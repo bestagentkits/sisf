@@ -48,14 +48,29 @@ type LKGStatus struct {
 // newAdminHandler serves the status and nothing else. It registers a single
 // read route, so every other path is not found and every other method on
 // the status path is refused: no request on this socket can change the
-// supervisor.
+// supervisor. A supervisor started with an emergency stop adds that one
+// route, which can only make the factory stop, never let it run again.
 func newAdminHandler(status func() Status) http.Handler {
+	return newAdminMux(status, Options{})
+}
+
+// newAdminMux serves the status and the actions opts provides. Nothing else
+// is routed: every other path is not found and every other method is
+// refused.
+func newAdminMux(status func() Status, opts Options) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+statusPath, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// A failed write means the client went away; there is nobody to tell.
-		_ = json.NewEncoder(w).Encode(status())
+		writeAdminJSON(w, http.StatusOK, status())
 	})
+	if opts.EmergencyStop != nil {
+		mux.Handle("POST "+EmergencyStopPath, emergencyStopHandler(opts.EmergencyStop))
+	}
+	if opts.FreezeStatus != nil {
+		mux.Handle("GET "+EmergencyStopPath, freezeStatusHandler(opts.FreezeStatus))
+	}
+	if opts.Rollback != nil {
+		mux.Handle("POST "+RollbackPath, rollbackHandler(opts.Rollback))
+	}
 	return mux
 }
 
@@ -64,9 +79,20 @@ func newAdminHandler(status func() Status) http.Handler {
 // cannot be pointed at another machine. A supervisor that does not answer
 // is UNAVAILABLE.
 func FetchStatus(ctx context.Context, addr string) (Status, error) {
+	var status Status
+	err := callAdmin(ctx, addr, http.MethodGet, statusPath, nil, &status)
+	return status, err
+}
+
+// callAdmin sends one request to the supervisor listening on addr and
+// decodes its JSON answer into out. The address goes through the same rule
+// as the listener's, so this client cannot be pointed at another machine. A
+// supervisor that does not answer is UNAVAILABLE; a refusal it answers with
+// keeps the error code the supervisor gave.
+func callAdmin(ctx context.Context, addr, method, path string, body io.Reader, out any) error {
 	target, err := parseAdminAddr(addr)
 	if err != nil {
-		return Status{}, err
+		return err
 	}
 	transport := &http.Transport{
 		DisableKeepAlives: true,
@@ -77,21 +103,28 @@ func FetchStatus(ctx context.Context, addr string) (Status, error) {
 	}
 	defer transport.CloseIdleConnections()
 	// The host in the URL is a label; the dialer above decides where to connect.
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://supervisor"+statusPath, nil)
+	request, err := http.NewRequestWithContext(ctx, method, "http://supervisor"+path, body)
 	if err != nil {
-		return Status{}, newError(core.CodeInternal, "the status request cannot be built").WithCause(err)
+		return newError(core.CodeInternal, "the admin request cannot be built").WithCause(err)
+	}
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
 	}
 	response, err := (&http.Client{Transport: transport}).Do(request)
 	if err != nil {
-		return Status{}, newError(core.CodeUnavailable, "no supervisor answers on %s", target).WithCause(err)
+		return newError(core.CodeUnavailable, "no supervisor answers on %s", target).WithCause(err)
 	}
 	defer func() { _ = response.Body.Close() }() // the answer was read or abandoned already
+	reader := io.LimitReader(response.Body, maxStatusBytes)
 	if response.StatusCode != http.StatusOK {
-		return Status{}, newError(core.CodeUnavailable, "the supervisor on %s answered %s", target, response.Status)
+		var refusal adminError
+		if json.NewDecoder(reader).Decode(&refusal) == nil && refusal.Code != "" {
+			return core.NewError(refusal.Code, refusal.Message)
+		}
+		return newError(core.CodeUnavailable, "the supervisor on %s answered %s", target, response.Status)
 	}
-	var status Status
-	if err := json.NewDecoder(io.LimitReader(response.Body, maxStatusBytes)).Decode(&status); err != nil {
-		return Status{}, newError(core.CodeUnavailable, "the supervisor on %s sent an unreadable status", target).WithCause(err)
+	if err := json.NewDecoder(reader).Decode(out); err != nil {
+		return newError(core.CodeUnavailable, "the supervisor on %s sent an unreadable answer", target).WithCause(err)
 	}
-	return status, nil
+	return nil
 }

@@ -5,13 +5,15 @@
 // Commands:
 //
 //	supervisor run     check this supervisor against the signed release
-//	                   manifest, then serve status on a local socket
+//	                   manifest, then serve status on a local socket and,
+//	                   given the state store, the emergency stop
 //	supervisor digest  print the digest this supervisor measures of itself,
 //	                   the value a release manifest pins
 //	supervisor status  ask a running supervisor for its status
 //
 // "run" refuses to start, with exit status 1, when it cannot prove that it
-// is the supervisor the Owner signed for. It performs no release steps.
+// is the supervisor the Owner signed for, or when it was given a state store
+// it cannot open. It performs no release steps.
 //
 // Exit status: 0 on success, 1 when a command fails or the supervisor
 // refuses to start, 2 when it was invoked wrongly.
@@ -30,6 +32,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/supervisor"
+	"github.com/bestagentkits/sisf/internal/supervisor/killswitch"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -49,7 +52,7 @@ const statusTimeout = 5 * time.Second
 const usageText = `supervisor is the trusted release supervisor of one factory deployment.
 
 Usage:
-  supervisor run --factory-id ID --manifest FILE --root-key-ref REF --trust-dir DIR [--lkg FILE] [--admin ADDR]
+  supervisor run --factory-id ID --manifest FILE --root-key-ref REF --trust-dir DIR [--lkg FILE] [--admin ADDR] [--state-dsn-env NAME]
   supervisor digest
   supervisor status [--admin ADDR]
 
@@ -125,7 +128,7 @@ func parseFlags(flags *flag.FlagSet, args []string, e env) (status int, ok bool)
 // runSupervisor runs the startup checks and serves status until interrupted.
 func runSupervisor(ctx context.Context, args []string, e env) int {
 	var cfg supervisor.Config
-	var factoryID string
+	var factoryID, dsnEnv string
 	flags := flag.NewFlagSet(program+" run", flag.ContinueOnError)
 	flags.StringVar(&factoryID, "factory-id", "", "factory_id of the deployment this supervisor belongs to")
 	flags.StringVar(&cfg.ManifestPath, "manifest", "", "path of the signed release manifest")
@@ -133,17 +136,39 @@ func runSupervisor(ctx context.Context, args []string, e env) int {
 	flags.StringVar(&cfg.TrustDir, "trust-dir", "", "directory of the trust volume, which only the supervisor writes")
 	flags.StringVar(&cfg.LKGPath, "lkg", "", "last known good record, inside the trust volume (default <trust-dir>/"+supervisor.DefaultLKGFile+")")
 	flags.StringVar(&cfg.AdminAddr, "admin", supervisor.DefaultAdminAddr, "status socket: unix:/absolute/path or a loopback host:port")
+	flags.StringVar(&dsnEnv, "state-dsn-env", killswitch.EnvStateDSN, "environment variable holding the state store connection; when it is set the socket also serves the emergency stop")
 	if status, ok := parseFlags(flags, args, e); !ok {
 		return status
 	}
 	cfg.FactoryID = core.FactoryID(factoryID)
 
-	sup, err := supervisor.Start(ctx, cfg, supervisor.Options{LookupEnv: e.lookupEnv})
+	clock := core.SystemClock{}
+	stop, err := openEmergencyStop(ctx, cfg.FactoryID, dsnEnv, e.lookupEnv, clock)
+	if err != nil {
+		say(e.stderr, "%s: refusing to start: the emergency stop needs the state store\n", program)
+		printError(e.stderr, err)
+		return exitFailure
+	}
+	if stop != nil {
+		defer stop.close()
+	}
+	sup, err := supervisor.Start(ctx, cfg, stop.options(supervisor.Options{LookupEnv: e.lookupEnv, Clock: clock}))
 	if err != nil {
 		say(e.stderr, "%s: refusing to start\n", program)
 		printError(e.stderr, err)
 		return exitFailure
 	}
+	// Enforcement ends before the store it uses is closed.
+	enforceCtx, stopEnforcing := context.WithCancel(ctx)
+	enforced := make(chan struct{})
+	go func() {
+		defer close(enforced)
+		stop.enforce(enforceCtx, clock, e.stderr)
+	}()
+	defer func() {
+		stopEnforcing()
+		<-enforced
+	}()
 	status := sup.Status()
 	say(e.stderr, "%s: self-check passed: executable %s is the one pinned by the release manifest signed with %s\n",
 		program, status.SelfCheck.ExecutableDigest, status.SelfCheck.ManifestKeyID)
