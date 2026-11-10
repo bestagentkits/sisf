@@ -359,3 +359,43 @@ func TestANewClaimStartsANewRunAndForgetsTheOldCandidate(t *testing.T) {
 		t.Fatalf("the new run inherited the old run, candidate or release: %+v", written)
 	}
 }
+
+func TestAStoreRefusesAStepThatLowersOrSkipsTheAttemptCount(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	issue := developing()
+	submit := stepOf(issue, core.EventCandidateSubmitted, core.StateQAEvaluation)
+	submit.CandidateDigest = build
+	if _, err := issue.Transition(ctx, submit); err != nil {
+		t.Fatalf("the run could not submit its candidate: %v", err)
+	}
+	fail := stepOf(issue, core.EventQAFailed, core.StateDeveloping)
+	fail.Attempt = 2
+	if _, err := issue.Transition(ctx, fail); err != nil {
+		t.Fatalf("the retry as attempt 2 was refused: %v", err)
+	}
+
+	cases := map[string]int{"resets it to 1": 1, "wipes it": 0, "raises it": 3}
+	for name, attempt := range cases {
+		reset := stepOf(issue, core.EventCandidateSubmitted, core.StateQAEvaluation)
+		reset.CandidateDigest, reset.Attempt = build, attempt
+		before := issue.record
+		if _, err := issue.Transition(ctx, reset); !core.HasCode(err, core.CodeConflict) {
+			t.Errorf("a submission that %s: want %s, got %v", name, core.CodeConflict, err)
+		}
+		if issue.record != before {
+			t.Errorf("a submission that %s changed the record", name)
+		}
+	}
+
+	submit = stepOf(issue, core.EventCandidateSubmitted, core.StateQAEvaluation)
+	submit.CandidateDigest = build
+	if _, err := issue.Transition(ctx, submit); err != nil {
+		t.Fatalf("the run could not submit at its stored attempt: %v", err)
+	}
+	skip := stepOf(issue, core.EventQAFailed, core.StateDeveloping)
+	skip.Attempt = 4
+	if _, err := issue.Transition(ctx, skip); !core.HasCode(err, core.CodeConflict) {
+		t.Fatalf("a retry that skips an attempt: want %s, got %v", core.CodeConflict, err)
+	}
+}
