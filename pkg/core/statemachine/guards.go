@@ -15,6 +15,11 @@ import (
 // for that issue and run. An error means the facts could not be established
 // and the step is refused. A typed *core.Error keeps its code, so a refusal
 // such as BUDGET_EXCEEDED or LEASE_HELD reaches the caller unchanged.
+//
+// A proof states both sides of every comparison the machine makes: what a
+// signed record says and what is in force now, read from the factory's own
+// configuration and stores. The value in force is never copied from the
+// record it is compared with.
 
 // ClaimProof is the lease and the budget reservation a claim is made under.
 type ClaimProof struct {
@@ -25,7 +30,9 @@ type ClaimProof struct {
 	// LeaseExpiresAt is when the lease lapses; a lapsed lease proves nothing.
 	LeaseExpiresAt time.Time
 	// Reservation is the budget admitted for the run. It exists in every
-	// budget mode, with a zero amount when the mode is unlimited.
+	// budget mode. Its amount may be zero when the mode is unlimited and must
+	// be positive when the mode is capped: a cap that sets nothing aside
+	// admits a run the budget never paid for.
 	Reservation core.Reservation
 }
 
@@ -58,10 +65,21 @@ type AttemptsGuard interface {
 	AttemptsProof(ctx context.Context, t core.Transition) (AttemptsProof, error)
 }
 
-// QAProof is the evaluator's receipt for the candidate, with the criteria in
-// force when it was judged.
+// QAProof is the evaluator's receipt for the candidate, next to the factory,
+// the policy, the baseline, the suite and the criteria in force now.
 type QAProof struct {
 	Receipt core.QAReceipt
+	// FactoryID is the factory deployment this machine serves. The receipt
+	// must have been issued by that factory's evaluator.
+	FactoryID core.FactoryID
+	// PolicyRevision is the policy commit in force now. A receipt issued
+	// under a policy that has since been replaced releases nothing.
+	PolicyRevision core.CommitSHA
+	// BaselineSHA is the commit of the read-only QA baseline in force now,
+	// and SuiteDigest the digest of the test suite in force now. A receipt
+	// judged against an older baseline or another suite releases nothing.
+	BaselineSHA core.CommitSHA
+	SuiteDigest core.Digest
 	// RequiredGates names every hard gate the review criteria demand. It must
 	// contain each gate of core.RequiredHardGates and may add more; criteria
 	// that leave a required gate out are refused, so the criteria can raise
@@ -76,8 +94,9 @@ type QAProof struct {
 // must return only a receipt whose signature it has verified, over the
 // receipt's SigningPayload, against the trusted evaluator keys; the machine
 // cannot check that. The machine checks everything else: that the receipt is
-// complete, bound to the issue, run and candidate of the transition, issued
-// in the past and unexpired, and that it passes core.QAReceipt.CheckPass.
+// complete, bound to the issue, run and candidate of the transition and to
+// the factory, policy, baseline and suite in force, issued in the past and
+// unexpired, and that it passes core.QAReceipt.CheckPass.
 type QAGuard interface {
 	QAProof(ctx context.Context, t core.Transition) (QAProof, error)
 }
@@ -118,18 +137,6 @@ type PostDeployGuard interface {
 	PostDeployProof(ctx context.Context, t core.Transition) (PostDeployProof, error)
 }
 
-// RetryGuard decides whether the actor named in the transition may send a
-// blocked issue back to Ready. As with core.Authorizer, the zero decision
-// denies and an error is treated as a denial.
-//
-// The machine sees that an issue is blocked, not why. A retry is therefore
-// the one check left on an issue blocked because its approval was denied or
-// expired: the implementation must deny it unless the scope has since been
-// approved or lies within the Owner's delegation.
-type RetryGuard interface {
-	AuthorizeRetry(ctx context.Context, t core.Transition) (core.AuthzDecision, error)
-}
-
 // Guards holds the guard of each guarded edge. A nil guard refuses its edge,
 // so an edge can never pass because nobody wired its check.
 type Guards struct {
@@ -138,6 +145,8 @@ type Guards struct {
 	Claim      ClaimGuard
 	Attempts   AttemptsGuard
 	QA         QAGuard
+	Rollout    RolloutGuard
+	Canary     CanaryGuard
 	PostDeploy PostDeployGuard
 	Retry      RetryGuard
 }
@@ -172,13 +181,5 @@ type PostDeployGuardFunc func(ctx context.Context, t core.Transition) (PostDeplo
 
 // PostDeployProof calls f.
 func (f PostDeployGuardFunc) PostDeployProof(ctx context.Context, t core.Transition) (PostDeployProof, error) {
-	return f(ctx, t)
-}
-
-// RetryGuardFunc adapts a function to RetryGuard.
-type RetryGuardFunc func(ctx context.Context, t core.Transition) (core.AuthzDecision, error)
-
-// AuthorizeRetry calls f.
-func (f RetryGuardFunc) AuthorizeRetry(ctx context.Context, t core.Transition) (core.AuthzDecision, error) {
 	return f(ctx, t)
 }

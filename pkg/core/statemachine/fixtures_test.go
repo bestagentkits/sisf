@@ -17,13 +17,16 @@ var (
 )
 
 const (
-	testRun    core.RunID         = "run-0001"
-	otherRun   core.RunID         = "run-0002"
-	testSHA    core.CommitSHA     = "0123456789abcdef0123456789abcdef01234567"
-	otherSHA   core.CommitSHA     = "fedcba9876543210fedcba9876543210fedcba98"
-	testDigest core.Digest        = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	released   core.ReleaseDigest = core.ReleaseDigest(testDigest)
-	otherBuild core.ReleaseDigest = "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	// testFactory is the factory deployment the machine under test serves.
+	testFactory  core.FactoryID     = "acme-factory"
+	otherFactory core.FactoryID     = "other-factory"
+	testRun      core.RunID         = "run-0001"
+	otherRun     core.RunID         = "run-0002"
+	testSHA      core.CommitSHA     = "0123456789abcdef0123456789abcdef01234567"
+	otherSHA     core.CommitSHA     = "fedcba9876543210fedcba9876543210fedcba98"
+	testDigest   core.Digest        = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	released     core.ReleaseDigest = core.ReleaseDigest(testDigest)
+	otherBuild   core.ReleaseDigest = "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 	// scopeDigest identifies the scope of work attached to the test issue.
 	scopeDigest core.Digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 	// testMaxAttempts is the attempt limit the test policy states.
@@ -109,7 +112,7 @@ func transitionOn(from core.State, event core.Event, to core.State) core.Transit
 	return t
 }
 
-// Requests for the seven guarded steps.
+// Requests for the ten guarded steps.
 func delegatedScopeRequest() core.Transition {
 	return transitionOn(core.StateScopeDraft, core.EventScopePermitted, core.StateReady)
 }
@@ -122,12 +125,24 @@ func claimRequest() core.Transition {
 	return transitionOn(core.StateReady, core.EventClaimed, core.StateClaimed)
 }
 
+func candidateRequest() core.Transition {
+	return transitionOn(core.StateDeveloping, core.EventCandidateSubmitted, core.StateQAEvaluation)
+}
+
 func qaRetryRequest() core.Transition {
 	return transitionOn(core.StateQAEvaluation, core.EventQAFailed, core.StateDeveloping)
 }
 
 func qaPassRequest() core.Transition {
 	return transitionOn(core.StateQAEvaluation, core.EventQAPassed, core.StateReleaseCandidate)
+}
+
+func rolloutRequest() core.Transition {
+	return transitionOn(core.StateReleaseCandidate, core.EventRolloutStarted, core.StateCanary)
+}
+
+func canaryRequest() core.Transition {
+	return transitionOn(core.StateCanary, core.EventRolloutHealthy, core.StateMonitoring)
 }
 
 func postDeployRequest() core.Transition {
@@ -140,6 +155,19 @@ func retryRequest() core.Transition {
 
 // machineWith builds a machine on the fixed test clock.
 func machineWith(guards Guards) *Machine { return New(fixedClock{testNow}, guards) }
+
+// requireHold asserts that err holds a release back on the named guard: the
+// step is refused with RELEASE_HOLD, never let through.
+func requireHold(t *testing.T, name string, err error, guard GuardKind) {
+	t.Helper()
+	if !core.HasCode(err, core.CodeReleaseHold) {
+		t.Errorf("%s: want %s, got %v", name, core.CodeReleaseHold, err)
+		return
+	}
+	if got := detailsOf(err)["guard"]; got != string(guard) {
+		t.Errorf("%s: hold names guard %q, want %q", name, got, guard)
+	}
+}
 
 // requireGuardFailed asserts that err refuses a step because the named guard
 // does not hold.

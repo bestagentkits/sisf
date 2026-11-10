@@ -68,6 +68,7 @@ func TestErrorRateIsUnknownWithoutRequests(t *testing.T) {
 
 func TestArtifactValidation(t *testing.T) {
 	good := deploy.Artifact{
+		FactoryID: "acme-app",
 		Unit:      "app",
 		Digest:    digest,
 		Image:     "ghcr.io/acme/app@" + string(digest),
@@ -77,10 +78,11 @@ func TestArtifactValidation(t *testing.T) {
 		t.Fatalf("valid artifact rejected: %v", err)
 	}
 	cases := map[string]func(*deploy.Artifact){
-		"no unit":       func(a *deploy.Artifact) { a.Unit = "" },
-		"mutable tag":   func(a *deploy.Artifact) { a.Digest = "latest" },
-		"unsigned":      func(a *deploy.Artifact) { a.Signature = core.Signature{} },
-		"no image name": func(a *deploy.Artifact) { a.Image = "" },
+		"no unit":           func(a *deploy.Artifact) { a.Unit = "" },
+		"mutable tag":       func(a *deploy.Artifact) { a.Digest = "latest" },
+		"unsigned":          func(a *deploy.Artifact) { a.Signature = core.Signature{} },
+		"no image name":     func(a *deploy.Artifact) { a.Image = "" },
+		"malformed factory": func(a *deploy.Artifact) { a.FactoryID = "Acme App" },
 	}
 	for name, mutate := range cases {
 		a := good
@@ -91,8 +93,34 @@ func TestArtifactValidation(t *testing.T) {
 	}
 }
 
+func TestAnArtifactIsReleasedOnlyByTheFactoryItWasBuiltFor(t *testing.T) {
+	t.Parallel()
+	if err := signedArtifact().ValidateFor("acme-app"); err != nil {
+		t.Fatalf("an artifact of this factory was refused: %v", err)
+	}
+	cases := map[string]struct {
+		factory core.FactoryID
+		mutate  func(*deploy.Artifact)
+	}{
+		"built for another factory on the same upstream": {"acme-app-2", func(*deploy.Artifact) {}},
+		"names no factory":                   {"acme-app", func(a *deploy.Artifact) { a.FactoryID = "" }},
+		"the releasing factory is unknown":   {"", func(*deploy.Artifact) {}},
+		"neither names a factory":            {"", func(a *deploy.Artifact) { a.FactoryID = "" }},
+		"of this factory but unsigned":       {"acme-app", func(a *deploy.Artifact) { a.Signature = core.Signature{} }},
+		"of this factory but named by a tag": {"acme-app", func(a *deploy.Artifact) { a.Digest = "latest" }},
+	}
+	for name, tc := range cases {
+		artifact := signedArtifact()
+		tc.mutate(&artifact)
+		if err := artifact.ValidateFor(tc.factory); !core.HasCode(err, core.CodeInvalidArgument) {
+			t.Errorf("%s: want %s, got %v", name, core.CodeInvalidArgument, err)
+		}
+	}
+}
+
 func signedArtifact() deploy.Artifact {
 	return deploy.Artifact{
+		FactoryID:     "acme-app",
 		Unit:          "app",
 		Digest:        digest,
 		Image:         "ghcr.io/acme/app@" + string(digest),
@@ -105,6 +133,7 @@ func signedArtifact() deploy.Artifact {
 // artifactMutations changes each field of an artifact in turn, keyed by the Go
 // field name so a field added later cannot be left out of the payload unseen.
 var artifactMutations = map[string]func(*deploy.Artifact){
+	"FactoryID":     func(a *deploy.Artifact) { a.FactoryID = "acme-app-2" },
 	"Unit":          func(a *deploy.Artifact) { a.Unit = "control" },
 	"Digest":        func(a *deploy.Artifact) { a.Digest = otherDigest },
 	"Image":         func(a *deploy.Artifact) { a.Image = "ghcr.io/acme/other@" + string(digest) },
@@ -147,7 +176,9 @@ func TestTheArtifactPayloadIsStableAndLeavesTheSignatureOut(t *testing.T) {
 	if !bytes.Equal(base, signedArtifact().SigningPayload()) {
 		t.Fatal("two equal artifacts produced different payloads")
 	}
-	if !strings.HasPrefix(string(base), "sisf-signed-record\ndomain=20:sisf.deploy_artifact\nversion=1:1\n") {
+	// The field list changed when the factory was bound, so the version did
+	// too: a signature made over the earlier list never verifies.
+	if !strings.HasPrefix(string(base), "sisf-signed-record\ndomain=20:sisf.deploy_artifact\nversion=1:2\nfactory_id=8:acme-app\n") {
 		t.Fatalf("payload does not open with the artifact domain and version: %q", base)
 	}
 	artifact.Signature = core.Signature{KeyID: "another-key", Algorithm: "ed25519", Value: []byte{9}}

@@ -43,13 +43,16 @@ func (r QAReceipt) RubricPoints() int {
 //   - passScore is within 1-100;
 //   - no hard gate failed, and every gate of RequiredHardGates and every gate
 //     in extraGates has a passing hard-gate result;
+//   - the rubric checks are exactly the categories of RubricCategories, each
+//     scored once, out of its fixed maximum;
 //   - the score equals the sum of the rubric points;
 //   - the score reaches passScore.
 //
 // The gates are judged before the score, so a high score never buys past a
 // failed gate. extraGates are gates the review criteria demand on top of the
 // required set; they can add to it and never replace it. When a gate is the
-// reason, the details of the refusal name it under "gate".
+// reason, the details of the refusal name it under "gate"; when a rubric
+// category is, under "rubric_category".
 //
 // CheckPass decides the verdict only. Whether the receipt is complete,
 // authentic, fresh and bound to the right candidate is checked separately.
@@ -71,6 +74,9 @@ func (r QAReceipt) CheckPass(passScore int, extraGates ...string) error {
 		if gate == "" || !passed[gate] {
 			return gateNotPassed(gate, "required hard gate %q has no passing result", gate)
 		}
+	}
+	if err := r.checkRubric(); err != nil {
+		return err
 	}
 	if points := r.RubricPoints(); r.Score != points {
 		return notPassed("QA score %d does not equal the %d rubric points recorded", r.Score, points)

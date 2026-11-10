@@ -1,10 +1,11 @@
 // Package approvals defines the contract of human approval for sensitive
 // actions.
 //
-// An approval is bound to the digest of the exact thing approved and to the
-// policy revision in force when it was given. It carries a nonce, expires,
-// can be used once and records who decided and through which surface. A
-// change to the subject or to the policy after the decision voids it.
+// An approval is bound to the factory, the issue and the action it was asked
+// for, to the digest of the exact thing approved and to the policy revision
+// in force when it was given. It carries a nonce, expires, can be used once
+// and records who decided and through which surface. A change to the subject
+// or to the policy after the decision voids it.
 package approvals
 
 import (
@@ -18,6 +19,12 @@ import (
 
 // MinNonceLength is the shortest nonce accepted, in characters.
 const MinNonceLength = 16
+
+// ActionApproveScope is the action of a request that asks the Owner to
+// approve the scope of work of an issue. Only an approval of this action lets
+// an issue leave ApprovalPending for Ready; an approval given for any other
+// action, such as a release or a policy change, never does.
+const ActionApproveScope = "scope.approve"
 
 // Decision is what an approver answered.
 type Decision string
@@ -129,6 +136,14 @@ type Conditions struct {
 // SigningPayload, which holds every field but the signature itself.
 type Approval struct {
 	RequestID string `json:"request_id"`
+	// FactoryID, IssueID and Action repeat the request's values. The request
+	// itself is not signed, so the signature covers them here: a decision
+	// cannot be presented for another factory, issue or action by rewriting
+	// the request it points to. IssueID is zero when the request concerns no
+	// single issue.
+	FactoryID core.FactoryID `json:"factory_id"`
+	IssueID   core.IssueRef  `json:"issue_id,omitzero"`
+	Action    string         `json:"action"`
 	// SubjectDigest, PolicyRevision and Nonce repeat the request's values;
 	// the signature covers them, so the decision cannot be moved elsewhere.
 	SubjectDigest  core.Digest    `json:"subject_digest"`
@@ -151,14 +166,21 @@ type Approval struct {
 
 // Validate checks that the decision is attributed, bound and dated.
 func (a Approval) Validate() error {
-	for _, check := range []func() error{a.SubjectDigest.Validate, a.PolicyRevision.Validate} {
+	for _, check := range []func() error{a.FactoryID.Validate, a.SubjectDigest.Validate, a.PolicyRevision.Validate} {
 		if err := check(); err != nil {
+			return err
+		}
+	}
+	if !a.IssueID.IsZero() {
+		if err := a.IssueID.Validate(); err != nil {
 			return err
 		}
 	}
 	switch {
 	case a.RequestID == "" || a.ActorID == "" || a.Nonce == "":
 		return invalid("approval needs a request, an actor and the request's nonce")
+	case a.Action == "":
+		return invalid("approval needs the action it was given for")
 	case !a.Decision.Valid() || !a.ActorKind.Valid() || !a.Surface.Valid():
 		return invalid("approval has an unknown decision, actor kind or surface")
 	case a.DecidedAt.IsZero() || a.Conditions.BudgetCap < 0:
@@ -167,19 +189,26 @@ func (a Approval) Validate() error {
 	return nil
 }
 
-// Domain and field-list version of the approval's signing payload.
+// Domain and field-list version of the approval's signing payload. Version 2
+// added the factory, the issue and the action.
 const (
 	approvalPayloadDomain  = "sisf.approval"
-	approvalPayloadVersion = 1
+	approvalPayloadVersion = 2
 )
 
 // SigningPayload returns the canonical bytes the approval service signs and a
 // verifier checks. Every field except the signature is bound, in a fixed
-// order, so a decision cannot be moved to another request, subject, policy
-// revision, actor or expiry without invalidating its signature.
+// order, so a decision cannot be moved to another request, factory, issue,
+// action, subject, policy revision, actor or expiry without invalidating its
+// signature.
 func (a Approval) SigningPayload() []byte {
 	return core.NewPayloadBuilder(approvalPayloadDomain, approvalPayloadVersion).
 		Text("request_id", a.RequestID).
+		Text("factory_id", string(a.FactoryID)).
+		Text("issue_owner", a.IssueID.Owner).
+		Text("issue_repo", a.IssueID.Repo).
+		Int("issue_number", int64(a.IssueID.Number)).
+		Text("action", a.Action).
 		Text("subject_digest", string(a.SubjectDigest)).
 		Text("policy_revision", string(a.PolicyRevision)).
 		Text("nonce", a.Nonce).
@@ -229,10 +258,12 @@ type Store interface {
 	Get(ctx context.Context, id string) (Request, error)
 	List(ctx context.Context, f Filter) ([]Request, error)
 	// Decide records a decision, signed over Approval.SigningPayload, on a
-	// pending request. The subject, policy revision and nonce must equal the
-	// request's; a request already decided or a foreign nonce is REPLAYED, a
-	// lapsed request EXPIRED. A request marked StepUp accepts only a person
-	// with a fresh StepUpAt and otherwise returns STEP_UP_REQUIRED.
+	// pending request. The factory, issue, action, subject, policy revision
+	// and nonce must equal the request's, and the factory must be the one
+	// this store serves; a request already decided or a foreign nonce is
+	// REPLAYED, a request that lapsed before the decision EXPIRED. A request
+	// marked StepUp accepts only a person with a fresh StepUpAt and otherwise
+	// returns STEP_UP_REQUIRED.
 	Decide(ctx context.Context, a Approval) (Request, error)
 	// Decision returns the decision recorded for a request, or NOT_FOUND.
 	Decision(ctx context.Context, requestID string) (Approval, error)

@@ -76,20 +76,48 @@ func TestEdgesOnlyConnectTheFifteenStates(t *testing.T) {
 	}
 }
 
-func TestOnlyTheSevenGuardedStepsCarryAGuard(t *testing.T) {
+func TestOnlyTheTenGuardedStepsCarryAGuard(t *testing.T) {
 	want := map[core.Event]GuardKind{
 		core.EventScopePermitted:     GuardDelegation,
 		core.EventOwnerApproved:      GuardApproval,
 		core.EventClaimed:            GuardClaim,
+		core.EventCandidateSubmitted: GuardCandidate,
 		core.EventQAFailed:           GuardAttempts,
 		core.EventQAPassed:           GuardQAPass,
+		core.EventRolloutStarted:     GuardRollout,
+		core.EventRolloutHealthy:     GuardCanaryHealth,
 		core.EventPostDeployVerified: GuardPostDeploy,
 		core.EventRetryAuthorized:    GuardRetry,
+	}
+	if len(want) != 10 {
+		t.Fatalf("%d guarded steps are listed, want 10", len(want))
 	}
 	for _, e := range Edges() {
 		if e.Guard != want[e.Event] {
 			t.Errorf("edge on %s has guard %q, want %q", e.Event, e.Guard, want[e.Event])
 		}
+	}
+}
+
+func TestEveryStepThatMovesACandidateTowardsUsersIsGuarded(t *testing.T) {
+	// From the moment a candidate exists, each step that brings it closer to
+	// users needs a proof; only the steps back to RolledBack do not.
+	towardsUsers := []core.State{
+		core.StateQAEvaluation, core.StateReleaseCandidate, core.StateCanary,
+		core.StateMonitoring, core.StateVerified,
+	}
+	steps := 0
+	for _, e := range Edges() {
+		if !slices.Contains(towardsUsers, e.To) {
+			continue
+		}
+		steps++
+		if e.Guard == GuardNone {
+			t.Errorf("%s moves a candidate on to %s on %s without any proof", e.From, e.To, e.Event)
+		}
+	}
+	if steps != len(towardsUsers) {
+		t.Fatalf("%d edges move a candidate towards users, want one into each of %v", steps, towardsUsers)
 	}
 }
 

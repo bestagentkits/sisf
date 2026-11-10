@@ -120,6 +120,15 @@ func TestAClaimWithoutAHeldReservationIsRefused(t *testing.T) {
 		"reservation amount is negative": func(_ *core.Transition, p *ClaimProof) {
 			p.Reservation.Amount = -1
 		},
+		"capped budget sets nothing aside": func(_ *core.Transition, p *ClaimProof) {
+			p.Reservation.Mode, p.Reservation.Amount = core.BudgetCapped, 0
+		},
+		"capped budget with an enforced cap sets nothing aside": func(_ *core.Transition, p *ClaimProof) {
+			p.Reservation.Mode, p.Reservation.Amount, p.Reservation.HardCapEnforced = core.BudgetCapped, 0, true
+		},
+		"capped budget reserves a negative amount": func(_ *core.Transition, p *ClaimProof) {
+			p.Reservation.Mode, p.Reservation.Amount = core.BudgetCapped, -1
+		},
 	}
 	for name, mutate := range cases {
 		requireGuardFailed(t, name, checkClaimWith(mutate), GuardClaim)

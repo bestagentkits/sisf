@@ -151,13 +151,25 @@ func TestClosedIsUnreachableWhileAGuardOnTheWayRefuses(t *testing.T) {
 			g.Approval = ApprovalGuardFunc(func(context.Context, core.Transition) (ApprovalProof, error) {
 				return ApprovalProof{}, refused
 			})
-			g.Retry = RetryGuardFunc(func(context.Context, core.Transition) (core.AuthzDecision, error) {
-				return core.AuthzDecision{}, refused
+			g.Retry = RetryGuardFunc(func(context.Context, core.Transition) (RetryProof, error) {
+				return RetryProof{}, refused
+			})
+		},
+		"no rollback preflight": func(g *Guards) {
+			g.Rollout = RolloutGuardFunc(func(context.Context, core.Transition) (RolloutProof, error) {
+				return RolloutProof{}, refused
+			})
+		},
+		"no healthy rollout was observed": func(g *Guards) {
+			g.Canary = CanaryGuardFunc(func(context.Context, core.Transition) (CanaryProof, error) {
+				return CanaryProof{}, refused
 			})
 		},
 		"no guard into Ready is wired": func(g *Guards) { g.Delegation, g.Approval, g.Retry = nil, nil, nil },
 		"claim guard not wired":        func(g *Guards) { g.Claim = nil },
 		"qa guard not wired":           func(g *Guards) { g.QA = nil },
+		"rollout guard not wired":      func(g *Guards) { g.Rollout = nil },
+		"canary guard not wired":       func(g *Guards) { g.Canary = nil },
 		"post-deploy guard not wired":  func(g *Guards) { g.PostDeploy = nil },
 	}
 	for name, withhold := range cases {
@@ -200,7 +212,7 @@ func TestWithoutScopeProofReadyIsReachedOnlyThroughAnAuthorizedRetry(t *testing.
 		t.Fatal("an issue became Ready with neither delegation, approval nor a retry")
 	}
 
-	guards.Retry = retryWith(core.AuthzDecision{Effect: core.EffectDeny})
+	guards.Retry = retryWith(retryDecided(core.AuthzDecision{Effect: core.EffectDeny}))
 	if reachable(acceptedBy(guards))[core.StateReady] {
 		t.Fatal("an issue became Ready although every way into it was refused")
 	}

@@ -8,6 +8,7 @@ import (
 func validReceipt() QAReceipt {
 	issued := time.Date(2026, 11, 10, 6, 0, 0, 0, time.UTC)
 	return QAReceipt{
+		FactoryID:           "acme-factory",
 		IssueID:             IssueRef{Owner: "acme", Repo: "app", Number: 7},
 		RunID:               "run-0001",
 		CandidateSHA:        testSHA,
@@ -36,6 +37,8 @@ func TestQAReceiptValidation(t *testing.T) {
 		t.Fatalf("valid receipt rejected: %v", err)
 	}
 	cases := map[string]func(*QAReceipt){
+		"names no factory":         func(r *QAReceipt) { r.FactoryID = "" },
+		"malformed factory":        func(r *QAReceipt) { r.FactoryID = "Acme Factory" },
 		"names no issue":           func(r *QAReceipt) { r.IssueID = IssueRef{} },
 		"issue without a number":   func(r *QAReceipt) { r.IssueID.Number = 0 },
 		"names no run":             func(r *QAReceipt) { r.RunID = "" },
@@ -48,6 +51,8 @@ func TestQAReceiptValidation(t *testing.T) {
 		"anonymous evaluator":      func(r *QAReceipt) { r.QAAgentIdentity = "" },
 		"anonymous coder":          func(r *QAReceipt) { r.CodingAgentIdentity = "" },
 		"evaluator scored itself":  func(r *QAReceipt) { r.QAAgentIdentity = r.CodingAgentIdentity },
+		"blank evaluator":          func(r *QAReceipt) { r.QAAgentIdentity = "  " },
+		"blank coder":              func(r *QAReceipt) { r.CodingAgentIdentity = "\t" },
 		"coding route missing":     func(r *QAReceipt) { r.CodingModelRoute = ModelRoute{} },
 		"qa route missing":         func(r *QAReceipt) { r.QAModelRoute = ModelRoute{} },
 		"same route not disclosed": func(r *QAReceipt) { r.QAModelRoute = r.CodingModelRoute },
@@ -68,6 +73,63 @@ func TestQAReceiptValidation(t *testing.T) {
 		mutate(&r)
 		if CodeOf(r.Validate()) != CodeInvalidArgument {
 			t.Errorf("%s: want %s, got %v", name, CodeInvalidArgument, r.Validate())
+		}
+	}
+}
+
+func TestAnEvaluatorCannotPassAsAnotherPartyByRespellingItsIdentity(t *testing.T) {
+	t.Parallel()
+	for name, evaluator := range map[string]string{
+		"trailing space":  "agent:coder-1 ",
+		"leading space":   " agent:coder-1",
+		"trailing tab":    "agent:coder-1\t",
+		"trailing line":   "agent:coder-1\n",
+		"upper case":      "AGENT:CODER-1",
+		"mixed case":      "Agent:Coder-1",
+		"case and spaces": "  Agent:CODER-1 ",
+	} {
+		r := validReceipt()
+		r.QAAgentIdentity = evaluator
+		if CodeOf(r.Validate()) != CodeInvalidArgument {
+			t.Errorf("%s: evaluator %q scored coder %q: want %s, got %v",
+				name, evaluator, r.CodingAgentIdentity, CodeInvalidArgument, r.Validate())
+		}
+		if !SameIdentity(evaluator, r.CodingAgentIdentity) || !SameIdentity(r.CodingAgentIdentity, evaluator) {
+			t.Errorf("%s: %q and %q name the same party", name, evaluator, r.CodingAgentIdentity)
+		}
+	}
+	if SameIdentity("agent:qa-1", "agent:coder-1") || SameIdentity("agent:qa-1", "agent:qa-10") {
+		t.Error("two different identities were taken for one party")
+	}
+}
+
+func TestASharedModelRouteCannotBeHiddenByRespellingIt(t *testing.T) {
+	t.Parallel()
+	for name, route := range map[string]ModelRoute{
+		"provider in upper case": {Provider: "ANTHROPIC", Model: "mid"},
+		"model in upper case":    {Provider: "anthropic", Model: "MID"},
+		"both in mixed case":     {Provider: "Anthropic", Model: "Mid", Effort: "high"},
+		"padded with spaces":     {Provider: " anthropic", Model: "mid "},
+	} {
+		r := validReceipt()
+		r.QAModelRoute = route
+		if !r.CodingModelRoute.SameModel(route) || !route.SameModel(r.CodingModelRoute) {
+			t.Errorf("%s: %s and %s are the same model", name, route, r.CodingModelRoute)
+		}
+		if CodeOf(r.Validate()) != CodeInvalidArgument {
+			t.Errorf("%s: an undisclosed shared route: want %s, got %v", name, CodeInvalidArgument, r.Validate())
+		}
+		r.SameModelRoute = true
+		if err := r.Validate(); err != nil {
+			t.Errorf("%s: a disclosed shared route is a valid receipt: %v", name, err)
+		}
+	}
+	for name, route := range map[string]ModelRoute{
+		"blank provider": {Provider: " ", Model: "mid"},
+		"blank model":    {Provider: "anthropic", Model: "\t"},
+	} {
+		if CodeOf(route.Validate()) != CodeInvalidArgument {
+			t.Errorf("%s: want %s, got %v", name, CodeInvalidArgument, route.Validate())
 		}
 	}
 }

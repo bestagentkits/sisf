@@ -9,7 +9,9 @@ import (
 )
 
 // countingGuards records how often each guard was consulted.
-type countingGuards struct{ delegation, approval, claim, attempts, qa, postDeploy, retry int }
+type countingGuards struct {
+	delegation, approval, claim, attempts, qa, rollout, canary, postDeploy, retry int
+}
 
 func (c *countingGuards) guards() Guards {
 	return Guards{
@@ -33,31 +35,50 @@ func (c *countingGuards) guards() Guards {
 			c.qa++
 			return validQA(), nil
 		}),
+		Rollout: RolloutGuardFunc(func(context.Context, core.Transition) (RolloutProof, error) {
+			c.rollout++
+			return validRollout(), nil
+		}),
+		Canary: CanaryGuardFunc(func(context.Context, core.Transition) (CanaryProof, error) {
+			c.canary++
+			return validCanary(), nil
+		}),
 		PostDeploy: PostDeployGuardFunc(func(context.Context, core.Transition) (PostDeployProof, error) {
 			c.postDeploy++
 			return validPostDeploy(), nil
 		}),
-		Retry: RetryGuardFunc(func(context.Context, core.Transition) (core.AuthzDecision, error) {
+		Retry: RetryGuardFunc(func(_ context.Context, t core.Transition) (RetryProof, error) {
 			c.retry++
-			return allowed(), nil
+			return validRetry(t), nil
 		}),
 	}
 }
 
 func (c *countingGuards) total() int {
-	return c.delegation + c.approval + c.claim + c.attempts + c.qa + c.postDeploy + c.retry
+	return c.delegation + c.approval + c.claim + c.attempts + c.qa + c.rollout + c.canary + c.postDeploy + c.retry
 }
 
 // guardedRequests is one well-formed request per guarded step.
 func guardedRequests() map[GuardKind]core.Transition {
+	requests := suppliedProofRequests()
+	requests[GuardCandidate] = candidateRequest()
+	return requests
+}
+
+// suppliedProofRequests is one well-formed request per step whose proof a
+// wired guard has to supply. The candidate step is not among them: its proof
+// is in the request itself.
+func suppliedProofRequests() map[GuardKind]core.Transition {
 	return map[GuardKind]core.Transition{
-		GuardDelegation: delegatedScopeRequest(),
-		GuardApproval:   ownerApprovedRequest(),
-		GuardClaim:      claimRequest(),
-		GuardAttempts:   qaRetryRequest(),
-		GuardQAPass:     qaPassRequest(),
-		GuardPostDeploy: postDeployRequest(),
-		GuardRetry:      retryRequest(),
+		GuardDelegation:   delegatedScopeRequest(),
+		GuardApproval:     ownerApprovedRequest(),
+		GuardClaim:        claimRequest(),
+		GuardAttempts:     qaRetryRequest(),
+		GuardQAPass:       qaPassRequest(),
+		GuardRollout:      rolloutRequest(),
+		GuardCanaryHealth: canaryRequest(),
+		GuardPostDeploy:   postDeployRequest(),
+		GuardRetry:        retryRequest(),
 	}
 }
 
@@ -76,13 +97,16 @@ func TestEveryGuardKindOfTheTableHasARequestInTheseTests(t *testing.T) {
 
 func TestEachGuardedStepConsultsOnlyItsOwnGuard(t *testing.T) {
 	want := map[GuardKind]countingGuards{
-		GuardDelegation: {delegation: 1},
-		GuardApproval:   {approval: 1},
-		GuardClaim:      {claim: 1},
-		GuardAttempts:   {attempts: 1},
-		GuardQAPass:     {qa: 1},
-		GuardPostDeploy: {postDeploy: 1},
-		GuardRetry:      {retry: 1},
+		GuardDelegation:   {delegation: 1},
+		GuardApproval:     {approval: 1},
+		GuardClaim:        {claim: 1},
+		GuardCandidate:    {},
+		GuardAttempts:     {attempts: 1},
+		GuardQAPass:       {qa: 1},
+		GuardRollout:      {rollout: 1},
+		GuardCanaryHealth: {canary: 1},
+		GuardPostDeploy:   {postDeploy: 1},
+		GuardRetry:        {retry: 1},
 	}
 	for guard, request := range guardedRequests() {
 		var calls countingGuards
@@ -149,9 +173,9 @@ func TestIllegalStepsAreRefusedBeforeAnyGuardRuns(t *testing.T) {
 
 func TestGuardedStepsFailClosedWhenNoGuardIsWired(t *testing.T) {
 	machine := machineWith(Guards{})
-	cases := guardedRequests()
-	if len(cases) != 7 {
-		t.Fatalf("%d guarded steps are exercised, want 7", len(cases))
+	cases := suppliedProofRequests()
+	if len(cases) != 9 {
+		t.Fatalf("%d steps whose proof a guard supplies are exercised, want 9", len(cases))
 	}
 	for guard, request := range cases {
 		requireGuardFailed(t, string(guard), machine.Check(context.Background(), request), guard)
@@ -196,9 +220,9 @@ func TestGuardsSeeTheRequestAndItsContext(t *testing.T) {
 	ctx := context.WithValue(context.Background(), key{}, "trace-1")
 	request := retryRequest()
 	seen := false
-	guards := Guards{Retry: RetryGuardFunc(func(got context.Context, t core.Transition) (core.AuthzDecision, error) {
+	guards := Guards{Retry: RetryGuardFunc(func(got context.Context, t core.Transition) (RetryProof, error) {
 		seen = got.Value(key{}) == "trace-1" && t.ActorID == request.ActorID && t.IssueID == request.IssueID
-		return allowed(), nil
+		return validRetry(t), nil
 	})}
 	if err := machineWith(guards).Check(ctx, request); err != nil {
 		t.Fatalf("authorized retry refused: %v", err)

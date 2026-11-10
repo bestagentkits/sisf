@@ -1,6 +1,9 @@
 package core
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // ModelRoute is the model a step runs on. It is chosen by code from
 // configuration and recorded with the run; a model is never asked to pick it.
@@ -23,13 +26,21 @@ func (m ModelRoute) String() string {
 
 // SameModel reports whether both routes use the same provider and model.
 // Effort is ignored: more effort on the same model shares its blind spots.
+// Letter case and surrounding white space are ignored too, so a shared route
+// cannot be passed off as a second one by respelling it.
 func (m ModelRoute) SameModel(other ModelRoute) bool {
-	return m.Provider == other.Provider && m.Model == other.Model
+	return sameName(m.Provider, other.Provider) && sameName(m.Model, other.Model)
+}
+
+// sameName compares two provider or model names without regard to letter case
+// or surrounding white space.
+func sameName(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
 // Validate requires a provider and a model.
 func (m ModelRoute) Validate() error {
-	if m.Provider == "" || m.Model == "" {
+	if strings.TrimSpace(m.Provider) == "" || strings.TrimSpace(m.Model) == "" {
 		return invalid("model route %q needs a provider and a model", m.String())
 	}
 	return nil

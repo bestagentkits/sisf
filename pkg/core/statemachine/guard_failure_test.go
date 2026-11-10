@@ -33,10 +33,12 @@ func TestAGuardThatCannotAnswerRefusesTheStep(t *testing.T) {
 		Claim:      ClaimGuardFunc(func(context.Context, core.Transition) (ClaimProof, error) { return validClaim(claimRequest()), down }),
 		Attempts:   AttemptsGuardFunc(func(_ context.Context, t core.Transition) (AttemptsProof, error) { return validAttempts(t), down }),
 		QA:         QAGuardFunc(func(context.Context, core.Transition) (QAProof, error) { return validQA(), down }),
+		Rollout:    RolloutGuardFunc(func(context.Context, core.Transition) (RolloutProof, error) { return validRollout(), down }),
+		Canary:     CanaryGuardFunc(func(context.Context, core.Transition) (CanaryProof, error) { return validCanary(), down }),
 		PostDeploy: PostDeployGuardFunc(func(context.Context, core.Transition) (PostDeployProof, error) { return validPostDeploy(), down }),
-		Retry:      RetryGuardFunc(func(context.Context, core.Transition) (core.AuthzDecision, error) { return allowed(), down }),
+		Retry:      RetryGuardFunc(func(_ context.Context, t core.Transition) (RetryProof, error) { return validRetry(t), down }),
 	}
-	cases := guardedRequests()
+	cases := suppliedProofRequests()
 	for guard, request := range cases {
 		err := machineWith(failing).Check(context.Background(), request)
 		requireGuardFailed(t, string(guard), err, guard)

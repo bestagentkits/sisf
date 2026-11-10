@@ -9,6 +9,7 @@ package qa
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 )
@@ -16,22 +17,30 @@ import (
 // Category is one scored area of the rubric.
 type Category string
 
+// The categories are those of core.RubricCategories, the list the release
+// step judges a receipt against.
 const (
 	// CategoryCorrectness is correctness and regression.
-	CategoryCorrectness Category = "correctness_regression"
+	CategoryCorrectness Category = core.RubricCorrectness
 	// CategorySecurity is security and authentication.
-	CategorySecurity Category = "security_auth"
+	CategorySecurity Category = core.RubricSecurity
 	// CategoryContract is contract and data safety.
-	CategoryContract Category = "contract_data_safety"
+	CategoryContract Category = core.RubricContract
 	// CategoryExperience is UX, performance and output.
-	CategoryExperience Category = "ux_performance_output"
+	CategoryExperience Category = core.RubricExperience
 	// CategoryObservability is observability and rollback.
-	CategoryObservability Category = "observability_rollback"
+	CategoryObservability Category = core.RubricObservability
 )
 
-// Categories returns the five rubric categories.
+// Categories returns the five rubric categories, in the order of
+// core.RubricCategories.
 func Categories() []Category {
-	return []Category{CategoryCorrectness, CategorySecurity, CategoryContract, CategoryExperience, CategoryObservability}
+	defined := core.RubricCategories()
+	categories := make([]Category, len(defined))
+	for i, category := range defined {
+		categories[i] = Category(category.Name)
+	}
+	return categories
 }
 
 // Rubric holds the weights and the pass score. The values in force come from
@@ -41,37 +50,33 @@ type Rubric struct {
 	PassScore int              `json:"pass_score"`
 }
 
-// DefaultRubric returns the starting rubric: 30/25/20/15/10 with a pass score
-// of 85. These are calibration starting points, not proven thresholds.
+// DefaultRubric returns the starting rubric: the weights of
+// core.RubricCategories, 30/25/20/15/10, with a pass score of 85. These are
+// calibration starting points, not proven thresholds.
 func DefaultRubric() Rubric {
-	return Rubric{
-		Weights: map[Category]int{
-			CategoryCorrectness:   30,
-			CategorySecurity:      25,
-			CategoryContract:      20,
-			CategoryExperience:    15,
-			CategoryObservability: 10,
-		},
-		PassScore: 85,
+	weights := map[Category]int{}
+	for _, category := range core.RubricCategories() {
+		weights[Category(category.Name)] = category.MaxPoints
 	}
+	return Rubric{Weights: weights, PassScore: 85}
 }
 
-// Validate requires exactly the five categories, non-negative weights that
-// sum to 100 and a pass score within 1-100.
+// Validate requires exactly the five categories, each at the weight
+// core.RubricCategories gives it, and a pass score within 1-100. The weights
+// are those the release step scores a receipt out of, so a rubric with other
+// weights could never agree with it; only the pass score varies.
 func (r Rubric) Validate() error {
-	total := 0
-	for _, c := range Categories() {
-		w, ok := r.Weights[c]
-		if !ok || w < 0 {
-			return core.NewError(core.CodeInvalidArgument, "rubric needs a non-negative weight for "+string(c))
+	defined := core.RubricCategories()
+	for _, category := range defined {
+		weight, ok := r.Weights[Category(category.Name)]
+		if !ok || weight != category.MaxPoints {
+			return core.NewError(core.CodeInvalidArgument,
+				fmt.Sprintf("rubric must weigh %s at %d", category.Name, category.MaxPoints))
 		}
-		total += w
 	}
 	switch {
-	case len(r.Weights) != len(Categories()):
+	case len(r.Weights) != len(defined):
 		return core.NewError(core.CodeInvalidArgument, "rubric contains an unknown category")
-	case total != 100:
-		return core.NewError(core.CodeInvalidArgument, "rubric weights must sum to 100")
 	case r.PassScore < 1 || r.PassScore > 100:
 		return core.NewError(core.CodeInvalidArgument, "rubric pass score must be within 1-100")
 	}
@@ -79,12 +84,13 @@ func (r Rubric) Validate() error {
 }
 
 // Passes reports whether a receipt meets the rubric: every hard gate was run
-// and passed, the score equals the rubric points recorded and it reaches the
-// pass score. The verdict is core.QAReceipt.CheckPass, the same rule the step
-// into ReleaseCandidate applies, so the evaluator and the release step cannot
-// disagree about what passing means.
+// and passed, every category is scored once out of its weight, the score
+// equals the rubric points recorded and it reaches the pass score. A rubric
+// that is not valid passes nothing. The verdict is core.QAReceipt.CheckPass,
+// the same rule the step into ReleaseCandidate applies, so the evaluator and
+// the release step cannot disagree about what passing means.
 func (r Rubric) Passes(receipt core.QAReceipt) bool {
-	return receipt.CheckPass(r.PassScore) == nil
+	return r.Validate() == nil && receipt.CheckPass(r.PassScore) == nil
 }
 
 // GateName names a hard gate.
@@ -194,11 +200,13 @@ type HardGate interface {
 	Check(ctx context.Context, c Candidate) (GateResult, error)
 }
 
-// Evaluator judges a candidate and returns a receipt bound to the candidate's
-// issue, run, commit and digest, signed over core.QAReceipt.SigningPayload.
-// The score it records is the sum of the rubric points. It refuses a
-// candidate written by its own identity and one that has not finished
-// building.
+// Evaluator judges a candidate and returns a receipt bound to its own factory
+// and to the candidate's issue, run, commit and digest, signed over
+// core.QAReceipt.SigningPayload. It scores each category of
+// core.RubricCategories once, out of the category's weight, and the score it
+// records is the sum of those points. It refuses a candidate written by its
+// own identity, compared with core.SameIdentity, and one that has not
+// finished building.
 type Evaluator interface {
 	Evaluate(ctx context.Context, c Candidate) (core.QAReceipt, error)
 }

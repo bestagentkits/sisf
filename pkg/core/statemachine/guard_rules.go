@@ -29,9 +29,10 @@ func refuse(guard GuardKind, t core.Transition, format string, args ...any) *cor
 	return refusal
 }
 
-// refuseAs restates the refusal of a shared rule as the refusal of a guard,
-// keeping the rule's message and details. An error that is not a typed
-// refusal says nothing a caller may see, so it is kept only as the cause.
+// refuseAs restates the refusal of a shared rule, or of another guard's rule,
+// as the refusal of a guard, keeping the rule's message and details. An error
+// that is not a typed refusal says nothing a caller may see, so it is kept
+// only as the cause.
 func refuseAs(guard GuardKind, t core.Transition, err error) *core.Error {
 	var rule *core.Error
 	if !errors.As(err, &rule) {
@@ -39,11 +40,13 @@ func refuseAs(guard GuardKind, t core.Transition, err error) *core.Error {
 	}
 	refusal := refuse(guard, t, "%s", rule.Message)
 	maps.Copy(refusal.Details, rule.Details)
+	refusal.Details["guard"] = string(guard)
 	return refusal
 }
 
 // checkClaim requires the claim to be written under the live lease presented
-// and to carry a held budget reservation for the same issue and run.
+// and to carry a held budget reservation for the same issue and run. Under a
+// cap the reservation must set a positive amount aside.
 func checkClaim(t core.Transition, p ClaimProof, now time.Time) error {
 	res := p.Reservation
 	switch {
@@ -65,6 +68,8 @@ func checkClaim(t core.Transition, p ClaimProof, now time.Time) error {
 		return refuse(GuardClaim, t, "the budget reservation does not state its budget mode")
 	case res.Amount < 0:
 		return refuse(GuardClaim, t, "the budget reservation has a negative amount")
+	case res.Mode == core.BudgetCapped && res.Amount == 0:
+		return refuse(GuardClaim, t, "a capped budget must set an amount aside before the run starts")
 	}
 	return nil
 }
@@ -95,8 +100,9 @@ func checkAttempts(t core.Transition, p AttemptsProof) error {
 }
 
 // checkQAPass requires a complete receipt for the issue, the run and the
-// candidate of the transition, issued in the past and unexpired, that passes
-// the shared pass rule under criteria that demand every required hard gate.
+// candidate of the transition, issued by this factory under the policy, the
+// baseline and the suite in force, in the past and unexpired, that passes the
+// shared pass rule under criteria that demand every required hard gate.
 func checkQAPass(t core.Transition, p QAProof, now time.Time) error {
 	receipt := p.Receipt
 	if err := receipt.Validate(); err != nil {
@@ -109,6 +115,14 @@ func checkQAPass(t core.Transition, p QAProof, now time.Time) error {
 		return refuse(GuardQAPass, t, "the QA receipt belongs to another issue or run")
 	case receipt.CandidateDigest != t.CandidateDigest:
 		return refuse(GuardQAPass, t, "the QA receipt is for another candidate")
+	case p.FactoryID.Validate() != nil || receipt.FactoryID != p.FactoryID:
+		return refuse(GuardQAPass, t, "the QA receipt was not issued by this factory")
+	case p.PolicyRevision.Validate() != nil || receipt.PolicySHA != p.PolicyRevision:
+		return refuse(GuardQAPass, t, "the QA receipt was issued under another policy than the one in force")
+	case p.BaselineSHA.Validate() != nil || receipt.BaselineSHA != p.BaselineSHA:
+		return refuse(GuardQAPass, t, "the QA receipt was judged against another baseline than the one in force")
+	case p.SuiteDigest.Validate() != nil || receipt.SuiteDigest != p.SuiteDigest:
+		return refuse(GuardQAPass, t, "the QA receipt was judged with another suite than the one in force")
 	case receipt.IssuedAt.After(now):
 		return refuse(GuardQAPass, t, "the QA receipt is dated after the current instant")
 	case receipt.Expired(now):
@@ -165,24 +179,6 @@ func checkPostDeploy(t core.Transition, p PostDeployProof, now time.Time) error 
 			refusal.Details["dod_item"] = item
 			return refusal
 		}
-	}
-	return nil
-}
-
-// checkRetry requires the retry to name its actor and that actor to be
-// allowed outright. A decision that still needs an approval or a step-up is
-// not an authorization.
-func checkRetry(t core.Transition, decision core.AuthzDecision) error {
-	if strings.TrimSpace(t.ActorID) == "" {
-		return refuse(GuardRetry, t, "a retry must name the actor who asked for it")
-	}
-	if !decision.Allowed() {
-		refusal := refuse(GuardRetry, t, "the retry is not authorized")
-		refusal.Details["effect"] = string(decision.Effect)
-		if decision.Reason != "" {
-			refusal.Details["reason"] = decision.Reason
-		}
-		return refusal
 	}
 	return nil
 }
