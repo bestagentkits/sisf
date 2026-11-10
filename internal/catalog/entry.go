@@ -5,6 +5,10 @@
 //
 // A release can mark an approved feature as built. It cannot add a feature:
 // a feature the catalog does not list needs the Owner's approval first.
+//
+// Actions serves the feature catalog, the changelog and the docs to every
+// surface, and turns a proposed change to DECISIONS.md into a pull request
+// the Owner must approve and merge; nothing here applies it directly.
 package catalog
 
 import (

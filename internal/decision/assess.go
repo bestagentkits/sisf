@@ -21,6 +21,9 @@ type endpointState struct {
 	// are kept out, so an incident does not raise its own baseline.
 	history []Window
 	streak  int
+	// breaches are the source references of the bad windows of the current
+	// streak, the latest ConsecutiveWindows of them.
+	breaches []string
 }
 
 // assessment is the deterministic judgment of one window.
@@ -35,14 +38,15 @@ type assessment struct {
 // window and updates the endpoint's state. name is the redacted endpoint.
 func (r Rules) assess(w Window, name string, st *endpointState, dismissed bool) assessment {
 	if reason := dataQuality(w); reason != "" {
-		st.streak = 0
+		st.streak, st.breaches = 0, nil
 		verdict := pkgdecision.VerdictIgnore
 		if w.Reset {
 			verdict = pkgdecision.VerdictCollectMoreEvidence
 		}
-		return assessment{verdict: verdict, reason: reason, evidence: r.evidence(w, name, 0, false, 0)}
+		return assessment{verdict: verdict, reason: reason, evidence: r.evidence(w, name, 0, false, 0, nil)}
 	}
 	baseline, known := r.baseline(st.history)
+	refs := []string{windowRef(name, w)}
 	rate := w.Rate()
 	enough := w.Requests >= r.MinSamples
 	above := rate > r.ErrorRateThreshold
@@ -53,8 +57,16 @@ func (r Rules) assess(w Window, name string, st *endpointState, dismissed bool) 
 	breach := enough && above && worse == yes
 	if breach {
 		st.streak++
+		st.breaches = append(st.breaches, refs[0])
+		if extra := len(st.breaches) - r.ConsecutiveWindows; extra > 0 {
+			st.breaches = append(st.breaches[:0], st.breaches[extra:]...)
+		}
+		refs = append([]string(nil), st.breaches...)
 	} else {
-		st.streak = 0
+		st.streak, st.breaches = 0, nil
+	}
+	if known {
+		refs = append(refs, baselineRef(name, st.history))
 	}
 	a := answers{
 		QuestionEnoughSamples:     yesNo(enough),
@@ -65,7 +77,7 @@ func (r Rules) assess(w Window, name string, st *endpointState, dismissed bool) 
 		QuestionDismissed:         yesNo(dismissed),
 	}
 	verdict, reason := verdictFor(a, known && rate > baseline)
-	ev := r.evidence(w, name, baseline, known, st.streak)
+	ev := r.evidence(w, name, baseline, known, st.streak, refs)
 	if enough && !breach {
 		st.history = append(st.history, w)
 		if extra := len(st.history) - r.BaselineWindows; extra > 0 {
@@ -110,8 +122,14 @@ func (r Rules) baseline(history []Window) (float64, bool) {
 	return float64(errs) / float64(requests), true
 }
 
-// evidence records what the verdict rests on, traceable to the edge window.
-func (r Rules) evidence(w Window, name string, baseline float64, known bool, streak int) pkgdecision.Evidence {
+// evidence records what the verdict rests on. refs trace it to the edge
+// windows it was measured in: the current one, every bad window of a
+// recurring regression and the healthy windows of the baseline. Without
+// refs it is traced to the current window.
+func (r Rules) evidence(w Window, name string, baseline float64, known bool, streak int, refs []string) pkgdecision.Evidence {
+	if len(refs) == 0 {
+		refs = []string{windowRef(name, w)}
+	}
 	trend := pkgdecision.TrendUnknown
 	switch rate := w.Rate(); {
 	case !known:
@@ -130,8 +148,19 @@ func (r Rules) evidence(w Window, name string, baseline float64, known bool, str
 		SampleCount: max(w.Requests, 0), From: w.From, To: w.To,
 		UserImpact: fmt.Sprintf("%d of %d requests failed with a server error", max(w.ServerErrors, 0), max(w.Requests, 0)),
 		Recurrence: streak, Confidence: confidence,
-		SourceRefs: []string{fmt.Sprintf("edge:counters:%q@%s/%s", name, w.From.UTC().Format(timeRef), w.To.UTC().Format(timeRef))},
+		SourceRefs: refs,
 	}
+}
+
+// windowRef names the edge counters of one window.
+func windowRef(name string, w Window) string {
+	return fmt.Sprintf("edge:counters:%q@%s/%s", name, w.From.UTC().Format(timeRef), w.To.UTC().Format(timeRef))
+}
+
+// baselineRef names the healthy windows the baseline was pooled from.
+func baselineRef(name string, history []Window) string {
+	first, last := history[0], history[len(history)-1]
+	return fmt.Sprintf("edge:baseline:%q@%s/%s#%d", name, first.From.UTC().Format(timeRef), last.To.UTC().Format(timeRef), len(history))
 }
 
 const timeRef = "2006-01-02T15:04:05Z"
