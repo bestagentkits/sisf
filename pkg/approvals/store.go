@@ -20,6 +20,11 @@ type Config struct {
 	// State is the operational store of the factory. Requests and decisions
 	// live in it, so single use survives a restart.
 	State state.Store
+	// FactoryID is the factory deployment this store serves. It files,
+	// decides and spends only requests of that factory, so an approval given
+	// in one factory is never used in another that shares its repository or
+	// its database.
+	FactoryID core.FactoryID
 	// Signer signs each recorded decision. It is the delegated key of the
 	// approval service; no agent or candidate ever holds it.
 	Signer core.Signer
@@ -39,6 +44,7 @@ type Config struct {
 // approval is spent once even when several callers race.
 type KVStore struct {
 	state    state.Store
+	factory  core.FactoryID
 	signer   core.Signer
 	verifier core.Verifier
 	audit    core.AuditLog
@@ -56,8 +62,11 @@ func NewStore(cfg Config) (*KVStore, error) {
 	case cfg.StepUpMaxAge < 0:
 		return nil, invalid("the step-up age must not be negative")
 	}
-	s := &KVStore{state: cfg.State, signer: cfg.Signer, verifier: cfg.Verifier, audit: cfg.Audit,
-		clock: cfg.Clock, stepUp: cfg.StepUpMaxAge}
+	if err := cfg.FactoryID.Validate(); err != nil {
+		return nil, err
+	}
+	s := &KVStore{state: cfg.State, factory: cfg.FactoryID, signer: cfg.Signer, verifier: cfg.Verifier,
+		audit: cfg.Audit, clock: cfg.Clock, stepUp: cfg.StepUpMaxAge}
 	if s.clock == nil {
 		s.clock = core.SystemClock{}
 	}
@@ -67,14 +76,17 @@ func NewStore(cfg Config) (*KVStore, error) {
 	return s, nil
 }
 
-// Create stores a valid pending request. A repeated ID is ALREADY_EXISTS, and
-// so is a nonce another request already carries, because a nonce that two
-// requests share could move a decision from one to the other.
+// Create stores a valid pending request of the factory this store serves. A
+// repeated ID is ALREADY_EXISTS, and so is a nonce another request already
+// carries, because a nonce that two requests share could move a decision from
+// one to the other.
 func (s *KVStore) Create(ctx context.Context, r Request) (Request, error) {
 	if err := r.Validate(); err != nil {
 		return Request{}, err
 	}
 	switch {
+	case r.FactoryID != s.factory:
+		return Request{}, invalid("the approval request is for another factory than this store serves")
 	case r.Status != StatusPending:
 		return Request{}, invalid("a new approval request must be pending")
 	case r.Expired(s.clock.Now()):

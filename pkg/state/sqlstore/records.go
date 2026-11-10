@@ -10,15 +10,17 @@ import (
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
-const recordColumns = `issue, state, version, idempotency_key, lease_owner, fencing_token, attempt, run_id, updated_at`
+const recordColumns = `issue, state, version, idempotency_key, lease_owner, fencing_token, attempt, run_id,
+	candidate_digest, release_digest, updated_at`
 
 // scanRecord reads one row selected with recordColumns.
 func (t *tx) scanRecord(scan func(dest ...any) error) (core.StateRecord, error) {
 	var (
-		issue, stateText, key, leaseOwner, runID string
-		version, token, attempt, updatedAt       int64
+		issue, stateText, key, leaseOwner, runID, candidate, release string
+		version, token, attempt, updatedAt                           int64
 	)
-	if err := scan(&issue, &stateText, &version, &key, &leaseOwner, &token, &attempt, &runID, &updatedAt); err != nil {
+	if err := scan(&issue, &stateText, &version, &key, &leaseOwner, &token, &attempt, &runID,
+		&candidate, &release, &updatedAt); err != nil {
 		return core.StateRecord{}, err
 	}
 	ref, err := core.ParseIssueRef(issue)
@@ -28,7 +30,8 @@ func (t *tx) scanRecord(scan func(dest ...any) error) (core.StateRecord, error) 
 	return core.StateRecord{
 		FactoryID: t.store.factory, IssueID: ref, State: core.State(stateText), Version: version,
 		IdempotencyKey: key, LeaseOwner: leaseOwner, FencingToken: core.FencingToken(token),
-		Attempt: int(attempt), RunID: core.RunID(runID), UpdatedAt: fromNanos(updatedAt),
+		Attempt: int(attempt), RunID: core.RunID(runID), CandidateDigest: core.Digest(candidate),
+		ReleaseDigest: core.ReleaseDigest(release), UpdatedAt: fromNanos(updatedAt),
 	}, nil
 }
 

@@ -113,8 +113,9 @@ func (b *Baselines) Digest(ctx context.Context, revision core.CommitSHA) (core.D
 //
 // The first baseline, set at install, needs nothing more. Replacing a
 // baseline is a policy change: approvalID must name an approval of exactly
-// the new content, given under the baseline being replaced. It is spent
-// here, once. Without one the answer is APPROVAL_REQUIRED.
+// the new content, given under the baseline being replaced, on a request to
+// approve a policy revision of this factory. It is spent here, once. Without
+// one the answer is APPROVAL_REQUIRED.
 //
 // Every attempt is audited. A change that cannot be audited is not made.
 func (b *Baselines) Approve(ctx context.Context, actor core.Actor, revision core.CommitSHA, approvalID string) (Baseline, error) {
@@ -150,7 +151,7 @@ func (b *Baselines) Approve(ctx context.Context, actor core.Actor, revision core
 	}
 	try.replaces = current.Revision
 	if replacing {
-		if _, err := b.cfg.Approvals.Consume(ctx, approvalID, snapshot.Digest, current.Revision); err != nil {
+		if err := b.spend(ctx, approvalID, snapshot.Digest, current.Revision); err != nil {
 			return Baseline{}, b.refuse(ctx, try, err)
 		}
 	}
@@ -181,6 +182,26 @@ func (b *Baselines) Approve(ctx context.Context, actor core.Actor, revision core
 		return Baseline{}, core.NewError(core.CodeOf(err), "the policy revision is in force, but recording that failed").WithCause(err)
 	}
 	return next, nil
+}
+
+// spend uses up the approval of a policy change: the new content, approved
+// under the baseline being replaced. The request must have asked for exactly
+// that, in this factory. An approval the Owner gave for anything else, such
+// as the scope of an issue or a release, is left unspent and changes nothing.
+// The store compares the decision with its request, so the request is enough
+// to tell what was approved.
+func (b *Baselines) spend(ctx context.Context, approvalID string, content core.Digest, replaced core.CommitSHA) error {
+	request, err := b.cfg.Approvals.Get(ctx, approvalID)
+	if err != nil {
+		return err
+	}
+	if request.Action != ActionApproveRevision || request.FactoryID != b.cfg.FactoryID {
+		return core.NewError(core.CodeApprovalRequired,
+			"the approval named does not approve a policy revision of this factory",
+			core.NextAction{Action: "approvals.list", Description: "find or file the approval request for this revision"})
+	}
+	_, err = b.cfg.Approvals.Consume(ctx, approvalID, content, replaced)
+	return err
 }
 
 // attempt is one call of Approve, as the audit log describes it.

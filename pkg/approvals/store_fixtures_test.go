@@ -35,12 +35,31 @@ func newFixture(t *testing.T) fixture {
 	return f
 }
 
+// factory is the factory the sample request was filed in and the store under
+// test serves.
+const factory core.FactoryID = "acme-app"
+
+// config is the configuration of a store of the sample factory over the
+// state of the fixture.
+func (f fixture) config() approvals.Config {
+	return approvals.Config{
+		State: f.state, FactoryID: factory, Signer: f.keys, Verifier: f.keys, Audit: f.audit, Clock: f.clock,
+	}
+}
+
 // open builds another store over the same state, as a restart would.
 func (f fixture) open(t *testing.T) *approvals.KVStore {
 	t.Helper()
-	store, err := approvals.NewStore(approvals.Config{
-		State: f.state, Signer: f.keys, Verifier: f.keys, Audit: f.audit, Clock: f.clock,
-	})
+	return f.openFor(t, factory)
+}
+
+// openFor builds a store over the same state that serves another factory,
+// as a second deployment pointed at the same database would.
+func (f fixture) openFor(t *testing.T, served core.FactoryID) *approvals.KVStore {
+	t.Helper()
+	cfg := f.config()
+	cfg.FactoryID = served
+	store, err := approvals.NewStore(cfg)
 	if err != nil {
 		t.Fatalf("store could not be built: %v", err)
 	}

@@ -166,12 +166,18 @@ func TestTransitionUnderAStaleFencingTokenIsRefused(t *testing.T) {
 			t.Fatalf("claimed record = %+v", claimed)
 		}
 
-		// A write made without a lease keeps the lease and run on record.
+		// The run goes on under the lease it claimed with, and under no other.
 		start := step(issue(7), core.StateClaimed, core.EventDevelopmentStarted, core.StateDeveloping, claimed.Version, "started")
-		start.Attempt = claimed.Attempt
+		start.Attempt, start.RunID = claimed.Attempt, claimed.RunID
+		_, err = transition(s, start)
+		wantCode(t, err, core.CodeStaleFencingToken)
+		start.LeaseOwner, start.FencingToken = crashed.Owner, crashed.Token
+		_, err = transition(s, start)
+		wantCode(t, err, core.CodeStaleFencingToken)
+		start.LeaseOwner, start.FencingToken = successor.Owner, successor.Token
 		started := mustTransition(t, s, start)
 		if started.LeaseOwner != "dispatcher-2" || started.FencingToken != successor.Token || started.RunID != "run-2" {
-			t.Fatalf("an unleased write dropped the lease or run: %+v", started)
+			t.Fatalf("a step of the run dropped the lease or run: %+v", started)
 		}
 	})
 }
@@ -183,6 +189,9 @@ func TestConcurrentWritersOnOneVersionLetExactlyOneWin(t *testing.T) {
 		control, agent := db.Open(t, core.ZoneControl), db.Open(t, core.ZoneAgent)
 		ready := readyRecord(t, control, issue(7))
 
+		// Every writer holds the current lease, as copies of one worker would,
+		// so only the version decides between them.
+		lease := leaseOn(t, agent, issue(7), "worker-1")
 		const writers = 8
 		var wg sync.WaitGroup
 		errs := make([]error, writers)
@@ -196,6 +205,7 @@ func TestConcurrentWritersOnOneVersionLetExactlyOneWin(t *testing.T) {
 				}
 				// Each writer has a key of its own, so none replays another.
 				tr := step(issue(7), core.StateReady, core.EventClaimed, core.StateClaimed, ready.Version, "claim-"+string(rune('a'+i)))
+				tr.LeaseOwner, tr.FencingToken, tr.RunID, tr.Attempt = lease.Owner, lease.Token, core.RunID("run-"+string(rune('a'+i))), 1
 				_, errs[i] = transition(s, tr)
 			}()
 		}

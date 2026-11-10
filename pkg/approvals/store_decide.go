@@ -46,17 +46,25 @@ func mayDecide(ctx context.Context, a Approval) error {
 //
 // The remaining checks run in a fixed order and the first failure wins: a
 // request that was already decided or used, or a nonce that is not the
-// request's, is REPLAYED; a lapsed request is EXPIRED; a subject or policy
-// revision other than the request's is APPROVAL_REQUIRED, because the
-// approver looked at something else; a malformed decision is
-// INVALID_ARGUMENT; and a request marked StepUp accepts only a person who
-// confirmed their identity within the step-up age, otherwise
-// STEP_UP_REQUIRED.
+// request's, is REPLAYED; a lapsed request is EXPIRED; a request of another
+// factory than this store serves is PERMISSION_DENIED; a factory, issue,
+// action, subject or policy revision other than the request's is
+// APPROVAL_REQUIRED, because the approver looked at something else; a
+// malformed decision, or one made before its request, is INVALID_ARGUMENT;
+// and a request marked StepUp accepts only a person who confirmed their
+// identity within the step-up age, otherwise STEP_UP_REQUIRED.
 //
 // The store stamps the decision time, caps the expiry at the request's and
 // signs Approval.SigningPayload itself. A time or a signature supplied by the
-// caller is discarded, so a decision can be neither backdated nor forged.
+// caller is discarded, so a decision can be neither backdated nor forged, and
+// every recorded decision was made while its request was open.
 func (s *KVStore) Decide(ctx context.Context, a Approval) (Request, error) {
+	return s.decide(ctx, a, false)
+}
+
+// decide is Decide. With answering set, the decision takes the factory, the
+// issue and the action from the request it answers instead of stating them.
+func (s *KVStore) decide(ctx context.Context, a Approval, answering bool) (Request, error) {
 	actor := auditActor{id: a.ActorID, kind: a.ActorKind, surface: a.Surface,
 		details: map[string]string{"decision": string(a.Decision)}}
 	if denied := mayDecide(ctx, a); denied != nil {
@@ -76,7 +84,11 @@ func (s *KVStore) Decide(ctx context.Context, a Approval) (Request, error) {
 			return err
 		}
 		request = r
-		signed, err := s.judge(ctx, s.current(r), a)
+		answer := a
+		if answering {
+			answer.FactoryID, answer.IssueID, answer.Action = r.FactoryID, r.IssueID, r.Action
+		}
+		signed, err := s.judge(ctx, s.current(r), answer)
 		if err != nil {
 			return err
 		}
@@ -107,9 +119,19 @@ func (s *KVStore) judge(ctx context.Context, r Request, a Approval) (Approval, e
 		return Approval{}, core.NewError(core.CodeReplayed, "the nonce does not belong to this approval request")
 	case r.Status == StatusExpired:
 		return Approval{}, core.NewError(core.CodeExpired, "the approval request has lapsed")
+	case r.FactoryID != s.factory:
+		return Approval{}, core.NewError(core.CodePermissionDenied,
+			"the approval request belongs to another factory than this store serves")
+	case a.FactoryID != r.FactoryID || a.IssueID != r.IssueID || a.Action != r.Action:
+		return Approval{}, core.NewError(core.CodeApprovalRequired,
+			"the decision names a different factory, issue or action than the request")
 	case a.SubjectDigest != r.SubjectDigest || a.PolicyRevision != r.PolicyRevision:
 		return Approval{}, core.NewError(core.CodeApprovalRequired,
 			"the decision names a different subject or policy revision than the request")
+	case now.Before(r.CreatedAt):
+		// A request dated ahead of this clock is not open yet. A decision
+		// stamped now would predate it and could never be used.
+		return Approval{}, invalid("the approval request is dated after the current instant and cannot be decided yet")
 	}
 	a.DecidedAt, a.Signature = now, core.Signature{}
 	if a.ExpiresAt.IsZero() || a.ExpiresAt.After(r.ExpiresAt) {
@@ -169,15 +191,18 @@ type Submission struct {
 // never from request content.
 //
 // Who decided, as what kind of actor and through which surface is taken from
-// the actor, so a caller cannot claim to be someone else. Decide then applies
-// its rules: only an identified Owner gets as far as the request.
+// the actor, so a caller cannot claim to be someone else. The factory, the
+// issue and the action are those of the request the submission answers: they
+// are fixed when a request is filed, so there is no other view of them an
+// approver could have decided on. Decide then applies its rules: only an
+// identified Owner gets as far as the request.
 func (s *KVStore) Submit(ctx context.Context, actor core.Actor, sub Submission) (Request, error) {
 	if sub.RequestID == "" {
 		return Request{}, invalid("a decision needs the id of the request it answers")
 	}
-	return s.Decide(WithApprover(ctx, actor), Approval{
+	return s.decide(WithApprover(ctx, actor), Approval{
 		RequestID: sub.RequestID, SubjectDigest: sub.SubjectDigest, PolicyRevision: sub.PolicyRevision,
 		Nonce: sub.Nonce, Decision: sub.Decision, ActorID: actor.ID, ActorKind: actor.Kind,
 		Surface: actor.Surface, StepUpAt: actor.StepUpAt, Reason: sub.Reason, Conditions: sub.Conditions,
-	})
+	}, true)
 }

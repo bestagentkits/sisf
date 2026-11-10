@@ -4,74 +4,43 @@ import (
 	"testing"
 
 	"github.com/bestagentkits/sisf/pkg/core"
-	"github.com/bestagentkits/sisf/pkg/core/statemachine"
-	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
-
-const (
-	candidateDigest core.Digest        = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	otherCandidate  core.Digest        = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	releaseDigest   core.ReleaseDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-)
-
-// next builds the write that moves a record along the edge of event. The
-// key is the event name, so a test takes each edge once per issue.
-func next(t *testing.T, from core.StateRecord, event core.Event, change func(*core.Transition)) core.Transition {
-	t.Helper()
-	to, err := statemachine.Next(from.State, event)
-	if err != nil {
-		t.Fatalf("no edge from %s on %s: %v", from.State, event, err)
-	}
-	tr := step(from.IssueID, from.State, event, to, from.Version, string(event))
-	tr.Attempt = from.Attempt
-	if change != nil {
-		change(&tr)
-	}
-	return tr
-}
-
-// advance takes one edge and returns the record after it.
-func advance(t *testing.T, s *sqlstore.Store, from core.StateRecord, event core.Event, change func(*core.Transition)) core.StateRecord {
-	t.Helper()
-	return mustTransition(t, s, next(t, from, event, change))
-}
 
 func TestAttemptOfARunIsNeverLowered(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		s := db.Open(t, core.ZoneControl)
-		rec := readyRecord(t, s, issue(7))
-		rec = advance(t, s, rec, core.EventClaimed, func(tr *core.Transition) { tr.RunID, tr.Attempt = "run-1", 1 })
-		rec = advance(t, s, rec, core.EventDevelopmentStarted, nil)
-		rec = advance(t, s, rec, core.EventCandidateSubmitted, nil)
+		rec := along(t, s, developing(t, s, issue(7)), core.EventCandidateSubmitted)
 		// The evaluation fails and the run goes into its second attempt.
-		rec = advance(t, s, rec, core.EventQAFailed, func(tr *core.Transition) { tr.Attempt = 2 })
+		rec = advance(t, s, rec, core.EventQAFailed, nil)
 		if rec.Attempt != 2 || rec.RunID != "run-1" {
 			t.Fatalf("record after the retry = %+v", rec)
 		}
 
-		// A later step of the same run may not wind the count back, whether
-		// it names the run or leaves it as it is.
+		// A later step of the same run may not wind the count back.
 		for name, change := range map[string]func(*core.Transition){
-			"run left as it is": func(tr *core.Transition) { tr.Attempt = 1 },
-			"run named again":   func(tr *core.Transition) { tr.RunID, tr.Attempt = "run-1", 1 },
-			"count dropped":     func(tr *core.Transition) { tr.Attempt = 0 },
+			"count wound back": func(tr *core.Transition) { tr.Attempt = 1 },
+			"count dropped":    func(tr *core.Transition) { tr.Attempt = 0 },
 		} {
 			lowered := next(t, rec, core.EventCandidateSubmitted, change)
 			lowered.IdempotencyKey = "resubmitted: " + name
-			_, err := transition(s, lowered)
-			if !core.HasCode(err, core.CodeInvalidArgument) {
-				t.Errorf("%s: want %s, got %v", name, core.CodeInvalidArgument, err)
-			}
-		}
-		if stored := record(t, s, issue(7)); stored != rec {
-			t.Fatalf("a refused step changed the record: %+v", stored)
+			refused(t, s, name, lowered, core.CodeInvalidArgument)
 		}
 		// Keeping the count is fine.
 		rec = advance(t, s, rec, core.EventCandidateSubmitted, func(tr *core.Transition) { tr.IdempotencyKey = "resubmitted" })
 		if rec.Attempt != 2 {
 			t.Fatalf("attempt after a step that keeps it = %d", rec.Attempt)
+		}
+
+		// Nor may a step that leaves the run unnamed, once no run holds the
+		// issue any more.
+		rec = along(t, s, rec, core.EventQAPassed, core.EventRolloutStarted, core.EventErrorThresholdExceeded)
+		for name, change := range map[string]func(*core.Transition){
+			"run left as it is": func(tr *core.Transition) { tr.RunID, tr.Attempt = "", 1 },
+			"run named again":   func(tr *core.Transition) { tr.Attempt = 1 },
+		} {
+			refused(t, s, name, next(t, rec, core.EventRecoveryReported, change), core.CodeInvalidArgument)
 		}
 	})
 }
@@ -80,18 +49,19 @@ func TestNewRunStartsItsOwnAttemptCount(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		s := db.Open(t, core.ZoneControl)
-		rec := readyRecord(t, s, issue(7))
-		rec = advance(t, s, rec, core.EventClaimed, func(tr *core.Transition) { tr.RunID, tr.Attempt = "run-1", 3 })
-		// The issue is sent back and claimed again by another run.
-		for _, event := range []core.Event{
-			core.EventDevelopmentStarted, core.EventCandidateSubmitted, core.EventQAPassed, core.EventRolloutStarted,
-			core.EventErrorThresholdExceeded, core.EventRecoveryReported, core.EventRetryAuthorized,
-		} {
-			rec = advance(t, s, rec, event, nil)
+		// The first run needs a second attempt before its candidate passes.
+		rec := along(t, s, developing(t, s, issue(7)), core.EventCandidateSubmitted, core.EventQAFailed)
+		rec = advance(t, s, rec, core.EventCandidateSubmitted, func(tr *core.Transition) { tr.IdempotencyKey = "resubmitted" })
+		if rec.Attempt != 2 {
+			t.Fatalf("attempt of the first run = %d, want 2", rec.Attempt)
 		}
-		again := next(t, rec, core.EventClaimed, func(tr *core.Transition) { tr.RunID, tr.Attempt = "run-2", 1 })
-		again.IdempotencyKey = "claimed-again"
-		rec = mustTransition(t, s, again)
+		// The issue is sent back and claimed again by another run.
+		rec = along(t, s, rec, core.EventQAPassed, core.EventRolloutStarted,
+			core.EventErrorThresholdExceeded, core.EventRecoveryReported, core.EventRetryAuthorized)
+		if rec.Attempt != 2 {
+			t.Fatalf("attempt kept until the next claim = %d, want 2", rec.Attempt)
+		}
+		rec = claim(t, s, rec, "worker-1", "run-2")
 		if rec.RunID != "run-2" || rec.Attempt != 1 {
 			t.Fatalf("record of the new run = %+v", rec)
 		}
@@ -102,15 +72,10 @@ func TestCandidateAndReleaseOfAStepAreKeptWithIt(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		s := db.Open(t, core.ZoneControl)
-		rec := readyRecord(t, s, issue(7))
-		rec = advance(t, s, rec, core.EventClaimed, func(tr *core.Transition) { tr.RunID, tr.Attempt = "run-1", 1 })
-		rec = advance(t, s, rec, core.EventDevelopmentStarted, nil)
-		rec = advance(t, s, rec, core.EventCandidateSubmitted, nil)
-		passed := next(t, rec, core.EventQAPassed, func(tr *core.Transition) { tr.CandidateDigest = candidateDigest })
+		rec := along(t, s, developing(t, s, issue(7)), core.EventCandidateSubmitted)
+		passed := next(t, rec, core.EventQAPassed, nil)
 		candidate := mustTransition(t, s, passed)
-		rec = advance(t, s, candidate, core.EventRolloutStarted, nil)
-		rec = advance(t, s, rec, core.EventRolloutHealthy, nil)
-		advance(t, s, rec, core.EventPostDeployVerified, func(tr *core.Transition) { tr.ReleaseDigest = releaseDigest })
+		along(t, s, candidate, core.EventRolloutStarted, core.EventRolloutHealthy, core.EventPostDeployVerified)
 
 		stored := func(key string) (candidate, release string) {
 			t.Helper()
@@ -130,7 +95,8 @@ func TestCandidateAndReleaseOfAStepAreKeptWithIt(t *testing.T) {
 		}
 
 		// The step replayed for the same candidate is answered from the
-		// first write; replayed for another candidate it is not a replay.
+		// first write, although the record has moved on and names a release
+		// by now; replayed for another candidate it is not a replay.
 		replayed, err := transition(s, passed)
 		if err != nil || replayed != candidate {
 			t.Fatalf("replay for the same candidate = %+v, %v", replayed, err)
@@ -138,6 +104,11 @@ func TestCandidateAndReleaseOfAStepAreKeptWithIt(t *testing.T) {
 		swapped := passed
 		swapped.CandidateDigest = otherCandidate
 		_, err = transition(s, swapped)
+		wantCode(t, err, core.CodeConflict)
+		// Nor is the same key presented by another run.
+		foreign := passed
+		foreign.RunID = "run-2"
+		_, err = transition(s, foreign)
 		wantCode(t, err, core.CodeConflict)
 		// A digest that is not a full content hash is refused outright.
 		malformed := passed

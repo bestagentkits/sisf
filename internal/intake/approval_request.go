@@ -10,9 +10,10 @@ import (
 )
 
 // request files the approval request for one scope version under the policy
-// in force, or returns the one already filed. The ID is derived from the
-// issue, the scope digest and the policy revision, so filing is safe to
-// repeat and a request can never be mistaken for one about other content.
+// in force, or returns the one already filed. It asks for the one action
+// that lets a scope go ahead, approvals.ActionApproveScope. The ID is derived
+// from the issue, the scope digest and the policy revision, so filing is safe
+// to repeat and a request can never be mistaken for one about other content.
 func (s *Service) request(ctx context.Context, in input, sow SoW, verdict Classification) (approvals.Request, error) {
 	revision := in.policy.Revision
 	if err := revision.Validate(); err != nil {
@@ -33,7 +34,7 @@ func (s *Service) request(ctx context.Context, in input, sow SoW, verdict Classi
 		return approvals.Request{}, err
 	}
 	created, err := s.cfg.Approvals.Create(ctx, approvals.Request{
-		ID: id, FactoryID: in.policy.Manifest.FactoryID, IssueID: sow.Issue, Action: ActionApproveScope,
+		ID: id, FactoryID: in.policy.Manifest.FactoryID, IssueID: sow.Issue, Action: approvals.ActionApproveScope,
 		SubjectDigest: sow.Digest, PolicyRevision: revision, Nonce: nonce, ExpiresAt: in.now.Add(s.cfg.ApprovalTTL),
 		RequestedBy: serviceActor, RiskSummary: riskSummary(verdict), Diff: sow.Text(), AffectedFeatures: sow.Features,
 		EvidenceRefs: []string{"issue:" + sow.Issue.String(), sowRef(sow)},

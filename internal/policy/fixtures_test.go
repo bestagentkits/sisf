@@ -23,6 +23,9 @@ const (
 	revC core.CommitSHA = "cccccccccccccccccccccccccccccccccccccccc"
 )
 
+// factory is the factory the foundation files of this repository declare.
+const factory core.FactoryID = "acme-hello"
+
 var testNow = time.Date(2026, 11, 10, 7, 0, 0, 0, time.UTC)
 
 // repository is a policy.Source over commits held in memory. It counts the
@@ -104,12 +107,12 @@ func newWorld(t *testing.T) *world {
 		state: intaketest.NewState(clock), clock: clock, audit: &intaketest.AuditLog{},
 	}
 	var err error
-	w.approvals, err = approvals.NewStore(approvals.Config{State: w.state, Signer: keys, Verifier: keys, Audit: w.audit, Clock: clock})
+	w.approvals, err = approvals.NewStore(approvals.Config{State: w.state, FactoryID: factory, Signer: keys, Verifier: keys, Audit: w.audit, Clock: clock})
 	if err != nil {
 		t.Fatal(err)
 	}
 	w.baselines, err = policy.NewBaselines(policy.BaselinesConfig{
-		State: w.state, Source: w.repo, Approvals: w.approvals, Audit: w.audit, Clock: clock, FactoryID: "acme-hello",
+		State: w.state, Source: w.repo, Approvals: w.approvals, Audit: w.audit, Clock: clock, FactoryID: factory,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -138,8 +141,16 @@ func (w *world) owner() core.Actor {
 }
 
 // requestChange files the approval request for making revision the policy
-// in force and returns its ID and the submission an approver would send.
+// in force and returns the submission an approver would send.
 func (w *world) requestChange(t *testing.T, id string, revision core.CommitSHA) approvals.Submission {
+	t.Helper()
+	return w.request(t, w.approvals, id, revision, nil)
+}
+
+// request files, in store, an approval request about the content of
+// revision under the policy in force. change, when given, turns it into a
+// request for something other than making that revision the policy.
+func (w *world) request(t *testing.T, store *approvals.KVStore, id string, revision core.CommitSHA, change func(*approvals.Request)) approvals.Submission {
 	t.Helper()
 	ctx := context.Background()
 	digest, err := w.baselines.Digest(ctx, revision)
@@ -155,12 +166,15 @@ func (w *world) requestChange(t *testing.T, id string, revision core.CommitSHA) 
 		t.Fatal(err)
 	}
 	request := approvals.Request{
-		ID: id, FactoryID: "acme-hello", Action: "policy.approve_revision", SubjectDigest: digest,
+		ID: id, FactoryID: factory, Action: "policy.approve_revision", SubjectDigest: digest,
 		PolicyRevision: current.Revision, Nonce: nonce, ExpiresAt: w.clock.Now().Add(24 * time.Hour),
 		RequestedBy: "service:control", RiskSummary: "Replaces the decision rules the factory follows.",
 		StepUp: true, Status: approvals.StatusPending, CreatedAt: w.clock.Now(),
 	}
-	if _, err := w.approvals.Create(ctx, request); err != nil {
+	if change != nil {
+		change(&request)
+	}
+	if _, err := store.Create(ctx, request); err != nil {
 		t.Fatal(err)
 	}
 	return approvals.Submission{RequestID: id, Nonce: nonce, SubjectDigest: digest,

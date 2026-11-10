@@ -14,12 +14,14 @@ func TestAStoreIsNotBuiltWithoutItsDependencies(t *testing.T) {
 	t.Parallel()
 	clock := intaketest.NewClock(created)
 	keys := intaketest.NewKeys("k")
-	full := approvals.Config{State: intaketest.NewState(clock), Signer: keys, Verifier: keys, Audit: &intaketest.AuditLog{}}
+	full := approvals.Config{State: intaketest.NewState(clock), FactoryID: factory, Signer: keys, Verifier: keys, Audit: &intaketest.AuditLog{}}
 	cases := map[string]func(*approvals.Config){
-		"no state":     func(c *approvals.Config) { c.State = nil },
-		"no signer":    func(c *approvals.Config) { c.Signer = nil },
-		"no verifier":  func(c *approvals.Config) { c.Verifier = nil },
-		"no audit log": func(c *approvals.Config) { c.Audit = nil },
+		"no state":                            func(c *approvals.Config) { c.State = nil },
+		"no factory":                          func(c *approvals.Config) { c.FactoryID = "" },
+		"a factory that is not an identifier": func(c *approvals.Config) { c.FactoryID = "Acme App" },
+		"no signer":                           func(c *approvals.Config) { c.Signer = nil },
+		"no verifier":                         func(c *approvals.Config) { c.Verifier = nil },
+		"no audit log":                        func(c *approvals.Config) { c.Audit = nil },
 		"negative step-up age": func(c *approvals.Config) {
 			c.StepUpMaxAge = -time.Second
 		},

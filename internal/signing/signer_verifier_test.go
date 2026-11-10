@@ -11,6 +11,7 @@ import (
 
 	"github.com/bestagentkits/sisf/pkg/approvals"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/deploy"
 )
 
 // The signer and the verifier are what the rest of the factory receives
@@ -25,11 +26,14 @@ func record(domain, subject string) []byte {
 	return core.NewPayloadBuilder(domain, 1).Text("subject", subject).Bytes()
 }
 
-func TestApprovalSignedByATrustedKeyVerifies(t *testing.T) {
-	t.Parallel()
-	signer, pub := newSigner(t)
-	approval := approvals.Approval{
+// ownerApproval is the Owner's approval of the scope of one issue of one
+// factory.
+func ownerApproval() approvals.Approval {
+	return approvals.Approval{
 		RequestID:      "req-1",
+		FactoryID:      "acme-hello",
+		IssueID:        core.IssueRef{Owner: "acme", Repo: "hello", Number: 7},
+		Action:         approvals.ActionApproveScope,
 		SubjectDigest:  appDigest,
 		PolicyRevision: "0123456789abcdef0123456789abcdef01234567",
 		Nonce:          "0123456789abcdef",
@@ -40,6 +44,12 @@ func TestApprovalSignedByATrustedKeyVerifies(t *testing.T) {
 		DecidedAt:      time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC),
 		ExpiresAt:      time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC),
 	}
+}
+
+func TestApprovalSignedByATrustedKeyVerifies(t *testing.T) {
+	t.Parallel()
+	signer, pub := newSigner(t)
+	approval := ownerApproval()
 	sig, err := signer.Sign(context.Background(), approval.SigningPayload())
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
@@ -50,6 +60,10 @@ func TestApprovalSignedByATrustedKeyVerifies(t *testing.T) {
 	if signer.KeyID() != KeyID(pub) || sig.KeyID != signer.KeyID() {
 		t.Errorf("signature names key %q, signer %q, want %q", sig.KeyID, signer.KeyID(), KeyID(pub))
 	}
+	approval.Signature = sig
+	if err := approval.Validate(); err != nil {
+		t.Fatalf("the signed approval is not a complete approval: %v", err)
+	}
 	verifier := newVerifier(t, pub)
 	if err := verifier.Verify(context.Background(), approval.SigningPayload(), sig); err != nil {
 		t.Fatalf("Verify: %v", err)
@@ -58,6 +72,71 @@ func TestApprovalSignedByATrustedKeyVerifies(t *testing.T) {
 	// The same decision moved to another subject is another payload.
 	approval.SubjectDigest = otherDigest
 	wantCode(t, verifier.Verify(context.Background(), approval.SigningPayload(), sig), core.CodeSignatureInvalid)
+}
+
+func TestApprovalMovedToAnotherFactoryIssueOrActionDoesNotVerify(t *testing.T) {
+	t.Parallel()
+	signer, pub := newSigner(t)
+	verifier := newVerifier(t, pub)
+	sig, err := signer.Sign(context.Background(), ownerApproval().SigningPayload())
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	moves := map[string]func(*approvals.Approval){
+		"another factory":         func(a *approvals.Approval) { a.FactoryID = "another-factory" },
+		"no factory":              func(a *approvals.Approval) { a.FactoryID = "" },
+		"another issue":           func(a *approvals.Approval) { a.IssueID.Number++ },
+		"another repository":      func(a *approvals.Approval) { a.IssueID.Repo = "other" },
+		"no single issue":         func(a *approvals.Approval) { a.IssueID = core.IssueRef{} },
+		"another action":          func(a *approvals.Approval) { a.Action = "release.publish" },
+		"no action":               func(a *approvals.Approval) { a.Action = "" },
+		"a rejection turned over": func(a *approvals.Approval) { a.Decision = approvals.DecisionReject },
+	}
+	for name, move := range moves {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			moved := ownerApproval()
+			move(&moved)
+			wantCode(t, verifier.Verify(context.Background(), moved.SigningPayload(), sig), core.CodeSignatureInvalid)
+		})
+	}
+}
+
+// A QA receipt and a release artifact carry the factory they were made for
+// inside what is signed, so neither counts in a second factory that works
+// on the same repository.
+func TestReceiptOrArtifactOfOneFactoryDoesNotVerifyForAnother(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	signer, pub := newSigner(t)
+	verifier := newVerifier(t, pub)
+
+	receipt := core.QAReceipt{
+		FactoryID: "acme-hello", IssueID: core.IssueRef{Owner: "acme", Repo: "hello", Number: 7}, RunID: "run-1",
+		CandidateSHA: "0123456789abcdef0123456789abcdef01234567", CandidateDigest: appDigest, SuiteDigest: otherDigest,
+		Score: 90, IssuedAt: time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC), ExpiresAt: time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC),
+	}
+	sig, err := signer.Sign(ctx, receipt.SigningPayload())
+	if err != nil {
+		t.Fatalf("Sign the receipt: %v", err)
+	}
+	if err := verifier.Verify(ctx, receipt.SigningPayload(), sig); err != nil {
+		t.Fatalf("the receipt does not verify in its own factory: %v", err)
+	}
+	receipt.FactoryID = "another-factory"
+	wantCode(t, verifier.Verify(ctx, receipt.SigningPayload(), sig), core.CodeSignatureInvalid)
+
+	artifact := deploy.Artifact{FactoryID: "acme-hello", Unit: "app", Digest: core.ReleaseDigest(appDigest),
+		Image: "registry.example/acme/app@" + string(appDigest)}
+	sig, err = signer.Sign(ctx, artifact.SigningPayload())
+	if err != nil {
+		t.Fatalf("Sign the artifact: %v", err)
+	}
+	if err := verifier.Verify(ctx, artifact.SigningPayload(), sig); err != nil {
+		t.Fatalf("the artifact does not verify in its own factory: %v", err)
+	}
+	artifact.FactoryID = "another-factory"
+	wantCode(t, verifier.Verify(ctx, artifact.SigningPayload(), sig), core.CodeSignatureInvalid)
 }
 
 func TestSignatureIsPlainEd25519OverThePayload(t *testing.T) {

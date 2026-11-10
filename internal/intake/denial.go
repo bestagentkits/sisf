@@ -23,7 +23,8 @@ const (
 
 // Denial records that intake blocked an issue because its scope needed the
 // Owner and did not get an approval. It is written in the same transaction
-// as the step to Blocked and never removed.
+// as the step to Blocked, and only the retry that lifts the block removes
+// it.
 type Denial struct {
 	Reason DenialReason `json:"reason"`
 	// RequestID is the approval request that was not approved.
@@ -32,6 +33,17 @@ type Denial struct {
 	ScopeDigest    core.Digest    `json:"scope_digest"`
 	PolicyRevision core.CommitSHA `json:"policy_revision"`
 	At             time.Time      `json:"at"`
+}
+
+// Cause is why the lifecycle holds the issue in Blocked. A request or an
+// approval that lapsed is an expired approval. A rejection is a denied one,
+// and so is an approval that went to something else: either way the scope
+// has no approval left.
+func (d Denial) Cause() statemachine.BlockCause {
+	if d.Reason == DenialExpired {
+		return statemachine.BlockApprovalExpired
+	}
+	return statemachine.BlockApprovalDenied
 }
 
 // ReadDenial returns the denial recorded for an issue, or NOT_FOUND when
@@ -68,25 +80,30 @@ func (s *Service) ApprovalDenial(ctx context.Context, issue core.IssueRef) (Deni
 
 // RetryGuard returns the retry guard of the lifecycle with one rule put in
 // front of next: an issue that is blocked because its scope was not approved
-// does not go back to Ready on a retry. A retry repeats work that was
-// permitted; here none was, and nothing but an approval of the scope can
-// change that. The answer is then require_approval, whoever asks.
+// does not go back to Ready through this guard, whoever asks and whatever
+// next would answer. Such an issue has no permitted work to repeat. It
+// returns to Ready only through Retry, which presents an approval given
+// after the block or proof of delegation and spends the approval as it
+// writes the step; a guard only reads and could not.
 //
-// Every other retry is left to next. A nil next denies, and so does a
-// denial record that cannot be read. The guard reads in a transaction of
-// its own, so it is asked before the caller opens one.
+// Every other retry is left to next. A nil next proves nothing, so the
+// lifecycle refuses the step, and so does a denial record that cannot be
+// read. The guard reads in a transaction of its own, so it is asked before
+// the caller opens one.
 func (s *Service) RetryGuard(next statemachine.RetryGuard) statemachine.RetryGuard {
-	return statemachine.RetryGuardFunc(func(ctx context.Context, t core.Transition) (core.AuthzDecision, error) {
+	return statemachine.RetryGuardFunc(func(ctx context.Context, t core.Transition) (statemachine.RetryProof, error) {
 		denial, err := s.ApprovalDenial(ctx, t.IssueID)
 		switch {
 		case err == nil:
-			return core.AuthzDecision{Effect: core.EffectRequireApproval,
-				Reason: "the scope of this issue was not approved (" + string(denial.Reason) + "), so there is no permitted work to retry"}, nil
+			refusal := core.NewError(core.CodeGuardFailed, "the scope of this issue was not approved ("+string(denial.Reason)+
+				"); it returns to Ready only on a new approval or proof of delegation, through the retry of intake")
+			refusal.Details = map[string]string{"guard": string(statemachine.GuardRetry), "cause": string(denial.Cause())}
+			return statemachine.RetryProof{}, refusal
 		case !core.HasCode(err, core.CodeNotFound):
-			return core.AuthzDecision{}, err
+			return statemachine.RetryProof{}, err
 		case next == nil:
-			return core.AuthzDecision{}, nil
+			return statemachine.RetryProof{}, nil
 		}
-		return next.AuthorizeRetry(ctx, t)
+		return next.RetryProof(ctx, t)
 	})
 }

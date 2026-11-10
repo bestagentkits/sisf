@@ -19,10 +19,6 @@ const (
 	// DefaultApprovalTTL is how long an approval request of intake stays
 	// open. It is a starting value.
 	DefaultApprovalTTL = 7 * 24 * time.Hour
-	// ActionApproveScope is the action an approval request of intake asks
-	// for: letting one scope version of one issue go ahead.
-	ActionApproveScope = "issues.approve_scope"
-
 	// serviceActor is who intake acts as in records and requests.
 	serviceActor = "service:intake"
 	// defaultClarifyTimeout applies when the manifest sets no usable one.

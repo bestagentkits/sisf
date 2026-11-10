@@ -15,12 +15,14 @@ type SpendFunc func(ctx context.Context, tx state.Tx, request Request, approval 
 
 // Consume spends the approval on subject under policy, atomically and once.
 //
+// A request of another factory than this store serves is PERMISSION_DENIED.
 // An approval that was already used is REPLAYED. A request still waiting is
 // APPROVAL_REQUIRED, and one that lapsed undecided is EXPIRED. The recorded
-// decision must still carry the request's binding and a signature over
-// Approval.SigningPayload that verifies, otherwise SIGNATURE_INVALID: a
-// record edited in the database, or signed by a key since revoked,
-// authorizes nothing. Then Approval.Authorizes applies at the current time:
+// decision must still carry the request's binding, be dated within the time
+// the request was open and carry a signature over Approval.SigningPayload
+// that verifies, otherwise SIGNATURE_INVALID: a record edited in the
+// database, or signed by a key since revoked, authorizes nothing. Then
+// Approval.Authorizes applies at the current time:
 // a rejection is PERMISSION_DENIED, another subject or policy revision is
 // APPROVAL_REQUIRED, a lapsed approval EXPIRED.
 //
@@ -115,6 +117,10 @@ func (s *KVStore) spendable(ctx context.Context, tx state.Tx, requestID string, 
 	if err != nil {
 		return Request{}, 0, Approval{}, err
 	}
+	if r.FactoryID != s.factory {
+		return r, 0, Approval{}, core.NewError(core.CodePermissionDenied,
+			"the approval request belongs to another factory than this store serves")
+	}
 	switch s.current(r).Status {
 	case StatusConsumed:
 		return r, 0, Approval{}, core.NewError(core.CodeReplayed, "the approval was already used")
@@ -138,9 +144,18 @@ func (s *KVStore) spendable(ctx context.Context, tx state.Tx, requestID string, 
 
 // authentic reports whether the stored decision is the one the store signed
 // for this request. The fields of a record are trusted only after this.
+//
+// The request is not signed, so the decision is held against it field by
+// field: a request rewritten to another factory, issue, action, subject,
+// policy or time no longer matches the decision that was signed for it.
 func (s *KVStore) authentic(ctx context.Context, r Request, a Approval) error {
-	if a.RequestID != r.ID || a.SubjectDigest != r.SubjectDigest || a.PolicyRevision != r.PolicyRevision || a.Nonce != r.Nonce {
+	switch {
+	case a.RequestID != r.ID || a.Nonce != r.Nonce,
+		a.FactoryID != r.FactoryID || a.IssueID != r.IssueID || a.Action != r.Action,
+		a.SubjectDigest != r.SubjectDigest || a.PolicyRevision != r.PolicyRevision:
 		return core.NewError(core.CodeSignatureInvalid, "the recorded decision does not belong to this approval request")
+	case a.DecidedAt.Before(r.CreatedAt) || r.Expired(a.DecidedAt):
+		return core.NewError(core.CodeSignatureInvalid, "the recorded decision was not made while this approval request was open")
 	}
 	if err := s.verifier.Verify(ctx, a.SigningPayload(), a.Signature); err != nil {
 		if core.HasCode(err, core.CodeSignatureInvalid) {

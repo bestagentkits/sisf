@@ -31,6 +31,12 @@ var releaseMigrations = []migration{
 		Migration: state.Migration{Version: 1, Name: "operational schema and audit chain", BackwardCompatible: true},
 		file:      "0001_operational_schema.sql",
 	},
+	{
+		// Columns are only added, each with a default, so the previous release
+		// reads and writes the new schema as it did the old one.
+		Migration: state.Migration{Version: 2, Name: "candidate and release of a record", BackwardCompatible: true},
+		file:      "0002_record_candidate_and_release.sql",
+	},
 }
 
 // Migrations lists the migrations this release ships, for callers that must

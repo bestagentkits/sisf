@@ -20,18 +20,49 @@ type plan struct {
 	// delegation is the proof that the scope needs no approval. The step
 	// from ScopeDraft to Ready is refused without it.
 	delegation *statemachine.DelegationProof
-	// spend names the approval the step from ApprovalPending to Ready uses
-	// up. The step is refused without one.
+	// spend names the approval the step uses up. The step from
+	// ApprovalPending to Ready is refused without one.
 	spend *spending
+	// retry is what is known about the request behind a step from Blocked
+	// back to Ready: who asked, whether they may, and why and when the issue
+	// was blocked. The scope proof of the retry is delegation or spend.
+	retry *statemachine.RetryProof
 }
 
 // spending is the approval a step uses, and what is in force as it does.
 type spending struct {
 	requestID string
-	// scope is the digest of the scope attached to the issue now, and
-	// revision the policy in force now. The approval must cover both.
+	// factory is the factory this intake serves, scope the digest of the
+	// scope attached to the issue now, and revision the policy in force now.
+	// The approval must have been given in that factory and cover both.
+	factory  core.FactoryID
 	scope    core.Digest
 	revision core.CommitSHA
+}
+
+// guards returns the guards the lifecycle machine judges the step of the
+// plan with. approval is the proof of the approval the step spends, or nil.
+// Each guard hands over what the plan holds and nothing else, so a step for
+// which the plan has no proof is refused.
+func (p *plan) guards(approval *statemachine.ApprovalProof) statemachine.Guards {
+	if p.retry != nil {
+		proof := *p.retry
+		proof.Approval, proof.Delegation = approval, p.delegation
+		return statemachine.Guards{Retry: statemachine.RetryGuardFunc(
+			func(context.Context, core.Transition) (statemachine.RetryProof, error) { return proof, nil })}
+	}
+	var guards statemachine.Guards
+	if p.delegation != nil {
+		guards.Delegation = statemachine.DelegationGuardFunc(
+			func(context.Context, core.Transition) (statemachine.DelegationProof, error) {
+				return *p.delegation, nil
+			})
+	}
+	if approval != nil {
+		guards.Approval = statemachine.ApprovalGuardFunc(
+			func(context.Context, core.Transition) (statemachine.ApprovalProof, error) { return *approval, nil })
+	}
+	return guards
 }
 
 // apply writes a step in one transaction: the transition, the documents
@@ -67,23 +98,16 @@ func (s *Service) apply(ctx context.Context, snap snapshot, p *plan) error {
 		return nil
 	}
 	if p.spend == nil {
-		var guards statemachine.Guards
-		if p.delegation != nil {
-			guards.Delegation = statemachine.DelegationGuardFunc(func(context.Context, core.Transition) (statemachine.DelegationProof, error) {
-				return *p.delegation, nil
-			})
-		}
-		return s.cfg.State.Update(ctx, func(ctx context.Context, tx state.Tx) error { return write(ctx, tx, guards) })
+		return s.cfg.State.Update(ctx, func(ctx context.Context, tx state.Tx) error { return write(ctx, tx, p.guards(nil)) })
 	}
 	use := *p.spend
 	_, err := s.cfg.Approvals.ConsumeWith(ctx, use.requestID, use.scope, use.revision,
 		func(ctx context.Context, tx state.Tx, request approvals.Request, decision approvals.Approval) error {
 			// The store hands over the request and the decision whose
 			// signature it verified; the machine judges whether they
-			// approve this scope under this policy.
-			proof := statemachine.ApprovalProof{Request: request, Approval: decision, ScopeDigest: use.scope, PolicyRevision: use.revision}
-			return write(ctx, tx, statemachine.Guards{Approval: statemachine.ApprovalGuardFunc(
-				func(context.Context, core.Transition) (statemachine.ApprovalProof, error) { return proof, nil })})
+			// approve this scope, in this factory, under this policy.
+			return write(ctx, tx, p.guards(&statemachine.ApprovalProof{Request: request, Approval: decision,
+				FactoryID: use.factory, ScopeDigest: use.scope, PolicyRevision: use.revision}))
 		})
 	return err
 }

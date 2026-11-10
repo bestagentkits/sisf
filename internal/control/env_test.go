@@ -198,20 +198,40 @@ func (e *env) seedRecord(t *testing.T, n int, events ...core.Event) {
 			if err != nil {
 				return err
 			}
-			var next core.State
-			if next, err = statemachine.Next(rec.State, ev); err != nil {
-				return err
-			}
-			rec, err = tx.Transition(ctx, core.Transition{
-				IssueID: ref, From: rec.State, To: next, Event: ev, ExpectedVersion: rec.Version,
-				IdempotencyKey: fmt.Sprintf("seed-%d-%d", n, i+1), ActorID: "test", Attempt: 1,
-			})
+			rec, err = step(ctx, tx, rec, ev, fmt.Sprintf("seed-%d-%d", n, i+1))
 		}
 		return err
 	})
 	if err != nil {
 		t.Fatalf("seed issue %d: %v", n, err)
 	}
+}
+
+// step takes a record one edge further, the way the factory writes it. The
+// claim takes the lease on the issue and starts a run at its first attempt;
+// every later step of that run is written under the lease and names the run.
+// A step that starts no run keeps the attempt the record has.
+func step(ctx context.Context, tx state.Tx, rec core.StateRecord, event core.Event, key string) (core.StateRecord, error) {
+	next, err := statemachine.Next(rec.State, event)
+	if err != nil {
+		return rec, err
+	}
+	write := core.Transition{
+		IssueID: rec.IssueID, From: rec.State, To: next, Event: event, ExpectedVersion: rec.Version,
+		IdempotencyKey: key, ActorID: "test", Attempt: rec.Attempt, RunID: rec.RunID,
+	}
+	switch {
+	case event == core.EventClaimed:
+		lease, err := tx.AcquireLease(ctx, state.IssueLeaseResource(rec.IssueID), "test-worker", time.Hour)
+		if err != nil {
+			return rec, err
+		}
+		write.LeaseOwner, write.FencingToken = lease.Owner, lease.Token
+		write.RunID, write.Attempt = core.RunID(fmt.Sprintf("run-%d-%d", rec.IssueID.Number, rec.Version)), 1
+	case statemachine.RequiresLease(rec.State):
+		write.LeaseOwner, write.FencingToken = rec.LeaseOwner, rec.FencingToken
+	}
+	return tx.Transition(ctx, write)
 }
 
 // toReady and toDeveloping are the event paths tests walk most.
@@ -315,14 +335,7 @@ func (e *env) advance(t *testing.T, n int, event core.Event) {
 		if err != nil {
 			return err
 		}
-		next, err := statemachine.Next(rec.State, event)
-		if err != nil {
-			return err
-		}
-		_, err = tx.Transition(ctx, core.Transition{
-			IssueID: ref, From: rec.State, To: next, Event: event, ExpectedVersion: rec.Version,
-			IdempotencyKey: fmt.Sprintf("advance-%d-%d", n, rec.Version), ActorID: "test", Attempt: 1,
-		})
+		_, err = step(ctx, tx, rec, event, fmt.Sprintf("advance-%d-%d", n, rec.Version))
 		return err
 	})
 	if err != nil {

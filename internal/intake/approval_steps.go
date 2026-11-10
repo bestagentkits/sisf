@@ -30,10 +30,7 @@ func (s *Service) planScope(ctx context.Context, in input, snap snapshot) (*plan
 		if err != nil {
 			return nil, err
 		}
-		// What the lifecycle machine is shown: this scope, judged under the
-		// policy in force, needs nobody's approval.
-		p.delegation = &statemachine.DelegationProof{IssueID: sow.Issue, ScopeDigest: sow.Digest, PolicyRevision: in.policy.Revision,
-			Decision: core.AuthzDecision{Effect: core.EffectAllow, Reason: "the scope lies inside the delegated scope"}}
+		p.delegation = delegated(in, sow)
 		return p, nil
 	}
 	request, err := s.request(ctx, in, sow, verdict)
@@ -47,6 +44,13 @@ func (s *Service) planScope(ctx context.Context, in input, snap snapshot) (*plan
 		return nil, err
 	}
 	return p.with(waitingEffect(sow, request.ID, verdict))
+}
+
+// delegated is what the lifecycle machine is shown for a scope that needs
+// nobody's approval: this scope, judged under the policy in force.
+func delegated(in input, sow SoW) *statemachine.DelegationProof {
+	return &statemachine.DelegationProof{IssueID: sow.Issue, ScopeDigest: sow.Digest, PolicyRevision: in.policy.Revision,
+		Decision: core.AuthzDecision{Effect: core.EffectAllow, Reason: "the scope lies inside the delegated scope"}}
 }
 
 // waitingEffect queues the comment that says the scope waits for the Owner.
@@ -161,8 +165,15 @@ func (s *Service) planReady(ctx context.Context, in input, snap snapshot, sow So
 	if err != nil {
 		return nil, err
 	}
-	p.spend = &spending{requestID: request.ID, scope: sow.Digest, revision: in.policy.Revision}
+	p.spend = spend(in, sow, request.ID)
 	return p, nil
+}
+
+// spend names the approval a step uses up on one scope, next to the factory
+// and the policy in force. Both are read from the policy, never from the
+// request or the decision they are compared with.
+func spend(in input, sow SoW, requestID string) *spending {
+	return &spending{requestID: requestID, factory: in.policy.Manifest.FactoryID, scope: sow.Digest, revision: in.policy.Revision}
 }
 
 // rerequest points the issue at a new approval request: for a new scope

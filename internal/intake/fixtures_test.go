@@ -111,7 +111,8 @@ func newFactoryWith(t *testing.T, wrap func(*approvals.KVStore) intake.Approvals
 		policy: &policyStub{snapshot: &policy.Snapshot{Revision: policyRevision, Manifest: m, DecisionSchemaVersion: 1,
 			Catalog: policy.Catalog{Features: []policy.Feature{{Name: "Health endpoint"}, {Name: "Dashboard"}}}}},
 	}
-	f.approvals, err = approvals.NewStore(approvals.Config{State: f.state, Signer: keys, Verifier: keys, Audit: f.audit, Clock: clock})
+	f.approvals, err = approvals.NewStore(approvals.Config{State: f.state, FactoryID: m.FactoryID,
+		Signer: keys, Verifier: keys, Audit: f.audit, Clock: clock})
 	if err != nil {
 		t.Fatal(err)
 	}

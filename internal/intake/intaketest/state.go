@@ -25,6 +25,10 @@ import (
 // documents and the outbox; the parts it does not model panic when used, so a
 // test never passes by reaching something that was not there.
 //
+// It issues no leases. A step that needs one, from the claim of an issue
+// onwards, is therefore refused whatever token it names, as the real store
+// refuses a writer that holds no lease.
+//
 // Transactions are serialized: a write transaction works on a copy that
 // replaces the stored data only when the callback returns nil.
 type State struct {
@@ -147,9 +151,16 @@ func (x *tx) ListRecords(_ context.Context, filter state.RecordFilter) ([]core.S
 	return out, nil
 }
 
-// Transition applies the rules of state.Records: the step must be an edge of
-// the lifecycle, and the record must be as the writer read it. Fencing tokens
-// are not modeled; intake writes are unleased.
+// Transition applies the rules of state.Records, each check by the call into
+// the lifecycle package the contract prescribes: the step must be an edge of
+// the lifecycle, the record must be as the writer read it, a step of a run
+// must carry a lease, and the step must continue the run, the candidate and
+// the release the record names.
+//
+// Leases are not modeled, so no fencing token was ever issued here: a step
+// that carries one is refused as stale, and so is every step that needs one.
+// The store therefore serves the steps before a claim and after a run, which
+// are the ones intake, policy and approvals write.
 func (x *tx) Transition(_ context.Context, t core.Transition) (core.StateRecord, error) {
 	if err := statemachine.CheckEdge(t); err != nil {
 		return core.StateRecord{}, err
@@ -168,11 +179,26 @@ func (x *tx) Transition(_ context.Context, t core.Transition) (core.StateRecord,
 	case !t.Creates() && (!exists || record.Version != t.ExpectedVersion || record.State != t.From):
 		return core.StateRecord{}, conflict("the record changed since it was read")
 	}
+	if err := statemachine.CheckLease(t); err != nil {
+		return core.StateRecord{}, err
+	}
+	if t.FencingToken != 0 {
+		return core.StateRecord{}, core.NewError(core.CodeStaleFencingToken, "no lease was issued for the issue")
+	}
+	if err := statemachine.CheckRecordBinding(record, t); err != nil {
+		return core.StateRecord{}, err
+	}
 	record.IssueID, record.State = t.IssueID, t.To
 	record.Version++
 	record.IdempotencyKey, record.Attempt, record.UpdatedAt = t.IdempotencyKey, t.Attempt, x.now
-	if t.RunID != "" {
-		record.RunID = t.RunID
+	record.LeaseOwner, record.FencingToken = t.LeaseOwner, t.FencingToken
+	switch t.Event {
+	case core.EventClaimed:
+		record.RunID, record.CandidateDigest, record.ReleaseDigest = t.RunID, "", ""
+	case core.EventCandidateSubmitted:
+		record.CandidateDigest = t.CandidateDigest
+	case core.EventRolloutStarted:
+		record.ReleaseDigest = t.ReleaseDigest
 	}
 	x.t.records[key] = record
 	x.t.writes[t.IdempotencyKey] = record

@@ -181,9 +181,9 @@ func TestACallerCannotBackdateSignOrOutliveTheRequest(t *testing.T) {
 func TestADecisionThatCannotBeSignedIsNotRecorded(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	store, err := approvals.NewStore(approvals.Config{
-		State: f.state, Signer: brokenSigner{}, Verifier: f.keys, Audit: f.audit, Clock: f.clock,
-	})
+	cfg := f.config()
+	cfg.Signer = brokenSigner{}
+	store, err := approvals.NewStore(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -46,6 +46,21 @@ func TestTheLifecycleRefusesReadyOnAnApprovalThatDoesNotHold(t *testing.T) {
 		"already used":         func(r *approvals.Request, _ *approvals.Approval) { r.Status = approvals.StatusConsumed },
 		"dated in the future":  func(_ *approvals.Request, a *approvals.Approval) { a.DecidedAt = a.DecidedAt.Add(time.Hour) },
 		"no decision at all":   func(_ *approvals.Request, a *approvals.Approval) { *a = approvals.Approval{} },
+		// The factory the step is judged for comes from the policy in force,
+		// so a request and a decision that agree on another one prove nothing.
+		"requested and decided in another factory": func(r *approvals.Request, a *approvals.Approval) {
+			r.FactoryID, a.FactoryID = "another-factory", "another-factory"
+		},
+		"requested in another factory":  func(r *approvals.Request, _ *approvals.Approval) { r.FactoryID = "another-factory" },
+		"a decision in another factory": func(_ *approvals.Request, a *approvals.Approval) { a.FactoryID = "another-factory" },
+		"a decision on another issue":   func(_ *approvals.Request, a *approvals.Approval) { a.IssueID.Number++ },
+		"a decision on no single issue": func(_ *approvals.Request, a *approvals.Approval) { a.IssueID = core.IssueRef{} },
+		"an approval of another action": func(r *approvals.Request, a *approvals.Approval) {
+			r.Action, a.Action = "release.publish", "release.publish"
+		},
+		"a decision for another action":   func(_ *approvals.Request, a *approvals.Approval) { a.Action = "release.publish" },
+		"decided before the request":      func(r *approvals.Request, a *approvals.Approval) { a.DecidedAt = r.CreatedAt.Add(-time.Second) },
+		"decided after the request ended": func(r *approvals.Request, a *approvals.Approval) { r.ExpiresAt = a.DecidedAt },
 	}
 	for name, alter := range faults {
 		t.Run(name, func(t *testing.T) {
@@ -83,12 +98,20 @@ func (f *factory) retry() core.Transition {
 		ExpectedVersion: record.Version, IdempotencyKey: "retry/1", ActorID: "user:owner-1"}
 }
 
-// permissive is a retry guard that lets everyone retry and counts the asks.
-type permissive struct{ asked int }
+// permissive is a retry guard that lets the Owner retry any issue, as the
+// rules for an issue blocked after a rollback might, and counts the asks.
+type permissive struct {
+	asked int
+	now   func() time.Time
+}
 
-func (p *permissive) AuthorizeRetry(context.Context, core.Transition) (core.AuthzDecision, error) {
+func (p *permissive) RetryProof(_ context.Context, t core.Transition) (statemachine.RetryProof, error) {
 	p.asked++
-	return core.AuthzDecision{Effect: core.EffectAllow}, nil
+	return statemachine.RetryProof{
+		IssueID: t.IssueID, Cause: statemachine.BlockRolledBack, BlockedAt: p.now().Add(-time.Hour),
+		Actor:    core.Actor{ID: t.ActorID, Kind: core.ActorHuman, Roles: []core.Role{core.RoleOwner}, Surface: core.SurfaceDashboard},
+		Decision: core.AuthzDecision{Effect: core.EffectAllow},
+	}, nil
 }
 
 func TestARetryCannotReviveAnIssueWhoseScopeWasNotApproved(t *testing.T) {
@@ -105,14 +128,19 @@ func TestARetryCannotReviveAnIssueWhoseScopeWasNotApproved(t *testing.T) {
 		f.wantState(core.StateBlocked)
 
 		// Even a guard that lets the Owner retry anything is not asked.
-		next := &permissive{}
+		next := &permissive{now: f.clock.Now}
 		guard := f.service.RetryGuard(next)
-		decision, err := guard.AuthorizeRetry(ctx, f.retry())
-		if err != nil || decision.Allowed() || decision.Effect != core.EffectRequireApproval || next.asked != 0 {
-			t.Fatalf("%s: retry decision = %+v, %v (next asked %d times)", name, decision, err, next.asked)
+		proof, err := guard.RetryProof(ctx, f.retry())
+		if !core.HasCode(err, core.CodeGuardFailed) || proof.Decision.Allowed() || proof.Approval != nil || proof.Delegation != nil || next.asked != 0 {
+			t.Fatalf("%s: retry proof = %+v, %v (next asked %d times)", name, proof, err, next.asked)
 		}
 		machine := statemachine.New(f.clock, statemachine.Guards{Retry: guard})
 		wantCode(t, machine.Check(ctx, f.retry()), core.CodeGuardFailed, name+": retry through the lifecycle")
+
+		// Nor does the Owner asking intake itself, without a new approval.
+		_, err = f.service.Retry(ctx, f.retryBy(f.owner()))
+		wantCode(t, err, core.CodeGuardFailed, name+": retry through intake")
+		f.wantState(core.StateBlocked)
 	}
 }
 
@@ -129,16 +157,19 @@ func TestOtherRetriesAreLeftToTheRetryRules(t *testing.T) {
 	// An issue intake never blocked for want of an approval, and one it
 	// never saw, are judged by the rules behind this one.
 	for name, request := range map[string]core.Transition{"taken in": f.retry(), "unknown": elsewhere} {
-		next := &permissive{}
-		decision, err := f.service.RetryGuard(next).AuthorizeRetry(ctx, request)
-		if err != nil || !decision.Allowed() || next.asked != 1 {
-			t.Errorf("%s: decision = %+v, %v (next asked %d times)", name, decision, err, next.asked)
+		next := &permissive{now: f.clock.Now}
+		proof, err := f.service.RetryGuard(next).RetryProof(ctx, request)
+		if err != nil || !proof.Decision.Allowed() || proof.Cause != statemachine.BlockRolledBack || next.asked != 1 {
+			t.Errorf("%s: proof = %+v, %v (next asked %d times)", name, proof, err, next.asked)
 		}
-		// Without rules behind it the guard denies.
-		alone, err := f.service.RetryGuard(nil).AuthorizeRetry(ctx, request)
-		if err != nil || alone.Allowed() {
-			t.Errorf("%s: a guard with nothing behind it allowed the retry: %+v, %v", name, alone, err)
+		// Without rules behind it the guard proves nothing, and the lifecycle
+		// refuses the step.
+		alone := f.service.RetryGuard(nil)
+		if proof, err := alone.RetryProof(ctx, request); err != nil || proof.Decision.Allowed() || proof.Cause.Valid() {
+			t.Errorf("%s: a guard with nothing behind it answered for the retry: %+v, %v", name, proof, err)
 		}
+		err = statemachine.New(f.clock, statemachine.Guards{Retry: alone}).Check(ctx, request)
+		wantCode(t, err, core.CodeGuardFailed, name+": a retry with no rules behind it")
 	}
 	if _, err := f.service.ApprovalDenial(ctx, issueRef); !core.HasCode(err, core.CodeNotFound) {
 		t.Fatalf("an issue that was never denied has a denial: %v", err)
@@ -164,12 +195,16 @@ func TestARetryIsRefusedWhenTheDenialRecordCannotBeRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := &permissive{}
+	next := &permissive{now: f.clock.Now}
 	guard := f.service.RetryGuard(next)
-	if decision, err := guard.AuthorizeRetry(ctx, f.retry()); err == nil || decision.Allowed() || next.asked != 0 {
-		t.Fatalf("a retry passed on an unreadable record: %+v, %v", decision, err)
+	if proof, err := guard.RetryProof(ctx, f.retry()); err == nil || proof.Decision.Allowed() || next.asked != 0 {
+		t.Fatalf("a retry passed on an unreadable record: %+v, %v", proof, err)
 	}
 	if err := statemachine.New(f.clock, statemachine.Guards{Retry: guard}).Check(ctx, f.retry()); err == nil {
 		t.Fatal("the lifecycle let the retry through")
 	}
+	if _, err := f.service.Retry(ctx, f.retryBy(f.owner())); err == nil {
+		t.Fatal("intake retried an issue whose record it cannot read")
+	}
+	f.wantState(core.StateBlocked)
 }
