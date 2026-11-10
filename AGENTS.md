@@ -16,6 +16,9 @@ Execution guidance for agents and contributors. This file has no authority to ch
 - Do not describe a feature as implemented unless code and a passing test prove it.
 - Do not edit `AGENTS.md`, `REVIEW.md`, `DECISIONS.md`, `FEATURES.md`, ADRs or `.sisf/factory.yaml` to make your own work pass; propose a PR.
 - Verify before claiming done: `go build ./... && go test ./... -race && golangci-lint run`.
+- **Current-stage goal: ship fast.** Prefer the shortest path that delivers the requested scope with its tests green.
+- Always use the `ak-test` skill to optimize tests and CI while you work. Keep the test suite and CI as fast as possible: fake clocks instead of sleeps, in-process fakes, parallel tests, caching, and slow suites behind the `e2e` and `smoke` tags.
+- Speed never breaks safety. Do not delete, skip or weaken a negative test, a hard gate, the `-race` run or a security check to save time, and stay within the product-building philosophy below.
 - Update docs and ADRs when behavior or a decision changes. Review criteria are in [REVIEW.md](REVIEW.md).
 
 ## Product-building philosophy
