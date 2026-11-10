@@ -512,6 +512,20 @@ Ngưỡng cụ thể do Owner đặt sau khi có số liệu baseline đầu ti�
 - Local SQLite WAL, multi-worker Postgres; Compose là full-deployment profile đầu tiên; 2 built-in agents đầu tiên Claude CLI + Codex, tiếp Pi. Có thể thay nếu proof chỉ ra adapter khác khả thi hơn mà vẫn đủ hai backend.
 - GitHub App OAuth cho repository workflow, OIDC Google cho SSO, role mapping cần rõ. Repo OSS là `bestagentkits/sisf`, giấy phép Apache-2.0 (đã chốt); mã kế thừa từ TOSE vẫn phải qua audit quyền sở hữu trước khi đưa vào.
 
+### Điểm còn mở, chờ Owner quyết
+
+> **Chưa có hiệu lực.** Các điểm dưới đây là khoảng trống đã biết, không phải yêu cầu. Coding agent không tự quyết thay Owner; mỗi điểm được đóng bằng một ADR, ghi rõ là yêu cầu (kèm phase và acceptance test) hoặc là non-goal có chủ đích.
+
+1. **Yêu cầu mới chưa có chỗ trong SoW.** Mục 3.5, yêu cầu trải nghiệm ở mục 9, yêu cầu bảo mật bổ sung ở mục 7 và thiết kế triển khai ở mục 10 chưa được gán vào DoD của P0 đến P4 và chưa có test SISF-xx. Cần quyết: mỗi yêu cầu thuộc phase nào và test nào chứng minh nó.
+2. **Phạm vi v1.** Đề xuất đổi thứ tự giao ở mục 12 vẫn chờ duyệt, trong khi phạm vi đã tăng thêm. Cần quyết trước khi bắt đầu P0.
+3. **Sao lưu và khôi phục.** Chưa có quy định về backup `state` và `artifacts`, mục tiêu RPO và RTO, và cách dựng lại factory từ GitHub khi mất database.
+4. **Migration schema khi factory tự cập nhật.** Rollback code đã có quy tắc; rollback sau khi schema database đã đổi thì chưa. Cần quyết: chỉ cho phép migration tương thích ngược, hay có bước khôi phục dữ liệu.
+5. **Nhiều repo và nhiều app.** Chưa rõ một factory phục vụ một repo hay nhiều repo, và nếu nhiều thì các repo có chung policy, budget và secret hay không.
+6. **Giới hạn của nhà cung cấp.** Chưa có cách xử lý rate limit của GitHub API và model provider khi nhiều run chạy song song, và hành vi của factory khi một provider ngừng hoạt động.
+7. **Quản trị dự án OSS.** Chưa có `CONTRIBUTING.md`, quy tắc đóng góp (DCO hoặc CLA), cách đánh version và cam kết tương thích cho các interface ở mục 3.
+8. **Pháp lý và dữ liệu.** Chưa nói về giấy phép của code do agent sinh ra, dữ liệu người dùng được gửi tới model provider, và nơi lưu dữ liệu theo vùng.
+9. **Con người khi có sự cố.** Chưa có kênh thông báo ngoài GitHub, người trực, và quy trình khi auto-rollback cũng thất bại.
+
 ## 16. Evidence & nguồn nghiên cứu
 
 - TOSE HHP current design: https://github.com/saasvn/tose-app/blob/899851ae84ead1177b8d12356ce4c262cb8ffac0/docs/harness-platform.md ; issue #574: https://github.com/saasvn/tose-app/issues/574 ; PR #622: https://github.com/saasvn/tose-app/pull/622 .

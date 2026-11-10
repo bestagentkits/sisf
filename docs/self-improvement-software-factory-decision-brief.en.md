@@ -512,6 +512,20 @@ The specific thresholds are set by the Owner once the first baseline data is ava
 - Local SQLite WAL, multi-worker Postgres; Compose is the first full-deployment profile; the first 2 built-in agents are Claude CLI + Codex, followed by Pi. These may be replaced if a proof shows that another adapter is more feasible while still providing two backends.
 - GitHub App OAuth for the repository workflow, Google OIDC for SSO, and role mapping that needs to be explicit. The OSS repo is `bestagentkits/sisf`, licensed Apache-2.0 (finalized); code inherited from TOSE must still pass an ownership audit before being included.
 
+### Open points awaiting an Owner decision
+
+> **Not in effect.** The points below are known gaps, not requirements. The coding agent does not decide them for the Owner; each is closed by an ADR that states it is either a requirement (with a phase and an acceptance test) or a deliberate non-goal.
+
+1. **New requirements have no place in the SoW.** Section 3.5, the experience requirements in section 9, the additional security requirements in section 7 and the deployment design in section 10 are not assigned to the DoD of P0 to P4 and have no SISF-xx tests. To decide: which phase each requirement belongs to and which test proves it.
+2. **v1 scope.** The delivery-order proposal in section 12 still awaits approval, while the scope has grown. To decide before P0 starts.
+3. **Backup and restore.** There are no rules for backing up `state` and `artifacts`, RPO and RTO targets, or rebuilding the factory from GitHub when the database is lost.
+4. **Schema migration when the factory updates itself.** Code rollback has rules; rollback after the database schema has changed does not. To decide: allow only backward-compatible migrations, or add a data-restore step.
+5. **Multiple repos and apps.** It is not stated whether one factory serves one repo or several, and if several, whether they share policy, budget and secrets.
+6. **Provider limits.** There is no handling for GitHub API and model-provider rate limits when many runs execute in parallel, or for the factory's behavior when a provider is down.
+7. **OSS project governance.** There is no `CONTRIBUTING.md`, contribution rule (DCO or CLA), versioning scheme or compatibility commitment for the interfaces in section 3.
+8. **Legal and data.** Nothing is said about the license of agent-generated code, user data sent to model providers, or regional data residency.
+9. **People during an incident.** There is no notification channel outside GitHub, no on-call owner, and no procedure for when auto-rollback also fails.
+
 ## 16. Evidence & research sources
 
 - TOSE HHP current design: https://github.com/saasvn/tose-app/blob/899851ae84ead1177b8d12356ce4c262cb8ffac0/docs/harness-platform.md ; issue #574: https://github.com/saasvn/tose-app/issues/574 ; PR #622: https://github.com/saasvn/tose-app/pull/622 .
