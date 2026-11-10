@@ -135,7 +135,7 @@ func pendingOutbox(t *testing.T, s *sqlstore.Store, limit int) []state.OutboxMes
 func TestOutboxKeepsOneMessagePerKeyAndRetriesWhenDue(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
-		s := db.Open(t, core.ZoneAgent)
+		s := db.Open(t, core.ZoneControl)
 		comment := state.OutboxMessage{Topic: "github.comment", Key: "acme/app#7:progress", Payload: []byte("v1")}
 		label := state.OutboxMessage{Topic: "github.label", Key: "acme/app#7:running"}
 		mustUpdate(t, s, func(tx state.Tx) error {

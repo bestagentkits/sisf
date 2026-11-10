@@ -11,7 +11,7 @@ import (
 
 // GetKV returns one document, or NOT_FOUND.
 func (t *tx) GetKV(ctx context.Context, namespace, key string) (state.KVEntry, error) {
-	if err := t.reads(tableKV); err != nil {
+	if err := t.readsDocuments(namespace); err != nil {
 		return state.KVEntry{}, err
 	}
 	e := state.KVEntry{Namespace: namespace, Key: key}
@@ -33,7 +33,7 @@ func (t *tx) GetKV(ctx context.Context, namespace, key string) (state.KVEntry, e
 // 0 creates it and fails if it exists, any other version must be the stored
 // one. A lost race is CONFLICT and writes nothing.
 func (t *tx) PutKV(ctx context.Context, e state.KVEntry) (state.KVEntry, error) {
-	if err := t.writes(tableKV, canInsert|canUpdate); err != nil {
+	if err := t.writesDocuments(e.Namespace, canInsert|canUpdate); err != nil {
 		return state.KVEntry{}, err
 	}
 	if err := requireText("document namespace", e.Namespace); err != nil {
@@ -74,7 +74,7 @@ func (t *tx) PutKV(ctx context.Context, e state.KVEntry) (state.KVEntry, error) 
 // ListKV returns the documents of a namespace whose key starts with prefix,
 // in byte order of the key. The prefix is matched literally and with case.
 func (t *tx) ListKV(ctx context.Context, namespace, prefix string, limit int) ([]state.KVEntry, error) {
-	if err := t.reads(tableKV); err != nil {
+	if err := t.readsDocuments(namespace); err != nil {
 		return nil, err
 	}
 	// substr counts characters on both engines, unlike LIKE, whose wildcards
@@ -100,7 +100,7 @@ func (t *tx) ListKV(ctx context.Context, namespace, prefix string, limit int) ([
 // DeleteKV removes a document only at the version the caller read: CONFLICT
 // if it moved on, NOT_FOUND if it does not exist.
 func (t *tx) DeleteKV(ctx context.Context, namespace, key string, version int64) error {
-	if err := t.writes(tableKV, canSelect|canDelete); err != nil {
+	if err := t.writesDocuments(namespace, canSelect|canDelete); err != nil {
 		return err
 	}
 	changed, err := t.q.exec(ctx, "delete document",

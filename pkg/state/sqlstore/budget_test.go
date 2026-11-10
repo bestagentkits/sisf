@@ -82,7 +82,7 @@ func TestReservationIsStoredAndUpdatedByID(t *testing.T) {
 func TestReservationCannotBeMalformedOrMovedToAnotherRun(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
-		s := db.Open(t, core.ZoneAgent)
+		s := db.Open(t, core.ZoneControl)
 		mustUpdate(t, s, func(tx state.Tx) error { return tx.PutReservation(ctx, reservation("r-1", 5_000_000)) })
 
 		put := func(change func(*core.Reservation)) error {
@@ -118,7 +118,7 @@ func TestReservationCannotBeMalformedOrMovedToAnotherRun(t *testing.T) {
 func TestBudgetTotalsCountHeldReservationsAndUsageSinceTheInstant(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
-		s := db.Open(t, core.ZoneAgent)
+		s := db.Open(t, core.ZoneControl)
 		if got := totals(t, s, time.Time{}); got != (core.BudgetTotals{}) {
 			t.Fatalf("totals of an empty ledger = %+v", got)
 		}
@@ -157,7 +157,7 @@ func TestBudgetTotalsCountHeldReservationsAndUsageSinceTheInstant(t *testing.T) 
 func TestUsageThatWouldLowerSpendingIsRefused(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
-		s := db.Open(t, core.ZoneAgent)
+		s := db.Open(t, core.ZoneControl)
 		for name, change := range map[string]func(*core.Usage){
 			"negative cost":   func(u *core.Usage) { u.Cost = -1 },
 			"negative tokens": func(u *core.Usage) { u.OutputTokens = -5 },
@@ -181,7 +181,7 @@ func TestUsageThatWouldLowerSpendingIsRefused(t *testing.T) {
 func TestRecordedUsageCannotBeEditedOrDeleted(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
-		s := db.Open(t, core.ZoneAgent)
+		s := db.Open(t, core.ZoneControl)
 		mustUpdate(t, s, func(tx state.Tx) error { return tx.AppendUsage(ctx, spend(900, true, db.Clock.Now())) })
 		raw := db.Raw(t)
 		if _, err := raw.ExecContext(ctx, `UPDATE usage_ledger SET cost = 0`); err == nil {
@@ -199,8 +199,8 @@ func TestRecordedUsageCannotBeEditedOrDeleted(t *testing.T) {
 func TestReservationRollsBackWithTheClaimItPaysFor(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
-		s := db.Open(t, core.ZoneAgent)
-		ready := readyRecord(t, db.Open(t, core.ZoneControl), issue(7))
+		s, control := db.Open(t, core.ZoneAgent), db.Open(t, core.ZoneControl)
+		ready := readyRecord(t, control, issue(7))
 		// The claim loses on a stale version after the money was set aside.
 		err := update(s, func(tx state.Tx) error {
 			if err := tx.PutReservation(ctx, reservation("r-1", 5_000_000)); err != nil {
@@ -210,7 +210,7 @@ func TestReservationRollsBackWithTheClaimItPaysFor(t *testing.T) {
 			return err
 		})
 		wantCode(t, err, core.CodeConflict)
-		if got := totals(t, s, time.Time{}); got.Reserved != 0 {
+		if got := totals(t, control, time.Time{}); got.Reserved != 0 {
 			t.Fatalf("a failed claim kept its reservation: %+v", got)
 		}
 		err = view(s, func(tx state.Tx) error {

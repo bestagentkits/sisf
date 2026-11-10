@@ -67,8 +67,9 @@ func Bootstrap(ctx context.Context, cfg BootstrapConfig) error {
 
 // ensureRoles creates each zone's login role, or sets the password of one
 // that exists. Roles can neither create databases or roles nor be
-// superusers. Statements are formatted by the server, which quotes names and
-// literals, so no value is ever spliced into SQL here.
+// superusers, and none passes the row policies the grants write. Statements
+// are formatted by the server, which quotes names and literals, so no value
+// is ever spliced into SQL here.
 func ensureRoles(ctx context.Context, cfg BootstrapConfig) error {
 	db, err := sql.Open("pgx", cfg.DSN)
 	if err != nil {
@@ -89,7 +90,7 @@ func ensureRoles(ctx context.Context, cfg BootstrapConfig) error {
 			verb = "ALTER"
 		}
 		var statement string
-		query := `SELECT format('` + verb + ` ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD %L', $1::text, $2::text)`
+		query := `SELECT format('` + verb + ` ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', $1::text, $2::text)`
 		if err := db.QueryRowContext(ctx, query, role, password).Scan(&statement); err != nil {
 			return unavailablef(redactDriverError(err), "cannot prepare the %s zone's role", zone)
 		}

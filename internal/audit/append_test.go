@@ -109,8 +109,8 @@ func TestMalformedEventIsRefusedAndLeavesTheChainUntouched(t *testing.T) {
 func TestConcurrentAppendsFormOneUnbrokenChain(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
-		// The control plane and the dispatcher write to the same log.
-		logs := []*Log{openLog(t, db), New(db.Open(t, core.ZoneAgent), db.Clock)}
+		// Two processes of the control plane write to the same log.
+		logs := []*Log{openLog(t, db), New(db.Open(t, core.ZoneControl), db.Clock)}
 		const writers, each = 6, 5
 		var wg sync.WaitGroup
 		errs := make(chan error, writers*each)

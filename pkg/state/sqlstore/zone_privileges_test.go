@@ -104,8 +104,16 @@ func TestApplicationZoneReachesNothingInTheFactoryStore(t *testing.T) {
 	})
 }
 
-func TestAgentZoneWorksOnRunsButCannotForgeADelivery(t *testing.T) {
+func TestAgentZoneWorksOnRunsAndReachesNothingElse(t *testing.T) {
 	t.Parallel()
+	// What the dispatcher does: it reads records, holds leases, reserves
+	// budget and meters usage. The rest of everyOperation is the control
+	// zone's: an intake step, the inbox, the outbox, the budget totals and
+	// the policy documents.
+	agentMay := map[string]bool{
+		"get record": true, "list records": true, "acquire lease": true, "renew lease": true,
+		"check fencing": true, "release lease": true, "reserve": true, "get reserved": true, "append usage": true,
+	}
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		control := db.Open(t, core.ZoneControl)
 		lease := seed(t, control)
@@ -120,6 +128,9 @@ func TestAgentZoneWorksOnRunsButCannotForgeADelivery(t *testing.T) {
 		if got := pendingDeliveries(t, control, 0); len(got) != 1 {
 			t.Fatalf("inbox after the refused delivery = %v", got)
 		}
+		_, err := agent.AppendAuditRow(ctx, func(int64, string) (string, []byte, error) { return "h", []byte("{}"), nil })
+		wantCode(t, err, core.CodePermissionDenied)
+		wantCode(t, agent.ViewAudit(ctx, func(*sqlstore.AuditView) error { return nil }), core.CodePermissionDenied)
 
 		// Each operation is undone again, so one does not disturb the next.
 		undone := errors.New("undo")
@@ -130,8 +141,11 @@ func TestAgentZoneWorksOnRunsButCannotForgeADelivery(t *testing.T) {
 				}
 				return undone
 			})
-			if !errors.Is(err, undone) {
+			switch {
+			case agentMay[name] && !errors.Is(err, undone):
 				t.Errorf("%s from the agent zone: %v", name, err)
+			case !agentMay[name] && !core.HasCode(err, core.CodePermissionDenied):
+				t.Errorf("%s from the agent zone: want %s, got %v", name, core.CodePermissionDenied, err)
 			}
 		}
 	})
@@ -180,19 +194,26 @@ func TestGrantsGiveEachZoneRoleOnlyWhatItsZoneNeeds(t *testing.T) {
 			}
 		}
 	}
-	var agentInbox, controlInbox string
+	// The agent role reaches the inbox, the outbox and the audit log not at
+	// all, creates no record and deletes nothing.
 	for _, grant := range grantsTo("sisf_agent") {
-		if strings.Contains(grant, `"inbox"`) {
-			agentInbox = grant
+		for _, table := range []string{`"inbox"`, `"outbox"`, `"audit_log"`, `"audit_head"`} {
+			if strings.Contains(grant, table) {
+				t.Errorf("the agent role is granted %s: %s", table, grant)
+			}
+		}
+		if strings.Contains(grant, "DELETE") || (strings.Contains(grant, `"records"`) && strings.Contains(grant, "INSERT")) {
+			t.Errorf("the agent role is granted more than it uses: %s", grant)
 		}
 	}
+	controlInbox := ""
 	for _, grant := range grantsTo("sisf_control") {
 		if strings.Contains(grant, `"inbox"`) {
 			controlInbox = grant
 		}
 	}
-	if agentInbox == "" || strings.Contains(agentInbox, "INSERT") || !strings.Contains(controlInbox, "INSERT") {
-		t.Errorf("inbox grants: agent %q, control %q; only control may insert", agentInbox, controlInbox)
+	if !strings.Contains(controlInbox, "INSERT") {
+		t.Errorf("the control role must store deliveries, got %q", controlInbox)
 	}
 }
 

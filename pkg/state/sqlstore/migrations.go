@@ -37,6 +37,12 @@ var releaseMigrations = []migration{
 		Migration: state.Migration{Version: 2, Name: "candidate and release of a record", BackwardCompatible: true},
 		file:      "0002_record_candidate_and_release.sql",
 	},
+	{
+		// No data moves and the previous release's steps and documents are
+		// all within the row policies, so it keeps working on the schema.
+		Migration: state.Migration{Version: 3, Name: "row security between the zones", BackwardCompatible: true},
+		file:      "0003_zone_row_security.sql",
+	},
 }
 
 // Migrations lists the migrations this release ships, for callers that must

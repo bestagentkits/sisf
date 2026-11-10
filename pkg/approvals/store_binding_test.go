@@ -165,6 +165,45 @@ func TestAnApprovalIsNotSpentOnceItsRequestOrDecisionWasMovedElsewhere(t *testin
 	}
 }
 
+// The subject and the policy revision of a stored request are not signed,
+// so a request rewritten to name another subject or policy must no longer
+// match its signed decision, whichever values the caller then asks with.
+func TestAnApprovalIsNotSpentOnceItsRequestNamesAnotherSubjectOrPolicy(t *testing.T) {
+	t.Parallel()
+	const (
+		editedSubject core.Digest    = "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+		editedPolicy  core.CommitSHA = "fedcba9876543210fedcba9876543210fedcba98"
+	)
+	cases := map[string]struct {
+		edit    func(*approvals.Request)
+		subject core.Digest
+		policy  core.CommitSHA
+	}{
+		"subject edited, spent on the approved subject": {
+			edit: func(r *approvals.Request) { r.SubjectDigest = editedSubject }, subject: subject, policy: policy,
+		},
+		"subject edited, spent on the edited subject": {
+			edit: func(r *approvals.Request) { r.SubjectDigest = editedSubject }, subject: editedSubject, policy: policy,
+		},
+		"policy edited, spent under the approved policy": {
+			edit: func(r *approvals.Request) { r.PolicyRevision = editedPolicy }, subject: subject, policy: policy,
+		},
+		"policy edited, spent under the edited policy": {
+			edit: func(r *approvals.Request) { r.PolicyRevision = editedPolicy }, subject: subject, policy: editedPolicy,
+		},
+	}
+	for name, c := range cases {
+		f := newFixture(t)
+		f.decided(t, approvals.DecisionApprove)
+		rewriteRequest(t, f, c.edit)
+		_, err := f.store.Consume(context.Background(), "apr-0001", c.subject, c.policy)
+		wantCode(t, err, core.CodeSignatureInvalid, name)
+		if got := f.status(t); got != approvals.StatusApproved {
+			t.Fatalf("%s: the approval became %s", name, got)
+		}
+	}
+}
+
 func TestASubmissionIsBoundToTheFactoryIssueAndActionOfItsRequest(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

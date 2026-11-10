@@ -39,7 +39,7 @@ func TestNoIssueIsClaimedUntilTheOwnerConfirmsTheBudget(t *testing.T) {
 			t.Errorf("an agent was started without a confirmed budget")
 		}
 		var totals core.BudgetTotals
-		if err := f.store.View(context.Background(), func(ctx context.Context, tx state.Tx) error {
+		if err := f.db.Open(t, core.ZoneControl).View(context.Background(), func(ctx context.Context, tx state.Tx) error {
 			var err error
 			totals, err = tx.BudgetTotals(ctx, time.Time{})
 			return err
@@ -120,8 +120,10 @@ func TestTheStoredConfirmationIsReadThroughTheClaimTransaction(t *testing.T) {
 				return err
 			})
 		}
+		// The installer writes the confirmation, through the control zone.
+		control := db.Open(t, core.ZoneControl)
 		put := func(value []byte) {
-			err := store.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
+			err := control.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
 				entry, err := tx.GetKV(ctx, dispatcher.ConfirmationNamespace, dispatcher.ConfirmationKey)
 				if err != nil && !core.HasCode(err, core.CodeNotFound) {
 					return err
@@ -193,7 +195,8 @@ func TestReservationsAreIdempotentBoundToTheirRunAndSettleOrRelease(t *testing.T
 		}
 		var settled core.Reservation
 		var totals core.BudgetTotals
-		_ = store.View(context.Background(), func(ctx context.Context, tx state.Tx) error {
+		// The totals are the control plane's to read.
+		_ = db.Open(t, core.ZoneControl).View(context.Background(), func(ctx context.Context, tx state.Tx) error {
 			settled, _ = tx.GetReservation(ctx, first.ID)
 			totals, _ = tx.BudgetTotals(ctx, time.Time{})
 			return nil

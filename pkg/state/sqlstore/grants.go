@@ -18,9 +18,11 @@ type ZoneRoles map[core.Zone]string
 var identifierPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
 // GrantStatements returns the statements that give each zone's role exactly
-// what its zone may reach in schema, and nothing else. Each role first
-// loses whatever it held on the factory's tables, so running the statements
-// again also takes away what a later release no longer grants.
+// what its zone may reach in schema, and nothing else: the table privileges
+// and the row policies that narrow them (row_policies.go). Each role first
+// loses whatever it held on the factory's tables and each table the
+// policies of every zone, so running the statements again also takes away
+// what a later release no longer grants.
 //
 // There must be one role for each of the three zones and no two zones may
 // share one: a shared role would let one zone act as another.
@@ -60,7 +62,11 @@ func GrantStatements(schema string, roles ZoneRoles) ([]string, error) {
 			}
 		}
 	}
-	return statements, nil
+	policies, err := policyStatements(schema, roles)
+	if err != nil {
+		return nil, err
+	}
+	return append(statements, policies...), nil
 }
 
 // GrantZoneRoles applies GrantStatements to the schema the store is

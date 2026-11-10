@@ -20,6 +20,8 @@ import (
 // The checks run in this order and the first failure wins with nothing
 // written:
 //
+//   - PERMISSION_DENIED when the zone of the store may not write the step:
+//     each zone has its own list of lifecycle events (zone_ownership.go);
 //   - INVALID_TRANSITION when the lifecycle table has no such edge;
 //   - INVALID_ARGUMENT for a malformed request;
 //   - a replay of an idempotency key already used on the issue returns the
@@ -44,10 +46,7 @@ import (
 // rollout starts.
 func (t *tx) Transition(ctx context.Context, tr core.Transition) (core.StateRecord, error) {
 	none := core.StateRecord{}
-	if err := t.writes(tableRecords, canSelect|canInsert|canUpdate); err != nil {
-		return none, err
-	}
-	if err := t.writes(tableTransitions, canSelect|canInsert); err != nil {
+	if err := t.writesStep(tr); err != nil {
 		return none, err
 	}
 	if err := statemachine.CheckEdge(tr); err != nil {

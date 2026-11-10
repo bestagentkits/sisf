@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
@@ -39,3 +40,6 @@ func MigrationScript(version int, d Dialect) (string, error) {
 func MigrationLock() (string, int32) {
 	return strings.Replace(lockMigrations, "?", "$1", 1), migrationLockClass
 }
+
+// ZoneMayWrite reports whether a store of zone may write a step on event.
+func ZoneMayWrite(zone core.Zone, event core.Event) bool { return zoneEvents[zone][event] }

@@ -37,45 +37,52 @@ var tables = []string{
 	tableReservations, tableUsage, tableKV, tableAuditLog, tableAuditHead, tableMigrations,
 }
 
-// factoryWork is what the agent zone and the control zone share: the working
-// state of issues and runs. Usage and the audit log are insert-only for
-// every zone, so nothing the factory runs can rewrite its own history.
-var factoryWork = map[string]privilege{
-	tableRecords:      canSelect | canInsert | canUpdate,
-	tableTransitions:  canSelect | canInsert,
-	tableLeases:       canSelect | canInsert | canUpdate,
-	tableOutbox:       canSelect | canInsert | canUpdate,
-	tableReservations: canSelect | canInsert | canUpdate,
-	tableUsage:        canSelect | canInsert,
-	tableKV:           canSelect | canInsert | canUpdate | canDelete,
-	tableAuditLog:     canSelect | canInsert,
-	tableAuditHead:    canSelect | canInsert | canUpdate,
-	tableMigrations:   canSelect,
-}
-
 // zonePrivileges is the single statement of what each zone may reach. The
 // store checks it before every operation, and the PostgreSQL grants are
-// generated from it, so the two cannot drift apart.
+// generated from it, so the two cannot drift apart. Which rows of the
+// lifecycle and of the documents a zone may touch is narrowed further by
+// the rules in zone_ownership.go.
 //
 // Zone 1, the application, gets nothing but the schema version: it has no
-// path into the factory's state. Zone 2 and Zone 3 both work on issues and
-// runs. Only Zone 3 stores a delivery, because an inbox entry is trusted as
-// a verified webhook and Zone 3 is where webhooks are verified; Zone 2 may
-// read deliveries and mark them processed.
+// path into the factory's state.
+//
+// Zone 2, the agent factory, gets what the dispatcher uses and nothing
+// more: it reads the lifecycle records and moves those of its runs, holds
+// leases, reserves budget and meters usage, and keeps its own documents.
+// It creates no record and deletes nothing, and it does not touch the
+// inbox, the outbox or the audit log: deliveries, notifications and audit
+// records are the control plane's, reached through its authenticated API.
+//
+// Zone 3, the control plane, keeps the lifecycle. Only it stores a
+// delivery, because an inbox entry is trusted as a verified webhook and
+// Zone 3 is where webhooks are verified.
+//
+// Usage and the audit log are insert-only for every zone, so nothing the
+// factory runs can rewrite its own history.
 var zonePrivileges = map[core.Zone]map[string]privilege{
 	core.ZoneApplication: {tableMigrations: canSelect},
-	core.ZoneAgent:       withTable(factoryWork, tableInbox, canSelect|canUpdate),
-	core.ZoneControl:     withTable(factoryWork, tableInbox, canSelect|canInsert|canUpdate),
-}
-
-// withTable returns a copy of base with one more table.
-func withTable(base map[string]privilege, table string, p privilege) map[string]privilege {
-	out := make(map[string]privilege, len(base)+1)
-	for name, granted := range base {
-		out[name] = granted
-	}
-	out[table] = p
-	return out
+	core.ZoneAgent: {
+		tableRecords:      canSelect | canUpdate,
+		tableTransitions:  canSelect | canInsert,
+		tableLeases:       canSelect | canInsert | canUpdate,
+		tableReservations: canSelect | canInsert | canUpdate,
+		tableUsage:        canInsert,
+		tableKV:           canSelect | canInsert | canUpdate,
+		tableMigrations:   canSelect,
+	},
+	core.ZoneControl: {
+		tableRecords:      canSelect | canInsert | canUpdate,
+		tableTransitions:  canSelect | canInsert,
+		tableLeases:       canSelect | canInsert | canUpdate,
+		tableInbox:        canSelect | canInsert | canUpdate,
+		tableOutbox:       canSelect | canInsert | canUpdate,
+		tableReservations: canSelect | canInsert | canUpdate,
+		tableUsage:        canSelect | canInsert,
+		tableKV:           canSelect | canInsert | canUpdate | canDelete,
+		tableAuditLog:     canSelect | canInsert,
+		tableAuditHead:    canSelect | canInsert | canUpdate,
+		tableMigrations:   canSelect,
+	},
 }
 
 // names renders a privilege set as SQL keywords in a fixed order.

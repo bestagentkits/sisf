@@ -101,9 +101,11 @@ func (f *fixture) dispatcher(owner string, adjust func(*dispatcher.Config)) *dis
 	return d
 }
 
-// readyIssue takes a new issue through intake to Ready.
+// readyIssue takes a new issue through intake to Ready, as the control
+// zone does.
 func (f *fixture) readyIssue(number int) core.IssueRef {
 	f.t.Helper()
+	control := f.db.Open(f.t, core.ZoneControl)
 	issue := core.IssueRef{Owner: "acme", Repo: "app", Number: number}
 	steps := []core.Transition{
 		{IssueID: issue, To: core.StateIntake, Event: core.EventIssueReceived, IdempotencyKey: "received"},
@@ -118,7 +120,7 @@ func (f *fixture) readyIssue(number int) core.IssueRef {
 			}
 			step.To = to
 		}
-		err := f.store.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
+		err := control.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
 			_, err := tx.Transition(ctx, step)
 			return err
 		})
