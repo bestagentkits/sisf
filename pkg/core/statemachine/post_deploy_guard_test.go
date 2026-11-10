@@ -11,9 +11,17 @@ import (
 // checkPostDeployWith runs the step into Verified after mutate has changed
 // the proof.
 func checkPostDeployWith(mutate func(*PostDeployProof)) error {
+	return checkPostDeployOn(func(*core.Transition) {}, mutate)
+}
+
+// checkPostDeployOn runs the step into Verified after the request and the
+// proof have each been changed.
+func checkPostDeployOn(mutateRequest func(*core.Transition), mutate func(*PostDeployProof)) error {
+	request := postDeployRequest()
+	mutateRequest(&request)
 	proof := validPostDeploy()
 	mutate(&proof)
-	return machineWith(Guards{PostDeploy: postDeployWith(proof)}).Check(context.Background(), postDeployRequest())
+	return machineWith(Guards{PostDeploy: postDeployWith(proof)}).Check(context.Background(), request)
 }
 
 func TestAReleaseIsVerifiedWhenTheObservedRevisionMeetsTheDoDAfterTheWindow(t *testing.T) {
@@ -45,6 +53,50 @@ func TestAReleaseThatWasNotObservedRunningIsNotVerified(t *testing.T) {
 	}
 	for name, mutate := range cases {
 		requireGuardFailed(t, name, checkPostDeployWith(mutate), GuardPostDeploy)
+	}
+}
+
+func TestAnObservationOfAnotherIssueRunOrReleaseDoesNotVerifyThisOne(t *testing.T) {
+	t.Parallel()
+	proofs := map[string]func(*PostDeployProof){
+		"the observation is for another issue": func(p *PostDeployProof) { p.IssueID = otherIssue },
+		"the observation is for another run":   func(p *PostDeployProof) { p.RunID = otherRun },
+		"the observation names no issue":       func(p *PostDeployProof) { p.IssueID = core.IssueRef{} },
+		"the observation names no run":         func(p *PostDeployProof) { p.RunID = "" },
+		"another release was observed for this issue": func(p *PostDeployProof) {
+			p.Released, p.Observed = otherBuild, otherBuild
+		},
+	}
+	for name, mutate := range proofs {
+		requireGuardFailed(t, name, checkPostDeployWith(mutate), GuardPostDeploy)
+	}
+	requests := map[string]func(*core.Transition){
+		"the step is for another issue":   func(r *core.Transition) { r.IssueID = otherIssue },
+		"the step is for another run":     func(r *core.Transition) { r.RunID = otherRun },
+		"the step is for another release": func(r *core.Transition) { r.ReleaseDigest = otherBuild },
+		"the step names no run":           func(r *core.Transition) { r.RunID = "" },
+		"the step names no release":       func(r *core.Transition) { r.ReleaseDigest = "" },
+	}
+	for name, mutate := range requests {
+		requireGuardFailed(t, name, checkPostDeployOn(mutate, func(*PostDeployProof) {}), GuardPostDeploy)
+	}
+	unnamed := checkPostDeployOn(func(r *core.Transition) { r.RunID = "" }, func(p *PostDeployProof) { p.RunID = "" })
+	requireGuardFailed(t, "neither the step nor the observation names a run", unnamed, GuardPostDeploy)
+}
+
+func TestAnObservationDatedAfterNowDoesNotVerifyARelease(t *testing.T) {
+	t.Parallel()
+	// The window has closed in every case, so only the date of the
+	// observation stands between the release and Verified.
+	cases := map[string]func(*PostDeployProof){
+		"observed a moment after now": func(p *PostDeployProof) { p.ObservedAt = testNow.Add(time.Nanosecond) },
+		"observed an hour from now":   func(p *PostDeployProof) { p.ObservedAt = testNow.Add(time.Hour) },
+	}
+	for name, mutate := range cases {
+		requireGuardFailed(t, name, checkPostDeployWith(mutate), GuardPostDeploy)
+	}
+	if err := checkPostDeployWith(func(p *PostDeployProof) { p.ObservedAt = testNow }); err != nil {
+		t.Fatalf("a release observed at this very instant was refused: %v", err)
 	}
 }
 

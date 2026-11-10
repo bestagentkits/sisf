@@ -36,21 +36,48 @@ type ClaimGuard interface {
 	ClaimProof(ctx context.Context, t core.Transition) (ClaimProof, error)
 }
 
+// AttemptsProof is how many attempts a run has made against its limit.
+type AttemptsProof struct {
+	// IssueID and RunID name the record the count was read from. They must be
+	// the issue and the run of the transition.
+	IssueID core.IssueRef
+	RunID   core.RunID
+	// Attempt is the number of attempts the run has made, counting from 1 and
+	// including the one that just failed evaluation. It is read from the
+	// stored record, never taken from the request.
+	Attempt int
+	// MaxAttempts is the limit policy sets for one run. It applies in every
+	// budget mode, and a proof that states none is refused.
+	MaxAttempts int
+}
+
+// AttemptsGuard proves that a run sent back to Developing has attempts left.
+// The retry must carry the next attempt number, so the count cannot be reset
+// or held still to loop without end.
+type AttemptsGuard interface {
+	AttemptsProof(ctx context.Context, t core.Transition) (AttemptsProof, error)
+}
+
 // QAProof is the evaluator's receipt for the candidate, with the criteria in
 // force when it was judged.
 type QAProof struct {
 	Receipt core.QAReceipt
-	// RequiredGates names every hard gate the review criteria demand. Each
-	// must appear in the receipt as a passed hard gate.
+	// RequiredGates names every hard gate the review criteria demand. It must
+	// contain each gate of core.RequiredHardGates and may add more; criteria
+	// that leave a required gate out are refused, so the criteria can raise
+	// the bar and never lower it. Each gate must appear in the receipt as a
+	// passed hard gate.
 	RequiredGates []string
 	// PassScore is the minimum score, within 1-100, from the review criteria.
 	PassScore int
 }
 
 // QAGuard proves that an independent evaluation passed. The implementation
-// must return only a receipt whose signature it has verified against the
-// trusted evaluator keys and which is bound to the candidate of this run; the
-// machine cannot check either, and checks everything else.
+// must return only a receipt whose signature it has verified, over the
+// receipt's SigningPayload, against the trusted evaluator keys; the machine
+// cannot check that. The machine checks everything else: that the receipt is
+// complete, bound to the issue, run and candidate of the transition, issued
+// in the past and unexpired, and that it passes core.QAReceipt.CheckPass.
 type QAGuard interface {
 	QAProof(ctx context.Context, t core.Transition) (QAProof, error)
 }
@@ -64,12 +91,18 @@ type DoDResult struct {
 
 // PostDeployProof is what was seen of a release after it went live.
 type PostDeployProof struct {
-	// Released is the digest the release set out to run.
+	// IssueID and RunID name the issue and the run the release was made for.
+	// They must be those of the transition.
+	IssueID core.IssueRef
+	RunID   core.RunID
+	// Released is the digest the release set out to run. It must be the
+	// release digest the transition names.
 	Released core.ReleaseDigest
 	// Observed is the digest read from the running system, never taken from
 	// the result of the deploy call.
 	Observed core.ReleaseDigest
-	// Healthy is the health of the running revision at ObservedAt.
+	// Healthy is the health of the running revision at ObservedAt, which
+	// must not lie after the current instant.
 	Healthy    bool
 	ObservedAt time.Time
 	// WindowEndsAt closes the observation window in which a regression would
@@ -88,6 +121,11 @@ type PostDeployGuard interface {
 // RetryGuard decides whether the actor named in the transition may send a
 // blocked issue back to Ready. As with core.Authorizer, the zero decision
 // denies and an error is treated as a denial.
+//
+// The machine sees that an issue is blocked, not why. A retry is therefore
+// the one check left on an issue blocked because its approval was denied or
+// expired: the implementation must deny it unless the scope has since been
+// approved or lies within the Owner's delegation.
 type RetryGuard interface {
 	AuthorizeRetry(ctx context.Context, t core.Transition) (core.AuthzDecision, error)
 }
@@ -95,7 +133,10 @@ type RetryGuard interface {
 // Guards holds the guard of each guarded edge. A nil guard refuses its edge,
 // so an edge can never pass because nobody wired its check.
 type Guards struct {
+	Delegation DelegationGuard
+	Approval   ApprovalGuard
 	Claim      ClaimGuard
+	Attempts   AttemptsGuard
 	QA         QAGuard
 	PostDeploy PostDeployGuard
 	Retry      RetryGuard
@@ -107,6 +148,14 @@ type ClaimGuardFunc func(ctx context.Context, t core.Transition) (ClaimProof, er
 
 // ClaimProof calls f.
 func (f ClaimGuardFunc) ClaimProof(ctx context.Context, t core.Transition) (ClaimProof, error) {
+	return f(ctx, t)
+}
+
+// AttemptsGuardFunc adapts a function to AttemptsGuard.
+type AttemptsGuardFunc func(ctx context.Context, t core.Transition) (AttemptsProof, error)
+
+// AttemptsProof calls f.
+func (f AttemptsGuardFunc) AttemptsProof(ctx context.Context, t core.Transition) (AttemptsProof, error) {
 	return f(ctx, t)
 }
 

@@ -1,7 +1,10 @@
 package deploy_test
 
 import (
+	"bytes"
 	"context"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,7 +12,10 @@ import (
 	"github.com/bestagentkits/sisf/pkg/deploy"
 )
 
-const digest = core.ReleaseDigest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+const (
+	digest      = core.ReleaseDigest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	otherDigest = core.ReleaseDigest("sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+)
 
 func TestSelfPublishNeedsASwitchARollbackAndObservation(t *testing.T) {
 	blueGreen := core.CapabilitySet{
@@ -82,6 +88,74 @@ func TestArtifactValidation(t *testing.T) {
 		if core.CodeOf(a.Validate()) != core.CodeInvalidArgument {
 			t.Errorf("%s: want %s, got %v", name, core.CodeInvalidArgument, a.Validate())
 		}
+	}
+}
+
+func signedArtifact() deploy.Artifact {
+	return deploy.Artifact{
+		Unit:          "app",
+		Digest:        digest,
+		Image:         "ghcr.io/acme/app@" + string(digest),
+		Signature:     core.Signature{KeyID: "release-1", Algorithm: "ed25519", Value: []byte{1}},
+		SBOMRef:       "artifact:sbom-1",
+		ProvenanceRef: "artifact:provenance-1",
+	}
+}
+
+// artifactMutations changes each field of an artifact in turn, keyed by the Go
+// field name so a field added later cannot be left out of the payload unseen.
+var artifactMutations = map[string]func(*deploy.Artifact){
+	"Unit":          func(a *deploy.Artifact) { a.Unit = "control" },
+	"Digest":        func(a *deploy.Artifact) { a.Digest = otherDigest },
+	"Image":         func(a *deploy.Artifact) { a.Image = "ghcr.io/acme/other@" + string(digest) },
+	"SBOMRef":       func(a *deploy.Artifact) { a.SBOMRef = "artifact:sbom-2" },
+	"ProvenanceRef": func(a *deploy.Artifact) { a.ProvenanceRef = "" },
+}
+
+func TestChangingAnyBoundArtifactFieldChangesTheSigningPayload(t *testing.T) {
+	t.Parallel()
+	base := signedArtifact().SigningPayload()
+	fields := reflect.TypeOf(deploy.Artifact{})
+	for i := range fields.NumField() {
+		name := fields.Field(i).Name
+		if name == "Signature" {
+			continue
+		}
+		mutate, ok := artifactMutations[name]
+		if !ok {
+			t.Errorf("artifact field %s has no case proving the signature covers it", name)
+			continue
+		}
+		changed := signedArtifact()
+		mutate(&changed)
+		if bytes.Equal(base, changed.SigningPayload()) {
+			t.Errorf("changing %s left the signing payload unchanged", name)
+		}
+	}
+	// The same text split differently over two fields is another artifact.
+	shifted := signedArtifact()
+	shifted.SBOMRef, shifted.ProvenanceRef = shifted.SBOMRef+"a", shifted.ProvenanceRef[1:]
+	if bytes.Equal(base, shifted.SigningPayload()) {
+		t.Error("moving text between two references left the signing payload unchanged")
+	}
+}
+
+func TestTheArtifactPayloadIsStableAndLeavesTheSignatureOut(t *testing.T) {
+	t.Parallel()
+	artifact := signedArtifact()
+	base := artifact.SigningPayload()
+	if !bytes.Equal(base, signedArtifact().SigningPayload()) {
+		t.Fatal("two equal artifacts produced different payloads")
+	}
+	if !strings.HasPrefix(string(base), "sisf-signed-record\ndomain=20:sisf.deploy_artifact\nversion=1:1\n") {
+		t.Fatalf("payload does not open with the artifact domain and version: %q", base)
+	}
+	artifact.Signature = core.Signature{KeyID: "another-key", Algorithm: "ed25519", Value: []byte{9}}
+	if !bytes.Equal(base, artifact.SigningPayload()) {
+		t.Fatal("the payload depends on the signature it is signed with")
+	}
+	if bytes.Equal(base, core.QAReceipt{}.SigningPayload()) {
+		t.Fatal("an artifact payload equals a receipt payload")
 	}
 }
 

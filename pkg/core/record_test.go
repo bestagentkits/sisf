@@ -66,16 +66,18 @@ func TestTransitionValidation(t *testing.T) {
 		t.Fatalf("valid transition rejected: %v", err)
 	}
 	cases := map[string]func(*Transition){
-		"missing issue":           func(tr *Transition) { tr.IssueID = IssueRef{} },
-		"unknown source state":    func(tr *Transition) { tr.From = "Merged" },
-		"unknown target state":    func(tr *Transition) { tr.To = "" },
-		"unknown event":           func(tr *Transition) { tr.Event = "merged" },
-		"negative version":        func(tr *Transition) { tr.ExpectedVersion = -1 },
-		"no idempotency key":      func(tr *Transition) { tr.IdempotencyKey = "" },
-		"fenced without owner":    func(tr *Transition) { tr.LeaseOwner = "" },
-		"negative fencing token":  func(tr *Transition) { tr.FencingToken = -1 },
-		"negative attempt":        func(tr *Transition) { tr.Attempt = -1 },
-		"no source on later edge": func(tr *Transition) { tr.From = "" },
+		"missing issue":            func(tr *Transition) { tr.IssueID = IssueRef{} },
+		"unknown source state":     func(tr *Transition) { tr.From = "Merged" },
+		"unknown target state":     func(tr *Transition) { tr.To = "" },
+		"unknown event":            func(tr *Transition) { tr.Event = "merged" },
+		"negative version":         func(tr *Transition) { tr.ExpectedVersion = -1 },
+		"no idempotency key":       func(tr *Transition) { tr.IdempotencyKey = "" },
+		"fenced without owner":     func(tr *Transition) { tr.LeaseOwner = "" },
+		"negative fencing token":   func(tr *Transition) { tr.FencingToken = -1 },
+		"negative attempt":         func(tr *Transition) { tr.Attempt = -1 },
+		"no source on later edge":  func(tr *Transition) { tr.From = "" },
+		"candidate named by a tag": func(tr *Transition) { tr.CandidateDigest = "latest" },
+		"release named by a tag":   func(tr *Transition) { tr.ReleaseDigest = "v1.2.3" },
 	}
 	for name, mutate := range cases {
 		tr := validTransition()
@@ -83,6 +85,15 @@ func TestTransitionValidation(t *testing.T) {
 		if CodeOf(tr.Validate()) != CodeInvalidArgument {
 			t.Errorf("%s: want %s, got %v", name, CodeInvalidArgument, tr.Validate())
 		}
+	}
+}
+
+func TestATransitionMayNameTheCandidateAndTheReleaseItIsAbout(t *testing.T) {
+	tr := validTransition()
+	tr.CandidateDigest = testDigest
+	tr.ReleaseDigest = ReleaseDigest(testDigest)
+	if err := tr.Validate(); err != nil {
+		t.Fatalf("a transition bound to a candidate and a release was rejected: %v", err)
 	}
 }
 

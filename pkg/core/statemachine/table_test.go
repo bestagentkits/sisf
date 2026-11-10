@@ -76,9 +76,12 @@ func TestEdgesOnlyConnectTheFifteenStates(t *testing.T) {
 	}
 }
 
-func TestOnlyTheFourGuardedStepsCarryAGuard(t *testing.T) {
+func TestOnlyTheSevenGuardedStepsCarryAGuard(t *testing.T) {
 	want := map[core.Event]GuardKind{
+		core.EventScopePermitted:     GuardDelegation,
+		core.EventOwnerApproved:      GuardApproval,
 		core.EventClaimed:            GuardClaim,
+		core.EventQAFailed:           GuardAttempts,
 		core.EventQAPassed:           GuardQAPass,
 		core.EventPostDeployVerified: GuardPostDeploy,
 		core.EventRetryAuthorized:    GuardRetry,
@@ -87,6 +90,44 @@ func TestOnlyTheFourGuardedStepsCarryAGuard(t *testing.T) {
 		if e.Guard != want[e.Event] {
 			t.Errorf("edge on %s has guard %q, want %q", e.Event, e.Guard, want[e.Event])
 		}
+	}
+}
+
+func TestEveryWayIntoReadyIsGuarded(t *testing.T) {
+	into := 0
+	for _, e := range Edges() {
+		if e.To != core.StateReady {
+			continue
+		}
+		into++
+		if e.Guard == GuardNone {
+			t.Errorf("%s reaches Ready on %s without any proof", e.From, e.Event)
+		}
+	}
+	if into != 3 {
+		t.Fatalf("%d edges enter Ready, want the delegated, the approved and the retried one", into)
+	}
+}
+
+func TestEveryStepThatClosesALoopIsGuarded(t *testing.T) {
+	// A step back to a state the issue has already been through is how work
+	// repeats, so each one needs a proof that bounds or authorizes it.
+	position := map[core.State]int{}
+	for i, state := range core.States() {
+		position[state] = i
+	}
+	loops := 0
+	for _, e := range Edges() {
+		if e.From == "" || position[e.To] >= position[e.From] {
+			continue
+		}
+		loops++
+		if e.Guard == GuardNone {
+			t.Errorf("%s returns to %s on %s without any proof", e.From, e.To, e.Event)
+		}
+	}
+	if loops != 2 {
+		t.Fatalf("%d edges lead back to an earlier state, want the QA retry and the authorized retry", loops)
 	}
 }
 

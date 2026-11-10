@@ -35,9 +35,9 @@ func New(clock core.Clock, guards Guards) *Machine {
 // hold. A guard is consulted only for a legal, well-formed request, and a
 // typed error returned by a guard keeps its own code.
 func (m *Machine) Check(ctx context.Context, t core.Transition) error {
-	edge, ok := lookup(t.From, t.Event)
-	if !ok || edge.To != t.To {
-		return noEdge(t.From, t.Event, t.To)
+	edge, err := edgeOf(t)
+	if err != nil {
+		return err
 	}
 	if err := t.Validate(); err != nil {
 		return err
@@ -52,6 +52,24 @@ func (m *Machine) checkGuard(ctx context.Context, guard GuardKind, t core.Transi
 	switch guard {
 	case GuardNone:
 		return nil
+	case GuardDelegation:
+		if m.guards.Delegation == nil {
+			return unwired(guard, t)
+		}
+		proof, err := m.guards.Delegation.DelegationProof(ctx, t)
+		if err != nil {
+			return unproven(guard, t, err)
+		}
+		return checkDelegation(t, proof)
+	case GuardApproval:
+		if m.guards.Approval == nil {
+			return unwired(guard, t)
+		}
+		proof, err := m.guards.Approval.ApprovalProof(ctx, t)
+		if err != nil {
+			return unproven(guard, t, err)
+		}
+		return checkApproval(t, proof, m.clock.Now())
 	case GuardClaim:
 		if m.guards.Claim == nil {
 			return unwired(guard, t)
@@ -61,6 +79,15 @@ func (m *Machine) checkGuard(ctx context.Context, guard GuardKind, t core.Transi
 			return unproven(guard, t, err)
 		}
 		return checkClaim(t, proof, m.clock.Now())
+	case GuardAttempts:
+		if m.guards.Attempts == nil {
+			return unwired(guard, t)
+		}
+		proof, err := m.guards.Attempts.AttemptsProof(ctx, t)
+		if err != nil {
+			return unproven(guard, t, err)
+		}
+		return checkAttempts(t, proof)
 	case GuardQAPass:
 		if m.guards.QA == nil {
 			return unwired(guard, t)
