@@ -9,13 +9,25 @@ import (
 )
 
 // countingGuards records how often each guard was consulted.
-type countingGuards struct{ claim, qa, postDeploy, retry int }
+type countingGuards struct{ delegation, approval, claim, attempts, qa, postDeploy, retry int }
 
 func (c *countingGuards) guards() Guards {
 	return Guards{
+		Delegation: DelegationGuardFunc(func(_ context.Context, t core.Transition) (DelegationProof, error) {
+			c.delegation++
+			return validDelegation(t), nil
+		}),
+		Approval: ApprovalGuardFunc(func(_ context.Context, t core.Transition) (ApprovalProof, error) {
+			c.approval++
+			return validApproval(t), nil
+		}),
 		Claim: ClaimGuardFunc(func(_ context.Context, t core.Transition) (ClaimProof, error) {
 			c.claim++
 			return validClaim(t), nil
+		}),
+		Attempts: AttemptsGuardFunc(func(_ context.Context, t core.Transition) (AttemptsProof, error) {
+			c.attempts++
+			return validAttempts(t), nil
 		}),
 		QA: QAGuardFunc(func(context.Context, core.Transition) (QAProof, error) {
 			c.qa++
@@ -32,25 +44,53 @@ func (c *countingGuards) guards() Guards {
 	}
 }
 
-func (c *countingGuards) total() int { return c.claim + c.qa + c.postDeploy + c.retry }
+func (c *countingGuards) total() int {
+	return c.delegation + c.approval + c.claim + c.attempts + c.qa + c.postDeploy + c.retry
+}
+
+// guardedRequests is one well-formed request per guarded step.
+func guardedRequests() map[GuardKind]core.Transition {
+	return map[GuardKind]core.Transition{
+		GuardDelegation: delegatedScopeRequest(),
+		GuardApproval:   ownerApprovedRequest(),
+		GuardClaim:      claimRequest(),
+		GuardAttempts:   qaRetryRequest(),
+		GuardQAPass:     qaPassRequest(),
+		GuardPostDeploy: postDeployRequest(),
+		GuardRetry:      retryRequest(),
+	}
+}
+
+func TestEveryGuardKindOfTheTableHasARequestInTheseTests(t *testing.T) {
+	requests := guardedRequests()
+	for _, e := range Edges() {
+		if e.Guard == GuardNone {
+			continue
+		}
+		request, ok := requests[e.Guard]
+		if !ok || request.Event != e.Event {
+			t.Errorf("guard %s on %s is not exercised by a request of its own", e.Guard, e.Event)
+		}
+	}
+}
 
 func TestEachGuardedStepConsultsOnlyItsOwnGuard(t *testing.T) {
-	cases := map[string]struct {
-		request core.Transition
-		want    countingGuards
-	}{
-		"claim":       {claimRequest(), countingGuards{claim: 1}},
-		"qa pass":     {qaPassRequest(), countingGuards{qa: 1}},
-		"post deploy": {postDeployRequest(), countingGuards{postDeploy: 1}},
-		"retry":       {retryRequest(), countingGuards{retry: 1}},
+	want := map[GuardKind]countingGuards{
+		GuardDelegation: {delegation: 1},
+		GuardApproval:   {approval: 1},
+		GuardClaim:      {claim: 1},
+		GuardAttempts:   {attempts: 1},
+		GuardQAPass:     {qa: 1},
+		GuardPostDeploy: {postDeploy: 1},
+		GuardRetry:      {retry: 1},
 	}
-	for name, tc := range cases {
+	for guard, request := range guardedRequests() {
 		var calls countingGuards
-		if err := machineWith(calls.guards()).Check(context.Background(), tc.request); err != nil {
-			t.Errorf("%s: refused with every guard satisfied: %v", name, err)
+		if err := machineWith(calls.guards()).Check(context.Background(), request); err != nil {
+			t.Errorf("%s: refused with every guard satisfied: %v", guard, err)
 		}
-		if calls != tc.want {
-			t.Errorf("%s: guards consulted %+v, want %+v", name, calls, tc.want)
+		if calls != want[guard] {
+			t.Errorf("%s: guards consulted %+v, want %+v", guard, calls, want[guard])
 		}
 	}
 }
@@ -92,6 +132,9 @@ func TestIllegalStepsAreRefusedBeforeAnyGuardRuns(t *testing.T) {
 		transitionOn(core.StateCanary, core.EventPostDeployVerified, core.StateVerified),
 		transitionOn(core.StateRolledBack, core.EventRetryAuthorized, core.StateReady),
 		transitionOn(core.StateReady, core.EventClaimed, core.StateDeveloping),
+		transitionOn(core.StateIntake, core.EventScopePermitted, core.StateReady),
+		transitionOn(core.StateScopeDraft, core.EventOwnerApproved, core.StateReady),
+		transitionOn(core.StateDeveloping, core.EventQAFailed, core.StateDeveloping),
 	}
 	for _, request := range illegal {
 		err := machine.Check(context.Background(), request)
@@ -106,11 +149,9 @@ func TestIllegalStepsAreRefusedBeforeAnyGuardRuns(t *testing.T) {
 
 func TestGuardedStepsFailClosedWhenNoGuardIsWired(t *testing.T) {
 	machine := machineWith(Guards{})
-	cases := map[GuardKind]core.Transition{
-		GuardClaim:      claimRequest(),
-		GuardQAPass:     qaPassRequest(),
-		GuardPostDeploy: postDeployRequest(),
-		GuardRetry:      retryRequest(),
+	cases := guardedRequests()
+	if len(cases) != 7 {
+		t.Fatalf("%d guarded steps are exercised, want 7", len(cases))
 	}
 	for guard, request := range cases {
 		requireGuardFailed(t, string(guard), machine.Check(context.Background(), request), guard)

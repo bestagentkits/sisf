@@ -123,8 +123,8 @@
       "additionalProperties": false,
       "properties": {
         "credentials_ref": {
-          "description": "Credential set only this zone may use; no two zones share one.",
-          "minLength": 1,
+          "description": "Reference to the credential set only this zone may use, written env:NAME or local:path/name; no two zones share one.",
+          "pattern": "^(env:[A-Z_][A-Z0-9_]*|local:[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$",
           "type": "string"
         },
         "health_check": {
@@ -520,8 +520,8 @@
           "type": "string"
         },
         "dsn_ref": {
-          "description": "Reference to the connection secret, written provider:name. The connection string itself never goes in this file.",
-          "pattern": "^[a-z][a-z0-9_-]*:[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$",
+          "description": "Reference to the connection secret, written env:NAME or local:path/name. The connection string itself never goes in this file.",
+          "pattern": "^(env:[A-Z_][A-Z0-9_]*|local:[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$",
           "type": "string"
         },
         "path": {
@@ -571,8 +571,8 @@
           "type": "string"
         },
         "root_key_ref": {
-          "description": "Where the root public key that verifies the signed manifest is found.",
-          "minLength": 1,
+          "description": "Reference to the root public key that verifies the signed manifest, written env:NAME or local:path/name.",
+          "pattern": "^(env:[A-Z_][A-Z0-9_]*|local:[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$",
           "type": "string"
         },
         "startup_self_check": {
@@ -771,6 +771,10 @@
     "supervisor": {
       "$ref": "#/$defs/Supervisor",
       "description": "The trusted release supervisor. Leaving it out disables self-update."
+    },
+    "trusted_code_only": {
+      "description": "Owner's acknowledgement that the execution backend can neither isolate agent runs nor enforce the egress policy, so the deployment runs only code the Owner trusts. Without it such a backend is refused.",
+      "type": "boolean"
     },
     "units": {
       "additionalProperties": false,

@@ -17,16 +17,16 @@ import (
 var errBroken = errors.New("backend is broken")
 
 func executionProbe() conformance.ExecutionProbe {
-	return conformance.ExecutionProbe{Spec: conformancetest.SandboxSpec(), Command: execution.Command{Argv: []string{"true"}}, EndToEndProven: true}
+	return conformance.ExecutionProbe{Spec: conformancetest.SandboxSpec(), Command: execution.Command{Argv: []string{"true"}}}
 }
 
 func deployProbe() conformance.DeployProbe {
 	baseline, candidate := conformancetest.Artifacts()
-	return conformance.DeployProbe{Baseline: baseline, Candidate: candidate, Window: time.Minute, EndToEndProven: true}
+	return conformance.DeployProbe{Baseline: baseline, Candidate: candidate, Window: time.Minute}
 }
 
 func agentProbe() conformance.AgentProbe {
-	return conformance.AgentProbe{Task: conformancetest.Task(), Workspace: agent.WorkspaceRef{ID: "probe"}, EndToEndProven: true}
+	return conformance.AgentProbe{Task: conformancetest.Task(), Workspace: agent.WorkspaceRef{ID: "probe"}}
 }
 
 // wantMissing fails unless the row is unsupported for exactly the given area.
@@ -61,12 +61,13 @@ func TestKitGradesABackendThatDoesWhatItDeclares(t *testing.T) {
 			t.Errorf("%s: a backend that proves every area must be supported, got %+v", kind, row)
 		}
 	}
-	// The same behavior without an end-to-end run is not yet "supported".
+	// The same behavior without an end-to-end run is not yet "supported": a
+	// probe that runs nothing in the sandbox skipped a step of the interface.
 	probe := executionProbe()
-	probe.EndToEndProven = false
+	probe.Command = execution.Command{}
 	row, err := conformance.GradeExecution(ctx, conformancetest.NewExecution("new-sandbox"), probe)
-	if err != nil || row.Verdict != conformance.VerdictExperimental {
-		t.Errorf("without an end-to-end run: verdict %q, err %v; want experimental", row.Verdict, err)
+	if err != nil || row.Verdict != conformance.VerdictExperimental || len(row.Notes) != 1 {
+		t.Errorf("without an end-to-end run: verdict %q, notes %v, err %v; want experimental and the reason", row.Verdict, row.Notes, err)
 	}
 }
 

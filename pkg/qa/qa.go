@@ -79,10 +79,12 @@ func (r Rubric) Validate() error {
 }
 
 // Passes reports whether a receipt meets the rubric: every hard gate was run
-// and passed, and the score reaches the pass score. The gates are checked
-// first and independently of the score.
+// and passed, the score equals the rubric points recorded and it reaches the
+// pass score. The verdict is core.QAReceipt.CheckPass, the same rule the step
+// into ReleaseCandidate applies, so the evaluator and the release step cannot
+// disagree about what passing means.
 func (r Rubric) Passes(receipt core.QAReceipt) bool {
-	return len(MissingGates(receipt.Checks)) == 0 && receipt.HardGatesPassed() && receipt.Score >= r.PassScore
+	return receipt.CheckPass(r.PassScore) == nil
 }
 
 // GateName names a hard gate.
@@ -104,10 +106,16 @@ const (
 	GateSupplyChain GateName = "supply_chain"
 )
 
-// Gates returns every hard gate. Each must be run for every candidate.
+// Gates returns every hard gate. Each must be run for every candidate. The
+// set is core.RequiredHardGates, the list the release step requires, so a
+// gate cannot be demanded in one place and forgotten in the other.
 func Gates() []GateName {
-	return []GateName{GateTestsContract, GatePermissions, GateMigrations, GateSecrets, GateObservedBuild,
-		GateIndependentEvaluator, GateResourceBudget, GateRollbackReadiness, GateSupplyChain}
+	names := core.RequiredHardGates()
+	gates := make([]GateName, len(names))
+	for i, name := range names {
+		gates[i] = GateName(name)
+	}
+	return gates
 }
 
 // MissingGates returns the hard gates that have no hard-gate result in
@@ -186,9 +194,11 @@ type HardGate interface {
 	Check(ctx context.Context, c Candidate) (GateResult, error)
 }
 
-// Evaluator judges a candidate and returns a signed receipt bound to the
-// candidate's commit and digest. It refuses a candidate written by its own
-// identity and one that has not finished building.
+// Evaluator judges a candidate and returns a receipt bound to the candidate's
+// issue, run, commit and digest, signed over core.QAReceipt.SigningPayload.
+// The score it records is the sum of the rubric points. It refuses a
+// candidate written by its own identity and one that has not finished
+// building.
 type Evaluator interface {
 	Evaluate(ctx context.Context, c Candidate) (core.QAReceipt, error)
 }

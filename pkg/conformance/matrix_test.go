@@ -37,9 +37,9 @@ func TestABackendLackingAnyAreaIsUnsupported(t *testing.T) {
 		},
 	}
 	for kind, declared := range proven() {
-		whole := conformance.Grade(conformance.Declaration{Kind: kind, Name: "whole", Capabilities: declared, EndToEndProven: true})
-		if whole.Verdict != conformance.VerdictSupported || len(whole.Missing) != 0 {
-			t.Fatalf("%s: a backend proving all four areas must be supported, got %+v", kind, whole)
+		whole := conformance.Grade(conformance.Declaration{Kind: kind, Name: "whole", Capabilities: declared})
+		if whole.Verdict != conformance.VerdictExperimental || len(whole.Missing) != 0 {
+			t.Fatalf("%s: a backend declaring all four areas lacks none and awaits a kit run, got %+v", kind, whole)
 		}
 		for _, area := range core.ConformanceAreas() {
 			for _, how := range []string{"never declared", "declared absent"} {
@@ -47,7 +47,7 @@ func TestABackendLackingAnyAreaIsUnsupported(t *testing.T) {
 				if delete(lacking, evidence[kind][area]); how == "declared absent" {
 					lacking[evidence[kind][area]] = core.SupportNotSupported
 				}
-				row := conformance.Grade(conformance.Declaration{Kind: kind, Name: "lacking", Capabilities: lacking, EndToEndProven: true})
+				row := conformance.Grade(conformance.Declaration{Kind: kind, Name: "lacking", Capabilities: lacking})
 				if row.Verdict != conformance.VerdictUnsupported || !slices.Equal(row.Missing, []core.Capability{area}) {
 					t.Errorf("%s with %s %s: verdict %q, missing %v; want unsupported, missing [%s]", kind, area, how, row.Verdict, row.Missing, area)
 				}
@@ -62,19 +62,19 @@ func TestAClaimIsNotSupportUntilItIsProven(t *testing.T) {
 		for capability := range claimed {
 			claimed[capability] = core.SupportUnverified
 		}
-		row := conformance.Grade(conformance.Declaration{Kind: kind, Name: "claimed", Capabilities: claimed, EndToEndProven: true})
+		row := conformance.Grade(conformance.Declaration{Kind: kind, Name: "claimed", Capabilities: claimed})
 		if row.Verdict != conformance.VerdictExperimental {
 			t.Errorf("%s: unverified claims must grade experimental, got %q", kind, row.Verdict)
 		}
-		// Verified areas still need an end-to-end run before "supported".
+		// Areas declared verified still need a kit run before "supported".
 		row = conformance.Grade(conformance.Declaration{Kind: kind, Name: "no-run", Capabilities: proven()[kind]})
 		if row.Verdict != conformance.VerdictExperimental {
-			t.Errorf("%s: without an end-to-end run the grade must stay experimental, got %q", kind, row.Verdict)
+			t.Errorf("%s: without a kit run the grade must stay experimental, got %q", kind, row.Verdict)
 		}
 		// A level the factory does not know is silence, and silence is not support.
 		odd := proven()[kind]
 		odd[core.CapLifecycle] = "probably"
-		row = conformance.Grade(conformance.Declaration{Kind: kind, Name: "odd", Capabilities: odd, EndToEndProven: true})
+		row = conformance.Grade(conformance.Declaration{Kind: kind, Name: "odd", Capabilities: odd})
 		if row.Verdict != conformance.VerdictUnsupported {
 			t.Errorf("%s: an unknown support level must not count, got %q", kind, row.Verdict)
 		}
@@ -143,6 +143,10 @@ func TestBuiltinBackendsClaimNoMoreThanTheirDesignAllows(t *testing.T) {
 		"execution/docker": conformance.VerdictExperimental,
 		"deploy/local":     conformance.VerdictExperimental,
 		"deploy/compose":   conformance.VerdictExperimental,
+		// The built-in agent runtimes of the brief, each only a claim so far.
+		"agent/claude": conformance.VerdictExperimental,
+		"agent/codex":  conformance.VerdictExperimental,
+		"agent/pi":     conformance.VerdictExperimental,
 	}
 	for _, row := range matrix {
 		key := string(row.Kind) + "/" + row.Name
@@ -169,6 +173,12 @@ func TestBuiltinBackendsClaimNoMoreThanTheirDesignAllows(t *testing.T) {
 	}
 	if _, ok := conformance.Find(declarations, conformance.KindExecution, "compose"); ok {
 		t.Error("a backend is found by kind and name together")
+	}
+	for _, name := range []string{"claude", "codex", "pi"} {
+		runtime, ok := conformance.Find(declarations, conformance.KindAgent, name)
+		if !ok || runtime.Capabilities.Level(core.CapAgentHardBudget) != core.SupportNotSupported {
+			t.Errorf("agent runtime %q must be declared and must not claim a hard budget no provider enforces", name)
+		}
 	}
 	for _, d := range declarations {
 		if !d.Kind.Valid() || len(d.Modes) == 0 {

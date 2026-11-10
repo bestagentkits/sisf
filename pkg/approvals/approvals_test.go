@@ -1,7 +1,10 @@
 package approvals_test
 
 import (
+	"bytes"
 	"context"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,6 +161,91 @@ func TestApprovalAuthorizesOnlyTheSubjectAndPolicyItWasGivenFor(t *testing.T) {
 		if err := a.Authorizes(tc.subject, tc.policy, tc.at); !core.HasCode(err, tc.want) {
 			t.Errorf("%s: want %s, got %v", tc.name, tc.want, err)
 		}
+	}
+}
+
+// approvalMutations changes each field of an approval in turn, keyed by the Go
+// field name so a field added later cannot be left out of the payload unseen.
+var approvalMutations = map[string]func(*approvals.Approval){
+	"RequestID":      func(a *approvals.Approval) { a.RequestID = "apr-0002" },
+	"SubjectDigest":  func(a *approvals.Approval) { a.SubjectDigest = other },
+	"PolicyRevision": func(a *approvals.Approval) { a.PolicyRevision = policy2 },
+	"Nonce":          func(a *approvals.Approval) { a.Nonce = "0000000000000000" },
+	"Decision":       func(a *approvals.Approval) { a.Decision = approvals.DecisionReject },
+	"ActorID":        func(a *approvals.Approval) { a.ActorID = "user:owner-2" },
+	"ActorKind":      func(a *approvals.Approval) { a.ActorKind = core.ActorAgent },
+	"Surface":        func(a *approvals.Approval) { a.Surface = core.SurfaceWebMCP },
+	"StepUpAt":       func(a *approvals.Approval) { a.StepUpAt = time.Time{} },
+	"Reason":         func(a *approvals.Approval) { a.Reason = "looks fine" },
+	"Conditions":     func(a *approvals.Approval) { a.Conditions.BudgetCap = 5_000_000 },
+	"DecidedAt":      func(a *approvals.Approval) { a.DecidedAt = a.DecidedAt.Add(time.Nanosecond) },
+	"ExpiresAt":      func(a *approvals.Approval) { a.ExpiresAt = a.ExpiresAt.Add(time.Nanosecond) },
+}
+
+func signedApproval() approvals.Approval {
+	a := validApproval()
+	a.Signature = core.Signature{KeyID: "approvals-2026-11", Algorithm: "ed25519", Value: []byte{1}}
+	return a
+}
+
+func TestChangingAnyBoundApprovalFieldChangesTheSigningPayload(t *testing.T) {
+	t.Parallel()
+	base := signedApproval().SigningPayload()
+	fields := reflect.TypeOf(approvals.Approval{})
+	for i := range fields.NumField() {
+		name := fields.Field(i).Name
+		if name == "Signature" {
+			continue
+		}
+		mutate, ok := approvalMutations[name]
+		if !ok {
+			t.Errorf("approval field %s has no case proving the signature covers it", name)
+			continue
+		}
+		changed := signedApproval()
+		mutate(&changed)
+		if bytes.Equal(base, changed.SigningPayload()) {
+			t.Errorf("changing %s left the signing payload unchanged", name)
+		}
+	}
+	narrowed := signedApproval()
+	narrowed.Conditions.ExpiresAt = created.Add(30 * time.Minute)
+	if bytes.Equal(base, narrowed.SigningPayload()) {
+		t.Error("an earlier expiry condition left the signing payload unchanged")
+	}
+}
+
+func TestTheApprovalPayloadIsStableAndLeavesTheSignatureOut(t *testing.T) {
+	t.Parallel()
+	approval := signedApproval()
+	base := approval.SigningPayload()
+	if !bytes.Equal(base, signedApproval().SigningPayload()) {
+		t.Fatal("two equal approvals produced different payloads")
+	}
+	if !strings.HasPrefix(string(base), "sisf-signed-record\ndomain=13:sisf.approval\nversion=1:1\n") {
+		t.Fatalf("payload does not open with the approval domain and version: %q", base)
+	}
+	approval.Signature = core.Signature{KeyID: "another-key", Algorithm: "ed25519", Value: []byte{9}}
+	if !bytes.Equal(base, approval.SigningPayload()) {
+		t.Fatal("the payload depends on the signature it is signed with")
+	}
+	approval.DecidedAt = approval.DecidedAt.In(time.FixedZone("ICT", 7*60*60))
+	if !bytes.Equal(base, approval.SigningPayload()) {
+		t.Fatal("the payload depends on the zone an instant is expressed in")
+	}
+}
+
+func TestAnApprovalSignatureDoesNotCoverAnotherRecordType(t *testing.T) {
+	t.Parallel()
+	// A decision and a QA receipt never share a payload, so a key that signs
+	// one cannot be tricked into vouching for the other.
+	approval := signedApproval().SigningPayload()
+	receipt := core.QAReceipt{}.SigningPayload()
+	if bytes.Equal(approval, receipt) || bytes.HasPrefix(approval, receipt) || bytes.HasPrefix(receipt, approval) {
+		t.Fatal("an approval payload and a receipt payload overlap")
+	}
+	if !bytes.Contains(receipt, []byte("domain=15:sisf.qa_receipt\n")) {
+		t.Fatalf("the receipt payload names no domain of its own: %q", receipt)
 	}
 }
 

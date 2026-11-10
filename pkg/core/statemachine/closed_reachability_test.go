@@ -118,13 +118,15 @@ func TestRandomEventSequencesNeverCloseAnIssueThatWasNotVerified(t *testing.T) {
 	}
 }
 
-func TestClosedIsUnreachableWhileAGuardOnTheWayRefuses(t *testing.T) {
-	acceptedBy := func(guards Guards) func(Edge) bool {
-		machine := machineWith(guards)
-		return func(e Edge) bool {
-			return machine.Check(context.Background(), transitionOn(e.From, e.Event, e.To)) == nil
-		}
+// acceptedBy lets through the edges a machine with these guards accepts.
+func acceptedBy(guards Guards) func(Edge) bool {
+	machine := machineWith(guards)
+	return func(e Edge) bool {
+		return machine.Check(context.Background(), transitionOn(e.From, e.Event, e.To)) == nil
 	}
+}
+
+func TestClosedIsUnreachableWhileAGuardOnTheWayRefuses(t *testing.T) {
 	if !reachable(acceptedBy(passingGuards()))[core.StateClosed] {
 		t.Fatal("with every guard satisfied an issue must be able to close")
 	}
@@ -142,9 +144,21 @@ func TestClosedIsUnreachableWhileAGuardOnTheWayRefuses(t *testing.T) {
 				return PostDeployProof{}, refused
 			})
 		},
-		"claim guard not wired":       func(g *Guards) { g.Claim = nil },
-		"qa guard not wired":          func(g *Guards) { g.QA = nil },
-		"post-deploy guard not wired": func(g *Guards) { g.PostDeploy = nil },
+		"no way into Ready is proven": func(g *Guards) {
+			g.Delegation = DelegationGuardFunc(func(context.Context, core.Transition) (DelegationProof, error) {
+				return DelegationProof{}, refused
+			})
+			g.Approval = ApprovalGuardFunc(func(context.Context, core.Transition) (ApprovalProof, error) {
+				return ApprovalProof{}, refused
+			})
+			g.Retry = RetryGuardFunc(func(context.Context, core.Transition) (core.AuthzDecision, error) {
+				return core.AuthzDecision{}, refused
+			})
+		},
+		"no guard into Ready is wired": func(g *Guards) { g.Delegation, g.Approval, g.Retry = nil, nil, nil },
+		"claim guard not wired":        func(g *Guards) { g.Claim = nil },
+		"qa guard not wired":           func(g *Guards) { g.QA = nil },
+		"post-deploy guard not wired":  func(g *Guards) { g.PostDeploy = nil },
 	}
 	for name, withhold := range cases {
 		guards := passingGuards()
@@ -153,5 +167,41 @@ func TestClosedIsUnreachableWhileAGuardOnTheWayRefuses(t *testing.T) {
 		if seen[core.StateVerified] || seen[core.StateClosed] {
 			t.Errorf("%s: the issue still reached Verified or Closed", name)
 		}
+	}
+
+	// One proven way into Ready is enough: a scope that needs the Owner is
+	// not stuck because delegation was refused, and the other way round.
+	for name, withhold := range map[string]func(*Guards){
+		"delegation refused, approval given": func(g *Guards) { g.Delegation = nil },
+		"approval missing, scope delegated":  func(g *Guards) { g.Approval = nil },
+	} {
+		guards := passingGuards()
+		withhold(&guards)
+		if !reachable(acceptedBy(guards))[core.StateClosed] {
+			t.Errorf("%s: the issue can no longer close", name)
+		}
+	}
+}
+
+func TestWithoutScopeProofReadyIsReachedOnlyThroughAnAuthorizedRetry(t *testing.T) {
+	guards := passingGuards()
+	guards.Delegation, guards.Approval = nil, nil
+
+	// A scope that is neither delegated nor approved can still be blocked and
+	// then retried, so the retry guard is the one check left on that path.
+	viaRetry := reachable(acceptedBy(guards))
+	if !viaRetry[core.StateBlocked] || !viaRetry[core.StateReady] {
+		t.Fatal("a denied approval must still be able to block the issue and an authorized retry to ready it")
+	}
+	withoutBlocked := reachable(func(e Edge) bool {
+		return e.From != core.StateBlocked && e.To != core.StateBlocked && acceptedBy(guards)(e)
+	})
+	if withoutBlocked[core.StateReady] {
+		t.Fatal("an issue became Ready with neither delegation, approval nor a retry")
+	}
+
+	guards.Retry = retryWith(core.AuthzDecision{Effect: core.EffectDeny})
+	if reachable(acceptedBy(guards))[core.StateReady] {
+		t.Fatal("an issue became Ready although every way into it was refused")
 	}
 }

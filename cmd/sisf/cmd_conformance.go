@@ -20,19 +20,29 @@ func init() {
 Checks the manifest (default ` + defaultManifest + `) and exits 0 only when it is conformant:
 
   - all three zones, all nine runtime units and all four network segments
-    are declared under one factory_id;
+    are declared under one factory_id, and every unit that runs pins its
+    digest;
   - factory_id, deployment_id and the runtime units can be told apart;
-  - no two zones share credentials or a store role, and no unit writes a
-    volume owned by another zone;
+  - no two zones share credentials or a store role; Zone 1 and Zone 2 mount
+    only their own volumes, no unit writes a volume of another zone, and a
+    shared volume is mounted only by the state or artifacts unit holding it;
+  - every unit stays on the network segments its role allows, the sandbox
+    is internal and leaves through a declared egress proxy, and only app,
+    edge and named routes of control are public;
   - the trusted release supervisor runs from its own pinned artifact, keeps
     the last known good release and the signing keys on a volume only it
-    writes, has a digest only a governance cycle can change, and checks
-    itself at startup;
-  - the selected backends are in the capability matrix, run in the chosen
-    mode and can do what the manifest asks of them.
+    writes and no candidate mounts, has a digest only a governance cycle
+    can change, and checks itself at startup;
+  - the selected agent, execution and deployment backends are in the
+    capability matrix, run in the chosen mode and can do what the manifest
+    asks of them; a backend that cannot sandbox agent runs is accepted only
+    with trusted_code_only: true, at reduced assurance;
+  - secrets are referenced (env:NAME or local:path/name), never written;
+  - release windows, canary steps and model routes are not left empty.
 
 Each finding names the rule that failed, the place in the manifest and the
-change that fixes it. Any finding exits 1.`,
+change that fixes it, and never repeats a value that may be a secret. Any
+finding exits 1.`,
 		Run: runConformanceCheck,
 	})
 }
@@ -60,7 +70,11 @@ func runConformanceCheck(_ context.Context, env *Env, args []string) error {
 	if !report.SelfUpdate {
 		selfUpdate = "disabled, no trusted supervisor is declared"
 	}
-	return env.Printf("%s: conformant\n  self-update: %s\n", path, selfUpdate)
+	assurance := ""
+	if report.TrustedCodeOnly {
+		assurance = "  assurance: reduced, trusted code only: the execution backend does not isolate agent runs or enforce the egress policy\n"
+	}
+	return env.Printf("%s: conformant\n  self-update: %s\n%s", path, selfUpdate, assurance)
 }
 
 // printFindings lists what is wrong with the manifest, one block per finding.

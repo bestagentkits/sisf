@@ -125,7 +125,8 @@ type Conditions struct {
 	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
-// Approval is one recorded decision on a request.
+// Approval is one recorded decision on a request. Its signature covers
+// SigningPayload, which holds every field but the signature itself.
 type Approval struct {
 	RequestID string `json:"request_id"`
 	// SubjectDigest, PolicyRevision and Nonce repeat the request's values;
@@ -166,6 +167,35 @@ func (a Approval) Validate() error {
 	return nil
 }
 
+// Domain and field-list version of the approval's signing payload.
+const (
+	approvalPayloadDomain  = "sisf.approval"
+	approvalPayloadVersion = 1
+)
+
+// SigningPayload returns the canonical bytes the approval service signs and a
+// verifier checks. Every field except the signature is bound, in a fixed
+// order, so a decision cannot be moved to another request, subject, policy
+// revision, actor or expiry without invalidating its signature.
+func (a Approval) SigningPayload() []byte {
+	return core.NewPayloadBuilder(approvalPayloadDomain, approvalPayloadVersion).
+		Text("request_id", a.RequestID).
+		Text("subject_digest", string(a.SubjectDigest)).
+		Text("policy_revision", string(a.PolicyRevision)).
+		Text("nonce", a.Nonce).
+		Text("decision", string(a.Decision)).
+		Text("actor_id", a.ActorID).
+		Text("actor_kind", string(a.ActorKind)).
+		Text("surface", string(a.Surface)).
+		Time("step_up_at", a.StepUpAt).
+		Text("reason", a.Reason).
+		Int("condition_budget_cap", int64(a.Conditions.BudgetCap)).
+		Time("condition_expires_at", a.Conditions.ExpiresAt).
+		Time("decided_at", a.DecidedAt).
+		Time("expires_at", a.ExpiresAt).
+		Bytes()
+}
+
 // Authorizes reports whether the approval permits acting on subject under
 // policy at now. It returns PERMISSION_DENIED unless the decision is approve,
 // APPROVAL_REQUIRED when the subject or the policy differs from what was
@@ -198,17 +228,18 @@ type Store interface {
 	// Get returns NOT_FOUND for an unknown ID.
 	Get(ctx context.Context, id string) (Request, error)
 	List(ctx context.Context, f Filter) ([]Request, error)
-	// Decide records a signed decision on a pending request. The subject,
-	// policy revision and nonce must equal the request's; a request already
-	// decided or a foreign nonce is REPLAYED, a lapsed request EXPIRED. A
-	// request marked StepUp accepts only a person with a fresh StepUpAt and
-	// otherwise returns STEP_UP_REQUIRED.
+	// Decide records a decision, signed over Approval.SigningPayload, on a
+	// pending request. The subject, policy revision and nonce must equal the
+	// request's; a request already decided or a foreign nonce is REPLAYED, a
+	// lapsed request EXPIRED. A request marked StepUp accepts only a person
+	// with a fresh StepUpAt and otherwise returns STEP_UP_REQUIRED.
 	Decide(ctx context.Context, a Approval) (Request, error)
 	// Decision returns the decision recorded for a request, or NOT_FOUND.
 	Decision(ctx context.Context, requestID string) (Approval, error)
 	// Consume spends the approval on subject under policy, atomically and
 	// once. It applies Approval.Authorizes at the current time, verifies the
-	// signature, and returns REPLAYED when the approval was already used.
+	// signature over Approval.SigningPayload, and returns REPLAYED when the
+	// approval was already used.
 	Consume(ctx context.Context, requestID string, subject core.Digest, policy core.CommitSHA) (Approval, error)
 }
 

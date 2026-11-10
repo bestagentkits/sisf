@@ -79,8 +79,15 @@ func allGatesPassed() []core.QACheck {
 	return checks
 }
 
+// receipt records the given gate results and a score earned in full as rubric
+// points, split over two categories.
 func receipt(score int, checks []core.QACheck) core.QAReceipt {
-	return core.QAReceipt{Score: score, Checks: checks}
+	first := min(score, 30)
+	scored := append(slices.Clone(checks),
+		core.QACheck{Name: string(qa.CategoryCorrectness), Kind: core.CheckRubric, Passed: true, Points: first, MaxPoints: 30},
+		core.QACheck{Name: string(qa.CategorySecurity), Kind: core.CheckRubric, Passed: true, Points: score - first, MaxPoints: 70},
+	)
+	return core.QAReceipt{Score: score, Checks: scored}
 }
 
 func TestCandidatePassesOnlyWithTheScoreAndEveryHardGate(t *testing.T) {
@@ -110,6 +117,46 @@ func TestCandidatePassesOnlyWithTheScoreAndEveryHardGate(t *testing.T) {
 	relabelled[0].Kind = core.CheckRubric
 	if rubric.Passes(receipt(100, relabelled)) {
 		t.Fatal("a rubric entry named like a gate is not a hard-gate result")
+	}
+}
+
+func TestTheHardGatesAreTheSetTheReleaseStepRequires(t *testing.T) {
+	var names []string
+	for _, gate := range qa.Gates() {
+		names = append(names, string(gate))
+	}
+	if !slices.Equal(names, core.RequiredHardGates()) {
+		t.Fatalf("Gates() = %v, but the release step requires %v", names, core.RequiredHardGates())
+	}
+}
+
+func TestTheRubricAppliesTheSharedPassRule(t *testing.T) {
+	rubric := qa.DefaultRubric()
+	inflated := receipt(84, allGatesPassed())
+	inflated.Score = 99
+	if rubric.Passes(inflated) {
+		t.Fatal("a score above the rubric points recorded must not pass")
+	}
+	unscored := core.QAReceipt{Score: 90, Checks: allGatesPassed()}
+	if rubric.Passes(unscored) {
+		t.Fatal("a score backed by no rubric points must not pass")
+	}
+	unbounded := qa.Rubric{Weights: rubric.Weights, PassScore: 0}
+	if unbounded.Passes(receipt(100, allGatesPassed())) {
+		t.Fatal("a rubric without a pass score must not pass anything")
+	}
+	// The rubric and the pass rule give one verdict on every receipt.
+	receipts := map[string]core.QAReceipt{
+		"passing":         receipt(85, allGatesPassed()),
+		"one point short": receipt(84, allGatesPassed()),
+		"gate missing":    receipt(100, allGatesPassed()[:8]),
+		"inflated score":  inflated,
+		"empty":           {},
+	}
+	for name, r := range receipts {
+		if got, want := rubric.Passes(r), r.CheckPass(rubric.PassScore) == nil; got != want {
+			t.Errorf("%s: the rubric says %v and the pass rule says %v", name, got, want)
+		}
 	}
 }
 

@@ -13,8 +13,6 @@ type AgentProbe struct {
 	Task      agent.Task
 	Workspace agent.WorkspaceRef
 	Scopes    []string
-	// EndToEndProven records that the backend also passed an end-to-end run.
-	EndToEndProven bool
 }
 
 // GradeAgent grades an agent backend. It starts from the backend's
@@ -22,7 +20,8 @@ type AgentProbe struct {
 // it and collects what it left behind. Each step the backend fails lowers
 // the area that step proves. A backend that declares it cannot cancel must
 // refuse with NOT_SUPPORTED; pretending to cancel is graded as a failure.
-// Isolation is graded from the declaration alone.
+// Isolation is graded from the declaration alone. Only a run that reaches
+// the last step can grade the backend supported.
 //
 // An error means the backend could not be graded at all.
 func GradeAgent(ctx context.Context, backend agent.Backend, probe AgentProbe) (Row, error) {
@@ -36,7 +35,7 @@ func GradeAgent(ctx context.Context, backend agent.Backend, probe AgentProbe) (R
 	if err != nil {
 		return Row{}, undeclared(backend.Name(), err)
 	}
-	row := Grade(Declaration{Kind: KindAgent, Name: backend.Name(), Capabilities: declared, EndToEndProven: probe.EndToEndProven})
+	row := Grade(Declaration{Kind: KindAgent, Name: backend.Name(), Capabilities: declared})
 
 	run, err := backend.Start(ctx, probe.Task, probe.Workspace, probe.Scopes)
 	switch {
@@ -77,5 +76,6 @@ func GradeAgent(ctx context.Context, backend agent.Backend, probe AgentProbe) (R
 	if _, err := backend.CollectArtifacts(ctx, run); err != nil {
 		row.lower(core.CapLifecycle, "the artifacts of the run could not be collected: "+err.Error())
 	}
+	row.exercise()
 	return row, nil
 }

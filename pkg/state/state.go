@@ -50,13 +50,27 @@ type Records interface {
 	// GetRecord returns NOT_FOUND when the issue has no record.
 	GetRecord(ctx context.Context, issue core.IssueRef) (core.StateRecord, error)
 	ListRecords(ctx context.Context, filter RecordFilter) ([]core.StateRecord, error)
-	// Transition applies t only if the stored version equals
-	// t.ExpectedVersion and the stored state equals t.From; otherwise it
-	// returns CONFLICT and writes nothing. A non-zero t.FencingToken must be
-	// the latest token issued for IssueLeaseResource(t.IssueID), else
-	// STALE_FENCING_TOKEN. A repeated t.IdempotencyKey returns the record
-	// written the first time without writing again. Whether the edge is
-	// legal is decided by the transition table before this call.
+	// Transition writes one step of the lifecycle. A conforming store MUST
+	// apply every check below itself and write nothing when one fails; it
+	// never relies on its caller having made them.
+	//
+	// The step must be an edge of the transition table in package
+	// pkg/core/statemachine. The store calls statemachine.CheckEdge(t), a
+	// pure lookup equal to asking statemachine.Next for t.From and t.Event
+	// and comparing the answer with t.To, and returns its INVALID_TRANSITION
+	// for any step the table does not allow, such as Intake straight to
+	// Closed. A request that matches the stored version, state and fencing
+	// token is still refused when the lifecycle has no such edge.
+	//
+	// The stored version must equal t.ExpectedVersion and the stored state
+	// must equal t.From; otherwise the store returns CONFLICT. A non-zero
+	// t.FencingToken must be the latest token issued for
+	// IssueLeaseResource(t.IssueID), else STALE_FENCING_TOKEN. A repeated
+	// t.IdempotencyKey returns the record written the first time without
+	// writing again.
+	//
+	// The proof a guarded edge needs is judged by statemachine.Machine.Check
+	// before this call, because it draws on facts the store does not hold.
 	Transition(ctx context.Context, t core.Transition) (core.StateRecord, error)
 }
 

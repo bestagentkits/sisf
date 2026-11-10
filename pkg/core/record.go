@@ -75,13 +75,21 @@ type Transition struct {
 	FencingToken    FencingToken `json:"fencing_token,omitempty"`
 	// RunID, when set, becomes the record's run.
 	RunID RunID `json:"run_id,omitempty"`
-	// Attempt is the attempt number the record carries after the write.
+	// Attempt is the attempt number the record carries after the write. The
+	// first attempt of a run is 1, the retry after a failed evaluation
+	// carries the next number, and no other step lowers the stored number.
 	Attempt int `json:"attempt"`
 	// ActorID names who asked for the change, for the audit trail.
 	ActorID string `json:"actor_id,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	// EvidenceRefs point to the receipts, reports or comments that justify the change.
 	EvidenceRefs []string `json:"evidence_refs,omitempty"`
+	// CandidateDigest names the built candidate the step is about. The step
+	// into ReleaseCandidate must carry it, and the QA receipt must be for it.
+	CandidateDigest Digest `json:"candidate_digest,omitempty"`
+	// ReleaseDigest names the release the step is about. The step into
+	// Verified must carry it, and the observed revision must be that release.
+	ReleaseDigest ReleaseDigest `json:"release_digest,omitempty"`
 }
 
 // Creates reports whether the transition creates the record instead of
@@ -115,6 +123,16 @@ func (t Transition) Validate() error {
 	}
 	if t.RunID != "" {
 		if err := t.RunID.Validate(); err != nil {
+			return err
+		}
+	}
+	if t.CandidateDigest != "" {
+		if err := t.CandidateDigest.Validate(); err != nil {
+			return err
+		}
+	}
+	if t.ReleaseDigest != "" {
+		if err := t.ReleaseDigest.Validate(); err != nil {
 			return err
 		}
 	}

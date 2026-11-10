@@ -23,8 +23,9 @@ func SelfPublishAllowed(caps core.CapabilitySet) bool {
 		caps.Supports(core.CapDeployObservedRevision) && caps.Supports(core.CapDeployMetrics)
 }
 
-// Artifact is an immutable, signed build of one unit. The trusted release
-// supervisor rejects an artifact whose signature it cannot verify.
+// Artifact is an immutable, signed build of one unit. The signature covers
+// SigningPayload, and the trusted release supervisor rejects an artifact
+// whose signature it cannot verify over those bytes.
 type Artifact struct {
 	// Unit is the runtime unit name from the manifest, for example "app".
 	Unit   string             `json:"unit"`
@@ -47,6 +48,26 @@ func (a Artifact) Validate() error {
 		return err
 	}
 	return a.Signature.Validate()
+}
+
+// Domain and field-list version of the artifact's signing payload.
+const (
+	artifactPayloadDomain  = "sisf.deploy_artifact"
+	artifactPayloadVersion = 1
+)
+
+// SigningPayload returns the canonical bytes the release signer signs and
+// the supervisor verifies. Every field except the signature is bound, in a
+// fixed order, so an artifact cannot be relabelled as another unit, digest,
+// image or set of supply-chain documents without invalidating its signature.
+func (a Artifact) SigningPayload() []byte {
+	return core.NewPayloadBuilder(artifactPayloadDomain, artifactPayloadVersion).
+		Text("unit", a.Unit).
+		Text("digest", string(a.Digest)).
+		Text("image", a.Image).
+		Text("sbom_ref", a.SBOMRef).
+		Text("provenance_ref", a.ProvenanceRef).
+		Bytes()
 }
 
 // Revision is a staged or running version of a unit.

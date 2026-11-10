@@ -6,9 +6,9 @@ deployment_id: laptop
 mode: standalone
 repository: {owner: acme, repo: hello-app}
 components:
-  application: {source: apps/web, credentials_ref: zone1-application, store_role: sisf_application}
-  agent: {source: factory, credentials_ref: zone2-agent, store_role: sisf_agent}
-  control: {source: control, credentials_ref: zone3-control, store_role: sisf_control}
+  application: {source: apps/web, credentials_ref: local:zone1-application, store_role: sisf_application}
+  agent: {source: factory, credentials_ref: local:zone2-agent, store_role: sisf_agent}
+  control: {source: control, credentials_ref: local:zone3-control, store_role: sisf_control}
 units:
   app:
     command: [bin/hello-app]
@@ -72,7 +72,7 @@ networks:
   app: {}
   factory: {}
   control: {}
-  sandbox: {egress_via: edge}
+  sandbox: {internal: true, egress_via: edge}
 volumes:
   app-data: {zone: application}
   workspaces: {zone: agent}
@@ -97,6 +97,9 @@ release:
 budget: {mode: unlimited, alert_threshold_micros: 50000000}
 limits: {run_timeout: 30m, max_attempts: 3, concurrency: 2, clarify_timeout: 72h}
 egress: {mode: allowlist, allow: [api.github.com, github.com]}
+# Local processes are neither isolated nor held to the egress allowlist above,
+# so the Owner states that only trusted code runs here.
+trusted_code_only: true
 model_routes:
   routes:
     coding: {provider: anthropic, model: mid, effort: low}

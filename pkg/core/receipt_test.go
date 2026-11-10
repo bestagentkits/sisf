@@ -8,6 +8,8 @@ import (
 func validReceipt() QAReceipt {
 	issued := time.Date(2026, 11, 10, 6, 0, 0, 0, time.UTC)
 	return QAReceipt{
+		IssueID:             IssueRef{Owner: "acme", Repo: "app", Number: 7},
+		RunID:               "run-0001",
 		CandidateSHA:        testSHA,
 		CandidateDigest:     testDigest,
 		SuiteDigest:         testDigest,
@@ -34,6 +36,10 @@ func TestQAReceiptValidation(t *testing.T) {
 		t.Fatalf("valid receipt rejected: %v", err)
 	}
 	cases := map[string]func(*QAReceipt){
+		"names no issue":           func(r *QAReceipt) { r.IssueID = IssueRef{} },
+		"issue without a number":   func(r *QAReceipt) { r.IssueID.Number = 0 },
+		"names no run":             func(r *QAReceipt) { r.RunID = "" },
+		"malformed run id":         func(r *QAReceipt) { r.RunID = "Run 1" },
 		"unbuilt candidate":        func(r *QAReceipt) { r.CandidateDigest = "" },
 		"candidate not a commit":   func(r *QAReceipt) { r.CandidateSHA = "feature-branch" },
 		"suite digest missing":     func(r *QAReceipt) { r.SuiteDigest = "" },

@@ -11,13 +11,23 @@ import (
 // testNow is the instant every test clock reports.
 var testNow = time.Date(2026, 11, 10, 7, 0, 0, 0, time.UTC)
 
-var testIssue = core.IssueRef{Owner: "acme", Repo: "app", Number: 7}
+var (
+	testIssue  = core.IssueRef{Owner: "acme", Repo: "app", Number: 7}
+	otherIssue = core.IssueRef{Owner: "acme", Repo: "app", Number: 8}
+)
 
 const (
+	testRun    core.RunID         = "run-0001"
+	otherRun   core.RunID         = "run-0002"
 	testSHA    core.CommitSHA     = "0123456789abcdef0123456789abcdef01234567"
+	otherSHA   core.CommitSHA     = "fedcba9876543210fedcba9876543210fedcba98"
 	testDigest core.Digest        = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	released   core.ReleaseDigest = core.ReleaseDigest(testDigest)
 	otherBuild core.ReleaseDigest = "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	// scopeDigest identifies the scope of work attached to the test issue.
+	scopeDigest core.Digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	// testMaxAttempts is the attempt limit the test policy states.
+	testMaxAttempts = 3
 )
 
 // fixedClock never moves, so expiry rules can be driven to the exact instant.
@@ -71,8 +81,9 @@ func sourceStates() []core.State {
 	return append([]core.State{""}, core.States()...)
 }
 
-// transitionOn builds a structurally valid request for one step. It is leased,
-// names a run and names an actor, so every guard has what it may bind to.
+// transitionOn builds a structurally valid request for one step. It is leased
+// and names a run, an actor, the candidate and the release, so every guard has
+// what it may bind to. A failed evaluation starts the second attempt.
 func transitionOn(from core.State, event core.Event, to core.State) core.Transition {
 	t := core.Transition{
 		IssueID:         testIssue,
@@ -83,19 +94,36 @@ func transitionOn(from core.State, event core.Event, to core.State) core.Transit
 		IdempotencyKey:  "step:" + string(event),
 		LeaseOwner:      "dispatcher-1",
 		FencingToken:    5,
-		RunID:           "run-0001",
+		RunID:           testRun,
 		Attempt:         1,
 		ActorID:         "user:owner-1",
+		CandidateDigest: testDigest,
+		ReleaseDigest:   released,
 	}
 	if from == "" {
 		t.ExpectedVersion = 0
 	}
+	if event == core.EventQAFailed {
+		t.Attempt = 2
+	}
 	return t
 }
 
-// Requests for the four guarded steps.
+// Requests for the seven guarded steps.
+func delegatedScopeRequest() core.Transition {
+	return transitionOn(core.StateScopeDraft, core.EventScopePermitted, core.StateReady)
+}
+
+func ownerApprovedRequest() core.Transition {
+	return transitionOn(core.StateApprovalPending, core.EventOwnerApproved, core.StateReady)
+}
+
 func claimRequest() core.Transition {
 	return transitionOn(core.StateReady, core.EventClaimed, core.StateClaimed)
+}
+
+func qaRetryRequest() core.Transition {
+	return transitionOn(core.StateQAEvaluation, core.EventQAFailed, core.StateDeveloping)
 }
 
 func qaPassRequest() core.Transition {
