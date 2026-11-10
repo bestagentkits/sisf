@@ -75,6 +75,7 @@ func newControl(s zoneSetup, log *slog.Logger) (*wiring.Control, error) {
 		OwnerToken: s.env.OwnerToken, WebhookSecret: s.env.WebhookSecret, ApprovalKey: key,
 		ListenAddr: listenOr(s.env.Listen, wiring.DefaultControlListen), AllowNonLoopback: s.env.AllowNonLoopback,
 		Probes: wiring.ZoneProbes(s.env.AppHealthURL, s.env.DispatcherHealthURL), Clock: s.clock, Logger: log,
+		TrustedProxies: s.env.TrustedProxies,
 	})
 }
 
@@ -105,41 +106,6 @@ func runControl(ctx context.Context, args []string, getenv func(string) string, 
 	}
 	log.Info("control plane listening", "factory", string(s.manifest.FactoryID), "addr", ln.Addr().String())
 	return c.Run(ctx, ln, wiring.ControlPassInterval)
-}
-
-// runDispatcher runs the dispatcher and its health endpoint until ctx ends.
-func runDispatcher(ctx context.Context, args []string, getenv func(string) string, log *slog.Logger) error {
-	fs := newFlags("dispatcher")
-	work := fs.Duration("fake-agent-work", defaultFakeAgentWork, "how long a scripted agent run works before it leaves its patch")
-	if err := parse(fs, args); err != nil {
-		return err
-	}
-	if *work < 0 {
-		return fmt.Errorf("%w: --fake-agent-work must not be negative", errUsage)
-	}
-	s, err := setup(ctx, getenv, core.ZoneAgent)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = s.store.Close() }()
-	d, err := newDispatcher(s, *work)
-	if err != nil {
-		return err
-	}
-	ln, err := wiring.Listen(ctx, listenOr(s.env.Listen, wiring.DefaultDispatcherListen), s.env.AllowNonLoopback)
-	if err != nil {
-		return err
-	}
-	log.Info("dispatcher running", "factory", string(s.manifest.FactoryID), "owner", d.Health().Owner, "health", ln.Addr().String())
-	served := make(chan error, 1)
-	go func() {
-		served <- wiring.Serve(ctx, ln, wiring.DispatcherHealth(d, s.clock, 3*wiring.DispatcherLeaseTTL))
-	}()
-	runErr := d.Run(ctx)
-	if err := <-served; err != nil && runErr == nil {
-		runErr = err
-	}
-	return runErr
 }
 
 // newDispatcher builds the dispatcher with the scripted agent, the only

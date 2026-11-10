@@ -6,9 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/runcontrol"
+	"github.com/bestagentkits/sisf/internal/audit"
 	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/internal/supervisor/killswitch"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
 )
 
 // enforceInterval is how often a stop in force is applied again, holding
@@ -19,14 +22,17 @@ const enforceInterval = time.Minute
 // when the supervisor was not given the state store.
 type emergencyStop struct {
 	sw    *killswitch.Switch
+	store *sqlstore.Store
 	close func()
 }
 
 // openEmergencyStop opens the store named by the environment variable dsnEnv
 // and builds the switch on it. Without the variable the supervisor serves
 // status only; with it, a store that cannot be opened refuses the start, so
-// a supervisor never looks able to stop the factory when it is not.
-func openEmergencyStop(ctx context.Context, factory core.FactoryID, dsnEnv string, lookupEnv func(string) (string, bool), clock core.Clock) (*emergencyStop, error) {
+// a supervisor never looks able to stop the factory when it is not. With
+// dispatcherURL the stop also cancels the agent runs and revokes their
+// secrets in the dispatcher's process, through its run control route.
+func openEmergencyStop(ctx context.Context, factory core.FactoryID, dsnEnv, dispatcherURL string, lookupEnv func(string) (string, bool), clock core.Clock) (*emergencyStop, error) {
 	raw, ok := lookupEnv(dsnEnv)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return nil, nil
@@ -35,12 +41,22 @@ func openEmergencyStop(ctx context.Context, factory core.FactoryID, dsnEnv strin
 	if err != nil {
 		return nil, err
 	}
-	sw, err := killswitch.New(killswitch.Config{FactoryID: factory, State: store, Clock: clock})
+	cfg := killswitch.Config{FactoryID: factory, State: store, Clock: clock, Audit: audit.New(store, clock)}
+	if dispatcherURL != "" {
+		token, _ := lookupEnv(runcontrol.EnvToken)
+		client, err := runcontrol.NewClient(dispatcherURL, core.NewSecretValue([]byte(token)))
+		if err != nil {
+			_ = store.Close()
+			return nil, err
+		}
+		cfg.Runs, cfg.Secrets = client, client
+	}
+	sw, err := killswitch.New(cfg)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
-	return &emergencyStop{sw: sw, close: func() { _ = store.Close() }}, nil
+	return &emergencyStop{sw: sw, store: store, close: func() { _ = store.Close() }}, nil
 }
 
 // options adds the switch's admin routes to opts.

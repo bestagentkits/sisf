@@ -8,6 +8,7 @@ package wiring
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,10 @@ const (
 	// EnvApprovalKey is the delegated key the approval store signs decisions
 	// with: an ed25519 seed in unpadded base64url. Only the control zone has it.
 	EnvApprovalKey = "SISF_APPROVAL_KEY"
+	// EnvTrustedProxies lists, comma separated, the networks the edge
+	// connects to the control zone from; the public report route trusts the
+	// client address the edge forwards only from them. Loopback when unset.
+	EnvTrustedProxies = "SISF_TRUSTED_PROXIES"
 	// EnvAppHealthURL and EnvDispatcherHealthURL are where the control plane
 	// probes Zone 1 and Zone 2. They default to the loopback ports of a
 	// Standalone install.
@@ -60,6 +65,7 @@ type Env struct {
 	ApprovalKey         core.SecretValue
 	AppHealthURL        string
 	DispatcherHealthURL string
+	TrustedProxies      []netip.Prefix
 }
 
 // ReadEnv reads the contract from getenv. It checks only the shape of what
@@ -84,6 +90,16 @@ func ReadEnv(getenv func(string) string) (Env, error) {
 			return e, core.NewError(core.CodeInvalidArgument, EnvAllowNonLoopback+" must be true or false")
 		}
 		e.AllowNonLoopback = allow
+	}
+	for _, raw := range strings.Split(getenv(EnvTrustedProxies), ",") {
+		if raw = strings.TrimSpace(raw); raw == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return e, core.NewError(core.CodeInvalidArgument, EnvTrustedProxies+" must list networks such as 172.18.0.0/16")
+		}
+		e.TrustedProxies = append(e.TrustedProxies, prefix.Masked())
 	}
 	if e.Config == "" {
 		return e, missing(EnvConfig)
