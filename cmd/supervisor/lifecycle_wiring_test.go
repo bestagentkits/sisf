@@ -59,7 +59,7 @@ func lifecycleInstall(t *testing.T) (*install, []string) {
 		t.Fatal(err)
 	}
 	return inst, append(inst.runArgs(), "--factory-manifest", manifestPath, "--edge-admin-url", srv.URL,
-		"--deploy", "local", "--deploy-local-program", program, "--root-private-key-env", "SISF_ROOT_PRIVATE_KEY")
+		"--qa-judge", "fake", "--deploy", "local", "--deploy-local-program", program, "--root-private-key-env", "SISF_ROOT_PRIVATE_KEY")
 }
 
 // A supervisor given the factory manifest issues its delegated keys onto
@@ -123,6 +123,9 @@ func TestASupervisorWhoseLifecycleCannotBeWiredRefusesToStart(t *testing.T) {
 		// Untrusted code is never built on the local backend.
 		"untrusted local exec": {func(_ *install, a []string) []string { return append(a, "--exec", "local", "--coder-agent", "codex") }, core.CodePermissionDenied},
 		"no build backend":     {func(_ *install, a []string) []string { return append(a, "--coder-agent", "claude") }, core.CodeNotSupported},
+		// QA is never skipped: the agent judge needs a backend to run under.
+		"the agent judge without a backend": {func(_ *install, a []string) []string { return append(a, "--qa-judge", "agent") }, core.CodeNotSupported},
+		"an unknown judge":                  {func(_ *install, a []string) []string { return append(a, "--qa-judge", "lenient") }, core.CodeInvalidArgument},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

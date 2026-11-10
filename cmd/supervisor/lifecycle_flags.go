@@ -38,6 +38,7 @@ type lifecycleFlags struct {
 	deployEndpoint, deployNetwork                      string
 	appPort                                            int
 	dispatcherAdminURL                                 string
+	qa                                                 qaFlags
 }
 
 func (l *lifecycleFlags) register(fs *flag.FlagSet) {
@@ -61,17 +62,15 @@ func (l *lifecycleFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&l.deployNetwork, "deploy-network", "", "deploy compose: the Compose network of the units")
 	fs.IntVar(&l.appPort, "deploy-app-port", 8080, "deploy compose: port the application listens on in its container")
 	fs.StringVar(&l.dispatcherAdminURL, "dispatcher-admin-url", "", "run control URL of the dispatcher the emergency stop cancels runs and revokes secrets through; token in "+runcontrol.EnvToken)
+	l.qa.register(fs)
 }
 
 // enabled reports whether the lifecycle stages run.
 func (l *lifecycleFlags) enabled() bool { return l.factoryManifest != "" }
 
-// imageBuilder picks how candidates are built. Untrusted code goes only to
-// an isolating backend; the local one is refused except in the trusted
-// simulation with the scripted agent.
-func (l *lifecycleFlags) imageBuilder(ctx context.Context, m *manifest.Manifest, sim bool, gate *prgate.Gate, clock core.Clock) (stages.ImageBuilder, error) {
-	var docker, local execution.Backend
-	var err error
+// execBackends builds the execution backend --exec names: at most one of
+// docker and local is set.
+func (l *lifecycleFlags) execBackends(m *manifest.Manifest, clock core.Clock) (docker, local execution.Backend, err error) {
 	switch l.exec {
 	case "none", "":
 	case "docker":
@@ -82,8 +81,15 @@ func (l *lifecycleFlags) imageBuilder(ctx context.Context, m *manifest.Manifest,
 		err = core.NewError(core.CodeInvalidArgument, "--exec must be none, docker or local")
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	return docker, local, nil
+}
+
+// imageBuilder picks how candidates are built. Untrusted code goes only to
+// an isolating backend; the local one is refused except in the trusted
+// simulation with the scripted agent.
+func (l *lifecycleFlags) imageBuilder(ctx context.Context, m *manifest.Manifest, sim bool, gate *prgate.Gate, docker, local execution.Backend) (stages.ImageBuilder, error) {
 	profile := stages.ProfileProduction
 	if sim {
 		profile = stages.ProfileSimulation

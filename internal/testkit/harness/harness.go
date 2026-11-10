@@ -34,6 +34,7 @@ import (
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/internal/install"
 	"github.com/bestagentkits/sisf/internal/policy"
+	"github.com/bestagentkits/sisf/internal/qa/agentjudge"
 	"github.com/bestagentkits/sisf/internal/supervisor/killswitch"
 	"github.com/bestagentkits/sisf/internal/testkit/fakegithub"
 	"github.com/bestagentkits/sisf/internal/testkit/fakeoidc"
@@ -41,6 +42,7 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/manifest"
+	"github.com/bestagentkits/sisf/pkg/qa"
 	"github.com/bestagentkits/sisf/pkg/state"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
@@ -77,6 +79,15 @@ type Options struct {
 	Upstream *Upstream
 	// Decision runs the decision layer on every control pass that is due.
 	Decision *wiring.DecisionConfig
+	// Coder, when set, is the coding agent the dispatcher runs in place of
+	// the scripted one, and CoderArtifacts where the agent zone's exporter
+	// reads its patches.
+	Coder          agent.Backend
+	CoderArtifacts lifecycle.ArtifactSource
+	// QAJudge, when set, builds the judge the supervisor's evaluator uses
+	// in place of the scripted one, from the materials the supervisor
+	// gathers of each candidate.
+	QAJudge func(materials agentjudge.MaterialsSource) (qa.Judge, error)
 }
 
 // Factory is one factory running in the test process.
@@ -119,6 +130,7 @@ type Factory struct {
 	// Telemetry is what telemetry.search reads.
 	Telemetry *telemetry.MemoryStore
 
+	opts       Options
 	dsn        string
 	controlSrv *httptest.Server
 	// owner is the Owner's browser, signed in on first use.
@@ -134,7 +146,7 @@ func New(t testing.TB, opts Options) *Factory {
 	t.Helper()
 	ctx := context.Background()
 	root := moduleRoot(t)
-	f := &Factory{t: t, Clock: sqlstoretest.NewClock(Start), dsn: filepath.Join(t.TempDir(), "factory.db"),
+	f := &Factory{t: t, opts: opts, Clock: sqlstoretest.NewClock(Start), dsn: filepath.Join(t.TempDir(), "factory.db"),
 		Supervisor: &FakeSupervisor{}, Telemetry: telemetry.NewMemoryStore(1000)}
 
 	manifestBytes := read(t, root, policy.PathFactory)
@@ -281,7 +293,7 @@ func (f *Factory) openStore(zone core.Zone) *sqlstore.Store {
 func (f *Factory) newDispatcher(store state.Store) *dispatcher.Dispatcher {
 	f.t.Helper()
 	d, err := wiring.NewDispatcher(wiring.DispatcherConfig{
-		Manifest: f.Manifest, Store: store, Agent: f.Agent, Clock: f.Clock,
+		Manifest: f.Manifest, Store: store, Agent: f.coder(), Clock: f.Clock,
 		Owner:        fmt.Sprintf("dispatcher@harness#%d", f.dispatchers.Add(1)),
 		PollInterval: PollInterval, LeaseTTL: LeaseTTL,
 		NewRunID: func() core.RunID { return core.RunID(fmt.Sprintf("run-%04d", f.runs.Add(1))) },
@@ -290,6 +302,14 @@ func (f *Factory) newDispatcher(store state.Store) *dispatcher.Dispatcher {
 		f.t.Fatalf("harness: build the dispatcher: %v", err)
 	}
 	return d
+}
+
+// coder is the coding agent the dispatcher runs.
+func (f *Factory) coder() agent.Backend {
+	if f.opts.Coder != nil {
+		return f.opts.Coder
+	}
+	return f.Agent
 }
 
 // RestartDispatcher replaces the dispatcher by a new one under a new name,

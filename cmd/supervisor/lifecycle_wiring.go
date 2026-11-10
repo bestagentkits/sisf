@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	"github.com/bestagentkits/sisf/adapters/agent/fake"
 	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/audit"
@@ -15,12 +14,10 @@ import (
 	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
-	"github.com/bestagentkits/sisf/pkg/agent"
 	"github.com/bestagentkits/sisf/pkg/approvals"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/manifest"
-	"github.com/bestagentkits/sisf/pkg/qa"
 )
 
 // lifecycleDeps are what the stages are built from besides the flags.
@@ -31,6 +28,8 @@ type lifecycleDeps struct {
 	redactor  *redact.Redactor
 	log       *slog.Logger
 	clock     core.Clock
+	// dsnEnv names the variable holding the state store connection.
+	dsnEnv string
 }
 
 // buildLifecycle wires the build, QA and release stages of the factory.
@@ -93,16 +92,25 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
-	images, err := l.imageBuilder(ctx, m, sim, gate, d.clock)
+	docker, local, err := l.execBackends(m, d.clock)
 	if err != nil {
 		return nil, err
 	}
-	judge, err := l.judge(sim, d.clock)
+	images, err := l.imageBuilder(ctx, m, sim, gate, docker, local)
+	if err != nil {
+		return nil, err
+	}
+	repo := github.RepoRef{Owner: m.Repository.Owner, Name: m.Repository.Repo}
+	judge, err := l.judge(ctx, judgeDeps{
+		manifest: m, sim: sim, docker: docker, local: local, trustDir: d.cfg.TrustDir, dsnEnv: d.dsnEnv, rootKeyEnv: l.rootPrivateKeyEnv,
+		lookupEnv: d.lookupEnv, clock: d.clock, store: d.stop.store,
+		materials: stages.CandidateMaterials{State: d.stop.store, Tree: stages.Tree{GitHub: client, Repo: repo}},
+	})
 	if err != nil {
 		return nil, err
 	}
 	return stages.New(stages.Config{
-		FactoryID: m.FactoryID, Repo: github.RepoRef{Owner: m.Repository.Owner, Name: m.Repository.Repo}, State: d.stop.store,
+		FactoryID: m.FactoryID, Repo: repo, State: d.stop.store, SameRouteAcknowledged: m.ModelRoutes.SameModelRoute,
 		GitHub: client, Judge: judge, QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
 		QASigner: keys.QA, ArtifactSigner: keys.Artifact, Verifier: keys.Verifier, ApprovalVerifier: approvalVerifier,
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
@@ -140,16 +148,6 @@ func lkgBook(cfg supervisor.Config, factory core.FactoryID, rootPub ed25519.Publ
 		return nil, err
 	}
 	return release.OpenLKGBook(cfg.TrustDir, factory, store, clock)
-}
-
-// judge is the evaluator's model. The trusted simulation scores with the
-// scripted agent; no production evaluator backend is installed yet, so a
-// production factory refuses to start its stages rather than skip QA.
-func (l *lifecycleFlags) judge(sim bool, clock core.Clock) (qa.Judge, error) {
-	if !sim || l.coderAgent != "fake" {
-		return nil, core.NewError(core.CodeNotSupported, "no evaluator backend is installed for the production profile")
-	}
-	return fake.New(fake.Config{Name: "fake-qa", Clock: clock, Roles: []agent.Role{agent.RoleQA}})
 }
 
 // spendOnly is the approval store's signer in the supervisor, which only

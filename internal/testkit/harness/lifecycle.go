@@ -63,12 +63,21 @@ func (f *Factory) startLifecycle(client *github.RESTClient) {
 
 	images, err := stages.SelectImageBuilder(context.Background(), stages.ExecutionChoice{Profile: stages.ProfileSimulation, Agent: "fake"})
 	must(f.t, err)
-	f.Exporter = &lifecycle.Exporter{Owner: "exporter@harness", State: f.AgentStore, Artifacts: f.Artifacts, Clock: f.Clock}
+	var artifacts lifecycle.ArtifactSource = f.Artifacts
+	if f.opts.CoderArtifacts != nil {
+		artifacts = f.opts.CoderArtifacts
+	}
+	f.Exporter = &lifecycle.Exporter{Owner: "exporter@harness", State: f.AgentStore, Artifacts: artifacts, Clock: f.Clock}
 	f.Freeze, err = killswitch.New(killswitch.Config{FactoryID: m.FactoryID, State: f.ControlStore, Clock: f.Clock,
-		Runs: killswitch.RunCanceller(f.Agent)})
+		Runs: killswitch.RunCanceller(f.coder())})
 	must(f.t, err)
+	var judge qa.Judge = f.Agent
+	if f.opts.QAJudge != nil {
+		judge, err = f.opts.QAJudge(stages.CandidateMaterials{State: f.ControlStore, Tree: stages.Tree{GitHub: client, Repo: repo}})
+		must(f.t, err)
+	}
 	f.Stages, err = stages.New(stages.Config{
-		FactoryID: m.FactoryID, Repo: repo, State: f.ControlStore, GitHub: client, Judge: f.Agent,
+		FactoryID: m.FactoryID, Repo: repo, State: f.ControlStore, GitHub: client, Judge: judge,
 		QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
 		QASigner: f.Trust.QA, ArtifactSigner: f.Trust.Artifact, Verifier: f.Trust.Verifier, ApprovalVerifier: f.Trust.Verifier,
 		Redactor: redact.New(redact.Config{}), MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: clock,
