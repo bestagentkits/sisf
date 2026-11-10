@@ -1,7 +1,9 @@
 package statemachine
 
 import (
+	"fmt"
 	"slices"
+	"strconv"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 )
@@ -47,14 +49,19 @@ func CheckLease(t core.Transition) error {
 }
 
 // CheckRecordBinding reports whether t continues what the stored record is
-// about: the run that holds the issue, the candidate it submitted and the
-// release it rolled out. stored is the record as it is before the write. A
-// step that does not continue it yields CONFLICT:
+// about: the run that holds the issue, the attempt it is on, the candidate it
+// submitted and the release it rolled out. stored is the record as it is
+// before the write. A step that does not continue it yields CONFLICT:
 //
-//   - the claim must name a run, and not the run the record already had: a
-//     claim starts a new run, so receipts of an earlier run never count again;
+//   - the claim must name a run, and not the run the stored record names: a
+//     claim starts a new run, so receipts of the run before never count again;
 //   - any other step must not name another run than the stored one, and must
 //     name the stored one while a run holds the issue (RequiresLease);
+//   - the claim must carry attempt 1, since a new run starts its count; the
+//     failed evaluation (qa_failed) must carry exactly the stored attempt
+//     plus one; every other step must carry the stored attempt unchanged, so
+//     no step can lower, reset or skip the count the attempt limit is judged
+//     against;
 //   - submitting a candidate must name it; the steps into ReleaseCandidate and
 //     Canary must name the stored candidate, and no other step may name
 //     another one;
@@ -62,9 +69,15 @@ func CheckLease(t core.Transition) error {
 //     and Verified must name the stored release, and no other step may name
 //     another one.
 func CheckRecordBinding(stored core.StateRecord, t core.Transition) error {
+	if want := attemptAfter(stored, t.Event); t.Attempt != want {
+		refusal := unbound(t, "the step must carry attempt %d, not %d", want, t.Attempt)
+		refusal.Details["attempt"] = strconv.Itoa(t.Attempt)
+		refusal.Details["stored_attempt"] = strconv.Itoa(stored.Attempt)
+		return refusal
+	}
 	if t.Event == core.EventClaimed {
 		if t.RunID == "" || t.RunID == stored.RunID {
-			return unbound(t, "a claim starts a new run and must name a run the issue has not had")
+			return unbound(t, "a claim starts a new run and must name another run than the one the record names")
 		}
 		return nil
 	}
@@ -88,6 +101,21 @@ func CheckRecordBinding(stored core.StateRecord, t core.Transition) error {
 	return nil
 }
 
+// attemptAfter is the attempt number the record must carry after a step on
+// event: the claim starts the count of a new run at 1, a failed evaluation
+// sends the run into its next attempt, and every other step keeps the stored
+// number. The attempts guard judges the limit against the stored number, so
+// this is what makes the limit bind.
+func attemptAfter(stored core.StateRecord, event core.Event) int {
+	switch event {
+	case core.EventClaimed:
+		return 1
+	case core.EventQAFailed:
+		return stored.Attempt + 1
+	}
+	return stored.Attempt
+}
+
 // binding is how one step relates to a value the record stores: the step
 // sets it, must repeat it, or may repeat it.
 type binding struct{ sets, required bool }
@@ -107,8 +135,8 @@ func (b binding) holds(named, stored string) bool {
 
 // unbound builds the CONFLICT of a step that does not continue the stored
 // record.
-func unbound(t core.Transition, message string) *core.Error {
-	refusal := core.NewError(core.CodeConflict, message)
+func unbound(t core.Transition, format string, args ...any) *core.Error {
+	refusal := core.NewError(core.CodeConflict, fmt.Sprintf(format, args...))
 	refusal.Details = stepDetails(t)
 	return refusal
 }

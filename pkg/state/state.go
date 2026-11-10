@@ -85,12 +85,16 @@ type Records interface {
 	// statemachine.CheckRecordBinding(stored, t) with the record as it is
 	// before the write and returns its CONFLICT: a step whose t.RunID differs
 	// from the stored run is refused, except the claim, which starts a new
-	// run; a step that names another candidate or release than the stored
-	// one is refused, except the step that submits a candidate and the step
-	// that starts the rollout.
+	// run and must name another run than the stored one; a step that names
+	// another candidate or release than the stored one is refused, except the
+	// step that submits a candidate and the step that starts the rollout. A
+	// step whose t.Attempt is not the number its event demands is refused
+	// too: the claim must carry 1, qa_failed exactly the stored attempt plus
+	// one, and every other step the stored attempt unchanged.
 	//
 	// The record written carries t.To, the next version, t.IdempotencyKey,
-	// the lease t was written under and t.Attempt. Its RunID changes only on
+	// the lease t was written under and t.Attempt, which the binding check
+	// has already held to the rule above. Its RunID changes only on
 	// the claim, which sets t.RunID and clears both digests. Its
 	// CandidateDigest changes only on candidate_submitted, which sets
 	// t.CandidateDigest, and its ReleaseDigest only on rollout_started,

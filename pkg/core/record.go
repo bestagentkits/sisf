@@ -97,8 +97,11 @@ type Transition struct {
 	// and no other step may name another run.
 	RunID RunID `json:"run_id,omitempty"`
 	// Attempt is the attempt number the record carries after the write. The
-	// first attempt of a run is 1, the retry after a failed evaluation
-	// carries the next number, and no other step lowers the stored number.
+	// claim must carry 1, since a new run starts its count; the failed
+	// evaluation (qa_failed) must carry exactly the stored number plus one;
+	// every other step must carry the stored number unchanged, so before the
+	// first claim it stays 0. The attempt limit is judged against the stored
+	// number, so no step may lower, reset or skip it.
 	Attempt int `json:"attempt"`
 	// ActorID names who asked for the change, for the audit trail.
 	ActorID string `json:"actor_id,omitempty"`
