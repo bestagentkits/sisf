@@ -151,7 +151,7 @@ func TestTransitionUnderAStaleFencingTokenIsRefused(t *testing.T) {
 		})
 
 		// The holder that lost its lease reports late.
-		stale := step(issue(7), core.StateReady, core.EventClaimed, core.StateClaimed, ready.Version, "claim-1")
+		stale := step(issue(7), core.StateReady, core.EventClaimed, core.StateClaimed, ready.Version, "claim/1")
 		stale.LeaseOwner, stale.FencingToken, stale.RunID = crashed.Owner, crashed.Token, "run-1"
 		_, err := transition(s, stale)
 		wantCode(t, err, core.CodeStaleFencingToken)
@@ -159,7 +159,7 @@ func TestTransitionUnderAStaleFencingTokenIsRefused(t *testing.T) {
 			t.Fatalf("a fenced-off write changed the record: %+v", stored)
 		}
 
-		claim := step(issue(7), core.StateReady, core.EventClaimed, core.StateClaimed, ready.Version, "claim-2")
+		claim := step(issue(7), core.StateReady, core.EventClaimed, core.StateClaimed, ready.Version, "claim/2")
 		claim.LeaseOwner, claim.FencingToken, claim.RunID, claim.Attempt = successor.Owner, successor.Token, "run-2", 1
 		claimed := mustTransition(t, s, claim)
 		if claimed.LeaseOwner != "dispatcher-2" || claimed.FencingToken != successor.Token || claimed.RunID != "run-2" || claimed.Attempt != 1 {
@@ -167,7 +167,7 @@ func TestTransitionUnderAStaleFencingTokenIsRefused(t *testing.T) {
 		}
 
 		// The run goes on under the lease it claimed with, and under no other.
-		start := step(issue(7), core.StateClaimed, core.EventDevelopmentStarted, core.StateDeveloping, claimed.Version, "started")
+		start := step(issue(7), core.StateClaimed, core.EventDevelopmentStarted, core.StateDeveloping, claimed.Version, "develop/run-2")
 		start.Attempt, start.RunID = claimed.Attempt, claimed.RunID
 		_, err = transition(s, start)
 		wantCode(t, err, core.CodeStaleFencingToken)
@@ -204,7 +204,7 @@ func TestConcurrentWritersOnOneVersionLetExactlyOneWin(t *testing.T) {
 					s = agent
 				}
 				// Each writer has a key of its own, so none replays another.
-				tr := step(issue(7), core.StateReady, core.EventClaimed, core.StateClaimed, ready.Version, "claim-"+string(rune('a'+i)))
+				tr := step(issue(7), core.StateReady, core.EventClaimed, core.StateClaimed, ready.Version, "claim/"+string(rune('a'+i)))
 				tr.LeaseOwner, tr.FencingToken, tr.RunID, tr.Attempt = lease.Owner, lease.Token, core.RunID("run-"+string(rune('a'+i))), 1
 				_, errs[i] = transition(s, tr)
 			}()

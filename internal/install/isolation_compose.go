@@ -32,12 +32,15 @@ func (v Violation) String() string {
 func CheckCompose(l Layout, data []byte) ([]Violation, error) {
 	var file composeFile
 	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(false)
+	// Strictly: a key the deployment does not write, which could widen a
+	// zone's reach in a way no rule below knows of, refuses the file.
+	dec.KnownFields(true)
 	if err := dec.Decode(&file); err != nil {
-		return nil, invalidf("the Compose file cannot be read: %v", err)
+		return nil, invalidf("the Compose file has a key this deployment does not write, or a value of another shape: %v", err)
 	}
 	c := &composeChecker{l: l, file: file}
 	c.names()
+	c.hostMaterial()
 	for _, name := range sortedKeys(file.Services) {
 		c.service(name, file.Services[name])
 	}
@@ -95,11 +98,32 @@ func (c *composeChecker) service(name string, s composeService) {
 	c.mounts(name, s, rule)
 }
 
+// hardening keeps each service confined: unprivileged, without added
+// capabilities or host devices, in namespaces of its own and under Docker's
+// default seccomp, AppArmor and SELinux confinement.
 func (c *composeChecker) hardening(name string, s composeService) {
-	if s.Privileged || s.Pid != "" || s.Ipc != "" || len(s.CapAdd) > 0 {
-		c.add(ruleHardening, name, "must not be privileged, share a host namespace or add capabilities")
+	if s.Privileged {
+		c.add(ruleHardening, name, "must not be privileged")
 	}
-	if !slices.Contains(s.SecurityOpt, "no-new-privileges:true") {
+	if len(s.CapAdd) > 0 {
+		c.add(ruleHardening, name, "must not add capabilities %v", s.CapAdd)
+	}
+	if len(s.Devices) > 0 {
+		c.add(ruleHardening, name, "must not be given host devices")
+	}
+	for _, ns := range []struct{ key, value string }{
+		{"pid", s.Pid}, {"ipc", s.Ipc}, {"uts", s.Uts}, {"cgroup", s.Cgroup}, {"userns_mode", s.UsernsMode},
+	} {
+		if ns.value != "" {
+			c.add(ruleHardening, name, "sets %s %q; it must keep a namespace of its own, not share the host's or another container's", ns.key, ns.value)
+		}
+	}
+	for _, opt := range s.SecurityOpt {
+		if opt != confinementOption {
+			c.add(ruleHardening, name, "sets security_opt %q; only %s is allowed, any other option changes the confinement", opt, confinementOption)
+		}
+	}
+	if !slices.Contains(s.SecurityOpt, confinementOption) {
 		c.add(ruleHardening, name, "must set no-new-privileges")
 	}
 	if name != "state" && !slices.Contains(s.CapDrop, "ALL") {
@@ -173,10 +197,35 @@ func (c *composeChecker) ports(name string, s composeService, rule serviceRule) 
 	}
 }
 
+// hostMaterial refuses what would put host files into a container past the
+// mount rules: a named volume that is a bind of a host directory, or any
+// other driver, and the top-level configs and secrets, which are host files.
+func (c *composeChecker) hostMaterial() {
+	for _, n := range sortedKeys(c.file.Volumes) {
+		v := c.file.Volumes[n]
+		if v.Driver != "" || len(v.DriverOpts) > 0 {
+			c.add(ruleVolume, "", "volume %s sets a driver or driver options; a volume here is a plain named volume, never a bind of a host path", n)
+		}
+	}
+	for _, n := range sortedKeys(c.file.Configs) {
+		c.add(ruleSecretMount, "", "declares the config %s; host files reach no container except the manifests mounted read-only", n)
+	}
+	for _, n := range sortedKeys(c.file.Secrets) {
+		c.add(ruleSecretMount, "", "declares the secret %s; each zone reads its secrets from the env file of its own area", n)
+	}
+}
+
 // mounts allows named volumes of the service's own, and a few read-only host
 // files. No service has a Docker socket (dockerAccess); the secrets
-// directory belongs to nobody.
+// directory belongs to nobody, and no service takes another's mounts or is
+// handed configs or secrets.
 func (c *composeChecker) mounts(name string, s composeService, rule serviceRule) {
+	if len(s.VolumesFrom) > 0 {
+		c.add(ruleVolume, name, "takes the mounts of %v; it may mount only its own volumes", s.VolumesFrom)
+	}
+	if len(s.Configs) > 0 || len(s.Secrets) > 0 {
+		c.add(ruleSecretMount, name, "is handed configs or secrets; it reads its secrets from the env file of its own area")
+	}
 	for _, m := range s.Volumes {
 		src, rest, _ := strings.Cut(m, ":")
 		switch {

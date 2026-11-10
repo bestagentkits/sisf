@@ -32,6 +32,10 @@ import (
 //   - STALE_FENCING_TOKEN when a run holds the issue, or the step is the
 //     claim, and the request carries no lease, and for any request whose
 //     token is not the latest one issued for the issue's lease;
+//   - PERMISSION_DENIED when the zone may not write the step under its
+//     idempotency key: a zone with keys of its own stays within them
+//     (zone_ownership.go), checked here, where the database's row policy
+//     refuses it as well;
 //   - CONFLICT when the step does not continue the run, the candidate or the
 //     release the record names;
 //   - INVALID_ARGUMENT when the step would lower the attempt count of the run.
@@ -134,6 +138,9 @@ func (t *tx) checkWriter(ctx context.Context, current core.StateRecord, tr core.
 		if err := t.CheckFencing(ctx, state.IssueLeaseResource(tr.IssueID), tr.FencingToken); err != nil {
 			return err
 		}
+	}
+	if err := t.keysStep(tr); err != nil {
+		return err
 	}
 	if err := statemachine.CheckRecordBinding(current, tr); err != nil {
 		return err

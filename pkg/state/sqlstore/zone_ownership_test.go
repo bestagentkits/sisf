@@ -186,7 +186,7 @@ func TestAgentZoneDrivesTheRunFromClaimToEvaluation(t *testing.T) {
 		claimed := claim(t, agent, ready, "worker-1", "run-1")
 		retried := along(t, agent, claimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted, core.EventQAFailed)
 		evaluating := advance(t, agent, retried, core.EventCandidateSubmitted, func(tr *core.Transition) {
-			tr.IdempotencyKey = "resubmitted"
+			tr.IdempotencyKey = "candidate/resubmitted"
 		})
 		if evaluating.State != core.StateQAEvaluation || evaluating.Attempt != 2 {
 			t.Fatalf("record after the run = %+v", evaluating)
