@@ -63,7 +63,7 @@ func (e logExporter) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpa
 	for _, s := range spans {
 		attrs := []any{"span", s.Name(), "duration", s.EndTime().Sub(s.StartTime()).String(), "status", s.Status().Code.String()}
 		for _, kv := range s.Attributes() {
-			attrs = append(attrs, string(kv.Key), kv.Value.Emit())
+			attrs = append(attrs, string(kv.Key), kv.Value.String())
 		}
 		e.log.Info("telemetry span", attrs...)
 	}
