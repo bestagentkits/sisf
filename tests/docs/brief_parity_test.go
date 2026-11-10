@@ -118,8 +118,8 @@ func TestADRSetIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 18 {
-		t.Fatalf("want 18 ADR files, got %d: %v", len(files), files)
+	if len(files) != 19 {
+		t.Fatalf("want 19 ADR files, got %d: %v", len(files), files)
 	}
 	nameRe := regexp.MustCompile(`^(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`)
 	required := []string{"## Status", "## Context", "## Decision", "## Consequences", "## Acceptance test"}
@@ -144,10 +144,14 @@ func TestADRSetIsComplete(t *testing.T) {
 			}
 		}
 		proposed := strings.Contains(text, "Status: proposed")
-		if i+1 >= 10 && !proposed {
+		const lastOpenPointADR = 18
+		if i+1 >= 10 && i+1 <= lastOpenPointADR && !proposed {
 			t.Errorf("%s: open-point ADR must contain \"Status: proposed\"", base)
 		}
-		if i+1 < 10 && proposed {
+		if i+1 > lastOpenPointADR && !strings.Contains(text, "Status: accepted") {
+			t.Errorf("%s: ADR after the open points must contain \"Status: accepted\"", base)
+		}
+		if (i+1 < 10 || i+1 > lastOpenPointADR) && proposed {
 			t.Errorf("%s: invariant ADR must not be proposed", base)
 		}
 	}
