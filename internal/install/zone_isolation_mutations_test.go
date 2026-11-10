@@ -1,6 +1,9 @@
 package install
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Negative cases: each breaks exactly one rule and must be caught.
 func TestTheCheckerCatchesEveryWayOfBreakingTheBoundaries(t *testing.T) {
@@ -23,14 +26,27 @@ func TestTheCheckerCatchesEveryWayOfBreakingTheBoundaries(t *testing.T) {
 		"dispatcher gets the raw socket": {ruleSocket, func(s, _ map[string]any) {
 			svc(s, "dispatcher")["volumes"] = []any{"/var/run/docker.sock:/var/run/docker.sock"}
 		}},
-		"dispatcher bypasses the proxy": {ruleSocket, func(s, _ map[string]any) {
-			svc(s, "dispatcher")["environment"].(map[string]any)["DOCKER_HOST"] = "unix:///var/run/docker.sock"
+		"dispatcher is pointed at a Docker API": {ruleSocket, func(s, _ map[string]any) {
+			svc(s, "dispatcher")["environment"].(map[string]any)["DOCKER_HOST"] = "tcp://socket-proxy:2375"
 		}},
-		"the proxy allows exec": {ruleProxy, func(s, _ map[string]any) {
-			svc(s, "socket-proxy")["environment"].(map[string]any)["EXEC"] = "1"
+		"a service mounts the socket read-only": {ruleSocket, func(s, _ map[string]any) {
+			svc(s, "control")["volumes"] = []any{"/var/run/docker.sock:/var/run/docker.sock:ro"}
 		}},
-		"the proxy leaves images to a default": {ruleProxy, func(s, _ map[string]any) {
-			delete(svc(s, "socket-proxy")["environment"].(map[string]any), "IMAGES")
+		"a service mounts another runtime socket": {ruleSocket, func(s, _ map[string]any) {
+			svc(s, "dispatcher")["volumes"] = []any{"/run/containerd/containerd.sock:/c.sock"}
+		}},
+		"the dispatcher is privileged": {ruleSocket, func(s, _ map[string]any) { svc(s, "dispatcher")["privileged"] = true }},
+		"a socket proxy service comes back": {ruleProxy, func(s, _ map[string]any) {
+			s["socket-proxy"] = map[string]any{"image": "tecnativa/docker-socket-proxy:v0.5.0@sha256:" + strings.Repeat("a", 64)}
+		}},
+		"a service runs a socket proxy image": {ruleProxy, func(s, _ map[string]any) {
+			svc(s, "edge")["image"] = "tecnativa/docker-socket-proxy@sha256:" + strings.Repeat("a", 64)
+		}},
+		"the edge joins the factory network with the state store": {ruleNetwork, func(s, _ map[string]any) {
+			svc(s, "edge")["networks"] = []any{"app", "control", "factory"}
+		}},
+		"the state store joins the edge's control network": {ruleNetwork, func(s, _ map[string]any) {
+			svc(s, "state")["networks"] = []any{"factory", "control"}
 		}},
 		"zone 1 joins the control network": {ruleNetwork, func(s, _ map[string]any) {
 			svc(s, "app")["networks"] = []any{"app", "control"}

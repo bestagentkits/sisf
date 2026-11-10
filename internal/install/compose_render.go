@@ -33,7 +33,7 @@ type ComposeData struct {
 	// JSON array (which is also a YAML flow sequence).
 	BootstrapCommand string
 
-	PostgresImage, SocketProxyImage                                string
+	PostgresImage                                                  string
 	PortEdge, PortApp, PortControl, PortSupervisor, PortDispatcher int
 	PortFakeGitHub, PortPostgres                                   int
 }
@@ -48,8 +48,7 @@ func newComposeData(l Layout, o Options, images Images, bootstrap []string) (Com
 		Project: project(o.FactoryID), FactoryID: o.FactoryID, Repository: o.Repo.Owner + "/" + o.Repo.Repo,
 		SecretsDir: l.Dir + "/secrets", ConfigFile: l.Config(), ReleaseFile: l.ReleaseManifest(),
 		GitHubAPIURL: o.GitHubAPIURL, Images: images, Sim: o.Sim, Debug: o.Debug,
-		BootstrapCommand: string(cmd),
-		PostgresImage:    PostgresImage, SocketProxyImage: SocketProxyImage,
+		BootstrapCommand: string(cmd), PostgresImage: PostgresImage,
 		PortEdge: PortEdge, PortApp: PortApp, PortControl: PortControl, PortSupervisor: PortSupervisor,
 		PortDispatcher: PortDispatcher, PortFakeGitHub: PortFakeGitHub, PortPostgres: PortPostgres,
 	}, nil

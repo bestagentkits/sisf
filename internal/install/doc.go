@@ -29,4 +29,15 @@
 // The password above is a placeholder for a server that exists for minutes.
 // Name the container with the "sisf-" prefix and remove it afterwards.
 // Zone isolation checks that need Docker live under the e2e build tag.
+//
+// # Docker API access
+//
+// No service of the Compose project has Docker API access: there is no socket
+// mount, no DOCKER_HOST and no socket proxy, and CheckCompose rejects each.
+// Container creation for agent runs must go through a filtering proxy that
+// denies inspect of every container except runner containers and allows only
+// creates with no bind mounts, no privileges and the sandbox network. That
+// proxy must ship with a live negative test (inspect of the control
+// container, and a privileged or bind-mounting create, are both refused)
+// before any Docker API access is given back to Zone 2.
 package install

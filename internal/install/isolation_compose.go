@@ -42,6 +42,7 @@ func CheckCompose(l Layout, data []byte) ([]Violation, error) {
 		c.service(name, file.Services[name])
 	}
 	c.sandbox()
+	c.stateReach()
 	return c.out, nil
 }
 
@@ -75,6 +76,7 @@ func (c *composeChecker) names() {
 }
 
 func (c *composeChecker) service(name string, s composeService) {
+	c.dockerAccess(name, s)
 	rule, known := serviceRules[name]
 	if !known {
 		c.add(ruleService, name, "is not a service this deployment has")
@@ -91,15 +93,6 @@ func (c *composeChecker) service(name string, s composeService) {
 	c.networks(name, s, rule)
 	c.ports(name, s, rule)
 	c.mounts(name, s, rule)
-	if name == "socket-proxy" {
-		c.proxy(s)
-	}
-	if _, holds := s.Environment["DOCKER_HOST"]; holds && name != "dispatcher" {
-		c.add(ruleSocket, name, "must not be pointed at the Docker API")
-	}
-	if name == "dispatcher" && s.Environment["DOCKER_HOST"] != "tcp://socket-proxy:2375" {
-		c.add(ruleSocket, name, "must reach Docker only through tcp://socket-proxy:2375")
-	}
 }
 
 func (c *composeChecker) hardening(name string, s composeService) {
@@ -128,9 +121,6 @@ func (c *composeChecker) secrets(name string, s composeService, rule serviceRule
 		c.add(ruleSecretMount, name, "env files %v are not the ones of its own area, %v", got, want)
 	}
 	for _, key := range sortedKeys(s.Environment) {
-		if name == "socket-proxy" {
-			break // its variables are API group switches, checked by proxy()
-		}
 		for _, word := range secretWords {
 			if strings.Contains(key, word) {
 				c.add(ruleSecretInline, name, "sets %s in the Compose file; secrets belong in the env file of the zone", key)
@@ -184,16 +174,12 @@ func (c *composeChecker) ports(name string, s composeService, rule serviceRule) 
 }
 
 // mounts allows named volumes of the service's own, and a few read-only host
-// files. The Docker socket belongs to the socket proxy; the secrets
+// files. No service has a Docker socket (dockerAccess); the secrets
 // directory belongs to nobody.
 func (c *composeChecker) mounts(name string, s composeService, rule serviceRule) {
 	for _, m := range s.Volumes {
 		src, rest, _ := strings.Cut(m, ":")
 		switch {
-		case strings.HasSuffix(src, "docker.sock"):
-			if name != "socket-proxy" || !strings.HasSuffix(m, ":ro") {
-				c.add(ruleSocket, name, "mounts the Docker socket; only the socket proxy may, read-only")
-			}
 		case strings.HasPrefix(src, "/"):
 			if strings.HasPrefix(src, c.l.Dir+"/secrets") {
 				c.add(ruleSecretMount, name, "mounts the secrets directory")
@@ -208,22 +194,43 @@ func (c *composeChecker) mounts(name string, s composeService, rule serviceRule)
 	}
 }
 
-// proxy holds the socket proxy to the container API alone.
-func (c *composeChecker) proxy(s composeService) {
-	for key, value := range s.Environment {
-		on := value == "1"
-		if on && !slices.Contains(proxyAllowed, key) {
-			c.add(ruleProxy, "socket-proxy", "enables %s; only %v may be on", key, proxyAllowed)
+// dockerAccess refuses every way a service could reach a Docker API: a
+// mounted runtime socket, DOCKER_HOST, a socket proxy by name or image, and
+// the privilege that makes a container the host. No unit of this release
+// creates containers, so none may be able to.
+func (c *composeChecker) dockerAccess(name string, s composeService) {
+	for _, m := range s.Volumes {
+		for _, sock := range dockerSocketNames {
+			if strings.Contains(m, sock) {
+				c.add(ruleSocket, name, "mounts %q; no service has a Docker socket", m)
+			}
 		}
 	}
-	for _, key := range proxyAllowed[:2] {
-		if s.Environment[key] != "1" {
-			c.add(ruleProxy, "socket-proxy", "must enable %s, or the dispatcher cannot create and destroy runners", key)
+	if _, set := s.Environment["DOCKER_HOST"]; set {
+		c.add(ruleSocket, name, "must not set DOCKER_HOST; no service has a Docker API")
+	}
+	if s.Privileged {
+		c.add(ruleSocket, name, "must not be privileged; a privileged container can reach the host and its Docker")
+	}
+	for _, word := range socketProxyWords {
+		if strings.Contains(name, word) || strings.Contains(s.Image, word) || strings.Contains(s.ContainerName, word) {
+			c.add(ruleProxy, name, "is a Docker socket proxy; there is none in this deployment")
+			break
 		}
 	}
-	for _, key := range proxyDenied {
-		if s.Environment[key] != "0" {
-			c.add(ruleProxy, "socket-proxy", "must switch %s off explicitly", key)
+}
+
+// stateReach keeps the state database off every network the edge is on: the
+// edge faces the outside and must have no route to the store.
+func (c *composeChecker) stateReach() {
+	state, ok := c.file.Services["state"]
+	edge, edgeOK := c.file.Services["edge"]
+	if !ok || !edgeOK {
+		return
+	}
+	for _, n := range state.Networks {
+		if slices.Contains(edge.Networks, n) {
+			c.add(ruleNetwork, "state", "shares the %s network with the edge, which must have no route to the state database", n)
 		}
 	}
 }

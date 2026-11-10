@@ -6,8 +6,8 @@
 # file that breaks the isolation rules checked in internal/install.
 #
 # One project, one service per runtime unit that exists today. The runner
-# units are created by the dispatcher through the socket proxy and are not
-# services here. Every container, network and volume is named
+# units do not exist yet, and nothing here can create a container: no service
+# has Docker API access. Every container, network and volume is named
 # "{{ .Project }}-..." so it can be told apart from anything else on the host.
 #
 # Isolation, in short:
@@ -15,9 +15,10 @@
 #     and only the edge is attached to it (its way out).
 #   - each zone reads only its own secrets (an env file of its own area);
 #     nothing mounts the secrets directory.
-#   - the host's Docker socket is mounted into the socket proxy only. The
-#     dispatcher talks to the proxy, which allows the container API and
-#     nothing else.
+#   - no service mounts the host's Docker socket or is pointed at a Docker
+#     API, and there is no socket proxy.
+#   - the state database is on the factory network only, which the edge is
+#     not on.
 #   - every published port is bound to 127.0.0.1, in the 7460-7469 range.
 #
 # Runtime contract with factoryd: it reads its manifest from SISF_CONFIG,
@@ -44,7 +45,7 @@ services:
     environment:
       POSTGRES_USER: sisf_owner
       POSTGRES_DB: sisf
-    networks: [factory, control]
+    networks: [factory]
 {{- if .Debug }}
     ports: ["127.0.0.1:{{ .PortPostgres }}:5432"]
 {{- end }}
@@ -69,41 +70,6 @@ services:
     networks: [factory]
     depends_on:
       state: {condition: service_healthy}
-
-  # ---- shared: the only holder of the host's Docker socket -----------------
-  socket-proxy:
-    <<: *hardened
-    container_name: "{{ .Project }}-socket-proxy"
-    image: "{{ .SocketProxyImage }}"
-    environment:
-      CONTAINERS: "1"
-      POST: "1"
-      PING: "1"
-      VERSION: "1"
-      ALLOW_RESTARTS: "0"
-      AUTH: "0"
-      BUILD: "0"
-      COMMIT: "0"
-      CONFIGS: "0"
-      DISTRIBUTION: "0"
-      EVENTS: "0"
-      EXEC: "0"
-      GRPC: "0"
-      IMAGES: "0"
-      INFO: "0"
-      NETWORKS: "0"
-      NODES: "0"
-      PLUGINS: "0"
-      SECRETS: "0"
-      SERVICES: "0"
-      SESSION: "0"
-      SWARM: "0"
-      SYSTEM: "0"
-      TASKS: "0"
-      VOLUMES: "0"
-    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
-    networks: [factory]
-    read_only: false
 
   # ---- Zone 3: control plane -----------------------------------------------
   supervisor:
@@ -174,7 +140,6 @@ services:
       SISF_CONFIG: /etc/sisf/factory.yaml
       SISF_LISTEN: "0.0.0.0:{{ .PortDispatcher }}"
       SISF_LISTEN_ALLOW_NON_LOOPBACK: "true"
-      DOCKER_HOST: "tcp://socket-proxy:2375"
     networks: [factory]
     volumes:
       - "{{ .ConfigFile }}:/etc/sisf/factory.yaml:ro"
@@ -186,7 +151,6 @@ services:
       start_period: 10s
     depends_on:
       state: {condition: service_healthy}
-      socket-proxy: {condition: service_started}
 
   # ---- Zone 1: application -------------------------------------------------
   app:

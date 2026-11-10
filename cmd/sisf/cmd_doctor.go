@@ -21,7 +21,9 @@ Checks a factory install end to end and changes nothing:
   - secrets are owner-only, each zone has a credential of its own, and
     nothing of Zone 3 sits in another zone's files;
   - Docker mode: the Compose project keeps every isolation rule (pinned
-    images, loopback ports, no raw Docker socket, per-zone credentials);
+    images, loopback ports, no Docker socket or API for any service,
+    per-zone credentials); it warns that container sandboxing is not
+    available in this release;
   - the budget confirmation exists;
   - all three zones report healthy, the edge reaches the app, the
     dispatcher answers (Docker mode: every container is running and healthy);

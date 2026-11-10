@@ -9,7 +9,7 @@ const (
 	ruleNaming       = "name.not_prefixed"
 	rulePort         = "port.not_loopback"
 	ruleSocket       = "socket.raw_access"
-	ruleProxy        = "socket.proxy_too_open"
+	ruleProxy        = "socket.proxy_present"
 	ruleSecretMount  = "secret.cross_zone"
 	ruleSecretInline = "secret.inline"
 	ruleNetwork      = "network.unexpected"
@@ -63,22 +63,17 @@ var serviceRules = map[string]serviceRule{
 	"supervisor":      {envFiles: []string{"control/supervisor.env"}, networks: []string{"control"}, volumes: []string{"trust"}},
 	"dispatcher":      {envFiles: []string{"agent/runtime.env"}, networks: []string{"factory"}},
 	"edge":            {networks: []string{"app", "control", "sandbox"}, ports: []int{PortEdge}},
-	"state":           {envFiles: []string{"state/runtime.env"}, networks: []string{"factory", "control"}, volumes: []string{"state-data"}, ports: []int{PortPostgres}},
+	"state":           {envFiles: []string{"state/runtime.env"}, networks: []string{"factory"}, volumes: []string{"state-data"}, ports: []int{PortPostgres}},
 	"state-bootstrap": {envFiles: []string{"state/bootstrap.env"}, networks: []string{"factory"}},
-	"socket-proxy":    {networks: []string{"factory"}},
 	"sim-github":      {envFiles: []string{"sim/runtime.env"}},
 }
 
-// proxyAllowed are the only socket-proxy API groups that may be on: the
-// container API (create, start, inspect, logs, delete), the POST method it
-// needs, and two read-only calls Docker clients make to negotiate a version.
-var proxyAllowed = []string{"CONTAINERS", "POST", "PING", "VERSION"}
+// dockerSocketNames are file names of a container runtime's API socket. A
+// mount whose path contains one of them hands the holder the host.
+var dockerSocketNames = []string{"docker.sock", "podman.sock", "containerd.sock"}
 
-// proxyDenied must be switched off by name, so a default of the image that
-// is "on" can never apply silently.
-var proxyDenied = []string{"ALLOW_RESTARTS", "AUTH", "BUILD", "COMMIT", "CONFIGS", "DISTRIBUTION", "EVENTS", "EXEC",
-	"GRPC", "IMAGES", "INFO", "NETWORKS", "NODES", "PLUGINS", "SECRETS", "SERVICES", "SESSION", "SWARM", "SYSTEM",
-	"TASKS", "VOLUMES"}
+// socketProxyWords mark a service or image as a Docker socket proxy.
+var socketProxyWords = []string{"socket-proxy", "socketproxy", "docker-proxy", "dockerproxy"}
 
 // secretWords mark an environment variable that must come from an env file.
 var secretWords = []string{"PASSWORD", "TOKEN", "SECRET", "DSN", "KEY", "CREDENTIAL"}

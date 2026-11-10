@@ -51,9 +51,14 @@ func TestAHealthyDockerFactoryPassesAndSeesZonesThroughTheirContainers(t *testin
 	in := dockerFactory(t, dockerPS, supervisorJSON)
 	r := runDoctor(t, in)
 	for _, c := range r.Checks {
-		if c.Verdict != VerdictOK && c.Name != "artifacts" {
+		if c.Verdict != VerdictOK && c.Name != "artifacts" && c.Name != "container sandbox" {
 			t.Errorf("%s: %s %s", c.Name, c.Verdict, c.Detail)
 		}
+	}
+	// Container sandboxing is not available yet, and the doctor says so
+	// as a warning rather than claiming isolation it does not have.
+	if v := verdictOf(r, "container sandbox"); len(v) != 1 || v[0] != VerdictWarn {
+		t.Errorf("container sandbox = %v, want one warning", v)
 	}
 	for _, name := range []string{"container app", "container dispatcher", "container state", "compose isolation"} {
 		if len(verdictOf(r, name)) == 0 {

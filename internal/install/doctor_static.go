@@ -115,5 +115,6 @@ func (in *Installer) checkCompose(c *collector) {
 		}
 		return
 	}
-	c.ok("compose isolation", "pinned images, loopback ports, no raw Docker socket, one credential set per zone")
+	c.ok("compose isolation", "pinned images, loopback ports, no Docker socket or API for any service, one credential set per zone")
+	c.warn("container sandbox", "not available in this release: no service has Docker access, so agent runs cannot be isolated in containers; the sandbox network is declared but unused")
 }

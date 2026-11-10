@@ -3,6 +3,7 @@ package install
 import (
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -98,30 +99,57 @@ func TestZoneOneHasNoPathIntoTheControlZone(t *testing.T) {
 	}
 }
 
-func TestOnlyTheSocketProxyHoldsTheDockerSocketAndItAllowsTheContainerAPIOnly(t *testing.T) {
+func TestNoServiceHasDockerAccessAndTheStateStoreIsOutOfTheEdgesReach(t *testing.T) {
+	t.Parallel()
+	for name, mutate := range map[string]func(*Options){
+		"sim":   nil,
+		"debug": func(o *Options) { o.Debug = true },
+	} {
+		_, out := renderCompose(t, mutate)
+		f := composeFileOf(t, out)
+		for svc, s := range f.Services {
+			for _, v := range s.Volumes {
+				for _, sock := range dockerSocketNames {
+					if strings.Contains(v, sock) {
+						t.Errorf("%s: service %s mounts %s", name, svc, v)
+					}
+				}
+			}
+			if _, set := s.Environment["DOCKER_HOST"]; set {
+				t.Errorf("%s: service %s sets DOCKER_HOST", name, svc)
+			}
+			if s.Privileged {
+				t.Errorf("%s: service %s is privileged", name, svc)
+			}
+			for _, word := range socketProxyWords {
+				if strings.Contains(svc, word) || strings.Contains(s.Image, word) {
+					t.Errorf("%s: service %s (%s) is a socket proxy", name, svc, s.Image)
+				}
+			}
+		}
+		edge := f.Services["edge"].Networks
+		for _, n := range f.Services["state"].Networks {
+			if slices.Contains(edge, n) {
+				t.Errorf("%s: edge and state share the %s network", name, n)
+			}
+		}
+	}
+}
+
+func TestEveryServiceThatNeedsTheStateStoreReachesItOnTheFactoryNetwork(t *testing.T) {
 	t.Parallel()
 	_, out := renderCompose(t, nil)
 	f := composeFileOf(t, out)
-	for name, s := range f.Services {
-		holds := false
-		for _, v := range s.Volumes {
-			holds = holds || strings.Contains(v, "docker.sock")
-		}
-		if holds != (name == "socket-proxy") {
-			t.Errorf("service %s: holds the Docker socket = %v", name, holds)
-		}
+	if got := f.Services["state"].Networks; !slices.Equal(got, []string{"factory"}) {
+		t.Fatalf("state networks = %v, want only factory", got)
 	}
-	if got := f.Services["dispatcher"].Environment["DOCKER_HOST"]; got != "tcp://socket-proxy:2375" {
-		t.Errorf("dispatcher DOCKER_HOST = %q", got)
-	}
-	on := []string{}
-	for k, v := range f.Services["socket-proxy"].Environment {
-		if v == "1" {
-			on = append(on, k)
+	for _, name := range []string{"control", "dispatcher", "state-bootstrap"} {
+		if !slices.Contains(f.Services[name].Networks, "factory") {
+			t.Errorf("%s cannot reach the state store: not on the factory network", name)
 		}
 	}
-	if len(on) != 4 {
-		t.Errorf("socket proxy API groups enabled = %v, want CONTAINERS, POST, PING, VERSION", on)
+	if slices.Contains(f.Services["edge"].Networks, "factory") {
+		t.Error("the edge is on the factory network")
 	}
 }
 
@@ -138,7 +166,7 @@ func TestEveryImageIsPinnedByDigestAndEveryNameCarriesThePrefix(t *testing.T) {
 			t.Errorf("service %s: container %q lacks the sisf- prefix", name, s.ContainerName)
 		}
 	}
-	if !strings.Contains(f.Services["state"].Image, "@sha256:") || !strings.Contains(f.Services["socket-proxy"].Image, "@sha256:") {
+	if !strings.Contains(f.Services["state"].Image, "@sha256:") {
 		t.Error("a third-party image is not pinned by digest")
 	}
 	for n, v := range f.Networks {

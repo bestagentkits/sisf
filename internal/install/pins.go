@@ -15,9 +15,6 @@ const (
 	// PostgresImage is the state store of Docker mode.
 	PostgresImage  = "postgres:17.11-alpine@" + PostgresDigest
 	PostgresDigest = "sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac"
-
-	// SocketProxyImage is the only holder of the host's Docker socket.
-	SocketProxyImage = "tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459"
 )
 
 // Artifacts that `sisf up` builds, in the order their placeholders count.
