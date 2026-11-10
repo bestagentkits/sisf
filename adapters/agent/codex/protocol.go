@@ -28,7 +28,11 @@ func (p protocol) Invocation(in cliagent.Input) (cliagent.Invocation, error) {
 		return cliagent.Invocation{}, err
 	}
 	sandbox := "workspace-write"
-	if p.unrestricted {
+	switch {
+	case in.Task.Role == agent.RoleQA:
+		// An evaluator never writes, not even in a proven sandbox.
+		sandbox = "read-only"
+	case p.unrestricted:
 		sandbox = "danger-full-access"
 	}
 	args := []string{

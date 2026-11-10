@@ -57,6 +57,7 @@ const usageText = `supervisor is the trusted release supervisor of one factory d
 Usage:
   supervisor run --factory-id ID --manifest FILE --root-key-ref REF --trust-dir DIR [--lkg FILE] [--admin ADDR] [--state-dsn-env NAME]
                  [--dispatcher-admin-url URL] [--factory-manifest FILE --edge-admin-url URL --deploy local|compose ...]
+                 [--qa-judge agent|fake --qa-agent claude|codex|pi --qa-model MODEL --qa-agent-binary PATH ...]
   supervisor digest
   supervisor status [--admin ADDR]
 
@@ -166,7 +167,7 @@ func runSupervisor(ctx context.Context, args []string, e env) int {
 	}
 	opts := stop.options(supervisor.Options{LookupEnv: e.lookupEnv, Clock: clock})
 	stages, err := lf.startLifecycle(ctx, lifecycleDeps{cfg: cfg, stop: stop, lookupEnv: e.lookupEnv,
-		redactor: proc.Redactor, log: proc.Log, clock: clock}, &opts)
+		redactor: proc.Redactor, log: proc.Log, clock: clock, dsnEnv: dsnEnv}, &opts)
 	if err != nil {
 		say(e.stderr, "%s: refusing to start: the lifecycle cannot be wired\n", program)
 		printError(e.stderr, err)

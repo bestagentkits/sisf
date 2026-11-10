@@ -70,9 +70,15 @@ func (e *Evaluator) Run(ctx context.Context, c qa.Candidate) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	// The judge is asked on the chosen route; the receipt records the
+	// route it actually runs on.
+	chosen := route
+	if route, err = e.actualRoute(chosen, c.CodingModelRoute); err != nil {
+		return Result{}, err
+	}
 	checks := e.runGates(ctx, c, route)
 	card, err := e.cfg.Judge.Score(ctx, qa.JudgeRequest{
-		Candidate: c, Baseline: baseline, Identity: e.cfg.Identity, ModelRoute: route.route, Rubric: rubric,
+		Candidate: c, Baseline: baseline, Identity: e.cfg.Identity, ModelRoute: chosen.route, Rubric: rubric,
 	})
 	if err != nil {
 		return Result{}, err

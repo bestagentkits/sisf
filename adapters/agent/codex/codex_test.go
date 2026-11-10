@@ -117,6 +117,25 @@ func TestOnlyAProvenSandboxRunsWithoutTheCLIsOwnSandbox(t *testing.T) {
 	}
 }
 
+func TestAnEvaluatorRunsInTheReadOnlySandboxEvenWhenUnrestricted(t *testing.T) {
+	t.Parallel()
+	for _, unrestricted := range []bool{false, true} {
+		rec := t.TempDir()
+		b := newBackend(t, clitest.Script{Record: rec, Steps: []clitest.Step{{AwaitStdin: "*EOF*"}, {EmitFile: fixture(t, "success.jsonl")}}}, codex.Config{Unrestricted: unrestricted})
+		ref, err := b.Start(context.Background(), task(agent.RoleQA, core.StepQA), agent.WorkspaceRef{Path: t.TempDir()}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := b.Wait(context.Background(), ref); err != nil {
+			t.Fatal(err)
+		}
+		seen := clitest.Recorded(t, rec)
+		if !containsRun(seen.Args, []string{"-s", "read-only"}) {
+			t.Errorf("unrestricted=%v: an evaluator may write: %v", unrestricted, seen.Args)
+		}
+	}
+}
+
 func TestTheStreamIsReadByEventTypeAndTolerantOfUnknownFields(t *testing.T) {
 	t.Parallel()
 	b := newBackend(t, clitest.Script{Steps: []clitest.Step{{AwaitStdin: "*EOF*"}, {EmitFile: fixture(t, "success.jsonl")}}}, codex.Config{})
