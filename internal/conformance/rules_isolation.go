@@ -11,7 +11,8 @@ import (
 // checkIsolation verifies the boundaries between the three zones: each has
 // its own credentials and its own store role and no secret stands in for
 // another, no unit reaches a volume it has no claim to (so Zone 1 has no
-// path into Zone 3), on one machine no two owners share a directory, every
+// path into Zone 3), on one machine no two owners share a directory and no
+// unit runs a binary from another unit's directory, every
 // unit stays on the network segments its role allows, the sandbox reaches
 // the outside only through its egress proxy, only the units meant to face
 // the outside do, and a runner listens on nothing.
@@ -21,6 +22,7 @@ func (c *checker) checkIsolation() {
 	c.checkVolumeHolders()
 	c.checkVolumeMounts()
 	c.checkStandalonePaths()
+	c.checkStandaloneExecutables()
 	c.checkSegments()
 	c.checkEgress()
 	c.checkPublicExposure()

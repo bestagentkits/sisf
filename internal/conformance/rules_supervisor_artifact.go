@@ -96,13 +96,31 @@ func (c *checker) startedExecutables(unit manifest.Unit, images ...string) []str
 	return started
 }
 
+// namesExecutable reports whether any word of a command, or the value after
+// "=" in a word such as --exec=FILE, names one of the executables. A wrapper
+// such as an init process or an interpreter runs the file it is given, so
+// the first word alone does not say what runs, and no list of launchers is
+// complete.
+func namesExecutable(command, executables []string) bool {
+	return slices.ContainsFunc(command, func(word string) bool {
+		if word == "" {
+			return false
+		}
+		_, value, assigned := strings.Cut(word, "=")
+		return slices.Contains(executables, executableName(word)) ||
+			(assigned && value != "" && slices.Contains(executables, executableName(value)))
+	})
+}
+
 // checkSupervisorArtifact verifies condition 1. The supervisor runs from a
 // digest-pinned artifact of its own, and no other unit shares it. Another
 // unit shares the supervisor's artifact when it has the supervisor's digest,
 // when its image is the supervisor's repository under any tag, digest or
 // registry alias, or, where executables identify artifacts, when it starts
-// an executable of the supervisor's name from any directory. A unit that
-// starts through a shell hides what it runs and is refused for that.
+// an executable of the supervisor's name from any directory or names one in
+// any argument. A unit that starts through a shell hides what it runs and is
+// refused for that. In Standalone mode the supervisor must also start the
+// binary it pins, from a directory no unit mounts.
 func (c *checker) checkSupervisorArtifact(sup manifest.Supervisor) {
 	if err := sup.Digest.Validate(); err != nil {
 		c.add(RuleSupervisorNotPinned, "supervisor.digest",
@@ -135,6 +153,7 @@ func (c *checker) checkSupervisorArtifact(sup manifest.Supervisor) {
 			"start the supervisor's own binary as the first word of units.supervisor.command, without a shell or launcher in front of it",
 			"the supervisor unit starts through a shell or launcher, so the executable that runs as the supervisor is named in an argument this check cannot read; it can be shown neither to be the pinned artifact nor to differ from what another unit runs")
 	}
+	c.checkSupervisorExecutable(sup)
 	c.checkSupervisorArtifactShared(sup, c.startedExecutables(own, sup.Image))
 }
 
@@ -162,9 +181,9 @@ func (c *checker) checkSupervisorArtifactShared(sup manifest.Supervisor, executa
 			c.add(RuleSupervisorSharesArtifact, at+".command",
 				"start the unit's own binary as the first word of its command, without a shell or launcher in front of it",
 				"unit %q starts through a shell or launcher, so what it runs is named in an argument this check cannot read and cannot be shown to differ from the supervisor's executable", name)
-		case len(unit.Command) > 0 && slices.Contains(executables, executableName(unit.Command[0])):
+		case namesExecutable(unit.Command, executables):
 			c.add(RuleSupervisorSharesArtifact, at+".command", fix,
-				"unit %q starts executable %q, the one the supervisor starts, so replacing that unit replaces the supervisor", name, unit.Command[0])
+				"unit %q names the executable the supervisor starts in its command, so whatever program comes first can run the supervisor's executable, and replacing that unit replaces the supervisor", name)
 		case c.m.Mode == manifest.ModeStandalone && unit.Image != "" && slices.Contains(executables, executableName(unit.Image)):
 			c.add(RuleSupervisorSharesArtifact, at+".image", fix,
 				"unit %q names as its binary the executable the supervisor starts, under another directory, so replacing that unit replaces the supervisor", name)

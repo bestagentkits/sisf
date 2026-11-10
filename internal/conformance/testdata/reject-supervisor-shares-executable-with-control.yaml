@@ -25,7 +25,7 @@ units:
     port: 7463
     mounts: [{volume: control-data, path: data/control}]
   supervisor:
-    image: bin/sisf-supervisor
+    image: bin/factoryd
     command: [bin/factoryd, supervisor]
     digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
     lifecycle: long_running
@@ -65,7 +65,7 @@ units:
     port: 7460
     public: true
 supervisor:
-  image: bin/sisf-supervisor
+  image: bin/factoryd
   digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
   trust_volume: trust
   root_key_ref: env:SISF_ROOT_PUBLIC_KEY

@@ -93,6 +93,10 @@ const (
 	// RuleVolumePathOverlap: on one machine, the directories of two volumes
 	// with different owners are the same directory or lie inside each other.
 	RuleVolumePathOverlap Rule = "isolation.volume_path_overlap"
+	// RuleExecutableInAnotherUnitsDirectory: on one machine, a unit starts a
+	// binary from a directory another unit mounts, so that unit decides what
+	// runs.
+	RuleExecutableInAnotherUnitsDirectory Rule = "isolation.executable_in_another_units_directory"
 	// RuleRunnerInbound: a runner declares a port, although a run accepts no
 	// inbound connection.
 	RuleRunnerInbound Rule = "isolation.runner_inbound_port"
@@ -173,7 +177,7 @@ func Rules() []Rule {
 		RuleSupervisorDigestChange, RuleSupervisorSelfCheck, RuleTrustVolumeStorage,
 		RuleSharedCredentials, RuleSharedStoreRole, RuleVolumeUndeclared, RuleCrossZoneWrite, RuleCrossZoneRead,
 		RuleSharedVolumeMount, RuleNetworkSegment, RuleNetworkUnattached, RuleSandboxNotInternal, RuleEgressProxy,
-		RulePublicExposure, RuleVolumeHolder, RuleVolumePathOverlap, RuleRunnerInbound,
+		RulePublicExposure, RuleVolumeHolder, RuleVolumePathOverlap, RuleExecutableInAnotherUnitsDirectory, RuleRunnerInbound,
 		RuleQARouteMissing, RuleQASameModelRoute, RuleQASharedWorkspace, RuleQASharedCredentials,
 		RuleStatePlacement, RuleArtifactsPlacement, RuleSecretInline, RuleSecretRefReused,
 		RuleModeUnsupported, RuleBackendUndeclared, RuleBackendMode, RuleBackendCapability,
