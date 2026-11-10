@@ -33,4 +33,4 @@ Which deployment profile and backend can claim which capability. The profile lis
 
 ## Current status
 
-Design stage. No profile is verified yet. Targets: Docker Compose is the first mandatory profile; standalone local is the trusted-code profile. All others (Kubernetes, TOSE, Cloudflare, Vercel, Render, Railway) are later and stay unsupported until proven. The profile table is in brief §10; ADR [0001](adr/0001-three-zones-one-deployment.md) holds the invariant.
+Supported operating modes: Standalone (the trusted-code profile) and Docker Compose. Both are installed and checked by `sisf init`, `sisf up` and `sisf doctor`; the conformance checker is `sisf conformance check`. Docker mode does not yet provide container sandboxing for untrusted code, and `sisf doctor` warns about it, so `safe_exec` is not claimed for either mode. The end-to-end lifecycle on Compose and the real smoke run are still in progress. All other profiles (Kubernetes, TOSE, Cloudflare, Vercel, Render, Railway) are experimental or unsupported until proven. The profile table is in brief §10; ADR [0001](adr/0001-three-zones-one-deployment.md) holds the invariant.

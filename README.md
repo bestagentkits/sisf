@@ -2,7 +2,14 @@
 
 An open-source framework for a closed-loop *software factory*: it takes in requests, writes and independently verifies code, publishes, monitors, rolls back, and improves itself — all inside **one deployment**.
 
-> **Status: design stage.** This repository currently contains the decision brief and architecture review only. Nothing described here is implemented yet.
+## Status
+
+The factory core is implemented and tested in this repository (Go 1.25, see [ADR 0019](docs/adr/0019-go-1-25-toolchain.md)); some surfaces are still being integrated. The authoritative record of what a test proves is the [acceptance matrix](docs/acceptance-matrix.md).
+
+- **Implemented:** the three-zone conformance checker, install and lifecycle tooling (`sisf init`, `up`, `doctor`, `down`), signed Owner approvals, the audit log, the dispatcher with fencing, independent QA with hard gates, the trusted release supervisor with automatic rollback, the emergency stop, identity (GitHub/OIDC login, device-flow CLI login), the action service with its REST API, the `sisf` CLI and the dashboard, and budget modes. Identity is tested against fakes; a real GitHub App and real Google SSO are not yet exercised.
+- **In progress / experimental:** remote MCP and WebMCP, the full Decision Layer, final wiring of every surface into the running factory, the end-to-end lifecycle on Compose, and the real smoke run. Do not rely on them yet.
+- **Supported operating modes:** Standalone (trusted code only) and Docker Compose. Kubernetes, Vercel, Cloudflare, TOSE and Railway are unsupported or experimental; see the [capability matrix](docs/capability-matrix.md).
+- **Quickstart:** [docs/guides/quickstart.md](docs/guides/quickstart.md) runs a local factory against a simulated GitHub.
 
 ## The idea in one picture
 
@@ -29,6 +36,10 @@ GitHub is the source of truth for source, policy, decisions and work items; oper
 - Decision brief and implementation contract: [English](docs/self-improvement-software-factory-decision-brief.en.md) · [Tiếng Việt](docs/self-improvement-software-factory-decision-brief.md) (original) — fixed product decisions, interfaces, issue state machine, QA and release rules, phased scope P0–P4, acceptance matrix SISF-01…20.
 - [Architecture](docs/self-improvement-software-factory-architecture.html) — detailed interactive page: topology, entrypoints, workflows, playable issue state graph, decisions, user flows, QA and release rules, surfaces and protocols, trust boundary and security requirements, deployment design per operating mode, roadmap (VI/EN, light/dark). Download and open in a browser.
 - [Architecture review](docs/self-improvement-software-factory-architecture-review.html) — interactive visual summary (VI/EN, light/dark). Download and open in a browser.
+
+## Guides
+
+- [Quickstart](docs/guides/quickstart.md) · [Operations](docs/guides/operations.md) · [Incident runbook](docs/guides/incident.md) · [Security guide](docs/guides/security.md)
 
 ## Security
 

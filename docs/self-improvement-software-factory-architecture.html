@@ -239,7 +239,7 @@ let L='vi';try{L=localStorage.getItem('sisf-lang')||'vi'}catch(e){}
 const t=o=>o==null?'':typeof o==='string'?o:o[L];
 const $=s=>document.querySelector(s), el=(h)=>{const d=document.createElement('template');d.innerHTML=h.trim();return d.content.firstChild};
 const T={
-eyebrow:{vi:'Kiến trúc · bản thiết kế, chưa triển khai',en:'Architecture · design draft, not implemented'},
+eyebrow:{vi:'Kiến trúc · bản thiết kế, đang triển khai (xem README và acceptance-matrix)',en:'Architecture · design reference, implementation in progress (see README and acceptance matrix)'},
 lede:{vi:'Một factory deployment khép kín: ứng dụng, agent factory và control plane cùng vận hành. Hệ thống tự phát hiện cơ hội cải tiến, kiểm chứng độc lập, tự phát hành và phục hồi an toàn.',en:'One closed-loop factory deployment: application, agent factory and control plane run together. It finds improvement opportunities, verifies them independently, publishes and recovers safely.'},
 h_topo:{vi:'Ba zone trong cùng một deployment',en:'Three zones in one deployment'},
 s_topo:{vi:'Bấm vào một zone để xem trách nhiệm. Nhiều process hay container đều được, miễn chung một manifest, một danh tính và một vòng đời.',en:'Select a zone to see what it owns. Many processes or containers are fine, as long as they share one manifest, one identity and one lifecycle.'},
