@@ -26,7 +26,8 @@ GitHub is the source of truth for source, policy, decisions and work items; oper
 
 ## Documents
 
-- [Decision brief and implementation contract](docs/self-improvement-software-factory-decision-brief.md) (Vietnamese) — fixed product decisions, interfaces, issue state machine, QA and release rules, phased scope P0–P4, acceptance matrix SISF-01…20.
+- Decision brief and implementation contract: [English](docs/self-improvement-software-factory-decision-brief.en.md) · [Tiếng Việt](docs/self-improvement-software-factory-decision-brief.md) (original) — fixed product decisions, interfaces, issue state machine, QA and release rules, phased scope P0–P4, acceptance matrix SISF-01…20.
+- [Architecture](docs/self-improvement-software-factory-architecture.html) — detailed interactive page: topology, entrypoints, workflows, playable issue state graph, decisions, user flows, QA and release rules, surfaces and protocols, trust boundary, roadmap (VI/EN, light/dark). Download and open in a browser.
 - [Architecture review](docs/self-improvement-software-factory-architecture-review.html) — interactive visual summary (VI/EN, light/dark). Download and open in a browser.
 
 ## Roadmap
@@ -41,4 +42,4 @@ GitHub is the source of truth for source, policy, decisions and work items; oper
 
 ## License
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE). See [NOTICE](NOTICE).
