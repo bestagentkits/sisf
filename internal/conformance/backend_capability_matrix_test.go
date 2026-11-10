@@ -27,16 +27,16 @@ func gradeNew(t *testing.T, kind kit.Kind, bend func(declared core.CapabilitySet
 		backend := conformancetest.NewExecution("new-sandbox")
 		bend(backend.Declared, backend.Fail)
 		row, err = kit.GradeExecution(ctx, backend, kit.ExecutionProbe{
-			Spec: conformancetest.SandboxSpec(), Command: execution.Command{Argv: []string{"true"}}, EndToEndProven: true})
+			Spec: conformancetest.SandboxSpec(), Command: execution.Command{Argv: []string{"true"}}})
 	case kit.KindDeploy:
 		backend := conformancetest.NewDeploy("new-platform")
 		bend(backend.Declared, backend.Fail)
 		baseline, candidate := conformancetest.Artifacts()
-		row, err = kit.GradeDeploy(ctx, backend, kit.DeployProbe{Baseline: baseline, Candidate: candidate, Window: time.Minute, EndToEndProven: true})
+		row, err = kit.GradeDeploy(ctx, backend, kit.DeployProbe{Baseline: baseline, Candidate: candidate, Window: time.Minute})
 	case kit.KindAgent:
 		backend := conformancetest.NewAgent("new-agent")
 		bend(backend.Declared, backend.Fail)
-		row, err = kit.GradeAgent(ctx, backend, kit.AgentProbe{Task: conformancetest.Task(), Workspace: agent.WorkspaceRef{ID: "probe"}, EndToEndProven: true})
+		row, err = kit.GradeAgent(ctx, backend, kit.AgentProbe{Task: conformancetest.Task(), Workspace: agent.WorkspaceRef{ID: "probe"}})
 	}
 	if err != nil {
 		t.Fatalf("the %s backend could not be graded: %v", kind, err)
@@ -151,6 +151,26 @@ func TestAManifestSelectsOnlyBackendsTheMatrixHolds(t *testing.T) {
 	m = docker(t)
 	m.Adapters.Execution.Name = "compose"
 	wantOnly(t, Check(m), RuleBackendUndeclared, "adapters.execution.name")
+
+	// The coding agent and the QA agent are backends like any other.
+	agents := map[string]func(m *manifest.Manifest, name string){
+		"adapters.coder.name": func(m *manifest.Manifest, name string) { m.Adapters.Coder.Name = name },
+		"adapters.qa.name":    func(m *manifest.Manifest, name string) { m.Adapters.QA.Name = name },
+	}
+	for path, set := range agents {
+		for _, name := range []string{"gemini", "docker", "claude-enterprise"} {
+			m = docker(t)
+			set(m, name)
+			wantOnly(t, Check(m), RuleBackendUndeclared, path)
+		}
+		for _, name := range []string{"claude", "codex", "pi"} {
+			m = docker(t)
+			set(m, name)
+			if report := Check(m); !report.Conformant() {
+				t.Errorf("%s: built-in agent runtime %q must be accepted, got %+v", path, name, report.Findings)
+			}
+		}
+	}
 }
 
 func TestAManifestSelectsOnlyBackendsThatRunInItsMode(t *testing.T) {
@@ -173,7 +193,7 @@ func TestAManifestSelectsOnlyBackendsThatRunInItsMode(t *testing.T) {
 func TestAManifestAsksABackendOnlyForWhatItDeclares(t *testing.T) {
 	// The process deployer has one switch and no traffic split.
 	m := standalone(t)
-	m.Release.Strategy = manifest.StrategyCanary
+	m.Release.Strategy, m.Release.CanarySteps = manifest.StrategyCanary, []int{5, 25, 100}
 	wantOnly(t, Check(m), RuleBackendCapability, "release.strategy")
 
 	// A new backend that declares no rollback and no metrics may be selected,

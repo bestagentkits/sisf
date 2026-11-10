@@ -5,9 +5,9 @@ import (
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
-// Builtin returns the declarations of the execution and deployment backends
-// of the two supported operating modes. A manifest may select only a backend
-// declared here, because capabilities are declared before use.
+// Builtin returns the declarations of the agent, execution and deployment
+// backends of the two supported operating modes. A manifest may select only
+// a backend declared here, because capabilities are declared before use.
 //
 // The levels are design-time claims: every one is unverified, so no built-in
 // backend is graded above experimental until a run proves it. What is absent
@@ -16,6 +16,7 @@ func Builtin() []Declaration {
 	const claimed, absent = core.SupportUnverified, core.SupportNotSupported
 	standalone, docker := manifest.ModeStandalone, manifest.ModeDocker
 	return []Declaration{
+		builtinAgent("claude"), builtinAgent("codex"), builtinAgent("pi"),
 		{
 			// Local processes share the machine with the factory: suitable
 			// for code the Owner trusts and for nothing else.
@@ -50,6 +51,21 @@ func Builtin() []Declaration {
 				core.CapDeployBlueGreen: claimed, core.CapDeployCanary: claimed, core.CapDeployPreview: claimed,
 				core.CapDeployRollback: claimed, core.CapDeployObservedRevision: claimed, core.CapDeployMetrics: claimed,
 			},
+		},
+	}
+}
+
+// builtinAgent declares one of the built-in agent runtimes. Each runs in the
+// task workspace the execution backend gives it. No provider enforces a
+// spending limit, so none is claimed; the optional operations stay
+// undeclared, which counts as NOT_SUPPORTED, until the adapter proves them.
+func builtinAgent(name string) Declaration {
+	const claimed, absent = core.SupportUnverified, core.SupportNotSupported
+	return Declaration{
+		Kind: KindAgent, Name: name, Modes: []manifest.Mode{manifest.ModeStandalone, manifest.ModeDocker},
+		Capabilities: core.CapabilitySet{
+			core.CapLifecycle: claimed, core.CapIsolation: claimed, core.CapObservability: claimed,
+			core.CapAgentCancel: claimed, core.CapAgentHardBudget: absent,
 		},
 	}
 }

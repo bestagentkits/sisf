@@ -54,14 +54,35 @@ func TestABreachOfAnySupervisorBoundaryConditionIsRejected(t *testing.T) {
 			func(m *manifest.Manifest) {
 				editUnit(m, manifest.UnitControl, func(u *manifest.Unit) { u.Digest = m.Supervisor.Digest })
 			}, RuleSupervisorSharesArtifact, "units.control.digest"},
-		{"the app runs the supervisor image without a digest of its own", 1, docker,
+		{"the app runs the supervisor image under a digest of its own", 1, docker,
 			func(m *manifest.Manifest) {
-				editUnit(m, manifest.UnitApp, func(u *manifest.Unit) { u.Image, u.Digest = m.Supervisor.Image, "" })
+				editUnit(m, manifest.UnitApp, func(u *manifest.Unit) { u.Image = m.Supervisor.Image })
 			}, RuleSupervisorSharesArtifact, "units.app.image"},
+		{"the control unit runs the supervisor image under another tag", 1, docker,
+			func(m *manifest.Manifest) {
+				editUnit(m, manifest.UnitControl, func(u *manifest.Unit) { u.Image = m.Supervisor.Image + ":v2" })
+			}, RuleSupervisorSharesArtifact, "units.control.image"},
+		{"the dispatcher runs the supervisor image named by another digest", 1, docker,
+			func(m *manifest.Manifest) {
+				editUnit(m, manifest.UnitDispatcher, func(u *manifest.Unit) { u.Image = m.Supervisor.Image + "@" + string(otherDigest) })
+			}, RuleSupervisorSharesArtifact, "units.dispatcher.image"},
+		{"the edge runs the supervisor image under a tag and a digest", 1, docker,
+			func(m *manifest.Manifest) {
+				editUnit(m, manifest.UnitEdge, func(u *manifest.Unit) { u.Image = m.Supervisor.Image + ":stable@" + string(otherDigest) })
+			}, RuleSupervisorSharesArtifact, "units.edge.image"},
 		{"the supervisor starts the executable of the dispatcher", 1, standalone,
 			func(m *manifest.Manifest) {
 				editUnit(m, manifest.UnitDispatcher, func(u *manifest.Unit) { u.Command = []string{"bin/sisf-supervisor", "dispatch"} })
 			}, RuleSupervisorSharesArtifact, "units.dispatcher.command"},
+		{"the supervisor starts the executable of the dispatcher from another directory", 1, standalone,
+			func(m *manifest.Manifest) {
+				editUnit(m, manifest.UnitDispatcher, func(u *manifest.Unit) { u.Command = []string{"/usr/local/bin/sisf-supervisor", "dispatch"} })
+			}, RuleSupervisorSharesArtifact, "units.dispatcher.command"},
+		{"the supervisor is the control unit's executable under a full path", 1, docker,
+			func(m *manifest.Manifest) {
+				editUnit(m, manifest.UnitControl, func(u *manifest.Unit) { u.Command = []string{"factoryd", "control"} })
+				editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) { u.Command = []string{"/usr/bin/factoryd", "supervisor"} })
+			}, RuleSupervisorSharesArtifact, "units.control.command"},
 
 		{"the trust volume is not named", 2, docker,
 			func(m *manifest.Manifest) { m.Supervisor.TrustVolume = "" }, RuleTrustVolumeUndeclared, "supervisor.trust_volume"},
@@ -87,6 +108,23 @@ func TestABreachOfAnySupervisorBoundaryConditionIsRejected(t *testing.T) {
 			func(m *manifest.Manifest) { mount(m, manifest.UnitEdge, "trust", true) }, RuleTrustVolumeExposed, "units.edge.mounts[0]"},
 		{"the control unit, which a release can replace, can write the trust volume", 2, docker,
 			func(m *manifest.Manifest) { mount(m, manifest.UnitControl, "trust", false) }, RuleTrustVolumeExposed, "units.control.mounts[1]"},
+		{"a unit the factory publishes by itself can read the signing keys", 2, docker,
+			func(m *manifest.Manifest) {
+				m.Release.Units = append(m.Release.Units, manifest.UnitControl)
+				mount(m, manifest.UnitControl, "trust", true)
+			}, RuleTrustVolumeExposed, "units.control.mounts[1]"},
+		{"the artifact store is kept on the trust volume", 2, docker,
+			func(m *manifest.Manifest) { m.Storage.Artifacts.Location = "trust" }, RuleTrustVolumeStorage, "storage.artifacts.location"},
+		{"the artifact store is kept in a directory of the trust volume", 2, docker,
+			func(m *manifest.Manifest) { m.Storage.Artifacts.Location = "trust/artifacts" }, RuleTrustVolumeStorage, "storage.artifacts.location"},
+		{"the artifact store is kept where the supervisor mounts the trust volume", 2, docker,
+			func(m *manifest.Manifest) { m.Storage.Artifacts.Location = "/var/lib/sisf/trust/../trust/artifacts" }, RuleTrustVolumeStorage, "storage.artifacts.location"},
+		{"an object store is addressed inside the trust volume", 2, docker,
+			func(m *manifest.Manifest) {
+				m.Storage.Artifacts = manifest.ArtifactStore{Kind: manifest.ArtifactsObjectStore, Location: "/var/lib/sisf/trust"}
+			}, RuleTrustVolumeStorage, "storage.artifacts.location"},
+		{"the state store file is kept on the trust volume", 2, standalone,
+			func(m *manifest.Manifest) { m.Storage.State.Path = "data/trust/factory.db" }, RuleTrustVolumeStorage, "storage.state.path"},
 		{"the supervisor does not mount the trust volume", 2, docker,
 			func(m *manifest.Manifest) {
 				editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) { u.Mounts = nil })

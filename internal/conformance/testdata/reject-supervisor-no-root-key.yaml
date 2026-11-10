@@ -6,9 +6,9 @@ deployment_id: local
 mode: docker
 repository: {owner: acme, repo: hello-app}
 components:
-  application: {source: apps/web, credentials_ref: zone1-application, store_role: sisf_application}
-  agent: {source: factory, credentials_ref: zone2-agent, store_role: sisf_agent}
-  control: {source: control, credentials_ref: zone3-control, store_role: sisf_control}
+  application: {source: apps/web, credentials_ref: local:zone1-application, store_role: sisf_application}
+  agent: {source: factory, credentials_ref: local:zone2-agent, store_role: sisf_agent}
+  control: {source: control, credentials_ref: local:zone3-control, store_role: sisf_control}
 units:
   app:
     image: ghcr.io/acme/hello-app
@@ -92,6 +92,7 @@ adapters:
 release:
   policy: B
   strategy: canary
+  canary_steps: [5, 25, 100]
   units: [app]
   rollback: {error_rate: 0.02, baseline_delta: 0.01, min_samples: 100, window: 10m, consecutive_windows: 2}
   low_traffic: {min_hold: 30m, synthetic_suite: synthetic}

@@ -8,13 +8,16 @@ import (
 )
 
 // checkIsolation verifies the boundaries between the three zones: each has
-// its own credentials and its own store role, no unit writes a volume owned
-// by another zone (so Zone 1 has no write path into Zone 3), and units that
-// face users or run agent code stay on their own network segment.
+// its own credentials and its own store role, no unit reaches a volume it
+// has no claim to (so Zone 1 has no path into Zone 3), every unit stays on
+// the network segments its role allows, the sandbox reaches the outside only
+// through its egress proxy, and only the units meant to face the outside do.
 func (c *checker) checkIsolation() {
 	c.checkZoneSecrets()
-	c.checkVolumeWrites()
+	c.checkVolumeMounts()
 	c.checkSegments()
+	c.checkEgress()
+	c.checkPublicExposure()
 }
 
 // checkZoneSecrets rejects a credential set or store role used by two zones.
@@ -33,7 +36,7 @@ func (c *checker) checkZoneSecrets() {
 			if component.CredentialsRef != "" && component.CredentialsRef == other.CredentialsRef {
 				c.add(RuleSharedCredentials, fmt.Sprintf("components.%s.credentials_ref", later),
 					"give each zone a credential set of its own",
-					"%s and %s share credentials %q, so a breach of one zone reaches the other", zoneLabel(earlier), zoneLabel(later), component.CredentialsRef)
+					"%s and %s reference the same credential set, so a breach of one zone reaches the other", zoneLabel(earlier), zoneLabel(later))
 			}
 			if component.StoreRole != "" && component.StoreRole == other.StoreRole {
 				c.add(RuleSharedStoreRole, fmt.Sprintf("components.%s.store_role", later),
@@ -44,10 +47,19 @@ func (c *checker) checkZoneSecrets() {
 	}
 }
 
-// checkVolumeWrites rejects a writable mount of a volume another zone owns.
-// A volume marked shared may be written by every zone. The supervisor's
-// trust volume has stricter rules of its own and is left to them.
-func (c *checker) checkVolumeWrites() {
+// checkVolumeMounts judges every mount by who owns the volume:
+//
+//   - a volume of the unit's own zone may be mounted freely;
+//   - a volume marked shared is the data of a durable unit and is mounted by
+//     that unit alone (see sharedVolumeHolder), read-only mounts included;
+//   - a volume of another zone is never mounted writable, and a unit of
+//     Zone 1 or Zone 2 does not mount it at all: the application and the
+//     agents reach another zone through its API, not through its files. A
+//     Zone 3 unit, or one every zone uses, may mount it read-only.
+//
+// The supervisor's trust volume has stricter rules of its own and is left to
+// them.
+func (c *checker) checkVolumeMounts() {
 	trust := ""
 	if c.m.Supervisor != nil {
 		trust = c.m.Supervisor.TrustVolume
@@ -62,37 +74,44 @@ func (c *checker) checkVolumeWrites() {
 					"unit %q mounts volume %q, which is not declared, so no zone owns it and its isolation cannot be judged", name, mount.Volume)
 				continue
 			}
-			owner := volume.Zone
-			if mount.ReadOnly || mount.Volume == trust || !owner.Valid() || owner.Shared() || owner == name.Zone() {
-				continue
+			owner, zone := volume.Zone, name.Zone()
+			remove := fmt.Sprintf("remove this mount from units.%s", name)
+			switch {
+			case mount.Volume == trust || !owner.Valid():
+			case owner.Shared():
+				if holder := c.sharedVolumeHolder(mount.Volume); name != holder {
+					c.add(RuleSharedVolumeMount, path,
+						fmt.Sprintf("%s and reach the data through the %s unit", remove, holder),
+						"unit %q mounts volume %q, which is marked shared; only the %s unit mounts it, and every zone uses what it holds through that unit, never through a mount of its own", name, mount.Volume, holder)
+				}
+			case owner == zone:
+			case !mount.ReadOnly:
+				fix := "set read_only: true on this mount, or " + remove
+				if confined(zone) {
+					fix = remove
+				}
+				c.add(RuleCrossZoneWrite, path, fix,
+					"unit %q of %s can write volume %q, which belongs to %s; a zone has no write path into another zone", name, zoneLabel(zone), mount.Volume, zoneLabel(owner))
+			case confined(zone):
+				c.add(RuleCrossZoneRead, path, remove,
+					"unit %q of %s mounts volume %q, which belongs to %s; Zone 1 and Zone 2 reach another zone only through its API and cannot read its files, read-only included", name, zoneLabel(zone), mount.Volume, zoneLabel(owner))
 			}
-			c.add(RuleCrossZoneWrite, path,
-				fmt.Sprintf("set read_only: true on this mount, or remove it from units.%s", name),
-				"unit %q of %s can write volume %q, which belongs to %s; a zone has no write path into another zone", name, zoneLabel(name.Zone()), mount.Volume, zoneLabel(owner))
 		}
 	}
 }
 
-// checkSegments keeps the application on the app segment and the runners on
-// the sandbox segment, from which they reach the outside only through the
-// egress proxy.
-func (c *checker) checkSegments() {
-	only := map[manifest.UnitName]manifest.NetworkName{
-		manifest.UnitApp:      manifest.NetworkApp,
-		manifest.UnitRunner:   manifest.NetworkSandbox,
-		manifest.UnitQARunner: manifest.NetworkSandbox,
+// confined reports whether units of zone z may mount only their own zone's
+// volumes. That holds for Zone 1, which must not read the secrets of the
+// other zones, and for Zone 2, which calls Zone 3 only through its API.
+func confined(z core.Zone) bool { return z == core.ZoneApplication || z == core.ZoneAgent }
+
+// sharedVolumeHolder returns the one unit that may mount a volume marked
+// shared. There are two kinds of shared data, each kept by a durable unit:
+// the artifacts unit holds the volume storage.artifacts names, and the state
+// unit holds any other.
+func (c *checker) sharedVolumeHolder(volume string) manifest.UnitName {
+	if store := c.m.Storage.Artifacts; store.Kind == manifest.ArtifactsVolume && store.Location == volume {
+		return manifest.UnitArtifacts
 	}
-	for _, name := range manifest.UnitNames() {
-		segment, restricted := only[name]
-		if !restricted {
-			continue
-		}
-		for _, attached := range c.m.Units[name].Networks {
-			if attached != segment {
-				c.add(RuleNetworkSegment, fmt.Sprintf("units.%s.networks", name),
-					fmt.Sprintf("attach units.%s to %s only", name, segment),
-					"unit %q of %s is attached to the %q segment; it belongs on %q alone, so it has no path into another zone's network", name, zoneLabel(name.Zone()), attached, segment)
-			}
-		}
-	}
+	return manifest.UnitState
 }

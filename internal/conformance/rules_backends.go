@@ -10,18 +10,22 @@ import (
 )
 
 // checkBackends verifies that the operating mode has a supported profile and
-// that the execution and deployment backends the manifest selects are in the
-// capability matrix, run in that mode, and do not lack what the manifest
-// asks of them. A capability a backend only claims passes here; whether it
-// is proven is decided when the release is attempted. A capability a backend
-// declares absent, or never declared, does not.
+// that the agent, execution and deployment backends the manifest selects are
+// in the capability matrix, run in that mode, and do not lack what the
+// manifest asks of them. A capability a backend only claims passes here;
+// whether it is proven is decided when the release is attempted. A
+// capability a backend declares absent, or never declared, does not.
 func (c *checker) checkBackends() {
 	if !c.m.Mode.Valid() {
 		c.add(RuleModeUnsupported, "mode",
 			fmt.Sprintf("set mode to %s or %s", manifest.ModeStandalone, manifest.ModeDocker),
 			"mode %q has no supported deployment profile; every other platform stays unsupported until it is proven end to end", string(c.m.Mode))
 	}
-	c.selected(kit.KindExecution, "adapters.execution.name", c.m.Adapters.Execution.Name)
+	c.selected(kit.KindAgent, "adapters.coder.name", c.m.Adapters.Coder.Name)
+	c.selected(kit.KindAgent, "adapters.qa.name", c.m.Adapters.QA.Name)
+	if executor, ok := c.selected(kit.KindExecution, "adapters.execution.name", c.m.Adapters.Execution.Name); ok {
+		c.checkSandboxing(executor)
+	}
 	deployer, ok := c.selected(kit.KindDeploy, "adapters.deploy.name", c.m.Adapters.Deploy.Name)
 	if !ok {
 		return
@@ -46,6 +50,40 @@ func (c *checker) checkBackends() {
 					"release.units lets the factory publish by itself, but deployment backend %q declares no %s; a release that cannot be observed and undone is held, not published", deployer.Name, needed)
 			}
 		}
+	}
+}
+
+// checkSandboxing verifies that the execution backend can do what running
+// agent code asks of it: isolate the run, and enforce the egress allowlist
+// when the manifest sets one. A backend that declares either absent is
+// refused unless the Owner acknowledges, with trusted_code_only, that the
+// deployment then runs only code the Owner trusts. The acknowledgement adds
+// no protection; it records that the assurance is reduced.
+func (c *checker) checkSandboxing(executor kit.Declaration) {
+	// A backend that does not run in this mode is already refused; what it
+	// lacks says nothing until one that does is selected.
+	if c.m.Mode.Valid() && !slices.Contains(executor.Modes, c.m.Mode) {
+		return
+	}
+	type need struct {
+		capability core.Capability
+		path, asks string
+	}
+	relied := []need{{core.CapExecIsolation, "adapters.execution.name", "the runner and the qa-runner execute agent code, which needs a sandbox that isolates it"}}
+	if c.m.Egress.Mode == core.EgressAllowlist {
+		relied = append(relied, need{core.CapExecEgressEnforcement, "egress.mode", "egress.mode is allowlist, which needs a sandbox that blocks every other destination"})
+	}
+	for _, need := range relied {
+		if !lacks(executor, need.capability) {
+			continue
+		}
+		if c.m.TrustedCodeOnly {
+			c.trustedCodeOnly = true
+			continue
+		}
+		c.add(RuleBackendCapability, need.path,
+			"choose an execution backend that declares "+string(need.capability)+", or set trusted_code_only: true to state that this deployment runs only code the Owner trusts",
+			"%s, but execution backend %q declares no %s; with trusted_code_only the manifest is accepted at reduced assurance: nothing confines a run or limits where it connects, so it is safe only for code the Owner trusts and never for untrusted code", need.asks, executor.Name, need.capability)
 	}
 }
 

@@ -32,6 +32,9 @@ type checker struct {
 	m        *manifest.Manifest
 	backends []kit.Declaration
 	findings []Finding
+	// trustedCodeOnly records that the Owner's acknowledgement stood in for a
+	// capability the execution backend lacks.
+	trustedCodeOnly bool
 }
 
 // add records a finding. The message is formatted with args.
@@ -53,9 +56,12 @@ func checkWith(m *manifest.Manifest, backends []kit.Declaration) Report {
 	c.checkSupervisor()
 	c.checkIsolation()
 	c.checkBackends()
+	c.checkSecrets()
 	c.checkLimits()
+	c.checkRelease()
+	c.checkModelRoutes()
 
-	report := Report{Findings: c.findings}
+	report := Report{Findings: c.findings, TrustedCodeOnly: c.trustedCodeOnly}
 	report.SelfUpdate = m.Supervisor != nil && !hasSupervisorFinding(report.Findings)
 	// A schema violation at a place a rule already reported adds nothing: the
 	// rule's finding says what is wrong there and how to fix it.

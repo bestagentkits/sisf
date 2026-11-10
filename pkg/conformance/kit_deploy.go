@@ -16,14 +16,13 @@ type DeployProbe struct {
 	Candidate deploy.Artifact
 	// Window is the span metrics are read over.
 	Window time.Duration
-	// EndToEndProven records that the backend also passed an end-to-end run.
-	EndToEndProven bool
 }
 
 // GradeDeploy grades a deployment backend. It starts from the backend's
 // declaration and then performs one release and one rollback, judging every
 // step by the revision observed running and never by the call that asked for
-// it. Each step the backend fails lowers the area that step proves.
+// it. Each step the backend fails lowers the area that step proves. Only a
+// run that reaches the last step can grade the backend supported.
 //
 // An error means the backend could not be graded at all.
 func GradeDeploy(ctx context.Context, backend deploy.Backend, probe DeployProbe) (Row, error) {
@@ -37,7 +36,7 @@ func GradeDeploy(ctx context.Context, backend deploy.Backend, probe DeployProbe)
 	if err != nil {
 		return Row{}, undeclared(backend.Name(), err)
 	}
-	row := Grade(Declaration{Kind: KindDeploy, Name: backend.Name(), Capabilities: declared, EndToEndProven: probe.EndToEndProven})
+	row := Grade(Declaration{Kind: KindDeploy, Name: backend.Name(), Capabilities: declared})
 	unit := probe.Baseline.Unit
 
 	// running reports whether the observed revision is rev, and why not.
@@ -93,6 +92,7 @@ func GradeDeploy(ctx context.Context, backend deploy.Backend, probe DeployProbe)
 	if ok, why := running(baseline); !ok {
 		row.lower(core.CapRollback, "after the rollback, "+why)
 	}
+	row.exercise()
 	return row, nil
 }
 

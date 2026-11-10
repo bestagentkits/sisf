@@ -169,8 +169,13 @@ type Manifest struct {
 	Budget     Budget                  `json:"budget" yaml:"budget"`
 	Limits     Limits                  `json:"limits" yaml:"limits"`
 	// Egress is the outbound policy of agent sandboxes.
-	Egress      core.EgressPolicy `json:"egress" yaml:"egress"`
-	ModelRoutes ModelRoutes       `json:"model_routes" yaml:"model_routes"`
+	Egress core.EgressPolicy `json:"egress" yaml:"egress"`
+	// TrustedCodeOnly is the Owner's acknowledgement that the execution
+	// backend can neither isolate agent runs nor enforce the egress policy,
+	// so this deployment runs only code the Owner trusts. It is false unless
+	// stated; without it such a backend is refused.
+	TrustedCodeOnly bool        `json:"trusted_code_only,omitempty" yaml:"trusted_code_only,omitempty"`
+	ModelRoutes     ModelRoutes `json:"model_routes" yaml:"model_routes"`
 	// Extensions carries settings these types do not model yet. Nothing in
 	// it can grant a permission or relax a check.
 	Extensions map[string]any `json:"extensions,omitempty" yaml:"extensions,omitempty"`
@@ -220,7 +225,8 @@ func (c Components) Missing() []core.Zone {
 type Component struct {
 	// Source is the directory of the component's code in the repository.
 	Source string `json:"source" yaml:"source"`
-	// CredentialsRef names the credential set only this zone may use.
+	// CredentialsRef references the credential set only this zone may use.
+	// It is a secret reference, never the credentials themselves.
 	CredentialsRef string `json:"credentials_ref" yaml:"credentials_ref"`
 	// StoreRole is the role this zone opens the state store with.
 	StoreRole string `json:"store_role" yaml:"store_role"`
@@ -252,7 +258,8 @@ type Mount struct {
 }
 
 // Volume is a named place for files. Zone is the only zone allowed to write
-// to it; core.ZoneShared marks a volume every zone may write.
+// to it; core.ZoneShared marks the data of the state or artifacts unit, which
+// every zone uses through that unit and never through a mount of its own.
 type Volume struct {
 	Zone core.Zone `json:"zone" yaml:"zone"`
 }

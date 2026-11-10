@@ -16,10 +16,12 @@ const (
 	repoPattern     = `^[A-Za-z0-9._-]+$`
 	namePattern     = `^[a-z0-9][a-z0-9._-]*$`
 	hostPattern     = `^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`
-	// secretRefPattern is "provider:name". A connection string or any other
-	// literal secret does not fit it, so secrets stay out of the file.
-	secretRefPattern = `^[a-z][a-z0-9_-]*:[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$`
 )
+
+// secretRefField is the schema of a field that names a secret. A connection
+// string, a token or any other literal secret does not fit the pattern, so
+// secrets stay out of the file.
+var secretRefField = map[string]any{"pattern": secretRefPattern}
 
 // enum is the schema of a string that takes one of a closed set of values.
 func enum[T ~string](values ...T) map[string]any {
@@ -101,10 +103,12 @@ var fieldRules = map[string]map[string]any{
 		map[string]any{"required": names(NetworkNames())}),
 	"Manifest.volumes": described("Named places for files; each states the only zone allowed to write to it.",
 		map[string]any{"patternProperties": map[string]any{namePattern: map[string]any{"$ref": "#/$defs/Volume"}}, "additionalProperties": false}),
-	"Manifest.release":      described("Release policy: delegation mode, switching strategy and automatic rollback thresholds.", nil),
-	"Manifest.budget":       described("Spending policy set by the Owner. Measured costs live in the ledger, never here.", nil),
-	"Manifest.limits":       described("Bounds on every task, whatever the budget mode.", nil),
-	"Manifest.egress":       described("Outbound network policy of agent sandboxes.", nil),
+	"Manifest.release": described("Release policy: delegation mode, switching strategy and automatic rollback thresholds.", nil),
+	"Manifest.budget":  described("Spending policy set by the Owner. Measured costs live in the ledger, never here.", nil),
+	"Manifest.limits":  described("Bounds on every task, whatever the budget mode.", nil),
+	"Manifest.egress":  described("Outbound network policy of agent sandboxes.", nil),
+	"Manifest.trusted_code_only": described(
+		"Owner's acknowledgement that the execution backend can neither isolate agent runs nor enforce the egress policy, so the deployment runs only code the Owner trusts. Without it such a backend is refused.", nil),
 	"Manifest.model_routes": described("Model per kind of step. Code reads this table; a model never picks its own route.", nil),
 	"Manifest.extensions":   described("Settings these types do not model yet. Nothing here can grant a permission or relax a check.", nil),
 
@@ -112,7 +116,7 @@ var fieldRules = map[string]map[string]any{
 	"Repository.repo":  {"pattern": repoPattern},
 
 	"Component.source":          described("Directory of the zone's code in the repository.", nonEmpty),
-	"Component.credentials_ref": described("Credential set only this zone may use; no two zones share one.", nonEmpty),
+	"Component.credentials_ref": described("Reference to the credential set only this zone may use, written env:NAME or local:path/name; no two zones share one.", secretRefField),
 	"Component.store_role":      described("Role this zone opens the state store with; no two zones share one.", nonEmpty),
 
 	"Unit.port":     {"minimum": 1, "maximum": 65535},
@@ -123,13 +127,12 @@ var fieldRules = map[string]map[string]any{
 	"Supervisor.image":        described("The supervisor's own artifact; never the artifact of a candidate.", nonEmpty),
 	"Supervisor.digest":       described("Pins the supervisor's artifact.", nil),
 	"Supervisor.trust_volume": described("Volume holding the last known good release, the signing keys and the rollback configuration. Only the supervisor writes it.", nonEmpty),
-	"Supervisor.root_key_ref": described("Where the root public key that verifies the signed manifest is found.", nonEmpty),
+	"Supervisor.root_key_ref": described("Reference to the root public key that verifies the signed manifest, written env:NAME or local:path/name.", secretRefField),
 	"Supervisor.digest_change": described(
 		"Who may change the pinned digest. Only \"governance\", a cycle approved by a person, keeps the supervisor out of a candidate's reach.", nil),
 	"Supervisor.startup_self_check": described("Makes the supervisor refuse to run when its digest deviates from the signed manifest.", nil),
 
-	"StateStore.dsn_ref": described("Reference to the connection secret, written provider:name. The connection string itself never goes in this file.",
-		map[string]any{"pattern": secretRefPattern}),
+	"StateStore.dsn_ref":     described("Reference to the connection secret, written env:NAME or local:path/name. The connection string itself never goes in this file.", secretRefField),
 	"ArtifactStore.location": nonEmpty,
 	"AdapterRef.name":        {"pattern": `^[a-z0-9][a-z0-9_-]*$`},
 

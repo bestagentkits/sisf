@@ -3,10 +3,12 @@
 //
 // A manifest is conformant when it declares all three zones and all nine
 // runtime units under one identity, keeps the zones isolated from each other,
-// places the trusted release supervisor outside any candidate's reach, and
-// selects only backends able to do what it asks of them. Every rule that
-// fails yields a finding that names the rule, the place in the manifest and
-// the change that fixes it. The checker reads declarations only: it is the
+// places the trusted release supervisor outside any candidate's reach,
+// selects only backends able to do what it asks of them, holds references to
+// secrets and never the secrets, and sets no bound to a value that removes
+// it. Every rule that fails yields a finding that names the rule, the place
+// in the manifest and the change that fixes it. A finding never repeats a
+// value that may be a secret. The checker reads declarations only: it is the
 // gate before a deployment starts, not proof of what runs afterwards.
 package conformance
 
@@ -35,6 +37,8 @@ const (
 	// RuleUnitLifecycle: a unit declares a lifecycle other than the one its
 	// name always has.
 	RuleUnitLifecycle Rule = "unit.lifecycle_mismatch"
+	// RuleUnitNotPinned: a unit that runs an artifact does not pin its digest.
+	RuleUnitNotPinned Rule = "unit.digest_not_pinned"
 	// RuleNetworkMissing: one of the four network segments is not declared.
 	RuleNetworkMissing Rule = "network.missing"
 
@@ -69,6 +73,10 @@ const (
 	// RuleSupervisorSelfCheck: the supervisor does not check its own digest
 	// against the signed manifest at startup (boundary condition 4).
 	RuleSupervisorSelfCheck Rule = "supervisor.self_check_missing"
+	// RuleTrustVolumeStorage: the state store or the artifact store is kept
+	// on the trust volume, where what agents produce would sit beside the
+	// signing keys (boundary condition 2).
+	RuleTrustVolumeStorage Rule = "supervisor.trust_volume_used_as_storage"
 
 	// RuleSharedCredentials: two zones use the same credential set.
 	RuleSharedCredentials Rule = "isolation.shared_credentials"
@@ -79,8 +87,31 @@ const (
 	// RuleCrossZoneWrite: a unit can write a volume owned by another zone,
 	// such as Zone 1 writing into Zone 3.
 	RuleCrossZoneWrite Rule = "isolation.cross_zone_write"
-	// RuleNetworkSegment: a unit is attached to a segment of another zone.
+	// RuleCrossZoneRead: a unit of Zone 1 or Zone 2 mounts, read-only, a
+	// volume owned by another zone.
+	RuleCrossZoneRead Rule = "isolation.cross_zone_read"
+	// RuleSharedVolumeMount: a volume marked shared is mounted by a unit
+	// other than the durable unit that holds it.
+	RuleSharedVolumeMount Rule = "isolation.shared_volume_mount"
+	// RuleNetworkSegment: a unit is attached to a segment outside the set
+	// its role allows.
 	RuleNetworkSegment Rule = "isolation.network_segment"
+	// RuleNetworkUnattached: a unit that runs is attached to no segment, so
+	// the platform would place it on a network this manifest does not divide.
+	RuleNetworkUnattached Rule = "isolation.network_unattached"
+	// RuleSandboxNotInternal: the sandbox segment has a route to the outside
+	// of its own.
+	RuleSandboxNotInternal Rule = "isolation.sandbox_not_internal"
+	// RuleEgressProxy: a segment's way out is missing or is not a declared
+	// unit attached to that segment.
+	RuleEgressProxy Rule = "isolation.egress_proxy_undeclared"
+	// RulePublicExposure: a unit is exposed outside the deployment although
+	// its role does not allow it, or the control unit is exposed whole.
+	RulePublicExposure Rule = "isolation.public_exposure"
+
+	// RuleSecretInline: a setting that holds a secret carries a value where
+	// a reference belongs.
+	RuleSecretInline Rule = "secret.inline_value"
 
 	// RuleModeUnsupported: the operating mode has no supported profile.
 	RuleModeUnsupported Rule = "mode.unsupported"
@@ -95,19 +126,32 @@ const (
 	// RuleLimitsUnbounded: a task could run without a bound on time,
 	// attempts or concurrency.
 	RuleLimitsUnbounded Rule = "limits.unbounded"
+
+	// RuleReleaseDuration: a span a release is observed over is zero, so the
+	// observation it stands for never happens.
+	RuleReleaseDuration Rule = "release.duration_not_positive"
+	// RuleCanaryStepsMissing: a canary release names no traffic steps.
+	RuleCanaryStepsMissing Rule = "release.canary_steps_missing"
+	// RuleCanarySteps: the canary steps do not grow from a first step below
+	// all traffic.
+	RuleCanarySteps Rule = "release.canary_steps_not_increasing"
+	// RuleModelRoutesEmpty: no kind of step has a model route.
+	RuleModelRoutesEmpty Rule = "model_routes.empty"
 )
 
 // Rules returns every rule the checker can report.
 func Rules() []Rule {
 	return []Rule{
-		RuleSchema, RuleZoneMissing, RuleUnitMissing, RuleUnitLifecycle, RuleNetworkMissing,
+		RuleSchema, RuleZoneMissing, RuleUnitMissing, RuleUnitLifecycle, RuleUnitNotPinned, RuleNetworkMissing,
 		RuleIdentityInvalid, RuleIdentityNotDistinct,
 		RuleSupervisorUndeclared, RuleSupervisorNotPinned, RuleSupervisorSharesArtifact,
 		RuleTrustVolumeUndeclared, RuleTrustVolumeExposed, RuleTrustVolumeUnmounted,
-		RuleSupervisorDigestChange, RuleSupervisorSelfCheck,
-		RuleSharedCredentials, RuleSharedStoreRole, RuleVolumeUndeclared, RuleCrossZoneWrite, RuleNetworkSegment,
+		RuleSupervisorDigestChange, RuleSupervisorSelfCheck, RuleTrustVolumeStorage,
+		RuleSharedCredentials, RuleSharedStoreRole, RuleVolumeUndeclared, RuleCrossZoneWrite, RuleCrossZoneRead,
+		RuleSharedVolumeMount, RuleNetworkSegment, RuleNetworkUnattached, RuleSandboxNotInternal, RuleEgressProxy,
+		RulePublicExposure, RuleSecretInline,
 		RuleModeUnsupported, RuleBackendUndeclared, RuleBackendMode, RuleBackendCapability,
-		RuleLimitsUnbounded,
+		RuleLimitsUnbounded, RuleReleaseDuration, RuleCanaryStepsMissing, RuleCanarySteps, RuleModelRoutesEmpty,
 	}
 }
 
@@ -132,6 +176,11 @@ type Report struct {
 	// four conditions of its boundary hold. When it is false the factory
 	// must not publish by itself.
 	SelfUpdate bool `json:"self_update"`
+	// TrustedCodeOnly reports that the Owner's acknowledgement is what lets
+	// this manifest pass: its execution backend cannot isolate agent runs or
+	// enforce the egress policy, so the deployment has reduced assurance and
+	// must run only code the Owner trusts.
+	TrustedCodeOnly bool `json:"trusted_code_only"`
 }
 
 // Conformant reports whether no rule failed.

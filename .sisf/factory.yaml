@@ -23,17 +23,17 @@ repository:
 components:
   application:
     source: apps/web
-    credentials_ref: zone1-application
+    credentials_ref: local:zone1-application
     store_role: sisf_application
     health_check: /healthz
   agent:
     source: factory
-    credentials_ref: zone2-agent
+    credentials_ref: local:zone2-agent
     store_role: sisf_agent
     health_check: /healthz
   control:
     source: control
-    credentials_ref: zone3-control
+    credentials_ref: local:zone3-control
     store_role: sisf_control
     health_check: /healthz
 

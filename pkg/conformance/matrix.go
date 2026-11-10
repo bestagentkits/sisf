@@ -5,7 +5,10 @@
 // observability. Grades come from what the backend declares about itself and,
 // when one of the kits exercises it, from what it is then seen to do. A
 // backend lacking any area is marked unsupported; support is never assumed
-// from silence, from a claim alone, or from being hosted by a provider.
+// from silence, from a claim alone, or from being hosted by a provider. A
+// declaration alone is graded experimental at most: only a kit that took the
+// backend through its whole interface can grade it supported, and nothing a
+// backend or a caller writes down stands in for that run.
 package conformance
 
 import (
@@ -40,20 +43,17 @@ type Declaration struct {
 	// Capabilities is the backend's own statement; a capability it does not
 	// mention counts as NOT_SUPPORTED.
 	Capabilities core.CapabilitySet `json:"capabilities"`
-	// EndToEndProven records that the backend also passed an end-to-end run.
-	// Without it no backend is graded higher than experimental.
-	EndToEndProven bool `json:"end_to_end_proven,omitempty"`
 }
 
 // Verdict is the overall grade of a backend.
 type Verdict string
 
 const (
-	// VerdictSupported means all four areas are verified and an end-to-end
-	// run proved them.
+	// VerdictSupported means all four areas are verified and a kit exercised
+	// the backend end to end without seeing a claim contradicted.
 	VerdictSupported Verdict = "supported"
 	// VerdictExperimental means no area is missing, but at least one is only
-	// claimed or the end-to-end proof is still owed.
+	// claimed or no kit has exercised the backend end to end.
 	VerdictExperimental Verdict = "experimental"
 	// VerdictUnsupported means at least one area is missing.
 	VerdictUnsupported Verdict = "unsupported"
@@ -71,13 +71,19 @@ type Row struct {
 	Notes   []string `json:"notes,omitempty"`
 	Verdict Verdict  `json:"verdict"`
 
-	endToEndProven bool
+	// exercised records that a kit took the backend through every step of
+	// its interface. It is the evidence "supported" rests on. Only the kits
+	// set it: it is not part of a declaration or of a probe and is not read
+	// from JSON, so no backend can state it about itself.
+	exercised bool
 }
 
-// Grade grades a backend from its declaration alone. The kits start from this
-// grade and lower it when the backend's behavior contradicts its claims.
+// Grade grades a backend from its declaration alone, which is a claim: the
+// verdict is experimental at most, whatever the declaration says. The kits
+// start from this grade, lower it when the backend's behavior contradicts
+// its claims, and alone can raise it to supported.
 func Grade(d Declaration) Row {
-	row := Row{Kind: d.Kind, Name: d.Name, Areas: map[core.Capability]core.SupportLevel{}, endToEndProven: d.EndToEndProven}
+	row := Row{Kind: d.Kind, Name: d.Name, Areas: map[core.Capability]core.SupportLevel{}}
 	for _, area := range core.ConformanceAreas() {
 		row.Areas[area] = areaLevel(d.Kind, area, d.Capabilities)
 	}
@@ -90,6 +96,13 @@ func Grade(d Declaration) Row {
 func (r *Row) lower(area core.Capability, note string) {
 	r.Areas[area] = core.SupportNotSupported
 	r.Notes = append(r.Notes, string(area)+": "+note)
+	r.settle()
+}
+
+// exercise records that a kit run took the backend through every step of its
+// interface.
+func (r *Row) exercise() {
+	r.exercised = true
 	r.settle()
 }
 
@@ -109,7 +122,7 @@ func (r *Row) settle() {
 	switch {
 	case len(r.Missing) > 0:
 		r.Verdict = VerdictUnsupported
-	case allVerified && r.endToEndProven:
+	case allVerified && r.exercised:
 		r.Verdict = VerdictSupported
 	default:
 		r.Verdict = VerdictExperimental

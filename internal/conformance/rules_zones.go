@@ -25,8 +25,22 @@ func (c *checker) checkZones() {
 	}
 }
 
+// runsArtifact reports whether a unit runs something: every unit does,
+// except a durable unit that names neither an image nor a command. Such a
+// unit is plain storage (a SQLite file, a volume, a store kept elsewhere),
+// so it has no artifact to pin and no process to place on a network.
+func runsArtifact(name manifest.UnitName, unit manifest.Unit) bool {
+	return name.Lifecycle() != manifest.LifecycleDurable || unit.Image != "" || len(unit.Command) > 0
+}
+
 // checkUnits requires all nine runtime units, each with the lifecycle its
-// name always has.
+// name always has and a pinned digest.
+//
+// The release manifest pins the digest of every unit, so every declared unit
+// pins one, with two exceptions that have nothing left unpinned: a durable
+// unit that names neither an image nor a command is plain storage and runs
+// no artifact, and the supervisor unit may leave its digest out when the
+// supervisor block pins it.
 func (c *checker) checkUnits() {
 	for _, name := range manifest.UnitNames() {
 		unit, declared := c.m.Units[name]
@@ -41,6 +55,12 @@ func (c *checker) checkUnits() {
 			c.add(RuleUnitLifecycle, path+".lifecycle",
 				fmt.Sprintf("set units.%s.lifecycle to %s", name, name.Lifecycle()),
 				"unit %q is declared %q, but a %s unit is always %s", name, unit.Lifecycle, name, name.Lifecycle())
+		}
+		pinnedBySupervisor := name == manifest.UnitSupervisor && c.m.Supervisor != nil
+		if runsArtifact(name, unit) && !pinnedBySupervisor && unit.Digest.Validate() != nil {
+			c.add(RuleUnitNotPinned, path+".digest",
+				fmt.Sprintf("set units.%s.digest to the sha256 or sha512 digest of the unit's artifact", name),
+				"unit %q does not pin a full content digest, so what runs as %q can change without the release manifest changing", name, name)
 		}
 	}
 }

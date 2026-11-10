@@ -13,9 +13,9 @@ type ExecutionProbe struct {
 	// Spec describes a sandbox the backend is able to create.
 	Spec execution.SandboxSpec
 	// Command, when it has arguments, must run in that sandbox and exit 0.
+	// A probe without one skips that step, so its run is not end to end and
+	// cannot grade the backend supported.
 	Command execution.Command
-	// EndToEndProven records that the backend also passed an end-to-end run.
-	EndToEndProven bool
 }
 
 // GradeExecution grades an execution backend. It starts from the backend's
@@ -24,6 +24,8 @@ type ExecutionProbe struct {
 // fails lowers the area that step proves, whatever the backend declared.
 // Isolation cannot be shown by a probe that behaves well, so it is graded
 // from the declared isolation and egress-enforcement capabilities alone.
+// Only a run that reaches the last step, having run a command, can grade the
+// backend supported.
 //
 // An error means the backend could not be graded at all; a backend that was
 // graded and found lacking is a Row, not an error.
@@ -38,7 +40,7 @@ func GradeExecution(ctx context.Context, backend execution.Backend, probe Execut
 	if err != nil {
 		return Row{}, undeclared(backend.Name(), err)
 	}
-	row := Grade(Declaration{Kind: KindExecution, Name: backend.Name(), Capabilities: declared, EndToEndProven: probe.EndToEndProven})
+	row := Grade(Declaration{Kind: KindExecution, Name: backend.Name(), Capabilities: declared})
 
 	if err := backend.Health(ctx); err != nil {
 		row.lower(core.CapLifecycle, "the backend is not able to create sandboxes: "+err.Error())
@@ -84,6 +86,11 @@ func GradeExecution(ctx context.Context, backend execution.Backend, probe Execut
 	case err != nil && !core.HasCode(err, core.CodeNotFound):
 		row.lower(core.CapObservability, "a destroyed sandbox must be reported destroyed or NOT_FOUND: "+err.Error())
 	}
+	if len(probe.Command.Argv) == 0 {
+		row.Notes = append(row.Notes, string(core.CapLifecycle)+": the probe ran no command in the sandbox, so the backend was not exercised end to end")
+		return row, nil
+	}
+	row.exercise()
 	return row, nil
 }
 

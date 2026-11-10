@@ -19,7 +19,9 @@ type Violation struct {
 	// "units.runner.mounts[0].path". It is empty when the whole document is
 	// at fault.
 	Path string `json:"path"`
-	// Message says what is wrong with the value at Path.
+	// Message says what is wrong with the value at Path. It never repeats a
+	// text value that was refused for its form, because that text may be a
+	// secret.
 	Message string `json:"message"`
 }
 
@@ -108,6 +110,10 @@ func collectViolations(failed *jsonschema.ValidationError, found *[]Violation) {
 		for _, extra := range k.Properties {
 			*found = append(*found, Violation{Path: dotted(at, extra), Message: "is not an allowed key here"})
 		}
+	case *kind.Pattern:
+		// The refused text may be a secret written where a reference belongs,
+		// so only the expected form is reported.
+		*found = append(*found, Violation{Path: dotted(at), Message: "does not match pattern '" + k.Want + "' (the value is not shown)"})
 	default:
 		*found = append(*found, Violation{Path: dotted(at), Message: failed.BasicOutput().Error.String()})
 	}
