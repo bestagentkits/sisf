@@ -18,6 +18,9 @@ type migration struct {
 	file string
 	// inline replaces the files with one script for both dialects.
 	inline string
+	// postgres replaces the PostgreSQL file with a script built from this
+	// package's rules, for a migration that rewrites a row policy.
+	postgres func() (string, error)
 }
 
 // releaseMigrations are the migrations this release ships, in order. Add to
@@ -53,6 +56,14 @@ var releaseMigrations = []migration{
 		Migration: state.Migration{Version: 4, Name: "retry schedule and outcome of inbox deliveries", BackwardCompatible: true},
 		file:      "0004_inbox_retry_schedule.sql",
 	},
+	{
+		// Only the condition of the agent zone's policy on the journal
+		// changes, and the steps of the previous release's dispatcher are
+		// within it, so it keeps working on the schema.
+		Migration: state.Migration{Version: 5, Name: "agent steps keyed and bound to their records", BackwardCompatible: true},
+		file:      "0005_agent_step_row_policy.sql",
+		postgres:  keyedStepPolicyScript,
+	},
 }
 
 // Migrations lists the migrations this release ships, for callers that must
@@ -70,6 +81,9 @@ func Migrations() []state.Migration {
 func (m migration) script(d Dialect) (string, error) {
 	if m.inline != "" {
 		return m.inline, nil
+	}
+	if d == DialectPostgres && m.postgres != nil {
+		return m.postgres()
 	}
 	content, err := migrationFiles.ReadFile("migrations/" + string(d) + "/" + m.file)
 	if err != nil || len(content) == 0 {

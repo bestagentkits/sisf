@@ -43,3 +43,7 @@ func MigrationLock() (string, int32) {
 
 // ZoneMayWrite reports whether a store of zone may write a step on event.
 func ZoneMayWrite(zone core.Zone, event core.Event) bool { return zoneEvents[zone][event] }
+
+// StepKeyPrefix is the prefix of the idempotency keys under which zone writes
+// the step on event; empty when the zone has no keys of its own for it.
+func StepKeyPrefix(zone core.Zone, event core.Event) string { return zoneStepKeys[zone][event] }

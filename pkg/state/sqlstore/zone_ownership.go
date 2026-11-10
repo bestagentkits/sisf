@@ -3,6 +3,7 @@ package sqlstore
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 )
@@ -49,6 +50,37 @@ var controlEvents = []core.Event{
 var zoneEvents = map[core.Zone]map[core.Event]bool{
 	core.ZoneAgent:   eventSet(runEvents),
 	core.ZoneControl: eventSet(controlEvents),
+}
+
+// zoneStepKeys gives a zone its own idempotency keys: the prefix each of its
+// steps must be keyed under. A key names a step once per issue, so a zone
+// that could write any key could take, ahead of time, the predictable key of
+// a step another zone has yet to write, and that step would then be refused
+// as a replay of a different one. The dispatcher keys the claim
+// "claim/<run>" and the start of development "develop/<run>"; the submission
+// of a candidate and a failed evaluation have their prefixes reserved here.
+// None of them meets a key of the control zone, whose intake keys its steps
+// "intake/<issue>/<event>" and an authorized retry "retry/<issue>".
+//
+// The control zone, which keeps the lifecycle, is not listed and may write
+// any key; a zone that is listed may write only the steps it lists.
+var zoneStepKeys = map[core.Zone]map[core.Event]string{
+	core.ZoneAgent: {
+		core.EventClaimed:            "claim/",
+		core.EventDevelopmentStarted: "develop/",
+		core.EventCandidateSubmitted: "candidate/",
+		core.EventQAFailed:           "qa/",
+	},
+}
+
+// ownsKey reports whether zone may write the step on event under key.
+func ownsKey(zone core.Zone, event core.Event, key string) bool {
+	prefixes, limited := zoneStepKeys[zone]
+	if !limited {
+		return true
+	}
+	prefix, listed := prefixes[event]
+	return listed && len(key) > len(prefix) && strings.HasPrefix(key, prefix)
 }
 
 func eventSet(events []core.Event) map[core.Event]bool {
@@ -142,4 +174,15 @@ func (t *tx) writesStep(tr core.Transition) error {
 			fmt.Sprintf("the %s zone may not write the lifecycle step %q", string(t.store.zone), string(tr.Event)))
 	}
 	return nil
+}
+
+// keysStep checks that the transaction's zone may write tr under its
+// idempotency key (zoneStepKeys).
+func (t *tx) keysStep(tr core.Transition) error {
+	if ownsKey(t.store.zone, tr.Event, tr.IdempotencyKey) {
+		return nil
+	}
+	return core.NewError(core.CodePermissionDenied, fmt.Sprintf(
+		"the %s zone may not write the lifecycle step %q under the idempotency key %q",
+		string(t.store.zone), string(tr.Event), tr.IdempotencyKey))
 }

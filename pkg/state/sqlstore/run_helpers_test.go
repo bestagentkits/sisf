@@ -25,14 +25,15 @@ const (
 // written under, naming the run of the record and its attempt, and naming the
 // candidate and the release on the steps that record or must repeat them. A
 // failed evaluation sends the run into its next attempt. The key is the event
-// name, so a test takes each edge once per issue unless it sets another.
+// name, under the agent zone's prefix for a step of the run, so a test takes
+// each edge once per issue unless it sets another.
 func next(t *testing.T, from core.StateRecord, event core.Event, change func(*core.Transition)) core.Transition {
 	t.Helper()
 	to, err := statemachine.Next(from.State, event)
 	if err != nil {
 		t.Fatalf("no edge from %s on %s: %v", from.State, event, err)
 	}
-	tr := step(from.IssueID, from.State, event, to, from.Version, string(event))
+	tr := step(from.IssueID, from.State, event, to, from.Version, sqlstore.StepKeyPrefix(core.ZoneAgent, event)+string(event))
 	tr.Attempt, tr.RunID = from.Attempt, from.RunID
 	if statemachine.RequiresLease(from.State) {
 		tr.LeaseOwner, tr.FencingToken = from.LeaseOwner, from.FencingToken
@@ -94,7 +95,7 @@ func claimWrite(t *testing.T, s *sqlstore.Store, ready core.StateRecord, owner s
 	return next(t, ready, core.EventClaimed, func(tr *core.Transition) {
 		under(lease)(tr)
 		tr.RunID, tr.Attempt = run, 1
-		tr.IdempotencyKey = "claimed:" + string(run)
+		tr.IdempotencyKey = "claim/" + string(run)
 	})
 }
 

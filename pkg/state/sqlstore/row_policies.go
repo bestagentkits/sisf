@@ -38,6 +38,10 @@ var policyCommands = []struct {
 // a policy as a literal: a state, an event or a namespace of this package.
 var literalPattern = regexp.MustCompile(`^[A-Za-z0-9_.]+$`)
 
+// keyPrefixPattern is what an idempotency key prefix must look like before
+// it is written into a policy as a literal.
+var keyPrefixPattern = regexp.MustCompile(`^[a-z]+/$`)
+
 // policyStatements returns the statements that replace the row policies of
 // every zone. Each table first loses the policies of all zones, so running
 // them again also takes away what a later release no longer allows.
@@ -52,7 +56,7 @@ func policyStatements(schema string, roles ZoneRoles) ([]string, error) {
 				if zonePrivileges[zone][table]&command.bit == 0 {
 					continue
 				}
-				using, check, err := rowRule(table, command.bit, zone)
+				using, check, err := rowRule(table, command.bit, zone, quote(schema)+"."+quote(tableRecords))
 				if err != nil {
 					return nil, err
 				}
@@ -86,8 +90,9 @@ func policyName(zone core.Zone, command string) string {
 
 // rowRule returns the conditions of the policy of zone for one command on
 // table: the rows the zone may see or change (USING) and the rows it may
-// leave behind (WITH CHECK). An empty condition is not written.
-func rowRule(table string, command privilege, zone core.Zone) (using, check string, err error) {
+// leave behind (WITH CHECK). An empty condition is not written. records is
+// how the conditions name the records table.
+func rowRule(table string, command privilege, zone core.Zone, records string) (using, check string, err error) {
 	switch table {
 	case tableRecords:
 		created, from, to := stepStates(zone)
@@ -112,6 +117,10 @@ func rowRule(table string, command privilege, zone core.Zone) (using, check stri
 		case canSelect:
 			return "true", "", nil
 		case canInsert:
+			if _, keyed := zoneStepKeys[zone]; keyed {
+				check, err = keyedStepCheck(zone, records)
+				return "", check, err
+			}
 			check, err = inList("event", eventNames(zone), false)
 			return "", check, err
 		}
@@ -159,6 +168,57 @@ func stepStates(zone core.Zone) (created, from, to []string) {
 	return created, from, to
 }
 
+// keyedStepCheck is the condition on a step a zone with keys of its own
+// journals: the step is one of the zone's edges of the lifecycle, taken
+// under the key prefix of its event (zoneStepKeys), and it journals the
+// record as written: the record of the issue stands in the state the step
+// ends in, at the version and under the key of the step. A stolen
+// credential can so neither take a key of another zone, nor journal a step
+// the lifecycle has no edge for, nor one for a record it did not write.
+func keyedStepCheck(zone core.Zone, records string) (string, error) {
+	var edges []string
+	for _, edge := range statemachine.Edges() {
+		if !zoneEvents[zone][edge.Event] {
+			continue
+		}
+		prefix, listed := zoneStepKeys[zone][edge.Event]
+		if !listed {
+			continue
+		}
+		// A step that creates its record starts from no state.
+		from := "''"
+		if edge.From != "" {
+			var err error
+			if from, err = literal(string(edge.From), literalPattern); err != nil {
+				return "", err
+			}
+		}
+		event, err := literal(string(edge.Event), literalPattern)
+		if err != nil {
+			return "", err
+		}
+		to, err := literal(string(edge.To), literalPattern)
+		if err != nil {
+			return "", err
+		}
+		quotedPrefix, err := literal(prefix, keyPrefixPattern)
+		if err != nil {
+			return "", err
+		}
+		edges = append(edges, fmt.Sprintf(
+			"(from_state = %s AND event = %s AND to_state = %s AND starts_with(idempotency_key, %s) AND length(idempotency_key) > %d)",
+			from, event, to, quotedPrefix, len(prefix)))
+	}
+	if len(edges) == 0 {
+		return "false", nil
+	}
+	slices.Sort(edges)
+	return "(" + strings.Join(edges, " OR ") + ") AND EXISTS (SELECT 1 FROM " + records + " AS r" +
+		" WHERE r.factory_id = transitions.factory_id AND r.issue = transitions.issue" +
+		" AND r.state = transitions.to_state AND r.version = transitions.version" +
+		" AND r.idempotency_key = transitions.idempotency_key)", nil
+}
+
 // eventNames lists the events zone may write.
 func eventNames(zone core.Zone) []string {
 	var names []string
@@ -191,16 +251,24 @@ func inList(column string, values []string, negated bool) (string, error) {
 	slices.Sort(sorted)
 	quoted := make([]string, len(sorted))
 	for i, value := range sorted {
-		if !literalPattern.MatchString(value) {
-			return "", core.NewError(core.CodeInternal, fmt.Sprintf("%q cannot be written into a row policy", value))
+		var err error
+		if quoted[i], err = literal(value, literalPattern); err != nil {
+			return "", err
 		}
-		quoted[i] = "'" + value + "'"
 	}
 	operator := " IN ("
 	if negated {
 		operator = " NOT IN ("
 	}
 	return column + operator + strings.Join(quoted, ", ") + ")", nil
+}
+
+// literal quotes value for a policy once it matches pattern.
+func literal(value string, pattern *regexp.Regexp) (string, error) {
+	if !pattern.MatchString(value) {
+		return "", core.NewError(core.CodeInternal, fmt.Sprintf("%q cannot be written into a row policy", value))
+	}
+	return "'" + value + "'", nil
 }
 
 // appendNew appends value unless list holds it already.
