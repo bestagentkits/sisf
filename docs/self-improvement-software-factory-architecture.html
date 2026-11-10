@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SISF Architecture</title>
+<meta name="description" content="Self-improvement Software Factory: one deployment, three zones. Entrypoints, workflows, state graph, decisions, protocols and surfaces.">
+<style>
+:root{--bg:#f6f4ee;--panel:#fffdf8;--panel2:#efece3;--ink:#1b1d22;--muted:#5d6470;--line:#d9d4c7;--z1:#0f8f7e;--z2:#b86e0c;--z3:#6b4fd8;--ok:#1d8a4a;--warn:#a86a10;--bad:#c0392b;--accent:#1f5fd1;--shadow:0 1px 2px rgba(0,0,0,.05),0 8px 24px rgba(0,0,0,.05)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1115;--panel:#171a21;--panel2:#1e222b;--ink:#e9e6df;--muted:#9aa3b2;--line:#2c313c;--z1:#35c9b3;--z2:#f0a93b;--z3:#9d86ff;--ok:#4ccb82;--warn:#e8b04a;--bad:#ef6b5b;--accent:#6ea0ff;--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.3)}}
+:root[data-theme="dark"]{--bg:#0f1115;--panel:#171a21;--panel2:#1e222b;--ink:#e9e6df;--muted:#9aa3b2;--line:#2c313c;--z1:#35c9b3;--z2:#f0a93b;--z3:#9d86ff;--ok:#4ccb82;--warn:#e8b04a;--bad:#ef6b5b;--accent:#6ea0ff;--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.3)}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:64px}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.mono,code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{font-size:.86em;background:var(--panel2);padding:.1em .35em;border-radius:4px}
+a{color:var(--accent)}
+.wrap{max-width:1120px;margin:0 auto;padding:0 16px}
+header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;height:52px}
+.brand{font-weight:700;letter-spacing:.04em;white-space:nowrap}
+.brand b{color:var(--z3)}
+nav.toc{display:flex;gap:2px;overflow-x:auto;flex:1;scrollbar-width:none}
+nav.toc::-webkit-scrollbar{display:none}
+nav.toc a{color:var(--muted);text-decoration:none;font-size:13px;padding:6px 9px;border-radius:6px;white-space:nowrap}
+nav.toc a:hover{background:var(--panel2);color:var(--ink)}
+button{font:inherit;color:inherit;cursor:pointer}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:5px 10px;font-size:13px}
+.btn:hover{border-color:var(--muted)}
+.btn[aria-pressed="true"],.btn.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.hero{padding:56px 0 28px}
+.eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+h1{font-size:clamp(34px,6vw,64px);line-height:1.04;margin:10px 0 14px;letter-spacing:-.02em}
+h1 span{background:linear-gradient(90deg,var(--z1),var(--z2),var(--z3));-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{font-size:18px;color:var(--muted);max-width:760px;margin:0}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:28px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+.stat b{display:block;font-size:30px;line-height:1.1}
+.stat span{font-size:13px;color:var(--muted)}
+section{padding:44px 0;border-top:1px solid var(--line)}
+.sec-n{font-size:12px;color:var(--muted);letter-spacing:.12em}
+h2{font-size:clamp(24px,3.4vw,34px);margin:4px 0 6px;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:0 0 22px;max-width:780px}
+h3{font-size:16px;margin:0 0 6px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow)}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.g5{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted);margin:2px 3px 2px 0;white-space:nowrap}
+.tag.z1{color:var(--z1);border-color:var(--z1)}.tag.z2{color:var(--z2);border-color:var(--z2)}.tag.z3{color:var(--z3);border-color:var(--z3)}
+.tag.ok{color:var(--ok);border-color:var(--ok)}.tag.warn{color:var(--warn);border-color:var(--warn)}.tag.bad{color:var(--bad);border-color:var(--bad)}
+.small{font-size:13.5px;color:var(--muted)}
+ul.clean{margin:6px 0 0;padding-left:18px}ul.clean li{margin:3px 0}
+.svgbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow-x:auto}
+.svgbox svg{display:block;width:100%;min-width:760px;height:auto}
+svg text{fill:var(--ink);font-family:ui-sans-serif,system-ui,sans-serif}
+svg .m{fill:var(--muted)}
+svg .lbl{font-size:11px;letter-spacing:.08em}
+.zone{cursor:pointer}
+.zone rect.zb{fill:var(--panel2);stroke-width:1.5;transition:stroke-width .15s}
+.zone:hover rect.zb,.zone.sel rect.zb{stroke-width:3.5}
+.flow{fill:none;stroke:var(--muted);stroke-width:1.5}
+.flow.dash{stroke-dasharray:5 5}
+.dot{fill:var(--accent)}
+.detail{margin-top:12px;border-left:4px solid var(--line);padding:12px 16px;background:var(--panel);border-radius:0 12px 12px 0}
+.steps{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px}
+.step{flex:1 0 128px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;position:relative;font-size:13.5px}
+.step b{display:block;font-size:13px}
+.step i{font-style:normal;font-size:11px;color:var(--muted);letter-spacing:.08em}
+.loop-h{display:flex;align-items:center;gap:8px;margin:18px 0 8px;font-weight:600}
+.loop-h .pill{width:10px;height:10px;border-radius:50%}
+.st rect{fill:var(--panel2);stroke:var(--line);stroke-width:1.5;cursor:pointer;transition:all .2s}
+.st text{font-size:12.5px;pointer-events:none;text-anchor:middle;dominant-baseline:central}
+.st:hover rect{stroke:var(--ink)}
+.st.on rect{fill:var(--accent);stroke:var(--accent)}.st.on text{fill:#fff}
+.st.bad.on rect{fill:var(--bad);stroke:var(--bad)}
+.st.ok.on rect{fill:var(--ok);stroke:var(--ok)}
+.st.sel rect{stroke:var(--ink);stroke-width:3}
+.edge{fill:none;stroke:var(--line);stroke-width:1.6;transition:stroke .2s}
+.edge.on{stroke:var(--accent);stroke-width:2.6}
+.elab{font-size:10.5px;fill:var(--muted);text-anchor:middle}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+.timeline{list-style:none;margin:0;padding:0;counter-reset:s}
+.timeline li{display:grid;grid-template-columns:118px 1fr;gap:12px;padding:9px 0;border-bottom:1px dashed var(--line);align-items:start}
+.timeline li:last-child{border:0}
+.actor{font-size:11.5px;font-weight:600;padding:3px 8px;border-radius:6px;text-align:center;border:1px solid currentColor;align-self:start}
+.a-h{color:var(--accent)}.a-z1{color:var(--z1)}.a-z2{color:var(--z2)}.a-z3{color:var(--z3)}.a-g{color:var(--muted)}
+.rubric{display:flex;height:34px;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+.rubric div{display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff}
+.legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:4px 14px;margin-top:8px;font-size:13px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
+.sim label{display:grid;grid-template-columns:1fr 64px;font-size:13.5px;margin-top:10px;gap:2px 8px}
+.sim input[type=range]{grid-column:1/-1;width:100%;accent-color:var(--accent)}
+.sim output{text-align:right;font-weight:700}
+.verdict{margin-top:14px;padding:12px 14px;border-radius:10px;border:2px solid;font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
+.ladder{counter-reset:l;list-style:none;margin:0;padding:0}
+.ladder li{counter-increment:l;display:flex;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:6px;background:var(--panel)}
+.ladder li::before{content:counter(l);font-weight:800;font-size:18px;color:var(--z3);min-width:20px}
+.ladder li:nth-child(1){margin-right:0}.ladder li:nth-child(2){margin-right:4%}.ladder li:nth-child(3){margin-right:8%}.ladder li:nth-child(4){margin-right:12%}.ladder li:nth-child(5){margin-right:16%}
+.pipe{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px}
+.pipe span{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 9px}
+.pipe em{font-style:normal;color:var(--muted)}
+.road{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:10px}
+.road .card{border-top:4px solid var(--z3)}
+.tests{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:8px}
+.test{font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+.test b{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--z3);display:block}
+footer{padding:32px 0 56px;color:var(--muted);font-size:13.5px;border-top:1px solid var(--line)}
+@media (max-width:560px){.timeline li{grid-template-columns:1fr}.actor{justify-self:start}}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <div class="brand"><b>SISF</b> / architecture</div>
+  <nav class="toc" id="toc" aria-label="Sections"></nav>
+  <button class="btn" id="lang" aria-label="Language">EN</button>
+  <button class="btn" id="theme" aria-label="Theme">◐</button>
+</div></header>
+
+<main class="wrap">
+  <div class="hero">
+    <div class="eyebrow mono" data-t="eyebrow"></div>
+    <h1>Self-improvement<br><span>Software Factory</span></h1>
+    <p class="lede" data-t="lede"></p>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <section id="topology"><div class="sec-n mono">01 / TOPOLOGY</div><h2 data-t="h_topo"></h2><p class="sub" data-t="s_topo"></p>
+    <div class="svgbox"><svg viewBox="0 0 1000 530" role="img" aria-label="Three zones in one deployment">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--muted)"/></marker>
+        <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--accent)"/></marker>
+      </defs>
+      <rect x="150" y="62" width="700" height="386" rx="18" style="fill:none;stroke:var(--muted);stroke-dasharray:7 6"/>
+      <text x="500" y="84" text-anchor="middle" class="lbl m mono">ONE FACTORY DEPLOYMENT · factory_id · release manifest · lifecycle</text>
+
+      <g><rect x="8" y="150" width="124" height="96" rx="12" style="fill:var(--panel2);stroke:var(--line)"/>
+        <text x="70" y="172" text-anchor="middle" class="lbl m mono">USER ENTRY</text>
+        <text x="70" y="194" text-anchor="middle" font-size="13">Browser · Agents</text>
+        <text x="70" y="212" text-anchor="middle" font-size="12" class="m">Issues · Feedback</text>
+        <text x="70" y="230" text-anchor="middle" font-size="12" class="m">Webapp / MCP</text></g>
+      <g><rect x="868" y="150" width="124" height="96" rx="12" style="fill:var(--panel2);stroke:var(--line)"/>
+        <text x="930" y="172" text-anchor="middle" class="lbl m mono">OWNER ENTRY</text>
+        <text x="930" y="194" text-anchor="middle" font-size="13">Browser · Agents</text>
+        <text x="930" y="212" text-anchor="middle" font-size="12" class="m">UI / API / CLI</text>
+        <text x="930" y="230" text-anchor="middle" font-size="12" class="m">MCP / WebMCP</text></g>
+      <g><rect x="415" y="6" width="170" height="44" rx="10" style="fill:var(--panel2);stroke:var(--line);stroke-dasharray:4 4"/>
+        <text x="500" y="24" text-anchor="middle" class="lbl m mono">REMOTE AGENTS · optional</text>
+        <text x="500" y="41" text-anchor="middle" font-size="11.5" class="m">Claude Routines · Codex · TOSE</text></g>
+      <g><rect x="380" y="472" width="240" height="50" rx="10" style="fill:var(--panel2);stroke:var(--line)"/>
+        <text x="500" y="492" text-anchor="middle" class="lbl m mono">GITHUB · SOURCE OF TRUTH</text>
+        <text x="500" y="510" text-anchor="middle" font-size="11.5" class="m">Source · Issues · PR · Decisions · Releases</text></g>
+
+      <g class="zone" data-z="0" tabindex="0" role="button"><rect class="zb" x="175" y="112" width="200" height="290" rx="14" style="stroke:var(--z1)"/>
+        <text x="275" y="138" text-anchor="middle" class="lbl mono" style="fill:var(--z1)">ZONE 1</text>
+        <text x="275" y="160" text-anchor="middle" font-size="16" font-weight="700">Application</text>
+        <text x="275" y="196" text-anchor="middle" font-size="12.5">Webapp · API</text><text x="275" y="216" text-anchor="middle" font-size="12.5">MCP · WebMCP</text>
+        <text x="275" y="252" text-anchor="middle" font-size="12.5" class="m">Immutable release</text><text x="275" y="272" text-anchor="middle" font-size="12.5" class="m">User-facing features</text>
+        <text x="275" y="322" text-anchor="middle" font-size="12.5">Traces · Logs</text><text x="275" y="342" text-anchor="middle" font-size="12.5">Sessions · Feedback</text></g>
+      <g class="zone" data-z="1" tabindex="0" role="button"><rect class="zb" x="400" y="112" width="200" height="290" rx="14" style="stroke:var(--z2)"/>
+        <text x="500" y="138" text-anchor="middle" class="lbl mono" style="fill:var(--z2)">ZONE 2</text>
+        <text x="500" y="160" text-anchor="middle" font-size="16" font-weight="700">Agent factory</text>
+        <text x="500" y="196" text-anchor="middle" font-size="12.5">Dispatcher · Run state</text><text x="500" y="216" text-anchor="middle" font-size="12.5">Claude · Codex · Pi</text>
+        <text x="500" y="252" text-anchor="middle" font-size="12.5" class="m">Sandboxed workspace</text><text x="500" y="272" text-anchor="middle" font-size="12.5" class="m">Code · Preview</text>
+        <text x="500" y="322" text-anchor="middle" font-size="12.5">Independent QA</text><text x="500" y="342" text-anchor="middle" font-size="12.5">Score + hard gates</text></g>
+      <g class="zone" data-z="2" tabindex="0" role="button"><rect class="zb" x="625" y="112" width="200" height="290" rx="14" style="stroke:var(--z3)"/>
+        <text x="725" y="138" text-anchor="middle" class="lbl mono" style="fill:var(--z3)">ZONE 3</text>
+        <text x="725" y="160" text-anchor="middle" font-size="16" font-weight="700">Control plane</text>
+        <text x="725" y="196" text-anchor="middle" font-size="12.5">UI · API · CLI · MCP</text><text x="725" y="216" text-anchor="middle" font-size="12.5">SSO · RBAC · Approvals</text>
+        <text x="725" y="252" text-anchor="middle" font-size="12.5" class="m">Decision Layer · Policies</text><text x="725" y="272" text-anchor="middle" font-size="12.5" class="m">Budget · Secrets · State</text>
+        <text x="725" y="322" text-anchor="middle" font-size="12.5">Release supervisor</text><text x="725" y="342" text-anchor="middle" font-size="12.5">Canary · Auto rollback</text></g>
+
+      <path class="flow" d="M132 198H173" marker-end="url(#ar)"/><path class="flow" d="M868 198H827" marker-end="url(#ar)"/>
+      <path class="flow dash" d="M500 50V110" marker-end="url(#ar)" marker-start="url(#ar)"/>
+      <path class="flow" d="M560 472C600 440 690 440 715 404" marker-end="url(#ar)" marker-start="url(#ar)"/>
+      <path class="flow" d="M470 472V404" marker-end="url(#ar)" marker-start="url(#ar)"/>
+      <path id="pTel" class="flow" style="stroke:var(--z1)" d="M300 112C380 88 620 88 700 110" marker-end="url(#ar)"/>
+      <text x="500" y="104" text-anchor="middle" font-size="10.5" class="m">telemetry → evidence</text>
+      <path id="pDis" class="flow" style="stroke:var(--z3)" d="M625 232H602" marker-end="url(#ar)"/>
+      <path id="pCan" class="flow" style="stroke:var(--z2)" d="M600 296H623" marker-end="url(#ar)"/>
+      <path id="pRel" class="flow" style="stroke:var(--z3)" d="M700 402C620 436 380 436 300 404" marker-end="url(#ar)"/>
+      <text x="500" y="424" text-anchor="middle" font-size="10.5" class="m">verified release / rollback</text>
+      <g id="dots">
+        <circle r="4.5" class="dot" style="fill:var(--z1)"><animateMotion dur="3.2s" repeatCount="indefinite"><mpath href="#pTel"/></animateMotion></circle>
+        <circle r="4.5" class="dot" style="fill:var(--z3)"><animateMotion dur="1.4s" repeatCount="indefinite"><mpath href="#pDis"/></animateMotion></circle>
+        <circle r="4.5" class="dot" style="fill:var(--z2)"><animateMotion dur="1.4s" begin=".7s" repeatCount="indefinite"><mpath href="#pCan"/></animateMotion></circle>
+        <circle r="4.5" class="dot" style="fill:var(--z3)"><animateMotion dur="3.2s" begin="1.6s" repeatCount="indefinite"><mpath href="#pRel"/></animateMotion></circle>
+      </g>
+    </svg></div>
+    <div class="detail" id="zdetail"></div>
+  </section>
+
+  <section id="entry"><div class="sec-n mono">02 / ENTRYPOINTS</div><h2 data-t="h_entry"></h2><p class="sub" data-t="s_entry"></p><div class="grid g5" id="entries"></div></section>
+
+  <section id="loops"><div class="sec-n mono">03 / WORKFLOWS</div><h2 data-t="h_loops"></h2><p class="sub" data-t="s_loops"></p><div id="loopsBody"></div></section>
+
+  <section id="states"><div class="sec-n mono">04 / STATE GRAPH</div><h2 data-t="h_states"></h2><p class="sub" data-t="s_states"></p>
+    <div class="bar" id="paths"></div>
+    <div class="svgbox"><svg id="sg" viewBox="0 0 1010 350" role="img" aria-label="Issue state machine"></svg></div>
+    <div class="detail" id="sdetail"></div>
+  </section>
+
+  <section id="decide"><div class="sec-n mono">05 / DECISIONS</div><h2 data-t="h_decide"></h2><p class="sub" data-t="s_decide"></p><div class="grid g2" id="decideBody"></div></section>
+
+  <section id="flows"><div class="sec-n mono">06 / USER FLOWS</div><h2 data-t="h_flows"></h2><p class="sub" data-t="s_flows"></p>
+    <div class="bar" id="flowTabs"></div><div class="card"><ol class="timeline" id="flowBody"></ol></div></section>
+
+  <section id="qa"><div class="sec-n mono">07 / QA &amp; RELEASE</div><h2 data-t="h_qa"></h2><p class="sub" data-t="s_qa"></p><div class="grid g2" id="qaBody"></div></section>
+
+  <section id="surfaces"><div class="sec-n mono">08 / SURFACES &amp; PROTOCOLS</div><h2 data-t="h_surf"></h2><p class="sub" data-t="s_surf"></p><div id="surfBody"></div></section>
+
+  <section id="trust"><div class="sec-n mono">09 / AUTH &amp; TRUST</div><h2 data-t="h_trust"></h2><p class="sub" data-t="s_trust"></p><div class="grid g2" id="trustBody"></div></section>
+
+  <section id="deploy"><div class="sec-n mono">10 / PORTABILITY</div><h2 data-t="h_deploy"></h2><p class="sub" data-t="s_deploy"></p><div class="tbl" id="deployBody"></div></section>
+
+  <section id="road"><div class="sec-n mono">11 / ROADMAP &amp; ACCEPTANCE</div><h2 data-t="h_road"></h2><p class="sub" data-t="s_road"></p><div class="road" id="roadBody"></div><h3 style="margin:26px 0 10px" data-t="h_tests"></h3><div class="tests" id="tests"></div></section>
+</main>
+<footer><div class="wrap" data-t="foot"></div></footer>
+
+<script>
+let L='vi';try{L=localStorage.getItem('sisf-lang')||'vi'}catch(e){}
+const t=o=>o==null?'':typeof o==='string'?o:o[L];
+const $=s=>document.querySelector(s), el=(h)=>{const d=document.createElement('template');d.innerHTML=h.trim();return d.content.firstChild};
+const T={
+eyebrow:{vi:'Kiến trúc · bản thiết kế, chưa triển khai',en:'Architecture · design draft, not implemented'},
+lede:{vi:'Một factory deployment khép kín: ứng dụng, agent factory và control plane cùng vận hành. Hệ thống tự phát hiện cơ hội cải tiến, kiểm chứng độc lập, tự phát hành và phục hồi an toàn.',en:'One closed-loop factory deployment: application, agent factory and control plane run together. It finds improvement opportunities, verifies them independently, publishes and recovers safely.'},
+h_topo:{vi:'Ba zone trong cùng một deployment',en:'Three zones in one deployment'},
+s_topo:{vi:'Bấm vào một zone để xem trách nhiệm. Nhiều process hay container đều được, miễn chung một manifest, một danh tính và một vòng đời.',en:'Select a zone to see what it owns. Many processes or containers are fine, as long as they share one manifest, one identity and one lifecycle.'},
+h_entry:{vi:'Năm cửa vào hệ thống',en:'Five ways into the system'},
+s_entry:{vi:'Mọi cửa vào đều đi qua cùng một lớp xác thực và policy. Không cửa nào tự cấp quyền.',en:'Every entrypoint passes through the same authentication and policy layer. None of them grants permission on its own.'},
+h_loops:{vi:'Hai vòng khép kín',en:'Two closed loops'},
+s_loops:{vi:'Một vòng bắt đầu từ con người, một vòng bắt đầu từ dữ liệu. Cả hai hội tụ vào cùng một pipeline.',en:'One loop starts with a person, the other with data. Both converge on the same pipeline.'},
+h_states:{vi:'Vòng đời của một issue',en:'Lifecycle of an issue'},
+s_states:{vi:'Chạy thử một kịch bản hoặc bấm vào một trạng thái để xem điều kiện vào và nhãn GitHub tương ứng.',en:'Play a scenario, or select a state to see its entry condition and GitHub label.'},
+h_decide:{vi:'Quyết định có căn cứ',en:'Evidence-based decisions'},
+s_decide:{vi:'Decision Layer chỉ khuyến nghị. Kiểm tra deterministic có quyền phủ quyết, và model chỉ được làm hệ thống thận trọng hơn.',en:'The Decision Layer only recommends. Deterministic checks hold the veto, and a model may only make the system more cautious.'},
+h_flows:{vi:'Luồng theo từng vai',en:'Flows by role'},
+s_flows:{vi:'Bốn tình huống điển hình, từng bước ai làm gì.',en:'Four typical situations, step by step, and who does what.'},
+h_qa:{vi:'QA chấm điểm, hệ thống cưỡng chế',en:'QA scores, the system enforces'},
+s_qa:{vi:'Điểm cao không thắng được một hard gate. Các con số dưới đây là mức khởi điểm, cần hiệu chỉnh bằng dữ liệu thật.',en:'A high score never beats a hard gate. The numbers below are starting points to be calibrated on real data.'},
+h_surf:{vi:'Một lớp dịch vụ, năm giao diện',en:'One service layer, five surfaces'},
+s_surf:{vi:'Dashboard, API, CLI, MCP và WebMCP gọi cùng một action service nên có cùng quyền và cùng hành vi.',en:'Dashboard, API, CLI, MCP and WebMCP call the same action service, so permissions and behaviour are identical.'},
+h_trust:{vi:'Danh tính, vai trò và ranh giới tin cậy',en:'Identity, roles and the trust boundary'},
+s_trust:{vi:'Đăng nhập là ai, được làm gì, và phần nào của factory mà ứng viên không bao giờ tự sửa được.',en:'Who signs in, what they may do, and which part of the factory a candidate can never modify.'},
+h_deploy:{vi:'Chạy ở đâu',en:'Where it runs'},
+s_deploy:{vi:'Một nền tảng chỉ được ghi là hỗ trợ đầy đủ sau khi qua kiểm thử end-to-end.',en:'A platform is marked fully supported only after it passes end-to-end tests.'},
+h_road:{vi:'Lộ trình và tiêu chí nghiệm thu',en:'Roadmap and acceptance'},
+s_road:{vi:'Năm giai đoạn, mỗi giai đoạn có đầu ra kiểm chứng được.',en:'Five phases, each with a verifiable outcome.'},
+h_tests:{vi:'20 phép thử nghiệm thu',en:'20 acceptance tests'},
+foot:{vi:'Tài liệu thiết kế, không phải phiên bản đã triển khai. Chi tiết đầy đủ nằm trong decision brief cùng thư mục. Giấy phép Apache-2.0.',en:'Design document, not an implemented release. Full detail lives in the decision brief in this folder. Apache-2.0 licensed.'}
+};
+const NAV=[['topology',{vi:'Topology',en:'Topology'}],['entry',{vi:'Cửa vào',en:'Entrypoints'}],['loops',{vi:'Workflows',en:'Workflows'}],['states',{vi:'State graph',en:'State graph'}],['decide',{vi:'Quyết định',en:'Decisions'}],['flows',{vi:'User flows',en:'User flows'}],['qa',{vi:'QA & release',en:'QA & release'}],['surfaces',{vi:'Surfaces',en:'Surfaces'}],['trust',{vi:'Auth & trust',en:'Auth & trust'}],['deploy',{vi:'Portability',en:'Portability'}],['road',{vi:'Lộ trình',en:'Roadmap'}]];
+const STATS=[['1',{vi:'factory deployment thống nhất',en:'unified factory deployment'}],['3',{vi:'zone đồng triển khai',en:'co-deployed zones'}],['5',{vi:'giao diện điều khiển',en:'control surfaces'}],['A/B/C',{vi:'chế độ ủy quyền',en:'delegation modes'}],['20',{vi:'phép thử nghiệm thu',en:'acceptance tests'}]];
+const ZONES=[
+{c:'z1',n:{vi:'Zone 1 · Application',en:'Zone 1 · Application'},d:{vi:'Phục vụ người dùng và luôn chạy bản phát hành đã được kiểm chứng. GitHub ngắt thì Zone 1 vẫn phục vụ tiếp.',en:'Serves users and always runs a verified release. If GitHub goes down, Zone 1 keeps serving.'},i:[{vi:'Webapp, API, MCP và WebMCP cho người dùng cuối',en:'Webapp, API, MCP and WebMCP for end users'},{vi:'Sinh traces, logs, sessions, activities và feedback có gắn <code>release_digest</code>',en:'Emits traces, logs, sessions, activities and feedback tagged with <code>release_digest</code>'},{vi:'Chỉ thay đổi qua release supervisor, không bao giờ sửa trực tiếp',en:'Changes only through the release supervisor, never edited in place'}]},
+{c:'z2',n:{vi:'Zone 2 · Agent factory',en:'Zone 2 · Agent factory'},d:{vi:'Biến một nhiệm vụ đã duyệt thành một release candidate đã qua QA độc lập.',en:'Turns an approved task into a release candidate that has passed independent QA.'},i:[{vi:'Dispatcher, lease, run state và điều phối QA nằm trong factory',en:'Dispatcher, leases, run state and QA orchestration live inside the factory'},{vi:'Agent tích hợp sẵn: Claude CLI, Codex, Pi. Agent từ xa chỉ là nơi thực thi',en:'Built-in agents: Claude CLI, Codex, Pi. Remote agents are executors only'},{vi:'Mỗi run có workspace giới hạn filesystem, mạng, thời gian và secret ngắn hạn',en:'Each run gets a workspace with bounded filesystem, network, time and short-lived secrets'},{vi:'Agent viết code và agent QA khác danh tính, khác workspace, ưu tiên khác model',en:'Coding and QA agents differ in identity and workspace, and preferably in model'}]},
+{c:'z3',n:{vi:'Zone 3 · Control plane',en:'Zone 3 · Control plane'},d:{vi:'Nơi giữ quyền: ai được làm gì, cái gì được phát hành, và khi nào phải quay lui.',en:'Where authority lives: who may do what, what gets released, and when to roll back.'},i:[{vi:'Dashboard, API, CLI, MCP, WebMCP trên cùng một action service',en:'Dashboard, API, CLI, MCP and WebMCP on one action service'},{vi:'SSO GitHub và Google, RBAC, approval inbox, audit',en:'GitHub and Google SSO, RBAC, approval inbox, audit'},{vi:'Decision Layer, state machine, backlog, budget, secrets',en:'Decision Layer, state machine, backlog, budget, secrets'},{vi:'Release supervisor ghim digest, giữ bản LKG, canary và tự rollback',en:'Digest-pinned release supervisor holding the LKG, canary and automatic rollback'}]}];
+const ENTRIES=[
+{k:'User',c:'z1',h:{vi:'Người dùng cuối',en:'End user'},p:'Webapp · API · MCP · WebMCP',d:{vi:'Dùng ứng dụng ở Zone 1. Có thể gửi báo lỗi hoặc đề xuất, nhưng người gửi không trở thành Owner.',en:'Uses the app in Zone 1. Can report a bug or propose a feature, but a reporter never becomes the Owner.'}},
+{k:'Owner',c:'z3',h:{vi:'Owner và nhóm vận hành',en:'Owner and operators'},p:'Dashboard · API · CLI',d:{vi:'Duyệt feature mới, đổi policy, xem tiến độ, dừng hoặc rollback. Việc nhạy cảm cần xác thực lại.',en:'Approves new features, changes policy, watches progress, stops or rolls back. Sensitive actions need re-authentication.'}},
+{k:'Agent',c:'z3',h:{vi:'Agent của Owner',en:"The Owner's agents"},p:'Remote MCP · OAuth 2.1',d:{vi:'Đọc trạng thái và đề xuất hành động qua MCP. Không dùng được phiên của Owner để tự duyệt.',en:"Read state and propose actions over MCP. Cannot use the Owner's session to approve on their behalf."}},
+{k:'GitHub',c:'',h:{vi:'GitHub',en:'GitHub'},p:'Issues · Labels · Webhooks',d:{vi:'Issue gắn <code>sisf:ready</code> là yêu cầu intake. Webhook được kiểm HMAC, chống trùng và đối soát định kỳ.',en:'An issue labelled <code>sisf:ready</code> is an intake request. Webhooks are HMAC-verified, de-duplicated and reconciled periodically.'}},
+{k:'Signal',c:'z1',h:{vi:'Telemetry',en:'Telemetry'},p:'OpenTelemetry · Feedback',d:{vi:'Dữ liệu vận hành của Zone 1 đi vào Decision Layer và có thể thành proposal nếu đủ bằng chứng.',en:'Zone 1 operational data feeds the Decision Layer and becomes a proposal when the evidence is sufficient.'}}];
+const LOOPS=[
+{c:'var(--accent)',h:{vi:'Vòng 1 · Từ GitHub issue',en:'Loop 1 · From a GitHub issue'},s:[['Issue',{vi:'Gắn nhãn hợp lệ',en:'Valid label applied'}],['Intake',{vi:'Xác thực repo, hỏi làm rõ',en:'Verify repo, clarify'}],['SoW / DoD',{vi:'Phạm vi có version',en:'Versioned scope'}],['Approval',{vi:'Nếu là feature mới',en:'If it is a new feature'}],['Code',{vi:'Agent trong sandbox',en:'Agent in a sandbox'}],['QA',{vi:'Agent khác chấm',en:'A different agent scores'}],['Release',{vi:'Canary rồi theo dõi',en:'Canary, then monitor'}],['Verify',{vi:'Đạt DoD mới đóng',en:'Close only on DoD'}]]},
+{c:'var(--z1)',h:{vi:'Vòng 2 · Từ telemetry',en:'Loop 2 · From telemetry'},s:[['Signal',{vi:'Lỗi, độ trễ, feedback',en:'Errors, latency, feedback'}],['Quality',{vi:'Lọc và che dữ liệu',en:'Filter and redact'}],['Baseline',{vi:'So với trước, feature nào',en:'Compare, find the feature'}],['Goal',{vi:'Mục tiêu ứng viên',en:'Candidate goal'}],['Typed Q',{vi:'Câu hỏi có kiểu',en:'Typed questions'}],['Evidence',{vi:'Lý do và dẫn chứng',en:'Rationale and evidence'}],['Policy',{vi:'Kiểm scope và quyền',en:'Scope and policy check'}],['Proposal',{vi:'Thành issue, vào vòng 1',en:'Becomes an issue, joins loop 1'}]]}];
+const S={Intake:[70,90],Clarifying:[155,24],ScopeDraft:[240,90],ApprovalPending:[325,24],Ready:[410,90],Claimed:[580,90],Developing:[750,90],QAEvaluation:[920,90],ReleaseCandidate:[920,280],Canary:[750,280],Monitoring:[580,280],Verified:[410,280],Closed:[240,280],RolledBack:[665,185],Blocked:[410,185]};
+const SD={
+Intake:{l:'sisf:ready',d:{vi:'Nhận issue có nhãn hợp lệ hoặc proposal từ Decision Layer. Kiểm repo, installation và quyền của người gửi.',en:'Accepts a validly labelled issue or a Decision Layer proposal. Checks repo, installation and the sender’s rights.'}},
+Clarifying:{l:'sisf:needs-info',d:{vi:'AI hỏi làm rõ bằng comment. Không có phản hồi trong thời hạn thì dừng, không tiêu tiền vô hạn.',en:'The AI asks clarifying questions in comments. No reply before the timeout means stop, not unbounded spend.'}},
+ScopeDraft:{l:'',d:{vi:'Soạn SoW và DoD đo được, có version, đính kèm issue. Sửa đáng kể sau khi duyệt làm approval cũ hết hiệu lực.',en:'Drafts a versioned SoW and measurable DoD attached to the issue. A material edit after approval invalidates it.'}},
+ApprovalPending:{l:'',d:{vi:'Feature mới hoặc thay đổi ngoài phạm vi ủy quyền chờ Owner quyết định trong approval inbox.',en:'A new feature or a change outside the delegation waits for the Owner in the approval inbox.'}},
+Ready:{l:'sisf:approved',d:{vi:'Policy cho phép hoặc Owner đã duyệt. Nhiệm vụ sẵn sàng để được nhận.',en:'Policy permits it or the Owner approved. The task is ready to be claimed.'}},
+Claimed:{l:'',d:{vi:'Một worker giữ lease nguyên tử và giữ chỗ ngân sách. Webhook trùng không tạo run thứ hai.',en:'One worker holds an atomic lease and a budget reservation. A duplicate webhook never creates a second run.'}},
+Developing:{l:'sisf:running',d:{vi:'Coding agent làm việc trong workspace giới hạn và trả về patch, tests, artifacts.',en:'The coding agent works in a bounded workspace and returns a patch, tests and artifacts.'}},
+QAEvaluation:{l:'sisf:qa',d:{vi:'QA agent độc lập chạy suite cố định theo commit và policy SHA. Cần điểm từ 85 và không hard gate nào rớt.',en:'An independent QA agent runs a suite pinned to the commit and policy SHA. Needs 85 or more and no failed hard gate.'}},
+ReleaseCandidate:{l:'',d:{vi:'Candidate bất biến, có preview và đã preflight đường rollback.',en:'An immutable candidate with a preview and a preflighted rollback path.'}},
+Canary:{l:'sisf:canary',d:{vi:'Chuyển lưu lượng dần 5 → 25 → 100 phần trăm, hoặc blue-green nếu nền tảng không chia được traffic.',en:'Shifts traffic 5 → 25 → 100 percent, or blue-green when the platform cannot split traffic.'}},
+Monitoring:{l:'',d:{vi:'Theo dõi observed revision và DoD hậu triển khai trong cửa sổ quan sát.',en:'Watches the observed revision and post-deploy DoD through the observation window.'}},
+Verified:{l:'sisf:verified',d:{vi:'Bản đang chạy thật đạt DoD và qua cửa sổ rollback. Merge PR chưa phải là xong.',en:'The revision actually running meets the DoD and outlived the rollback window. A merged PR is not done.'}},
+Closed:{l:'',d:{vi:'Đóng issue, cập nhật changelog và feature catalogue.',en:'Closes the issue and updates the changelog and feature catalogue.'}},
+RolledBack:{l:'',d:{vi:'Supervisor tự khôi phục bản LKG khi vượt ngưỡng lỗi. Dữ liệu khách hàng không bị ghi đè.',en:'The supervisor restores the LKG when the error threshold is exceeded. Customer data is never overwritten.'}},
+Blocked:{l:'sisf:blocked',d:{vi:'Dừng kèm bằng chứng và báo cáo phục hồi. Chỉ chạy lại khi an toàn và được ủy quyền.',en:'Stopped with evidence and a recovery report. Retries only when safe and authorized.'}}};
+const E=[['Intake','Clarifying'],['Clarifying','ScopeDraft'],['Intake','ScopeDraft'],['ScopeDraft','ApprovalPending'],['ScopeDraft','Ready'],['ApprovalPending','Ready'],['ApprovalPending','Blocked',-46],['Ready','Claimed'],['Claimed','Developing'],['Developing','QAEvaluation',-16],['QAEvaluation','Developing',-16],['QAEvaluation','ReleaseCandidate'],['ReleaseCandidate','Canary'],['Canary','Monitoring'],['Canary','RolledBack'],['Monitoring','Verified'],['Monitoring','RolledBack'],['Verified','Closed'],['RolledBack','Blocked'],['Blocked','Ready']];
+const PATHS=[
+{n:{vi:'Thuận lợi',en:'Happy path'},p:['Intake','ScopeDraft','Ready','Claimed','Developing','QAEvaluation','ReleaseCandidate','Canary','Monitoring','Verified','Closed']},
+{n:{vi:'Feature mới cần duyệt',en:'New feature needs approval'},p:['Intake','Clarifying','ScopeDraft','ApprovalPending','Ready','Claimed','Developing','QAEvaluation','ReleaseCandidate','Canary','Monitoring','Verified','Closed']},
+{n:{vi:'QA trả về',en:'QA sends it back'},p:['Intake','ScopeDraft','Ready','Claimed','Developing','QAEvaluation','Developing','QAEvaluation','ReleaseCandidate','Canary','Monitoring','Verified','Closed']},
+{n:{vi:'Canary lỗi, tự rollback',en:'Canary fails, auto rollback'},p:['Intake','ScopeDraft','Ready','Claimed','Developing','QAEvaluation','ReleaseCandidate','Canary','RolledBack','Blocked','Ready']}];
+const FLOWS=[
+{n:{vi:'Báo lỗi',en:'Report a bug'},s:[['h','Reporter',{vi:'Mở issue hoặc gọi <code>report</code> qua MCP, UI. Framework gắn <code>kind:bug</code>.',en:'Opens an issue or calls <code>report</code> over MCP or the UI. The framework tags it <code>kind:bug</code>.'}],['z3','Zone 3',{vi:'Xác thực webhook, ghi inbox, trả 2xx ngay rồi xử lý bất đồng bộ.',en:'Verifies the webhook, stores it in the inbox, returns 2xx at once and processes asynchronously.'}],['z3','Zone 3',{vi:'Hỏi làm rõ trong một comment, rồi đăng SoW và DoD có version.',en:'Asks clarifying questions in one comment, then posts a versioned SoW and DoD.'}],['z2','Zone 2',{vi:'Bug thuộc chức năng đã duyệt nên không cần Owner. Worker nhận lease, coding agent sửa.',en:'A bug in an approved feature needs no Owner. A worker takes the lease and the coding agent fixes it.'}],['z2','QA agent',{vi:'Chấm trên baseline chỉ đọc và ký <code>qa_receipt</code> gắn với digest của candidate.',en:'Scores against a read-only baseline and signs a <code>qa_receipt</code> bound to the candidate digest.'}],['z3','Supervisor',{vi:'Canary, theo dõi, rồi promote. Vượt ngưỡng lỗi thì tự khôi phục bản LKG.',en:'Canary, monitor, then promote. On a threshold breach it restores the LKG.'}],['g','GitHub',{vi:'Issue chỉ đóng khi bản đang chạy đạt DoD. Reporter thấy một comment tiến độ được cập nhật, không bị spam.',en:'The issue closes only when the running revision meets the DoD. The reporter sees one updated progress comment, not spam.'}]]},
+{n:{vi:'Duyệt feature mới',en:'Approve a new feature'},s:[['h','Reporter',{vi:'Đề xuất một tính năng. Hệ thống phỏng vấn, phân loại <code>kind:feature</code> và soạn SoW, DoD.',en:'Proposes a feature. The system interviews, classifies it <code>kind:feature</code> and drafts the SoW and DoD.'}],['z3','Zone 3',{vi:'Đưa vào approval inbox kèm bằng chứng, diff dự kiến và các feature bị ảnh hưởng.',en:'Puts it in the approval inbox with evidence, the expected diff and affected features.'}],['h','Owner',{vi:'Xem trên bất kỳ surface nào. Khi duyệt phải xác thực lại, kể cả khi đang đăng nhập.',en:'Reviews it on any surface. Approving requires re-authentication even when already signed in.'}],['z3','Zone 3',{vi:'Approval được ký, dùng một lần, gắn với <code>subject_digest</code>, policy revision và có hạn.',en:'The approval is signed, single-use, bound to the <code>subject_digest</code> and policy revision, and it expires.'}],['z2','Zone 2',{vi:'Từ đây đi đúng pipeline chung. Nếu SoW đổi đáng kể thì phải duyệt lại.',en:'From here it follows the common pipeline. A material SoW change requires a new approval.'}],['z3','Zone 3',{vi:'Sau khi verified, feature catalogue và changelog được cập nhật.',en:'Once verified, the feature catalogue and changelog are updated.'}]]},
+{n:{vi:'Agent điều khiển qua MCP',en:'Agent operates over MCP'},s:[['h','Owner',{vi:'Cho agent của mình kết nối remote MCP bằng OAuth 2.1 với scope gắn tài nguyên.',en:'Lets their agent connect to the remote MCP using OAuth 2.1 with resource-bound scopes.'}],['a','Agent',{vi:'Gọi <code>factory.status</code>, <code>issues.list</code>, <code>runs.inspect</code> để nắm tình hình.',en:'Calls <code>factory.status</code>, <code>issues.list</code> and <code>runs.inspect</code> to get the picture.'}],['a','Agent',{vi:'Muốn rollback thì gọi <code>deployments.rollback</code> và nhận về một plan, chưa có gì thay đổi.',en:'To roll back it calls <code>deployments.rollback</code> and gets a plan back; nothing has changed yet.'}],['h','Owner',{vi:'Xác nhận plan trong trình duyệt hoặc qua device flow. Agent không tự xác nhận được.',en:'Confirms the plan in a browser or through a device flow. The agent cannot confirm it itself.'}],['z3','Zone 3',{vi:'Thực thi, ghi audit ai là người duyệt và ai là agent thực hiện, trả kết quả qua chính MCP.',en:'Executes, audits who approved and which agent acted, and returns the result over the same MCP.'}]]},
+{n:{vi:'Factory tự nâng cấp',en:'Factory upgrades itself'},s:[['z3','Zone 3',{vi:'Một issue yêu cầu sửa một trang dashboard chỉ đọc của Zone 3.',en:'An issue asks to change a read-only dashboard page in Zone 3.'}],['z2','Zone 2',{vi:'Coding agent sửa mã của chính factory. QA agent chấm trên baseline mà candidate không sửa được.',en:'The coding agent changes the factory’s own code. The QA agent scores on a baseline the candidate cannot edit.'}],['z3','Supervisor',{vi:'Kiểm tra candidate không đụng tới supervisor, khóa ký, policy enforcement, QA baseline hay quy tắc rollback.',en:'Checks that the candidate does not touch the supervisor, signing keys, policy enforcement, QA baseline or rollback rules.'}],['z3','Supervisor',{vi:'Triển khai Zone 3 mới. Zone 1 vẫn phục vụ trong lúc Zone 2 và 3 khởi động lại.',en:'Deploys the new Zone 3. Zone 1 keeps serving while Zones 2 and 3 restart.'}],['z3','Supervisor',{vi:'Tự theo dõi. Lỗi thì quay về bản LKG được giữ ngoài tầm ghi của candidate.',en:'Monitors itself. On failure it returns to the LKG, which is kept out of the candidate’s write reach.'}],['h','Owner',{vi:'Thay đổi tới chính supervisor hay policy là governance change, luôn cần con người duyệt trong một chu kỳ riêng.',en:'A change to the supervisor or policy itself is a governance change and always needs a human, in a separate cycle.'}]]}];
+const RUB=[[30,'var(--accent)',{vi:'Đúng và không hồi quy',en:'Correctness and regression'}],[25,'var(--bad)',{vi:'Bảo mật và auth',en:'Security and auth'}],[20,'var(--z3)',{vi:'Contract và an toàn dữ liệu',en:'Contract and data safety'}],[15,'var(--z2)',{vi:'UX, hiệu năng, output',en:'UX, performance, output'}],[10,'var(--z1)',{vi:'Quan sát và rollback',en:'Observability and rollback'}]];
+const GATES=['tests / contract','permissions','migrations','secrets','observed build','independent evaluator','resource / budget policy','rollback readiness'];
+const SURF=[
+['Dashboard',{vi:'Con người',en:'People'},'Session cookie HttpOnly + SameSite + CSRF',{vi:'Theo dõi, duyệt, dừng, rollback',en:'Watch, approve, stop, roll back'}],
+['REST API',{vi:'Tích hợp',en:'Integrations'},{vi:'Token ngắn hạn có scope · OpenAPI',en:'Short-lived scoped token · OpenAPI'},{vi:'Hợp đồng gốc mà mọi surface khác gọi',en:'The root contract every other surface calls'}],
+['CLI',{vi:'Kỹ sư, CI',en:'Engineers, CI'},{vi:'Token có scope · device flow cho việc nhạy cảm',en:'Scoped token · device flow for sensitive actions'},{vi:'Cài đặt, kiểm tra, vận hành từ terminal',en:'Install, inspect and operate from a terminal'}],
+['Remote MCP',{vi:'Agent',en:'Agents'},'OAuth 2.1 · Protected Resource Metadata · resource-bound scopes',{vi:'Agent đọc trạng thái và đề xuất hành động',en:'Agents read state and propose actions'}],
+['WebMCP',{vi:'Agent trong trình duyệt',en:'In-browser agents'},{vi:'Phiên trình duyệt hiện có · chỉ khi trình duyệt hỗ trợ',en:'Existing browser session · only when the browser supports it'},{vi:'Tùy chọn, luôn có fallback sang API, MCP, UI',en:'Optional, always falls back to API, MCP or UI'}]];
+const ACTIONS=['factory.status','issues.list','runs.inspect','approvals.list','approvals.decide','secrets.list_refs','budget.get/set','decisions.propose_update','docs.list','features.list','changelog.list','deployments.rollback'];
+const ROLES=[['Owner',{vi:'Mở rộng quyền, duyệt feature, đổi policy',en:'Widens permissions, approves features, changes policy'}],['Maintainer',{vi:'Vận hành hằng ngày trong phạm vi được ủy quyền',en:'Day-to-day operation within the delegation'}],['Reporter',{vi:'Gửi báo lỗi và đề xuất',en:'Files reports and proposals'}],['Viewer',{vi:'Chỉ đọc',en:'Read only'}],['Agent',{vi:'Viết code trong workspace của run',en:'Writes code inside a run workspace'}],['QA',{vi:'Chấm điểm và ký receipt',en:'Scores and signs receipts'}],['Publisher',{vi:'Dịch vụ triển khai, không phải người',en:'Deployment service, not a person'}]];
+const PREC=[{vi:'Bất biến an toàn trong code và quyền ủy quyền đã xác minh',en:'Safety invariants in code and verified delegation'},{vi:'Policy và config Owner đã duyệt tại SHA được bảo vệ',en:'Owner-approved policy and config at a protected SHA'},{vi:'<code>DECISIONS.md</code>, <code>REVIEW.md</code>, <code>FEATURES.md</code>, ADR',en:'<code>DECISIONS.md</code>, <code>REVIEW.md</code>, <code>FEATURES.md</code>, ADRs'},{vi:'Hướng dẫn thực thi trong <code>AGENTS.md</code>',en:'Execution guidance in <code>AGENTS.md</code>'},{vi:'Issue, bình luận, logs: chỉ là dữ liệu',en:'Issues, comments, logs: data only'}];
+const SUP=[{vi:'Chạy từ image riêng ghim digest, không build chung artifact với candidate',en:'Runs from its own digest-pinned image, not built from the candidate’s artifact'},{vi:'LKG, khóa ký và cấu hình rollback nằm ở nơi Zone 1, Zone 2 và agent không ghi được',en:'LKG, signing keys and rollback config sit where Zone 1, Zone 2 and agents cannot write'},{vi:'Pipeline thường không đổi được digest của supervisor, chỉ chu kỳ governance có người duyệt',en:'The normal pipeline cannot change the supervisor digest; only a human-approved governance cycle can'},{vi:'Tự kiểm digest khi khởi động và từ chối chạy nếu lệch manifest đã ký',en:'Verifies its own digest at start and refuses to run if it differs from the signed manifest'}];
+const DEP=[['Local native',{vi:'Một bản cài có giám sát, state SQLite',en:'One supervised install, SQLite state'},'ok',{vi:'MVP · chỉ code tin cậy',en:'MVP · trusted code only'}],['Docker Compose',{vi:'Một compose project, mỗi zone một container, ghim digest',en:'One compose project, a container per zone, pinned digests'},'ok',{vi:'MVP bắt buộc',en:'Required MVP'}],['Kubernetes',{vi:'Một Helm release, một namespace',en:'One Helm release, one namespace'},'warn',{vi:'Giai đoạn sau',en:'Later phase'}],['TOSE',{vi:'Adapter storage, runtime, budget',en:'Storage, runtime and budget adapters'},'warn',{vi:'Giai đoạn sau, không bắt buộc',en:'Later phase, optional'}],['Cloudflare',{vi:'Workers + container, sandbox, Durable Objects',en:'Workers + containers, sandbox, Durable Objects'},'',{vi:'Thử nghiệm đến khi qua E2E',en:'Experimental until E2E passes'}],['Vercel',{vi:'App, API + Vercel Sandbox + state bền',en:'App, API + Vercel Sandbox + durable state'},'',{vi:'Thử nghiệm đến khi qua E2E',en:'Experimental until E2E passes'}],['Render / Railway',{vi:'Nhóm service + state bền',en:'Service group + durable state'},'',{vi:'Thử nghiệm đến khi qua E2E',en:'Experimental until E2E passes'}]];
+const ROAD=[['P0',{vi:'Nền móng',en:'Foundations'},{vi:'ADR cho từng bất biến, conformance checker ba zone, hợp đồng interface.',en:'An ADR per invariant, three-zone conformance checker, interface contracts.'}],['P1',{vi:'Ba zone chạy được',en:'Three zones running'},{vi:'Local và Compose đủ ba zone, vòng đời GitHub issue, state bền qua restart.',en:'Local and Compose with all three zones, GitHub issue lifecycle, state that survives restarts.'}],['P2',{vi:'Vòng khép kín',en:'Closed loop'},{vi:'Hai agent, QA độc lập, phát hành có rollback, factory tự sửa, một lát Decision Layer.',en:'Two agents, independent QA, release with rollback, factory self-update, a Decision Layer slice.'}],['P3',{vi:'Đủ giao diện',en:'All surfaces'},{vi:'SSO GitHub và Google, năm surfaces, Decision Layer đầy đủ, budgets.',en:'GitHub and Google SSO, five surfaces, full Decision Layer, budgets.'}],['P4',{vi:'Mở rộng',en:'Reach'},{vi:'Agent từ xa, Kubernetes và serverless, conformance matrix công khai.',en:'Remote agents, Kubernetes and serverless, a public conformance matrix.'}]];
+const TESTS=[{vi:'Cài mới: một factory_id, đủ ba zone',en:'Fresh install: one factory_id, all three zones'},{vi:'Issue hợp lệ đi hết vòng đời đến đóng',en:'A valid issue runs the full lifecycle to close'},{vi:'Feature chưa duyệt không được triển khai',en:'An unapproved feature is never deployed'},{vi:'Webhook trùng và sai thứ tự: đúng một run',en:'Duplicate, reordered webhooks: exactly one run'},{vi:'Worker chết giữa chừng vẫn khôi phục được',en:'A worker dying mid-task recovers'},{vi:'QA tự chấm patch của mình bị từ chối',en:'QA grading its own patch is refused'},{vi:'Điểm đạt nhưng rớt security: không publish',en:'Passing score with a security failure: no publish'},{vi:'QA đạt, health tốt: lên đúng digest',en:'QA pass and healthy: the right digest ships'},{vi:'Vượt ngưỡng lỗi: tự khôi phục LKG',en:'Threshold breach: LKG restored automatically'},{vi:'Factory tự sửa Zone 3 không nhạy cảm',en:'Factory updates a non-sensitive part of Zone 3'},{vi:'Agent đổi DECISIONS.md không duyệt: vô hiệu',en:'Unapproved agent change to DECISIONS.md: ignored'},{vi:'SSO và OAuth qua các negative test',en:'SSO and OAuth pass their negative tests'},{vi:'Năm surfaces phân quyền tương đương',en:'Five surfaces enforce equal permissions'},{vi:'Budget unlimited và capped đúng cam kết',en:'Unlimited and capped budgets behave as stated'},{vi:'Hai deployment không ảnh hưởng nhau',en:'Two deployments do not affect each other'},{vi:'Backend mới qua conformance matrix',en:'A new backend passes the conformance matrix'},{vi:'Không có lợi ích thì không tạo issue',en:'No benefit means no issue is created'},{vi:'Agent mới không cần lịch sử chat',en:'A fresh agent needs no chat history'},{vi:'Prompt injection không vượt quyền',en:'Prompt injection gains no privilege'},{vi:'Thiếu metrics hoặc rollback: hold',en:'Missing metrics or rollback: hold'}];
+
+function render(){
+  document.documentElement.lang=L; $('#lang').textContent=L==='vi'?'EN':'VI';
+  document.querySelectorAll('[data-t]').forEach(e=>e.innerHTML=t(T[e.dataset.t]));
+  $('#toc').innerHTML=NAV.map(([i,n])=>`<a href="#${i}">${t(n)}</a>`).join('');
+  $('#stats').innerHTML=STATS.map(([b,s])=>`<div class="stat"><b>${b}</b><span>${t(s)}</span></div>`).join('');
+  showZone(zsel);
+  $('#entries').innerHTML=ENTRIES.map(e=>`<div class="card"><span class="tag ${e.c}">${e.k}</span><h3 style="margin-top:8px">${t(e.h)}</h3><div class="small mono" style="margin-bottom:6px">${e.p}</div><div class="small">${t(e.d)}</div></div>`).join('');
+  $('#loopsBody').innerHTML=LOOPS.map(l=>`<div class="loop-h"><span class="pill" style="background:${l.c}"></span>${t(l.h)}</div><div class="steps">${l.s.map((s,i)=>`<div class="step" style="border-top:3px solid ${l.c}"><i class="mono">${String(i+1).padStart(2,'0')}</i><b>${s[0]}</b>${t(s[1])}</div>`).join('')}</div>`).join('');
+  $('#paths').innerHTML=PATHS.map((p,i)=>`<button class="btn" data-p="${i}">▶ ${t(p.n)}</button>`).join('')+`<span class="small" id="pstat"></span>`;
+  showState(ssel);
+  renderDecide(); renderFlows(); renderQA(); renderSurf(); renderTrust();
+  $('#deployBody').innerHTML=`<table><thead><tr><th>Profile</th><th>${L==='vi'?'Cách đóng gói':'Packaging'}</th><th>${L==='vi'?'Trạng thái':'Status'}</th></tr></thead><tbody>${DEP.map(d=>`<tr><td><b>${d[0]}</b></td><td>${t(d[1])}</td><td><span class="tag ${d[2]}">${t(d[3])}</span></td></tr>`).join('')}</tbody></table>`;
+  $('#roadBody').innerHTML=ROAD.map(r=>`<div class="card"><span class="tag z3">${r[0]}</span><h3 style="margin-top:8px">${t(r[1])}</h3><div class="small">${t(r[2])}</div></div>`).join('');
+  $('#tests').innerHTML=TESTS.map((x,i)=>`<div class="test"><b>SISF-${String(i+1).padStart(2,'0')}</b>${t(x)}</div>`).join('');
+}
+let zsel=0;
+function showZone(i){zsel=i;const z=ZONES[i];document.querySelectorAll('.zone').forEach(g=>g.classList.toggle('sel',+g.dataset.z===i));
+  const d=$('#zdetail');d.style.borderLeftColor=`var(--${z.c})`;d.innerHTML=`<h3>${t(z.n)}</h3><div>${t(z.d)}</div><ul class="clean small">${z.i.map(x=>`<li>${t(x)}</li>`).join('')}</ul>`}
+document.querySelectorAll('.zone').forEach(g=>{g.onclick=()=>showZone(+g.dataset.z);g.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();showZone(+g.dataset.z)}}});
+
+/* state graph */
+const W=118,H=34,NS='http://www.w3.org/2000/svg';
+function clip(c,toward){const dx=toward[0]-c[0],dy=toward[1]-c[1];if(!dx&&!dy)return c;const k=Math.min(dx?W/2/Math.abs(dx):1e9,dy?H/2/Math.abs(dy):1e9);return [c[0]+dx*k,c[1]+dy*k]}
+function buildGraph(){const sg=$('#sg');let h=`<defs><marker id="sa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--muted)"/></marker></defs>`;
+  E.forEach(([a,b,cv],i)=>{const A=S[a],B=S[b],mx=(A[0]+B[0])/2,my=(A[1]+B[1])/2,dx=B[0]-A[0],dy=B[1]-A[1],len=Math.hypot(dx,dy)||1;
+    const C=cv?[mx-dy/len*cv,my+dx/len*cv]:[mx,my],p1=clip(A,C),p2=clip(B,C);
+    h+=`<path class="edge" data-e="${a}>${b}" marker-end="url(#sa)" d="M${p1[0].toFixed(1)} ${p1[1].toFixed(1)}Q${C[0].toFixed(1)} ${C[1].toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}"/>`});
+  Object.entries(S).forEach(([n,[x,y]])=>{const c=n==='RolledBack'||n==='Blocked'?'bad':n==='Verified'||n==='Closed'?'ok':'';
+    h+=`<g class="st ${c}" data-s="${n}" tabindex="0" role="button" aria-label="${n}"><rect x="${x-W/2}" y="${y-H/2}" width="${W}" height="${H}" rx="9"/><text x="${x}" y="${y}">${n}</text></g>`});
+  sg.innerHTML=h;
+  sg.querySelectorAll('.st').forEach(g=>{g.onclick=()=>{stop();showState(g.dataset.s)};g.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();stop();showState(g.dataset.s)}}})}
+let ssel='Intake',timer=null;
+function showState(n){ssel=n;document.querySelectorAll('.st').forEach(g=>g.classList.toggle('sel',g.dataset.s===n));const s=SD[n];
+  $('#sdetail').innerHTML=`<h3 class="mono">${n} ${s.l?`<span class="tag">${s.l}</span>`:''}</h3><div>${t(s.d)}</div>`}
+function clearOn(){document.querySelectorAll('.st.on,.edge.on').forEach(e=>e.classList.remove('on'))}
+function stop(){clearInterval(timer);timer=null;clearOn();const p=$('#pstat');if(p)p.textContent='';document.querySelectorAll('#paths .btn').forEach(b=>b.classList.remove('on'))}
+function play(i){stop();const p=PATHS[i].p;let k=0;document.querySelector(`#paths [data-p="${i}"]`).classList.add('on');
+  const tick=()=>{if(k>=p.length){clearInterval(timer);timer=null;return}clearOn();
+    for(let j=0;j<=k;j++){document.querySelector(`.st[data-s="${p[j]}"]`).classList.add('on');if(j>0){const e=document.querySelector(`.edge[data-e="${p[j-1]}>${p[j]}"]`);e&&e.classList.add('on')}}
+    showState(p[k]);$('#pstat').textContent=`${k+1} / ${p.length}`;k++};
+  tick();timer=setInterval(tick,matchMedia('(prefers-reduced-motion:reduce)').matches?250:850)}
+$('#paths').addEventListener('click',e=>{const b=e.target.closest('[data-p]');if(b)play(+b.dataset.p)});
+
+function renderDecide(){const vi=L==='vi';
+  $('#decideBody').innerHTML=`
+  <div class="card"><h3>${vi?'Luồng của Decision Layer':'Decision Layer flow'}</h3>
+    <div class="pipe"><span>signal</span><em>→</em><span>data quality + redaction</span><em>→</em><span>baseline / feature</span><em>→</em><span>candidate goal</span><em>→</em><span>typed questions</span><em>→</em><span>rationale + evidence</span><em>→</em><span>scope &amp; policy check</span><em>→</em><span>task proposal</span></div>
+    <p class="small" style="margin:12px 0 4px">${vi?'Kết quả có thể chọn':'Possible outcomes'}</p>
+    <span class="tag">ignore</span><span class="tag">observe</span><span class="tag">investigate</span><span class="tag ok">propose</span><span class="tag ok">implement</span><span class="tag bad">stop</span>
+    <p class="small" style="margin:10px 0 4px">${vi?'Phân loại':'Classification'}</p>
+    <span class="tag">bug</span><span class="tag">existing_improvement</span><span class="tag warn">new_feature</span><span class="tag warn">policy_change</span>
+    <p class="small" style="margin-top:12px">${vi?'Thiếu dữ liệu thì chọn <code>collect_more_evidence</code> hoặc <code>ignore</code>, không ép phải có cải tiến. Lỗi, timeout hay câu trả lời sai schema của model thì fail closed.':'With too little data it picks <code>collect_more_evidence</code> or <code>ignore</code> and never forces an improvement. A model error, timeout or off-schema answer fails closed.'}</p></div>
+  <div class="card"><h3>${vi?'Thứ tự thẩm quyền':'Order of authority'}</h3><p class="small" style="margin:0 0 10px">${vi?'Mục trên thắng mục dưới. Có mâu thuẫn thì hold, model không được chọn luật thuận tiện hơn.':'Higher wins over lower. On conflict the system holds; a model may not pick the more convenient rule.'}</p>
+    <ol class="ladder">${PREC.map(p=>`<li><span>${t(p)}</span></li>`).join('')}</ol></div>
+  <div class="card"><h3>${vi?'Ai quyết định gì':'Who decides what'}</h3><table><tbody>
+    <tr><td><span class="tag bad">Owner</span></td><td>${vi?'Feature mới, mở rộng quyền, đổi policy, gửi contribution upstream':'New features, wider permissions, policy changes, upstream contributions'}</td></tr>
+    <tr><td><span class="tag ok">Agent</span></td><td>${vi?'Sửa lỗi và cải tiến chức năng đã có, trong phạm vi được ủy quyền':'Fixes and improvements to existing features, within the delegation'}</td></tr>
+    <tr><td><span class="tag">Gates</span></td><td>${vi?'Có được phát hành hay không. Không ai ghi đè được hard gate':'Whether a release may ship. Nobody overrides a hard gate'}</td></tr></tbody></table></div>
+  <div class="card"><h3>${vi?'Ba chế độ ủy quyền':'Three delegation modes'}</h3><table><tbody>
+    <tr><td><span class="tag z1">A</span></td><td>${vi?'Theo yêu cầu: agent chỉ chạy khi con người khởi động':'On demand: the agent runs only when a person starts it'}</td></tr>
+    <tr><td><span class="tag z2">B</span></td><td>${vi?'Chủ động đề xuất: agent đề xuất, con người cho phép trước khi sửa':'Proactive proposals: the agent proposes, a person allows it before any change'}</td></tr>
+    <tr><td><span class="tag z3">C</span></td><td>${vi?'Tự chủ có giới hạn: qua mọi deterministic gate thì không cần duyệt từng lần':'Bounded autonomy: passing every deterministic gate needs no per-change approval'}</td></tr></tbody></table></div>`}
+
+let fsel=0;
+function renderFlows(){$('#flowTabs').innerHTML=FLOWS.map((f,i)=>`<button class="btn" data-f="${i}" aria-pressed="${i===fsel}">${t(f.n)}</button>`).join('');
+  $('#flowBody').innerHTML=FLOWS[fsel].s.map(s=>`<li><span class="actor a-${s[0]==='a'?'h':s[0]}">${s[1]}</span><span>${t(s[2])}</span></li>`).join('')}
+$('#flowTabs').addEventListener('click',e=>{const b=e.target.closest('[data-f]');if(b){fsel=+b.dataset.f;renderFlows()}});
+
+const sim={e:3.5,b:.8,n:240,w:2};
+function renderQA(){const vi=L==='vi';
+  $('#qaBody').innerHTML=`
+  <div class="card"><h3>${vi?'Rubric 100 điểm, ngưỡng khởi điểm 85':'100-point rubric, starting threshold 85'}</h3>
+    <div class="rubric">${RUB.map(r=>`<div style="width:${r[0]}%;background:${r[1]}">${r[0]}</div>`).join('')}</div>
+    <div class="legend">${RUB.map(r=>`<span><i style="background:${r[1]}"></i>${t(r[2])}</span>`).join('')}</div>
+    <p class="small" style="margin:14px 0 4px">${vi?'Hard gates: rớt một cái là dừng, bất kể điểm':'Hard gates: one failure stops the release, whatever the score'}</p>
+    ${GATES.map(g=>`<span class="tag bad">${g}</span>`).join('')}
+    <p class="small" style="margin-top:12px">${vi?'<code>qa_receipt</code> được ký và ghim: candidate digest, suite digest, baseline SHA, danh tính và model route của cả hai agent. Receipt của commit khác không dùng lại được.':'The signed <code>qa_receipt</code> pins the candidate digest, suite digest, baseline SHA, and the identity and model route of both agents. A receipt from another commit cannot be reused.'}</p></div>
+  <div class="card"><h3>${vi?'Pipeline phát hành':'Release pipeline'}</h3>
+    <div class="pipe"><span>build immutable candidate</span><em>→</em><span>preview</span><em>→</em><span>QA</span><em>→</em><span>preflight rollback</span><em>→</em><span>canary / blue-green</span><em>→</em><span>observed revision + metrics</span><em>→</em><span>promote / restore</span></div>
+    <ul class="clean small" style="margin-top:12px">
+      <li>${vi?'API báo cập nhật thành công chưa phải là bản phát hành khỏe mạnh; phải quan sát được revision đang chạy.':'An API reporting a successful update is not a healthy release; the running revision must be observed.'}</li>
+      <li>${vi?'Thiếu metrics, không có bản phục hồi hoặc adapter hỏng thì hold.':'Missing metrics, no restore point or a broken adapter means hold.'}</li>
+      <li>${vi?'Rollback chỉ đổi code và config, không ghi đè dữ liệu khách hàng bằng snapshot cũ.':'Rollback changes code and config only; it never overwrites customer data with an old snapshot.'}</li>
+      <li>${vi?'Lưu lượng thấp thì dùng synthetic checks bắt buộc và một thời gian hold tối thiểu.':'Under low traffic it relies on required synthetic checks and a minimum hold.'}</li></ul></div>
+  <div class="card sim" style="grid-column:1/-1"><h3>${vi?'Thử quy tắc tự rollback':'Try the auto-rollback rule'}</h3>
+    <p class="small" style="margin:0">${vi?'Cấu hình minh họa: rollback khi 5xx trên 2%, cao hơn baseline trên 1 điểm phần trăm, đủ 100 mẫu, trong 2 cửa sổ liên tiếp.':'Illustrative config: roll back when 5xx is above 2%, more than 1 percentage point over baseline, with at least 100 samples, for 2 consecutive windows.'}</p>
+    <div class="grid g2" style="margin-top:6px"><div>
+      <label>${vi?'Tỷ lệ 5xx của canary':'Canary 5xx rate'}<output id="oe"></output><input type="range" id="ie" min="0" max="10" step="0.1"></label>
+      <label>${vi?'Baseline':'Baseline'}<output id="ob"></output><input type="range" id="ib" min="0" max="5" step="0.1"></label>
+      <label>${vi?'Số mẫu trong cửa sổ':'Samples in the window'}<output id="on"></output><input type="range" id="in" min="0" max="500" step="10"></label>
+      <label>${vi?'Số cửa sổ liên tiếp vượt ngưỡng':'Consecutive breaching windows'}<output id="ow"></output><input type="range" id="iw" min="1" max="3" step="1"></label>
+    </div><div><div class="verdict" id="verdict" aria-live="polite"></div></div></div></div>`;
+  [['e','ie'],['b','ib'],['n','in'],['w','iw']].forEach(([k,id])=>{const i=$('#'+id);i.value=sim[k];i.oninput=()=>{sim[k]=+i.value;verdict()}});verdict()}
+function verdict(){const vi=L==='vi',{e,b,n,w}=sim,d=e-b;$('#oe').textContent=e.toFixed(1)+'%';$('#ob').textContent=b.toFixed(1)+'%';$('#on').textContent=n;$('#ow').textContent=w;
+  let c,h,m;
+  if(n<100){c='var(--warn)';h=vi?'HOLD · chế độ lưu lượng thấp':'HOLD · low-traffic mode';m=vi?'Chưa đủ 100 mẫu nên không kết luận từ lưu lượng thật. Chạy synthetic checks và giữ đủ thời gian hold.':'Fewer than 100 samples, so real traffic proves nothing. Run synthetic checks and wait out the hold.'}
+  else if(e>2&&d>1&&w>=2){c='var(--bad)';h=vi?'ROLLBACK · khôi phục LKG':'ROLLBACK · restore LKG';m=(vi?'5xx vượt 2% và cao hơn baseline ':'5xx is above 2% and over baseline by ')+d.toFixed(1)+(vi?' điểm phần trăm trong 2 cửa sổ. Issue chuyển sang Blocked kèm bằng chứng.':' points for 2 windows. The issue moves to Blocked with evidence.')}
+  else if(e>2&&d>1){c='var(--warn)';h=vi?'THEO DÕI · chờ cửa sổ thứ hai':'WATCH · wait for a second window';m=vi?'Đã vượt ngưỡng một lần. Dừng tăng traffic, chưa rollback.':'One breach so far. Stop shifting traffic; no rollback yet.'}
+  else{c='var(--ok)';h=vi?'PROMOTE · sang bước kế tiếp':'PROMOTE · move to the next step';m=e>2?(vi?'5xx cao nhưng gần bằng baseline, nên không phải do bản mới.':'5xx is high but close to baseline, so the new revision is not the cause.'):(vi?'Trong ngưỡng. Tăng traffic 5 → 25 → 100.':'Within thresholds. Shift traffic 5 → 25 → 100.')}
+  const v=$('#verdict');v.style.borderColor=c;v.innerHTML=`<div style="color:${c}">${h}</div><div class="small" style="font-weight:400;margin-top:4px">${m}</div>`}
+
+function renderSurf(){const vi=L==='vi';
+  $('#surfBody').innerHTML=`<div class="tbl"><table><thead><tr><th>Surface</th><th>${vi?'Dành cho':'For'}</th><th>${vi?'Xác thực':'Authentication'}</th><th>${vi?'Dùng để':'Used to'}</th></tr></thead><tbody>${SURF.map(s=>`<tr><td><b>${s[0]}</b></td><td>${t(s[1])}</td><td class="small">${t(s[2])}</td><td class="small">${t(s[3])}</td></tr>`).join('')}</tbody></table></div>
+  <div class="grid g2" style="margin-top:12px">
+    <div class="card"><h3>${vi?'Đường đi của một lệnh ghi nhạy cảm':'Path of a sensitive write'}</h3><div class="pipe"><span>surface</span><em>→</em><span>action service</span><em>→</em><span><b>plan</b></span><em>→</em><span><b>approval</b></span><em>→</em><span><b>execute</b></span><em>→</em><span><b>audit</b></span></div>
+      <p class="small" style="margin-top:12px">${vi?'Quyền không bao giờ được cấp qua câu mô tả của một tool. WebMCP trong trình duyệt không có quyền vượt backend.':'Permission is never granted through a tool description. WebMCP in the browser has no rights beyond the backend.'}</p></div>
+    <div class="card"><h3>${vi?'Tập hành động chung':'Shared action set'}</h3>${ACTIONS.map(a=>`<span class="tag mono">${a}</span>`).join('')}<p class="small" style="margin-top:10px">${vi?'Mỗi hành động có scope riêng. Năm surface cùng gọi đúng tập này.':'Each action has its own scope. All five surfaces call exactly this set.'}</p></div></div>`}
+
+function renderTrust(){const vi=L==='vi';
+  $('#trustBody').innerHTML=`
+  <div class="card"><h3>${vi?'Danh tính':'Identity'}</h3><table><tbody>
+    <tr><td><b>GitHub login</b></td><td class="small">${vi?'Đăng nhập người dùng. Khác với quyền trên repo.':'User sign-in. Separate from repository rights.'}</td></tr>
+    <tr><td><b>GitHub App</b></td><td class="small">${vi?'Installation token tối thiểu cho quyền repo.':'Least-privilege installation token for repository rights.'}</td></tr>
+    <tr><td><b>Google OIDC</b></td><td class="small">${vi?'Định danh theo <code>issuer+sub</code>, không theo email.':'Identified by <code>issuer+sub</code>, never by email alone.'}</td></tr>
+    <tr><td><b>Secrets</b></td><td class="small">${vi?'Mã hóa khi lưu. Broker cấp theo run, giới hạn mục đích, scope, TTL, thu hồi khi hủy.':'Encrypted at rest. A per-run broker limits purpose, scope and TTL, and revokes on cancel.'}</td></tr></tbody></table></div>
+  <div class="card"><h3>${vi?'Vai trò':'Roles'}</h3><table><tbody>${ROLES.map(r=>`<tr><td><b>${r[0]}</b></td><td class="small">${t(r[1])}</td></tr>`).join('')}</tbody></table><p class="small" style="margin-top:8px">${vi?'Quyền được kiểm tại thời điểm thực hiện. Nhãn issue không phải là vai trò.':'Rights are checked at the moment of action. An issue label is not a role.'}</p></div>
+  <div class="card" style="grid-column:1/-1;border-left:4px solid var(--z3)"><h3>${vi?'Ranh giới của release supervisor':'The release supervisor boundary'}</h3>
+    <p class="small" style="margin:0 0 6px">${vi?'Cùng deployment với factory, nhưng nằm ngoài tầm sửa của mọi candidate. Thiếu một trong bốn điều sau thì tính năng tự nâng cấp bị tắt.':'Part of the same deployment, yet out of reach of every candidate. If any of these four fails, self-update is switched off.'}</p>
+    <ol class="clean">${SUP.map(s=>`<li>${t(s)}</li>`).join('')}</ol>
+    <p class="small" style="margin-top:10px">${vi?'Trong một lượt tự nâng cấp, candidate không được đổi cùng lúc':'In a single self-update a candidate may not also change the'} <span class="tag bad">supervisor</span><span class="tag bad">signing keys</span><span class="tag bad">policy enforcement</span><span class="tag bad">QA baseline</span><span class="tag bad">rollback rules</span></p></div>`}
+
+$('#lang').onclick=()=>{L=L==='vi'?'en':'vi';try{localStorage.setItem('sisf-lang',L)}catch(e){}stop();render()};
+const themes=['','light','dark'];let ti=0;try{ti=Math.max(0,themes.indexOf(localStorage.getItem('sisf-theme')||''))}catch(e){}
+function applyTheme(){const r=document.documentElement;themes[ti]?r.setAttribute('data-theme',themes[ti]):r.removeAttribute('data-theme');$('#theme').textContent=['◐','☀','☾'][ti]}
+$('#theme').onclick=()=>{ti=(ti+1)%3;try{localStorage.setItem('sisf-theme',themes[ti])}catch(e){}applyTheme()};
+if(matchMedia('(prefers-reduced-motion:reduce)').matches)$('#dots').remove();
+applyTheme();buildGraph();render();
+</script>
+</body>
+</html>
