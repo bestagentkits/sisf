@@ -25,7 +25,7 @@ func TestAttemptOfARunIsNeverLowered(t *testing.T) {
 		} {
 			lowered := next(t, rec, core.EventCandidateSubmitted, change)
 			lowered.IdempotencyKey = "resubmitted: " + name
-			refused(t, s, name, lowered, core.CodeInvalidArgument)
+			refused(t, s, name, lowered, core.CodeConflict)
 		}
 		// Keeping the count is fine.
 		rec = advance(t, s, rec, core.EventCandidateSubmitted, func(tr *core.Transition) { tr.IdempotencyKey = "resubmitted" })
@@ -40,7 +40,7 @@ func TestAttemptOfARunIsNeverLowered(t *testing.T) {
 			"run left as it is": func(tr *core.Transition) { tr.RunID, tr.Attempt = "", 1 },
 			"run named again":   func(tr *core.Transition) { tr.Attempt = 1 },
 		} {
-			refused(t, s, name, next(t, rec, core.EventRecoveryReported, change), core.CodeInvalidArgument)
+			refused(t, s, name, next(t, rec, core.EventRecoveryReported, change), core.CodeConflict)
 		}
 	})
 }
