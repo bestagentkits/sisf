@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 

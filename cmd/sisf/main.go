@@ -23,7 +23,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Exit statuses of the program.

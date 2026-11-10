@@ -6,7 +6,7 @@ Execution guidance for agents and contributors. This file has no authority to ch
 
 - Go 1.24, module `github.com/bestagentkits/sisf`, no CGO. Layout follows brief §11.
 - Tests first. Every security or spending rule has a negative test. Unit tests live in the package, acceptance tests in `tests/acceptance/`, end-to-end tests under build tag `e2e`, real smoke runs under tag `smoke`.
-- Shared contracts (`internal/core/*.go`, the interface file in each `pkg/*/`, `cmd/sisf/main.go`, `Makefile`, the CI workflow) change only through a reviewed contract change. New CLI commands go in `cmd/sisf/cmd_<area>.go`.
+- Shared contracts (`pkg/core/*.go`, the interface file in each `pkg/*/`, `cmd/sisf/main.go`, `Makefile`, the CI workflow) change only through a reviewed contract change. New CLI commands go in `cmd/sisf/cmd_<area>.go`.
 - A new dependency needs a recorded decision (ADR).
 - Never push to `main`. Branch, open a PR; the Owner merges.
 - Conventional commits, no AI references. No plan or phase identifiers in code, tests or commits. See [CONTRIBUTING.md](CONTRIBUTING.md) for DCO sign-off.

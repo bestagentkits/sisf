@@ -13,7 +13,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Labels of the issue workflow. The framework maintains the status labels as

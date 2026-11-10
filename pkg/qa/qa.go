@@ -10,7 +10,7 @@ package qa
 import (
 	"context"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Category is one scored area of the rubric.

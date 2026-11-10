@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // MinNonceLength is the shortest nonce accepted, in characters.

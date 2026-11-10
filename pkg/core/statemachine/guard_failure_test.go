@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 func TestATypedRefusalFromAGuardKeepsItsCode(t *testing.T) {

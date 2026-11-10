@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // checkQAWith runs the step into ReleaseCandidate after mutate has changed

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
 	"github.com/bestagentkits/sisf/pkg/approvals"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 const (

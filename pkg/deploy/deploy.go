@@ -10,7 +10,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // SelfPublishAllowed reports whether a backend with these capabilities may

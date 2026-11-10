@@ -17,7 +17,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // GuardKind names the proof an edge needs. Most edges need none.

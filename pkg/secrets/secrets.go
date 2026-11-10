@@ -12,7 +12,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Class says who may ever hold a secret.

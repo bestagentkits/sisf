@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Role is the part an agent plays in a run. The coder and the evaluator of

@@ -1,6 +1,6 @@
 package conformance
 
-import "github.com/bestagentkits/sisf/internal/core"
+import "github.com/bestagentkits/sisf/pkg/core"
 
 // areaEvidence says which declared capabilities each area rests on, per
 // interface. An area is as strong as its weakest group, and a group is as

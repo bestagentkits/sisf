@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // checkClaimWith runs the claim step after mutate has changed the request,

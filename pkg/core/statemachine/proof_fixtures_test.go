@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // validClaim is the proof of a live lease and a held reservation for t.

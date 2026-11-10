@@ -11,7 +11,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Keys of the six required attributes.

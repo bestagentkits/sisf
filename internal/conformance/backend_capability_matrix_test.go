@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/conformance/conformancetest"
-	"github.com/bestagentkits/sisf/internal/core"
 	"github.com/bestagentkits/sisf/pkg/agent"
 	kit "github.com/bestagentkits/sisf/pkg/conformance"
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/execution"
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )

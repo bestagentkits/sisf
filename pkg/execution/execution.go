@@ -14,7 +14,7 @@ import (
 	"path"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Trust says whether the code a sandbox will run is trusted. It is always
