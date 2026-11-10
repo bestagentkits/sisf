@@ -7,6 +7,13 @@
 //
 //	HELLO_ADDR      listen address, default 127.0.0.1:7461
 //	HELLO_DATA_DIR  writable data volume, default ./data
+//	SISF_REVISION   the revision /healthz reports, set by the deployment
+//
+// Faults for exercising a release pipeline, all off by default:
+//
+//	HELLO_FAULT_ERROR_PERCENT  share of page requests that fail with 500, 0 to 100
+//	HELLO_FAULT_UNHEALTHY      true makes /healthz answer 503
+//	HELLO_FAULT_CRITICAL_LOG   true logs a critical line for each injected failure
 //
 // Exit status: 0 after a clean shutdown, 1 on failure.
 package main
@@ -35,7 +42,11 @@ func main() {
 // run serves the application until ctx ends.
 func run(ctx context.Context, getenv func(string) string) error {
 	addr := valueOr(getenv("HELLO_ADDR"), "127.0.0.1:7461")
-	a, err := newApp(valueOr(getenv("HELLO_DATA_DIR"), "data"))
+	cfg, err := settingsFromEnv(getenv)
+	if err != nil {
+		return err
+	}
+	a, err := newApp(valueOr(getenv("HELLO_DATA_DIR"), "data"), withSettings(cfg), withLogs(os.Stderr))
 	if err != nil {
 		return err
 	}

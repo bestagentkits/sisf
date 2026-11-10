@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,20 +26,35 @@ const probeFile = ".healthz"
 // outside its own volume.
 type app struct {
 	dir      string
-	mu       sync.Mutex // serializes the read-increment-write of the count
+	cfg      settings
+	logs     io.Writer
+	mu       sync.Mutex // serializes the read-increment-write of the count and the fault cadence
 	visits   int64
+	faultAcc int
 	requests atomic.Int64
 }
 
+// option changes how an app is built.
+type option func(*app)
+
+// withSettings sets the revision and the injected faults.
+func withSettings(s settings) option { return func(a *app) { a.cfg = s } }
+
+// withLogs sets where the app writes its log lines; they are dropped by default.
+func withLogs(w io.Writer) option { return func(a *app) { a.logs = w } }
+
 // newApp opens the data volume and loads the stored visit count.
-func newApp(dir string) (*app, error) {
+func newApp(dir string, opts ...option) (*app, error) {
 	if dir == "" {
 		return nil, errors.New("the data directory is not set")
 	}
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("data directory: %w", err)
 	}
-	a := &app{dir: dir}
+	a := &app{dir: dir, logs: io.Discard}
+	for _, o := range opts {
+		o(a)
+	}
 	raw, err := os.ReadFile(filepath.Join(dir, visitsFile))
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -65,6 +82,10 @@ func (a *app) handler() http.Handler {
 
 // page counts the visit durably and says which one it was.
 func (a *app) page(w http.ResponseWriter, _ *http.Request) {
+	if a.injectedError() {
+		http.Error(w, "injected failure", http.StatusInternalServerError)
+		return
+	}
 	n, err := a.countVisit()
 	if err != nil {
 		http.Error(w, "the visit could not be stored", http.StatusServiceUnavailable)
@@ -91,17 +112,22 @@ func (a *app) countVisit() (int64, error) {
 	return next, nil
 }
 
-// health is 200 while the data volume accepts writes and 503 otherwise.
+// health is 200 while the data volume accepts writes and 503 otherwise. It
+// always says which revision this process was started as.
 func (a *app) health(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	status, code := "ok", http.StatusOK
 	probe := filepath.Join(a.dir, probeFile)
-	if err := os.WriteFile(probe, []byte("ok"), 0o640); err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte(`{"status":"data volume not writable"}` + "\n"))
-		return
+	switch {
+	case a.cfg.Unhealthy:
+		status, code = "unhealthy by configuration", http.StatusServiceUnavailable
+	case os.WriteFile(probe, []byte("ok"), 0o640) != nil:
+		status, code = "data volume not writable", http.StatusServiceUnavailable
+	default:
+		_ = os.Remove(probe) // a probe left behind is harmless; the next check rewrites it
 	}
-	_ = os.Remove(probe) // a probe left behind is harmless; the next check rewrites it
-	_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": status, "revision": a.cfg.Revision}) // a gone client is not an error here
 }
 
 // metrics serves the counters in the Prometheus text format.
