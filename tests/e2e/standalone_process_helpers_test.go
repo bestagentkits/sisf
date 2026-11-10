@@ -31,10 +31,19 @@ const (
 	downLimit = 2 * time.Minute
 )
 
-// requireFreeFactoryPorts fails the test at once when another factory, of
-// either mode, holds one of the ports a Standalone install needs.
+// requireFreeFactoryPorts skips the test when SISF_HOME points at a Docker
+// install: that install holds the ports while the Compose tests run against
+// it, and the Standalone test runs in a `make e2e` without SISF_HOME. Other
+// than that it fails the test at once when another factory, of either mode,
+// holds one of the ports a Standalone install needs.
 func requireFreeFactoryPorts(t *testing.T) {
 	t.Helper()
+	if home := os.Getenv("SISF_HOME"); home != "" {
+		if _, docker, err := dockerInstall(home); err == nil && docker {
+			t.Skip("SISF_HOME points at a Docker install, whose factory holds the ports; " +
+				"the Standalone test runs when no Docker factory is up (`make e2e` without SISF_HOME)")
+		}
+	}
 	if busy := busyFactoryPorts(); len(busy) > 0 {
 		t.Fatalf("ports %v on 127.0.0.1 are in use; the Standalone test needs %d-%d free. "+
 			"Another factory (a Docker install, perhaps) is up: stop it with `sisf down` and run the test again",

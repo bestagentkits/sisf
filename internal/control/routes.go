@@ -15,13 +15,21 @@ const contentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 
 	"img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; " +
 	"base-uri 'none'; frame-ancestors 'none'"
 
+// webhookPath is where GitHub delivers webhooks.
+const webhookPath = "/webhooks/github"
+
+// PublicPaths are the paths of the control zone that outside traffic may
+// reach through the edge. Everything else the control zone serves is for
+// the Owner on the factory's own network. The caller owns the slice.
+func PublicPaths() []string { return []string{webhookPath} }
+
 // routes builds the route table. Only /healthz, the webhook route and the
 // static assets are open; the webhook route proves itself with its signature.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
-	mux.Handle("/webhooks/github", s.webhook)
+	mux.Handle(webhookPath, s.webhook)
 	mux.Handle("GET /static/", ui.StaticHandler())
 
 	mux.HandleFunc("GET /api/v1/factory/status", s.requireOwner(s.apiFactoryStatus))

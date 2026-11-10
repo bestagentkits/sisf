@@ -130,7 +130,7 @@ func runDispatcher(ctx context.Context, args []string, getenv func(string) strin
 	if err != nil {
 		return err
 	}
-	log.Info("dispatcher running", "factory", string(s.manifest.FactoryID), "owner", wiring.DispatcherOwner(), "health", ln.Addr().String())
+	log.Info("dispatcher running", "factory", string(s.manifest.FactoryID), "owner", d.Health().Owner, "health", ln.Addr().String())
 	served := make(chan error, 1)
 	go func() {
 		served <- wiring.Serve(ctx, ln, wiring.DispatcherHealth(d, s.clock, 3*wiring.DispatcherLeaseTTL))
@@ -180,6 +180,34 @@ func runPolicyApprove(ctx context.Context, args []string, getenv func(string) st
 		return err
 	}
 	_, err = fmt.Fprintf(stdout, "policy revision %s is in force (content %s)\n", baseline.Revision, baseline.Digest)
+	return err
+}
+
+// runPolicyRequest files, as the Owner, the approval request for replacing
+// the policy in force with a revision, and prints only its ID.
+func runPolicyRequest(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer, log *slog.Logger) error {
+	fs := newFlags("policy request")
+	revision := fs.String("revision", "", "full commit SHA of the foundation files to put in force")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if *revision == "" {
+		return fmt.Errorf("%w: --revision is required", errUsage)
+	}
+	s, err := setup(ctx, getenv, core.ZoneControl)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = s.store.Close() }()
+	c, err := newControl(s, log)
+	if err != nil {
+		return err
+	}
+	request, err := c.RequestPolicyChange(ctx, core.CommitSHA(*revision))
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(stdout, request.ID)
 	return err
 }
 

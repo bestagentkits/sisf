@@ -178,7 +178,8 @@ func spend(in input, sow SoW, requestID string) *spending {
 
 // rerequest points the issue at a new approval request: for a new scope
 // version when the scope was edited, or for the same version under the
-// policy now in force. The issue keeps waiting.
+// policy now in force. The issue keeps waiting, and the request it waited on
+// before is closed: a decision on it could never be used for this issue.
 func (s *Service) rerequest(ctx context.Context, in input, snap snapshot, sow SoW, verdict Classification, edited bool) (*plan, error) {
 	request, err := s.request(ctx, in, sow, verdict)
 	if err != nil {
@@ -186,7 +187,7 @@ func (s *Service) rerequest(ctx context.Context, in input, snap snapshot, sow So
 	}
 	doc := snap.doc
 	doc.ApprovalID, doc.NotedRequest = request.ID, ""
-	p := &plan{doc: doc}
+	p := &plan{doc: doc, supersedes: snap.doc.ApprovalID}
 	effects := []func() (state.OutboxMessage, error){waitingEffect(sow, request.ID, verdict)}
 	if edited {
 		doc.SoWVersion, doc.SoWDigest = sow.Version, sow.Digest

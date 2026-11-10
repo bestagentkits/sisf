@@ -22,6 +22,8 @@ func TestAWrongCommandLineExitsWithTheUsageStatus(t *testing.T) {
 		{"build"},
 		{"policy"},
 		{"policy", "approve"},
+		{"policy", "request"},
+		{"policy", "request", "--revision", "abc", "extra"},
 		{"issue", "retry", "--issue", "not-an-issue"},
 		{"dispatcher", "--fake-agent-work", "-1s"},
 		{"control", "extra"},

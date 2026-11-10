@@ -12,6 +12,7 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/state"
+	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
 )
 
 // Bounds of one pass, and of the waits after a failure.
@@ -20,6 +21,16 @@ const (
 	outboxBatch  = 100
 	firstBackoff = 2 * time.Second
 	maxBackoff   = 5 * time.Minute
+	// maxDeliveryAge is how long after its arrival a delivery that keeps
+	// failing is tried again, at most every maxBackoff, before it is parked.
+	// A day covers an outage of GitHub or a policy hold of a working day.
+	maxDeliveryAge = 24 * time.Hour
+)
+
+// Who parks a delivery in the audit log, and the audited action.
+const (
+	inboxActor         = "service:control-inbox"
+	actionParkDelivery = "inbox.park_delivery"
 )
 
 // backoffAfter is the wait after the given number of failures: it doubles
@@ -32,15 +43,21 @@ func backoffAfter(failures int) time.Duration {
 	return min(wait, maxBackoff)
 }
 
-// drainInbox hands every stored GitHub delivery to intake, oldest first, and
-// marks it processed once intake is done with it. Intake decides from the
-// issue as GitHub shows it now, so a delivery that arrives twice or out of
-// order changes nothing; the inbox already keeps one entry per delivery ID.
+// drainInbox hands every stored GitHub delivery that is due to intake,
+// oldest first, and records how each one left the inbox. Intake decides
+// from the issue as GitHub shows it now, so a delivery that arrives twice or
+// out of order changes nothing; the inbox already keeps one entry per
+// delivery ID.
 //
-// A delivery that cannot be decoded or is refused as malformed is marked
-// processed: trying it again cannot help. Any other failure, such as GitHub
-// being unreachable or the policy being on hold, leaves it in the inbox to
-// be tried again after a growing wait.
+// A delivery that cannot be read or is refused as malformed is finished as
+// refused, and one whose issue or repository GitHub no longer knows is
+// finished as gone: trying either again cannot help. Any other failure, such
+// as GitHub being unreachable or the policy being on hold, holds the delivery
+// back in the store for a growing wait, so the next pass asks only for
+// deliveries that are due and a batch of failing ones cannot hold back those
+// behind them. A delivery that still fails maxDeliveryAge after it arrived
+// is parked: it is not tried again, and its last failure is kept in the
+// inbox and the audit log for the Owner.
 func (c *Control) drainInbox(ctx context.Context) error {
 	var pending []state.InboxEntry
 	err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
@@ -52,31 +69,61 @@ func (c *Control) drainInbox(ctx context.Context) error {
 		return err
 	}
 	var failed error
-	now := c.cfg.Clock.Now()
 	for _, entry := range pending {
-		if entry.Source != control.InboxSourceGitHub || !c.due(entry.DeliveryID, now) {
+		if entry.Source != control.InboxSourceGitHub {
 			continue
 		}
 		var ev github.WebhookEvent
 		if err := json.Unmarshal(entry.Payload, &ev); err != nil {
 			c.log.Warn("dropped a stored delivery that cannot be read", "delivery", entry.DeliveryID)
-		} else if _, err := c.Intake.HandleEvent(ctx, ev); err != nil && !permanent(err) {
-			c.failed(entry.DeliveryID, now)
-			failed = err
+			err = c.cfg.Store.FinishDelivery(ctx, entry.Source, entry.DeliveryID, sqlstore.DeliveryRefused, "the delivery cannot be read")
+			if err != nil {
+				return err
+			}
 			continue
-		} else if err != nil {
-			c.log.Warn("dropped a delivery intake refused", "delivery", entry.DeliveryID, "code", string(core.CodeOf(err)))
 		}
-		if err := c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-			return tx.MarkDeliveryProcessed(ctx, entry.Source, entry.DeliveryID)
-		}); err != nil {
+		_, handleErr := c.Intake.HandleEvent(ctx, ev)
+		if err := c.settle(ctx, entry, handleErr); err != nil {
 			return err
 		}
-		c.mu.Lock()
-		delete(c.backoff, entry.DeliveryID)
-		c.mu.Unlock()
+		if handleErr != nil && !permanent(handleErr) && !core.HasCode(handleErr, core.CodeNotFound) {
+			failed = handleErr
+		}
 	}
 	return failed
+}
+
+// settle records how intake's handling of a delivery ended: handled, refused,
+// gone, held back for another try, or parked once it failed for too long.
+func (c *Control) settle(ctx context.Context, entry state.InboxEntry, handleErr error) error {
+	store := c.cfg.Store
+	switch {
+	case handleErr == nil:
+		return store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+			return tx.MarkDeliveryProcessed(ctx, entry.Source, entry.DeliveryID)
+		})
+	case core.HasCode(handleErr, core.CodeNotFound):
+		c.log.Info("finished a delivery about an issue that is gone", "delivery", entry.DeliveryID)
+		return store.FinishDelivery(ctx, entry.Source, entry.DeliveryID, sqlstore.DeliveryGone, reasonOf(handleErr))
+	case permanent(handleErr):
+		c.log.Warn("dropped a delivery intake refused", "delivery", entry.DeliveryID, "code", string(core.CodeOf(handleErr)))
+		return store.FinishDelivery(ctx, entry.Source, entry.DeliveryID, sqlstore.DeliveryRefused, reasonOf(handleErr))
+	}
+	reason := reasonOf(handleErr)
+	if c.cfg.Clock.Now().Sub(entry.ReceivedAt) < maxDeliveryAge {
+		_, err := store.DeferDelivery(ctx, entry.Source, entry.DeliveryID, reason, backoffAfter)
+		return err
+	}
+	if err := store.FinishDelivery(ctx, entry.Source, entry.DeliveryID, sqlstore.DeliveryParked, reason); err != nil {
+		return err
+	}
+	c.log.Warn("parked a delivery that kept failing", "delivery", entry.DeliveryID, "code", string(core.CodeOf(handleErr)))
+	_, err := c.Audit.Append(ctx, core.AuditEvent{
+		At: c.cfg.Clock.Now(), FactoryID: c.cfg.Manifest.FactoryID, ActorID: inboxActor, ActorKind: core.ActorService,
+		Action: actionParkDelivery, Resource: "delivery:" + entry.Source + "/" + entry.DeliveryID, Outcome: core.OutcomeFailed,
+		Details: map[string]string{"code": string(core.CodeOf(handleErr)), "reason": reason, "received_at": entry.ReceivedAt.UTC().Format(time.RFC3339)},
+	})
+	return err
 }
 
 // permanent reports whether retrying the same input can never succeed.

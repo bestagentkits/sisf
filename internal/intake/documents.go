@@ -179,3 +179,22 @@ func ReadApprovedScope(ctx context.Context, kv state.KV, issue core.IssueRef) (S
 	var sow SoW
 	return sow, decode(entry, &sow)
 }
+
+// ReadAwaitedApproval returns the approval request the current scope of an
+// issue waits on, read through kv: one document, whatever else was filed
+// about the issue. It is "" when the issue waits on none, and NOT_FOUND
+// for an issue intake has no record of.
+func ReadAwaitedApproval(ctx context.Context, kv state.KV, issue core.IssueRef) (string, error) {
+	entry, err := kv.GetKV(ctx, namespace, issueKey(issue))
+	if err != nil {
+		if core.HasCode(err, core.CodeNotFound) {
+			return "", core.NewError(core.CodeNotFound, "intake has no record of this issue")
+		}
+		return "", err
+	}
+	var doc issueDoc
+	if err := decode(entry, &doc); err != nil {
+		return "", err
+	}
+	return doc.ApprovalID, nil
+}

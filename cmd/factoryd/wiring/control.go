@@ -232,3 +232,10 @@ func LocalOwner(clock core.Clock) core.Actor {
 func (c *Control) ApproveBaseline(ctx context.Context, revision core.CommitSHA, approvalID string) (policy.Baseline, error) {
 	return c.Baselines.Approve(ctx, LocalOwner(c.cfg.Clock), revision, approvalID)
 }
+
+// RequestPolicyChange files, as the Owner, the approval request that making
+// revision the policy in force needs, and returns it. Approving it and then
+// ApproveBaseline with its ID puts the revision in force.
+func (c *Control) RequestPolicyChange(ctx context.Context, revision core.CommitSHA) (approvals.Request, error) {
+	return c.Baselines.RequestChange(ctx, LocalOwner(c.cfg.Clock), revision)
+}

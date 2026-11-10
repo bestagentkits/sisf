@@ -25,6 +25,8 @@ const (
 	actionRequest = "approvals.request"
 	actionDecide  = "approvals.decide"
 	actionConsume = "approvals.consume"
+	// actionSupersede closes a request another request replaced.
+	actionSupersede = "approvals.supersede"
 	// serviceActor is who the store acts as when no person is involved.
 	serviceActor = "service:approvals"
 )
@@ -32,6 +34,9 @@ const (
 func requestKey(id string) string  { return requestPrefix + id }
 func decisionKey(id string) string { return "decision/" + id }
 func nonceKey(nonce string) string { return "nonce/" + nonce }
+
+// supersededKey keeps the record of a request closed in favour of another.
+func supersededKey(id string) string { return "superseded/" + id }
 
 // decode reads a stored document. A document that no longer parses was
 // damaged outside the store and is reported, never guessed at.

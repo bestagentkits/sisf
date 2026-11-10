@@ -180,7 +180,6 @@ services:
       - --allow-non-loopback
       - --upstream=http://app:{{ .PortApp }}
       - --route=/webhooks/github=http://control:{{ .PortControl }}
-      - --route=/report=http://control:{{ .PortControl }}
     networks: [app, control, sandbox]
     ports: ["127.0.0.1:{{ .PortEdge }}:{{ .PortEdge }}"]
     depends_on:

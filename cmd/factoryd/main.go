@@ -8,6 +8,7 @@
 // Owner commands, run on the factory's host with the control zone's
 // environment (in Docker mode: docker compose exec control factoryd ...):
 //
+//	factoryd policy request --revision SHA
 //	factoryd policy approve --revision SHA [--approval ID]
 //	factoryd issue retry --issue owner/repo#N
 //
@@ -47,6 +48,7 @@ const (
 const usage = `usage:
   factoryd control
   factoryd dispatcher [--fake-agent-work DURATION]
+  factoryd policy request --revision SHA
   factoryd policy approve --revision SHA [--approval ID]
   factoryd issue retry --issue owner/repo#N
   factoryd report --issue owner/repo#N --run ID --owner NAME --token N (--pr REF)...
@@ -90,6 +92,8 @@ func dispatch(ctx context.Context, args []string, getenv func(string) string, st
 		return runControl(ctx, rest, getenv, log)
 	case name == "dispatcher":
 		return runDispatcher(ctx, rest, getenv, log)
+	case name == "policy" && len(rest) > 0 && rest[0] == "request":
+		return runPolicyRequest(ctx, rest[1:], getenv, stdout, log)
 	case name == "policy" && len(rest) > 0 && rest[0] == "approve":
 		return runPolicyApprove(ctx, rest[1:], getenv, stdout, log)
 	case name == "issue" && len(rest) > 0 && rest[0] == "retry":

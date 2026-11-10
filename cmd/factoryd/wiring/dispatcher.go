@@ -2,6 +2,8 @@ package wiring
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net"
@@ -24,7 +26,8 @@ type DispatcherConfig struct {
 	// Store is the operational store opened for the agent zone.
 	Store state.Store
 	Agent agent.Backend
-	// Owner names this instance in its leases; DispatcherOwner when empty.
+	// Owner names this instance in its leases; a fresh DispatcherOwner when
+	// empty.
 	Owner        string
 	Clock        core.Clock
 	PollInterval time.Duration
@@ -33,15 +36,26 @@ type DispatcherConfig struct {
 	NewRunID func() core.RunID
 }
 
-// DispatcherOwner names the dispatcher of this host. A restarted process
-// keeps the name, takes its leases back at once under new fencing tokens,
-// and so fences off whatever its earlier incarnation left in flight.
+// DispatcherOwner names one dispatcher process: its host and a random
+// suffix of its own. Two processes on one host, or two containers that share
+// a host name, are therefore two lease holders, and only one of them is the
+// active dispatcher at a time.
+//
+// A restarted process has a new name, so it cannot take its predecessor's
+// leases back at once. A process that stops cleanly gives its leases up and
+// its successor takes over at its next tick. One that was killed holds them
+// until they lapse, at most the lease lifetime (DispatcherLeaseTTL) after
+// its last tick; the successor then takes them under new fencing tokens,
+// which fence off whatever the killed process left in flight.
 func DispatcherOwner() string {
 	host, err := os.Hostname()
 	if err != nil || host == "" {
 		host = "localhost"
 	}
-	return "dispatcher@" + host
+	var suffix [4]byte
+	// crypto/rand.Read never returns an error on supported platforms.
+	_, _ = rand.Read(suffix[:])
+	return "dispatcher@" + host + "#" + hex.EncodeToString(suffix[:])
 }
 
 // LimitsOf reads the run limits of the manifest.

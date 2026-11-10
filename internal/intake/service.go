@@ -43,11 +43,12 @@ type IssueReader interface {
 }
 
 // Approvals is the approval store as intake uses it: the store contract,
-// and spending an approval in the same transaction as the step it permits.
-// approvals.KVStore is one.
+// spending an approval in the same transaction as the step it permits, and
+// closing a request that a newer one replaced. approvals.KVStore is one.
 type Approvals interface {
 	approvals.Store
 	ConsumeWith(ctx context.Context, requestID string, subject core.Digest, policy core.CommitSHA, write approvals.SpendFunc) (approvals.Approval, error)
+	Supersede(ctx context.Context, id, replacement string) (approvals.Request, error)
 }
 
 // Config is what intake is built from. Clock and ApprovalTTL are optional.

@@ -36,11 +36,11 @@ func newComposeDeployment(t *testing.T) *composeDeployment {
 	if dir == "" {
 		t.Skip("SISF_HOME is not set: start a factory with `sisf up --mode docker --profile sim` and point SISF_HOME at it")
 	}
-	m, err := manifest.Load(filepath.Join(dir, "factory.yaml"))
+	m, docker, err := dockerInstall(dir)
 	if err != nil {
 		t.Fatalf("the install in SISF_HOME cannot be read: %v", err)
 	}
-	if m.Mode != manifest.ModeDocker || m.Extensions["profile"] != "sim" {
+	if !docker || m.Extensions["profile"] != "sim" {
 		t.Fatalf("the install in SISF_HOME is not a Docker install of the simulation profile")
 	}
 	d := &composeDeployment{dir: dir, project: string(m.FactoryID), repo: m.Repository.Owner + "/" + m.Repository.Repo}
@@ -51,6 +51,16 @@ func newComposeDeployment(t *testing.T) *composeDeployment {
 		}
 	}
 	return d
+}
+
+// dockerInstall reads the install in dir and reports whether it runs in
+// Docker mode.
+func dockerInstall(dir string) (*manifest.Manifest, bool, error) {
+	m, err := manifest.Load(filepath.Join(dir, "factory.yaml"))
+	if err != nil {
+		return nil, false, err
+	}
+	return m, m.Mode == manifest.ModeDocker, nil
 }
 
 func (d *composeDeployment) container(unit string) string { return d.project + "-" + unit }

@@ -27,6 +27,9 @@ type plan struct {
 	// back to Ready: who asked, whether they may, and why and when the issue
 	// was blocked. The scope proof of the retry is delegation or spend.
 	retry *statemachine.RetryProof
+	// supersedes is the approval request the step stops waiting on because
+	// it now waits on another. It is closed once the step is written.
+	supersedes string
 }
 
 // spending is the approval a step uses, and what is in force as it does.
@@ -98,7 +101,10 @@ func (s *Service) apply(ctx context.Context, snap snapshot, p *plan) error {
 		return nil
 	}
 	if p.spend == nil {
-		return s.cfg.State.Update(ctx, func(ctx context.Context, tx state.Tx) error { return write(ctx, tx, p.guards(nil)) })
+		if err := s.cfg.State.Update(ctx, func(ctx context.Context, tx state.Tx) error { return write(ctx, tx, p.guards(nil)) }); err != nil {
+			return err
+		}
+		return s.supersede(ctx, p)
 	}
 	use := *p.spend
 	_, err := s.cfg.Approvals.ConsumeWith(ctx, use.requestID, use.scope, use.revision,
@@ -109,5 +115,18 @@ func (s *Service) apply(ctx context.Context, snap snapshot, p *plan) error {
 			return write(ctx, tx, p.guards(&statemachine.ApprovalProof{Request: request, Approval: decision,
 				FactoryID: use.factory, ScopeDigest: use.scope, PolicyRevision: use.revision}))
 		})
+	return err
+}
+
+// supersede closes the approval request a written step stopped waiting on,
+// so the Owner can no longer decide it and nothing can spend it. It runs
+// after the step is written: until then the issue still names that request.
+// A failure is returned; the step stands, and the request merely stays open
+// until it lapses, since nothing waits on it any more.
+func (s *Service) supersede(ctx context.Context, p *plan) error {
+	if p.supersedes == "" || p.supersedes == p.doc.ApprovalID {
+		return nil
+	}
+	_, err := s.cfg.Approvals.Supersede(ctx, p.supersedes, p.doc.ApprovalID)
 	return err
 }

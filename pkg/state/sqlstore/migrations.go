@@ -43,6 +43,16 @@ var releaseMigrations = []migration{
 		Migration: state.Migration{Version: 3, Name: "row security between the zones", BackwardCompatible: true},
 		file:      "0003_zone_row_security.sql",
 	},
+	{
+		// Columns are only added, each with a default, and a delivery that
+		// leaves the inbox for good is marked processed as before, so the
+		// previous release neither retries a parked delivery nor fails on
+		// the new columns. It ignores the retry schedule and tries a failing
+		// delivery again at its own pace, as it always did. The inbox has no
+		// row policies and its grants are per table, so no grant changes.
+		Migration: state.Migration{Version: 4, Name: "retry schedule and outcome of inbox deliveries", BackwardCompatible: true},
+		file:      "0004_inbox_retry_schedule.sql",
+	},
 }
 
 // Migrations lists the migrations this release ships, for callers that must

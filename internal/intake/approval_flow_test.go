@@ -148,12 +148,14 @@ func TestAnEditedScopeNeedsItsOwnApproval(t *testing.T) {
 		t.Fatalf("the new version is not shown on the issue: %q", f.github.factoryComments(issueRef))
 	}
 
-	// Approving what the scope used to be approves nothing now.
-	f.decide(first, approvals.DecisionApprove)
+	// The request for what the scope used to be was closed: it can no
+	// longer be approved, and nothing can be spent on it.
+	_, err := f.approvals.Submit(ctx, f.owner(), answer(first, approvals.DecisionApprove))
+	wantCode(t, err, core.CodeExpired, "approving the request of the replaced scope")
 	wantEvents(t, f.reconcile())
 	f.wantState(core.StateApprovalPending)
-	_, err := f.approvals.Consume(ctx, first.ID, second.SubjectDigest, policyRevision)
-	wantCode(t, err, core.CodeApprovalRequired, "spending the old approval on the edited scope")
+	_, err = f.approvals.Consume(ctx, first.ID, second.SubjectDigest, policyRevision)
+	wantCode(t, err, core.CodeExpired, "spending the old request on the edited scope")
 
 	f.decide(second, approvals.DecisionApprove)
 	wantEvents(t, f.reconcile(), core.EventOwnerApproved)
@@ -162,8 +164,8 @@ func TestAnEditedScopeNeedsItsOwnApproval(t *testing.T) {
 	if err != nil || scope.Version != 2 || scope.Digest != second.SubjectDigest || len(scope.DoD) != 2 {
 		t.Fatalf("the scope handed on must be the edited one that was approved: %+v, %v", scope, err)
 	}
-	if got := f.requestFor(first.SubjectDigest); got.Status != approvals.StatusApproved {
-		t.Fatalf("the approval of the old scope was spent: %s", got.Status)
+	if got := f.requestFor(first.SubjectDigest); got.Status != approvals.StatusExpired {
+		t.Fatalf("the request of the old scope is %s, want it closed", got.Status)
 	}
 }
 
@@ -179,8 +181,13 @@ func TestAnEditAfterTheDecisionVoidsTheApproval(t *testing.T) {
 	if f.hasLabel(github.LabelApproved) {
 		t.Fatal("the edited scope was marked approved")
 	}
-	if got := f.requestFor(first.SubjectDigest); got.Status != approvals.StatusApproved {
-		t.Fatalf("the approval of the old scope was spent on the edited one: %s", got.Status)
+	// The approval of the old scope was not spent on the edited one; it was
+	// withdrawn with the request it answered, which the new one replaced.
+	if got := f.requestFor(first.SubjectDigest); got.Status != approvals.StatusExpired {
+		t.Fatalf("the approval of the old scope was not withdrawn: %s", got.Status)
+	}
+	if _, err := f.approvals.Consume(context.Background(), first.ID, first.SubjectDigest, first.PolicyRevision); !core.HasCode(err, core.CodeExpired) {
+		t.Fatalf("the withdrawn approval of the old scope could still be spent: %v", err)
 	}
 	if got := f.newestRequest(); got.Status != approvals.StatusPending || got.SubjectDigest == first.SubjectDigest {
 		t.Fatalf("the edited scope must wait for its own decision: %+v", got)
@@ -230,8 +237,11 @@ func TestAnApprovalGivenUnderAnOlderPolicyDoesNotCount(t *testing.T) {
 	if second.PolicyRevision != newerPolicy || second.SubjectDigest != first.SubjectDigest || second.ID == first.ID {
 		t.Fatalf("the scope must be put to the Owner again under the policy in force: %+v", second)
 	}
-	if got := f.requestFor(first.SubjectDigest); got.ID == first.ID && got.Status != approvals.StatusApproved {
-		t.Fatalf("the approval under the old policy was spent: %s", got.Status)
+	// The approval under the old policy was withdrawn with its request, which
+	// the new one replaced, and not spent.
+	old, err := f.approvals.Get(context.Background(), first.ID)
+	if err != nil || old.Status != approvals.StatusExpired {
+		t.Fatalf("the approval under the old policy was not withdrawn: %+v, %v", old, err)
 	}
 	f.decide(second, approvals.DecisionApprove)
 	wantEvents(t, f.reconcile(), core.EventOwnerApproved)

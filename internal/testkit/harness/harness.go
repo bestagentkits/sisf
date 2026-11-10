@@ -42,9 +42,10 @@ import (
 // Start is the instant the harness clock starts at.
 var Start = time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
 
-// DispatcherOwner is the lease holder name of the harness dispatcher; a
-// restart keeps it, as a restarted process on the same host does.
-const DispatcherOwner = "dispatcher@harness"
+// DispatcherOwner is the lease holder name of the first harness
+// dispatcher. Each restart takes a new name, as a restarted factoryd process
+// does (see wiring.DispatcherOwner).
+const DispatcherOwner = "dispatcher@harness#1"
 
 // Poll interval and lease lifetime of the harness dispatcher.
 const (
@@ -84,6 +85,8 @@ type Factory struct {
 	dsn        string
 	controlSrv *httptest.Server
 	runs       atomic.Int64
+	// dispatchers counts the dispatcher processes started, for their names.
+	dispatchers atomic.Int64
 }
 
 // New builds and starts a factory and registers its teardown with t.
@@ -208,7 +211,8 @@ func (f *Factory) openStore(zone core.Zone) *sqlstore.Store {
 func (f *Factory) newDispatcher(store state.Store) *dispatcher.Dispatcher {
 	f.t.Helper()
 	d, err := wiring.NewDispatcher(wiring.DispatcherConfig{
-		Manifest: f.Manifest, Store: store, Agent: f.Agent, Owner: DispatcherOwner, Clock: f.Clock,
+		Manifest: f.Manifest, Store: store, Agent: f.Agent, Clock: f.Clock,
+		Owner:        fmt.Sprintf("dispatcher@harness#%d", f.dispatchers.Add(1)),
 		PollInterval: PollInterval, LeaseTTL: LeaseTTL,
 		NewRunID: func() core.RunID { return core.RunID(fmt.Sprintf("run-%04d", f.runs.Add(1))) },
 	})
@@ -218,10 +222,11 @@ func (f *Factory) newDispatcher(store state.Store) *dispatcher.Dispatcher {
 	return d
 }
 
-// RestartDispatcher replaces the dispatcher by a new one under the same
-// name, on a freshly opened store, as a killed and restarted process. The
-// old one is returned so a test can show that what it still holds no
-// longer counts.
+// RestartDispatcher replaces the dispatcher by a new one under a new name,
+// on a freshly opened store, as a killed and restarted process. The new one
+// takes over once the leases of the old one lapse, LeaseTTL after the old
+// one last ticked. The old one is returned so a test can show that what it
+// still holds no longer counts.
 func (f *Factory) RestartDispatcher() *dispatcher.Dispatcher {
 	f.t.Helper()
 	old := f.Dispatcher

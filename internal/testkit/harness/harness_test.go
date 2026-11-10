@@ -127,6 +127,11 @@ func TestARestartedDispatcherResumesTheRunAndFencesTheStaleReport(t *testing.T) 
 	stale := tokenOf(t, f.Dispatcher, run)
 
 	old := f.RestartDispatcher()
+	// The killed process still holds its leases until they lapse.
+	if res := f.Tick(); res.Leader || len(res.Resumed) != 0 {
+		t.Fatalf("the restarted dispatcher took over leases that were still held: %+v", res)
+	}
+	f.Clock.Advance(harness.LeaseTTL)
 	res := f.Tick()
 	if len(res.Resumed) != 1 || len(res.Claimed) != 0 {
 		t.Fatalf("the restarted dispatcher did not resume the run: %+v", res)
@@ -134,7 +139,7 @@ func TestARestartedDispatcherResumesTheRunAndFencesTheStaleReport(t *testing.T) 
 	if fresh := tokenOf(t, f.Dispatcher, run); fresh <= stale {
 		t.Fatalf("the resumed run holds token %d, not newer than %d", fresh, stale)
 	}
-	report := dispatcher.Report{Issue: issue, RunID: run, LeaseOwner: harness.DispatcherOwner, FencingToken: stale,
+	report := dispatcher.Report{Issue: issue, RunID: run, LeaseOwner: old.Health().Owner, FencingToken: stale,
 		PullRequests: []string{f.Repo + "#99"}}
 	for name, d := range map[string]*dispatcher.Dispatcher{"the new dispatcher": f.Dispatcher, "the old one": old} {
 		if err := d.Report(ctx, report); !core.HasCode(err, core.CodeStaleFencingToken) {
