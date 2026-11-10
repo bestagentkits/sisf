@@ -3,6 +3,7 @@ package conformance
 import (
 	"testing"
 
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
@@ -42,11 +43,25 @@ func TestAnImageIsComparedByRepositoryWhateverItsTagOrDigest(t *testing.T) {
 // Storage beside the trust volume, or merely named like it, is not on it.
 func TestStorageOutsideTheTrustVolumeIsAllowed(t *testing.T) {
 	t.Parallel()
-	for _, location := range []string{"artifacts", "trusted-artifacts", "s3://bucket/trust", "/var/lib/sisf/trust-archive"} {
+	// A shared volume the artifacts unit holds, whatever it is called.
+	for _, volume := range []string{"artifacts", "trusted-artifacts", "trust-archive"} {
 		m := docker(t)
-		m.Storage.Artifacts.Location = location
+		delete(m.Volumes, "artifacts")
+		m.Volumes[volume] = manifest.Volume{Zone: core.ZoneShared}
+		m.Storage.Artifacts.Location = volume
+		editUnit(m, manifest.UnitArtifacts, func(u *manifest.Unit) {
+			u.Mounts = []manifest.Mount{{Volume: volume, Path: "/var/lib/sisf/trust-archive"}}
+		})
 		if report := Check(m); !report.Conformant() {
-			t.Errorf("artifact location %q is outside the trust volume, got %+v", location, report.Findings)
+			t.Errorf("artifact volume %q is outside the trust volume, got %+v", volume, report.Findings)
+		}
+	}
+	// An object store addressed beside the trust volume.
+	for _, location := range []string{"s3://bucket/trust", "/var/lib/sisf/trust-archive"} {
+		m := docker(t)
+		m.Storage.Artifacts = manifest.ArtifactStore{Kind: manifest.ArtifactsObjectStore, Location: location}
+		if report := Check(m); !report.Conformant() {
+			t.Errorf("object store %q is outside the trust volume, got %+v", location, report.Findings)
 		}
 	}
 }

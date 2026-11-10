@@ -63,6 +63,14 @@ func TestValidateLocatesEachDepartureFromTheSchema(t *testing.T) {
 			m.ModelRoutes.Routes["dreaming"] = core.ModelRoute{Provider: "p", Model: "m"}
 		}, "model_routes.routes.dreaming", "not an allowed key"},
 		"an adapter without a name": {func(m *manifest.Manifest) { m.Adapters.Deploy.Name = "" }, "adapters.deploy.name", "pattern"},
+		"unit credentials written in the file": {func(m *manifest.Manifest) {
+			u := m.Units[manifest.UnitQARunner]
+			u.CredentialsRef = "tok_EXAMPLE0000000000000000000000"
+			m.Units[manifest.UnitQARunner] = u
+		}, "units.qa-runner.credentials_ref", "pattern"},
+		"a shared volume held by a unit of one zone": {func(m *manifest.Manifest) {
+			m.Volumes["artifacts"] = manifest.Volume{Zone: core.ZoneShared, Holder: manifest.UnitRunner}
+		}, "volumes.artifacts.holder", "value must be"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -319,6 +319,10 @@
             }
           },
           "type": "object"
+        },
+        "same_model_route": {
+          "description": "Owner's acknowledgement that QA runs on the coding agent's provider and model. Without it such a route table is refused; with it every QA receipt records same_model_route.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -604,6 +608,11 @@
           },
           "type": "array"
         },
+        "credentials_ref": {
+          "description": "Reference to a credential set of the unit's own, written env:NAME or local:path/name. The qa-runner names one that differs from the runner's.",
+          "pattern": "^(env:[A-Z_][A-Z0-9_]*|local:[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$",
+          "type": "string"
+        },
         "digest": {
           "pattern": "^(sha256:[a-f0-9]{64}|sha512:[a-f0-9]{128})$",
           "type": "string"
@@ -661,6 +670,15 @@
     "Volume": {
       "additionalProperties": false,
       "properties": {
+        "holder": {
+          "description": "Unit that keeps a shared volume. Left out, artifacts holds the volume storage.artifacts names and state holds any other.",
+          "enum": [
+            "state",
+            "artifacts",
+            "edge"
+          ],
+          "type": "string"
+        },
         "zone": {
           "enum": [
             "application",

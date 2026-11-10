@@ -23,12 +23,20 @@ Checks the manifest (default ` + defaultManifest + `) and exits 0 only when it i
     are declared under one factory_id, and every unit that runs pins its
     digest;
   - factory_id, deployment_id and the runtime units can be told apart;
-  - no two zones share credentials or a store role; Zone 1 and Zone 2 mount
-    only their own volumes, no unit writes a volume of another zone, and a
-    shared volume is mounted only by the state or artifacts unit holding it;
+  - no two zones share credentials or a store role and no secret reference
+    stands for two secrets; Zone 1 and Zone 2 mount only their own volumes,
+    no unit writes a volume of another zone, a shared volume is mounted
+    only by the unit holding it (state, artifacts or edge), and in
+    standalone mode no two owners share a directory;
+  - the state store and the artifact store are kept on the volumes their
+    own units hold;
   - every unit stays on the network segments its role allows, the sandbox
-    is internal and leaves through a declared egress proxy, and only app,
-    edge and named routes of control are public;
+    is internal and leaves through a declared egress proxy, a runner
+    listens on no port, and only app, edge and named routes of control are
+    public;
+  - QA is independent of the coding agent: another provider or model
+    (or model_routes.same_model_route: true, at reduced assurance), a
+    workspace of its own and credentials of its own;
   - the trusted release supervisor runs from its own pinned artifact, keeps
     the last known good release and the signing keys on a volume only it
     writes and no candidate mounts, has a digest only a governance cycle
@@ -38,11 +46,16 @@ Checks the manifest (default ` + defaultManifest + `) and exits 0 only when it i
     asks of them; a backend that cannot sandbox agent runs is accepted only
     with trusted_code_only: true, at reduced assurance;
   - secrets are referenced (env:NAME or local:path/name), never written;
-  - release windows, canary steps and model routes are not left empty.
+  - release.units lists only app, control, dispatcher and runner, a
+    synthetic suite backs self-publishing, rollback thresholds can be
+    reached, a canary ends at 100, and an unlimited budget states its
+    alert threshold or that none is wanted.
 
 Each finding names the rule that failed, the place in the manifest and the
 change that fixes it, and never repeats a value that may be a secret. Any
-finding exits 1.`,
+finding exits 1. A conformant manifest is reported with every reduction of
+assurance and every accepted risk, such as an egress policy that blocks
+nothing.`,
 		Run: runConformanceCheck,
 	})
 }
@@ -66,15 +79,13 @@ func runConformanceCheck(_ context.Context, env *Env, args []string) error {
 		printFindings(env.Stderr, report)
 		return err
 	}
-	selfUpdate := "enabled, the supervisor boundary holds"
-	if !report.SelfUpdate {
-		selfUpdate = "disabled, no trusted supervisor is declared"
+	// The verdict never stands alone: reduced assurance and accepted risks
+	// are printed beside it.
+	var notes strings.Builder
+	for _, note := range report.Notes() {
+		notes.WriteString("  " + note + "\n")
 	}
-	assurance := ""
-	if report.TrustedCodeOnly {
-		assurance = "  assurance: reduced, trusted code only: the execution backend does not isolate agent runs or enforce the egress policy\n"
-	}
-	return env.Printf("%s: conformant\n  self-update: %s\n%s", path, selfUpdate, assurance)
+	return env.Printf("%s: conformant\n%s", path, notes.String())
 }
 
 // printFindings lists what is wrong with the manifest, one block per finding.

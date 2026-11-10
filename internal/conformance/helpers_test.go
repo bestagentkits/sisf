@@ -69,3 +69,13 @@ func wantOnly(t *testing.T, report Report, rule Rule, path string) {
 		t.Errorf("a rejected manifest must yield INVALID_ARGUMENT, got %v", err)
 	}
 }
+
+// reportedAt reports whether rule failed at path.
+func (r Report) reportedAt(rule Rule, path string) bool {
+	for _, finding := range r.Findings {
+		if finding.Rule == rule && finding.Path == path {
+			return true
+		}
+	}
+	return false
+}

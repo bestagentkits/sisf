@@ -2,19 +2,19 @@ package conformance
 
 import (
 	"fmt"
-	"slices"
+	"regexp"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
 // checkSecrets keeps secrets out of the free-form parts of the manifest. The
 // fields that name a secret are held to the reference form by the schema;
-// adapter config and extensions have no schema, so a setting whose key says
-// it holds a secret must carry a reference too. A finding gives the place
-// and the expected form and never the value.
+// adapter config and extensions have no schema, so there a secret is
+// recognized two ways: by the key it stands under, and by its own shape
+// whatever the key. A finding gives the place and the expected form and
+// never the value.
 func (c *checker) checkSecrets() {
 	adapters := []struct {
 		name   string
@@ -24,14 +24,23 @@ func (c *checker) checkSecrets() {
 		{"execution", c.m.Adapters.Execution.Config}, {"deploy", c.m.Adapters.Deploy.Config},
 	}
 	for _, adapter := range adapters {
-		c.checkInlineSecrets("adapters."+adapter.name+".config", adapter.config, false)
+		c.checkInlineSecrets("adapters."+adapter.name+".config", adapter.config, setting{})
 	}
-	c.checkInlineSecrets("extensions", c.m.Extensions, false)
+	c.checkInlineSecrets("extensions", c.m.Extensions, setting{})
 }
 
-// checkInlineSecrets walks one free-form value. secret is true below a key
-// that names a secret, where every text value must be a reference.
-func (c *checker) checkInlineSecrets(path string, value any, secret bool) {
+// setting says what the keys above a free-form value tell about it.
+type setting struct {
+	// secret is true below a key that names a secret, where every text
+	// value must be a reference.
+	secret bool
+	// environment is true below a key that lists environment variables,
+	// where text may be an assignment such as NAME=value.
+	environment bool
+}
+
+// checkInlineSecrets walks one free-form value.
+func (c *checker) checkInlineSecrets(path string, value any, above setting) {
 	switch v := value.(type) {
 	case map[string]any:
 		keys := make([]string, 0, len(v))
@@ -40,7 +49,10 @@ func (c *checker) checkInlineSecrets(path string, value any, secret bool) {
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			c.checkInlineSecrets(path+"."+key, v[key], secret || namesSecret(key))
+			c.checkInlineSecrets(path+"."+key, v[key], setting{
+				secret:      above.secret || namesSecret(key),
+				environment: above.environment || namesEnvironment(key),
+			})
 		}
 	case map[any]any:
 		// A mapping with a key that is not text has no JSON form and is
@@ -51,70 +63,54 @@ func (c *checker) checkInlineSecrets(path string, value any, secret bool) {
 				named[text] = inner
 			}
 		}
-		c.checkInlineSecrets(path, named, secret)
+		c.checkInlineSecrets(path, named, above)
 	case []any:
 		for i, item := range v {
-			c.checkInlineSecrets(fmt.Sprintf("%s[%d]", path, i), item, secret)
+			c.checkInlineSecrets(fmt.Sprintf("%s[%d]", path, i), item, above)
 		}
 	case string:
-		if secret && !manifest.IsSecretRef(v) {
-			c.add(RuleSecretInline, path,
-				"store the secret with a secret provider and put "+manifest.SecretRefForm+" here",
+		const fix = "store the secret with a secret provider and put " + manifest.SecretRefForm + " here"
+		switch shape := secretShape(v); {
+		case manifest.IsSecretRef(v):
+		case above.secret:
+			c.add(RuleSecretInline, path, fix,
 				"%s is named like a secret but does not hold %s; a secret is never written in the manifest (the value is not shown)", path, manifest.SecretRefForm)
+		case shape != "":
+			c.add(RuleSecretInline, path, fix,
+				"%s holds %s; a secret is never written in the manifest, whatever the setting is called (the value is not shown)", path, shape)
+		case above.environment && assignsSecret(v):
+			c.add(RuleSecretInline, path,
+				"store the secret with a secret provider and assign "+manifest.SecretRefForm+" to the variable",
+				"%s assigns a value to an environment variable named like a secret; a secret is never written in the manifest (the value is not shown)", path)
 		}
 	}
 }
 
-// secretWords are the words that mark a key as holding a secret wherever
-// they stand in it.
-var secretWords = []string{"password", "passwd", "passphrase", "secret", "secrets", "credential", "credentials",
-	"apikey", "dsn", "authorization"}
+// The shapes a secret has whatever key it stands under.
+var (
+	// privateKeyBlock is the armour line of a private key in PEM, OpenSSH or
+	// PGP form. A certificate or a public key is not a secret.
+	privateKeyBlock = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----`)
+	// urlWithPassword is a URL whose authority carries "user:password@", as
+	// a connection string does.
+	urlWithPassword = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s/?#@:]*:[^\s/?#@]+@`)
+)
 
-// keyQualifiers are the words that make a key ending in "key" a secret: an
-// api key or a private key is one, a cache key or a sort key is not.
-var keyQualifiers = []string{"api", "private", "secret", "access", "signing", "auth", "encryption", "ssh"}
-
-// namesSecret reports whether a config key says its value is a secret, as
-// api_key, apiKey, github-token and db.password do. Only text is judged
-// below such a key, so a count such as max_tokens: 4096 is left alone.
-func namesSecret(key string) bool {
-	words := keyWords(key)
-	if n := len(words); n > 0 && words[n-1] == "ref" {
-		words = words[:n-1] // api_key_ref still names a secret; its value must be the reference
+// secretShape says what kind of secret a text value is by its shape, or ""
+// when it has none of the known shapes.
+func secretShape(value string) string {
+	switch {
+	case privateKeyBlock.MatchString(value):
+		return "a private key block"
+	case urlWithPassword.MatchString(value):
+		return "a URL with a password in it"
 	}
-	n := len(words)
-	if n == 0 {
-		return false
-	}
-	if slices.ContainsFunc(words, func(word string) bool { return slices.Contains(secretWords, word) }) {
-		return true
-	}
-	last := strings.TrimSuffix(words[n-1], "s") // api_keys and tokens hold what api_key and token hold
-	return last == "token" || last == "key" && n > 1 && slices.Contains(keyQualifiers, words[n-2])
+	return ""
 }
 
-// keyWords splits a key into lowercase words at separators and at the
-// capitals of camelCase.
-func keyWords(key string) []string {
-	var words []string
-	var word []rune
-	flush := func() {
-		if len(word) > 0 {
-			words = append(words, strings.ToLower(string(word)))
-			word = nil
-		}
-	}
-	runes := []rune(key)
-	for i, r := range runes {
-		switch {
-		case !unicode.IsLetter(r) && !unicode.IsDigit(r):
-			flush()
-			continue
-		case unicode.IsUpper(r) && i > 0 && (unicode.IsLower(runes[i-1]) || i+1 < len(runes) && unicode.IsLower(runes[i+1])):
-			flush()
-		}
-		word = append(word, r)
-	}
-	flush()
-	return words
+// assignsSecret reports whether text is NAME=value with a name that says
+// the value is a secret and a value that is not a reference.
+func assignsSecret(text string) bool {
+	name, value, assigned := strings.Cut(text, "=")
+	return assigned && value != "" && !manifest.IsSecretRef(value) && namesSecret(strings.TrimSpace(name))
 }

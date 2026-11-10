@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	kit "github.com/bestagentkits/sisf/pkg/conformance"
@@ -35,11 +36,29 @@ type checker struct {
 	// trustedCodeOnly records that the Owner's acknowledgement stood in for a
 	// capability the execution backend lacks.
 	trustedCodeOnly bool
+	// sameModelRoute records that the Owner's acknowledgement stood in for a
+	// QA route that differs from the coding agent's.
+	sameModelRoute bool
+	// risks collects accepted settings the Owner is warned about.
+	risks []Risk
 }
 
 // add records a finding. The message is formatted with args.
 func (c *checker) add(rule Rule, path, fix, message string, args ...any) {
 	c.findings = append(c.findings, Finding{Rule: rule, Path: path, Message: fmt.Sprintf(message, args...), Fix: fix})
+}
+
+// reported reports whether rule already failed at path.
+func (c *checker) reported(rule Rule, path string) bool {
+	return slices.ContainsFunc(c.findings, func(f Finding) bool { return f.Rule == rule && f.Path == path })
+}
+
+// addOnce records a finding unless rule already failed at path, so that one
+// offending value compared against several others is reported once.
+func (c *checker) addOnce(rule Rule, path, fix, message string, args ...any) {
+	if !c.reported(rule, path) {
+		c.add(rule, path, fix, message, args...)
+	}
 }
 
 // checkWith runs every rule against m, judging backends by the given
@@ -55,13 +74,17 @@ func checkWith(m *manifest.Manifest, backends []kit.Declaration) Report {
 	c.checkNetworks()
 	c.checkSupervisor()
 	c.checkIsolation()
+	c.checkQA()
+	c.checkStorage()
 	c.checkBackends()
 	c.checkSecrets()
 	c.checkLimits()
+	c.checkBudget()
 	c.checkRelease()
 	c.checkModelRoutes()
+	c.noteEgressRisks()
 
-	report := Report{Findings: c.findings, TrustedCodeOnly: c.trustedCodeOnly}
+	report := Report{Findings: c.findings, TrustedCodeOnly: c.trustedCodeOnly, SameModelRoute: c.sameModelRoute, Risks: c.risks}
 	report.SelfUpdate = m.Supervisor != nil && !hasSupervisorFinding(report.Findings)
 	// A schema violation at a place a rule already reported adds nothing: the
 	// rule's finding says what is wrong there and how to fix it.

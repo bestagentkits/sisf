@@ -78,6 +78,17 @@ func (u UnitName) Zone() core.Zone {
 	return ""
 }
 
+// sharedUnits returns the units every zone uses, in unit order.
+func sharedUnits() []UnitName {
+	var shared []UnitName
+	for _, u := range allUnits {
+		if u.Zone().Shared() {
+			shared = append(shared, u)
+		}
+	}
+	return shared
+}
+
 // Lifecycle returns the lifecycle the unit always has, or "" when unknown.
 func (u UnitName) Lifecycle() Lifecycle {
 	switch u {
@@ -248,6 +259,11 @@ type Unit struct {
 	Public       bool     `json:"public,omitempty" yaml:"public,omitempty"`
 	PublicRoutes []string `json:"public_routes,omitempty" yaml:"public_routes,omitempty"`
 	Mounts       []Mount  `json:"mounts,omitempty" yaml:"mounts,omitempty"`
+	// CredentialsRef references a credential set of the unit's own, used in
+	// place of its zone's. The qa-runner names one, so that independent QA
+	// never holds the credentials of the runner whose work it judges. It is
+	// a secret reference, never the credentials themselves.
+	CredentialsRef string `json:"credentials_ref,omitempty" yaml:"credentials_ref,omitempty"`
 }
 
 // Mount attaches a declared volume to a unit.
@@ -262,6 +278,11 @@ type Mount struct {
 // every zone uses through that unit and never through a mount of its own.
 type Volume struct {
 	Zone core.Zone `json:"zone" yaml:"zone"`
+	// Holder names the unit that keeps a shared volume: state, artifacts or
+	// edge (its TLS state). Left out, the artifacts unit holds the volume
+	// storage.artifacts names and the state unit holds any other. A volume
+	// owned by a zone names no holder.
+	Holder UnitName `json:"holder,omitempty" yaml:"holder,omitempty"`
 }
 
 // Network is one network segment.
@@ -453,4 +474,11 @@ type ModelRoutes struct {
 	// run falls short. MaxEscalations caps how many are used per issue.
 	Escalation     map[core.StepKind][]core.ModelRoute `json:"escalation,omitempty" yaml:"escalation,omitempty"`
 	MaxEscalations int                                 `json:"max_escalations,omitempty" yaml:"max_escalations,omitempty"`
+	// SameModelRoute is the Owner's acknowledgement that this deployment has
+	// a single model route, so QA runs on the provider and model of the
+	// coding agent and shares its blind spots. It is false unless stated;
+	// without it such a route table is refused. Every QA receipt of the
+	// deployment then records same_model_route, and policy may require the
+	// Owner's approval in place of self-publishing.
+	SameModelRoute bool `json:"same_model_route,omitempty" yaml:"same_model_route,omitempty"`
 }
