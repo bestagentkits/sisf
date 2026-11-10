@@ -69,7 +69,7 @@ func (in *Installer) standaloneUnits(m *manifest.Manifest) ([]unit, []io.Closer,
 			"SISF_LISTEN="+addr(PortDispatcher))}},
 		{"edge", Cmd{Name: bin("sisf-edge"), Args: []string{
 			"--listen=" + addr(PortEdge), "--upstream=http://" + addr(PortApp),
-			"--route=/webhooks/github=http://" + addr(PortControl), "--route=/report=http://" + addr(PortControl),
+			"--route=/webhooks/github=http://" + addr(PortControl),
 		}}},
 	}
 	if m.Extensions["profile"] == profileSim {

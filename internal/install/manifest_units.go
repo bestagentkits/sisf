@@ -39,7 +39,7 @@ func dockerUnits() map[manifest.UnitName]manifest.Unit {
 		manifest.UnitControl: {
 			Image: "sisf-factoryd", Digest: unbuilt(artifactFactoryd), Command: []string{"factoryd", "control"}, Lifecycle: long,
 			Networks: []manifest.NetworkName{manifest.NetworkControl, manifest.NetworkFactory}, Port: PortControl,
-			Public: true, PublicRoutes: []string{"/webhooks/github", "/report"},
+			Public: true, PublicRoutes: []string{"/webhooks/github"},
 			Mounts: []manifest.Mount{{Volume: "control-data", Path: "/var/lib/sisf/control"}},
 		},
 		manifest.UnitSupervisor: {
