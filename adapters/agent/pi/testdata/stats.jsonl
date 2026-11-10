@@ -1,0 +1,1 @@
+{"id":"factory-stats","type":"response","command":"get_session_stats","success":true,"data":{"sessionId":"abc","tokens":{"input":5000,"output":1200,"cacheRead":4000,"cacheWrite":500,"total":10700},"cost":0.45,"contextUsage":{"tokens":60000,"contextWindow":200000,"percent":30}}}

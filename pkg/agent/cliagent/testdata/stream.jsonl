@@ -1,0 +1,6 @@
+{"type":"msg","text":"reading the repository","future_field":{"a":1}}
+not json at all
+{"type":"unknown_kind","x":1}
+{"type":"msg","text":"editing main.go"}
+{"type":"usage","in":120,"out":45}
+{"type":"done"}
