@@ -105,12 +105,24 @@ func TestACanaryGrowsFromAShareOfTheTraffic(t *testing.T) {
 			}
 		})
 	}
-	for _, steps := range [][]int{{5, 25, 100}, {1, 100}, {10, 50}, {50}} {
+	for _, steps := range [][]int{{5, 25, 100}, {1, 100}, {10, 50, 99, 100}} {
 		m := docker(t)
 		m.Release.CanarySteps = steps
 		if report := Check(m); !report.Conformant() {
-			t.Errorf("canary steps %v grow from a share of the traffic, got %+v", steps, report.Findings)
+			t.Errorf("canary steps %v grow from a share of the traffic to all of it, got %+v", steps, report.Findings)
 		}
+	}
+	// Steps that grow but stop short of all traffic never finish the release.
+	for _, steps := range [][]int{{10, 50}, {50}, {5, 25, 99}} {
+		t.Run(fmt.Sprint("unfinished ", steps), func(t *testing.T) {
+			m := docker(t)
+			m.Release.CanarySteps = steps
+			report := Check(m)
+			wantOnly(t, report, RuleCanaryIncomplete, "release.canary_steps")
+			if len(report.Findings) != 1 {
+				t.Fatalf("one list of steps is one finding, got %+v", report.Findings)
+			}
+		})
 	}
 	// Steps mean nothing to a release that switches all traffic at once.
 	m := standalone(t)

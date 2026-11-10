@@ -47,6 +47,9 @@ func TestParseDecodesAManifestWrittenInYAML(t *testing.T) {
 		"mount":          m.Units[manifest.UnitSupervisor].Mounts[0].Volume == "trust",
 		"model route":    m.ModelRoutes.Routes[core.StepQA].Provider == "openai",
 		"egress default": m.Egress.Mode == core.EgressAllowlist && m.Egress.Validate() == nil,
+		"QA credentials": m.Units[manifest.UnitQARunner].CredentialsRef == "local:zone2-qa" && m.Units[manifest.UnitRunner].CredentialsRef == "",
+		"volume holder":  m.Volumes["artifacts"].Holder == manifest.UnitArtifacts && m.Volumes["state-data"].Holder == "",
+		"one route off":  !m.ModelRoutes.SameModelRoute,
 	}
 	for name, ok := range checks {
 		if !ok {
@@ -160,5 +163,21 @@ func TestParseReportsProblemsInTheWordsOfTheFile(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The acknowledgement of a single model route is false unless written.
+func TestParseReadsTheSameModelRouteAcknowledgement(t *testing.T) {
+	t.Parallel()
+	text := strings.Replace(exampleYAML(t), "  max_escalations: 2\n", "  max_escalations: 2\n  same_model_route: true\n", 1)
+	m, err := manifest.Parse([]byte(text))
+	if err != nil || !m.ModelRoutes.SameModelRoute {
+		t.Fatalf("same_model_route: true must be read, got %v, %v", m, err)
+	}
+	if got := manifest.Validate(m); len(got) != 0 {
+		t.Fatalf("the acknowledgement is part of the schema, got %v", got)
+	}
+	if _, err := manifest.Parse([]byte(strings.Replace(text, "\n  same_model_route: true\n", "\n  same_model_route: maybe\n", 1))); err == nil {
+		t.Fatal("an acknowledgement that is not true or false must be refused")
 	}
 }

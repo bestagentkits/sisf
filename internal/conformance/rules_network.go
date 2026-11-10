@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -105,16 +106,60 @@ func (c *checker) checkEgress() {
 	}
 }
 
+// routeSegment is one plain segment of a route: no pattern character, no
+// encoding and nothing a router would expand.
+var routeSegment = regexp.MustCompile(`^[A-Za-z0-9_~.-]+$`)
+
+// namedRoute reports whether route names exactly one path below the root:
+// it starts at the root and every segment is plain text. A pattern such as
+// "/*", a dot segment such as "/." and an empty segment all stand for more
+// than one path, or for the root itself.
+func namedRoute(route string) bool {
+	rest, rooted := strings.CutPrefix(route, "/")
+	if !rooted {
+		return false
+	}
+	for _, segment := range strings.Split(rest, "/") {
+		if segment == "." || segment == ".." || !routeSegment.MatchString(segment) {
+			return false
+		}
+	}
+	return true
+}
+
+// checkRunnerInbound refuses a port on the runner and the qa-runner. A run
+// accepts no inbound connection: whatever listens inside a sandbox is a
+// door into code the factory does not trust.
+func (c *checker) checkRunnerInbound() {
+	for _, name := range []manifest.UnitName{manifest.UnitRunner, manifest.UnitQARunner} {
+		if unit, declared := c.m.Units[name]; declared && unit.Port != 0 {
+			c.add(RuleRunnerInbound, fmt.Sprintf("units.%s.port", name),
+				fmt.Sprintf("remove port from units.%s", name),
+				"unit %q declares a port; a run accepts no inbound connection, so nothing may listen where agent code executes", name)
+		}
+	}
+}
+
 // checkPublicExposure lets only the units that serve the outside be exposed:
 // the application and the edge, and the control unit for the routes it
-// names. The control plane as a whole is never public.
+// names. The control plane as a whole is never public. Routes are read for
+// the control unit alone, so naming them on another unit restricts nothing
+// and is refused rather than ignored.
 func (c *checker) checkPublicExposure() {
 	for _, name := range manifest.UnitNames() {
 		unit, declared := c.m.Units[name]
-		if !declared || !unit.Public {
+		if !declared {
 			continue
 		}
 		path := "units." + string(name)
+		if name != manifest.UnitControl && len(unit.PublicRoutes) > 0 {
+			c.add(RulePublicExposure, path+".public_routes",
+				fmt.Sprintf("remove public_routes from units.%s; only the control unit is exposed by route", name),
+				"unit %q names public routes, which are read for the control unit alone; here they restrict nothing, so the unit is exposed whole or not at all whatever the list says", name)
+		}
+		if !unit.Public {
+			continue
+		}
 		switch name {
 		case manifest.UnitApp, manifest.UnitEdge:
 		case manifest.UnitControl:
@@ -124,10 +169,10 @@ func (c *checker) checkPublicExposure() {
 					"the control unit is public without naming routes, which exposes the whole control plane; only the routes it names may be reached from outside")
 			}
 			for i, route := range unit.PublicRoutes {
-				if !strings.HasPrefix(route, "/") || strings.Trim(route, "/") == "" {
+				if !namedRoute(route) {
 					c.add(RulePublicExposure, fmt.Sprintf("%s.public_routes[%d]", path, i),
-						"name one route below the root, such as /webhooks/github",
-						"public route %q of the control unit is not a path below the root, so it exposes the whole control plane or nothing that can be told", route)
+						"name one route below the root in plain segments, such as /webhooks/github, with no pattern, dot segment or trailing slash",
+						"public route %q of the control unit is not one path below the root, so it exposes the whole control plane, a set of routes nobody listed, or nothing that can be told", route)
 				}
 			}
 		default:

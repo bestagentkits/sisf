@@ -1,0 +1,110 @@
+# Rejected: QA runs on the provider and model of the coding agent and the Owner has not acknowledged it.
+# expect: qa.same_model_route
+api_version: sisf/v1
+factory_id: acme-hello
+deployment_id: local
+mode: docker
+repository: {owner: acme, repo: hello-app}
+components:
+  application: {source: apps/web, credentials_ref: local:zone1-application, store_role: sisf_application}
+  agent: {source: factory, credentials_ref: local:zone2-agent, store_role: sisf_agent}
+  control: {source: control, credentials_ref: local:zone3-control, store_role: sisf_control}
+units:
+  app:
+    image: ghcr.io/acme/hello-app
+    digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+    lifecycle: long_running
+    networks: [app]
+    port: 7461
+    mounts: [{volume: app-data, path: /data}]
+  control:
+    image: ghcr.io/acme/sisf-factoryd
+    digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+    lifecycle: long_running
+    networks: [control, factory]
+    port: 7463
+    mounts: [{volume: control-data, path: /var/lib/sisf/control}]
+  supervisor:
+    image: ghcr.io/acme/sisf-supervisor
+    digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
+    lifecycle: long_running
+    networks: [control]
+    port: 7464
+    mounts: [{volume: trust, path: /var/lib/sisf/trust}]
+  dispatcher:
+    image: ghcr.io/acme/sisf-factoryd
+    digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+    lifecycle: long_running
+    networks: [factory]
+    port: 7465
+  runner:
+    image: ghcr.io/acme/sisf-runner
+    digest: sha256:4444444444444444444444444444444444444444444444444444444444444444
+    lifecycle: ephemeral
+    networks: [sandbox]
+    mounts: [{volume: workspaces, path: /workspace}]
+  qa-runner:
+    image: ghcr.io/acme/sisf-qa-runner
+    digest: sha256:5555555555555555555555555555555555555555555555555555555555555555
+    lifecycle: ephemeral
+    networks: [sandbox]
+    credentials_ref: local:zone2-qa
+    mounts: [{volume: qa-workspaces, path: /workspace}]
+  state:
+    image: postgres
+    digest: sha256:6666666666666666666666666666666666666666666666666666666666666666
+    lifecycle: durable
+    networks: [app, factory, control]
+    mounts: [{volume: state-data, path: /var/lib/postgresql/data}]
+  artifacts:
+    lifecycle: durable
+    mounts: [{volume: artifacts, path: /var/lib/sisf/artifacts}]
+  edge:
+    image: ghcr.io/acme/sisf-edge
+    digest: sha256:7777777777777777777777777777777777777777777777777777777777777777
+    lifecycle: long_running
+    networks: [app, control, sandbox]
+    port: 7460
+    public: true
+supervisor:
+  image: ghcr.io/acme/sisf-supervisor
+  digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
+  trust_volume: trust
+  root_key_ref: env:SISF_ROOT_PUBLIC_KEY
+  digest_change: governance
+  startup_self_check: true
+networks:
+  app: {}
+  factory: {internal: true}
+  control: {internal: true}
+  sandbox: {internal: true, egress_via: edge}
+volumes:
+  app-data: {zone: application}
+  workspaces: {zone: agent}
+  qa-workspaces: {zone: agent}
+  control-data: {zone: control}
+  trust: {zone: control}
+  state-data: {zone: shared}
+  artifacts: {zone: shared, holder: artifacts}
+storage:
+  state: {driver: postgres, dsn_ref: env:SISF_STATE_DSN}
+  artifacts: {kind: volume, location: artifacts}
+adapters:
+  coder: {name: claude}
+  qa: {name: codex}
+  execution: {name: docker}
+  deploy: {name: compose}
+release:
+  policy: B
+  strategy: canary
+  canary_steps: [5, 25, 100]
+  units: [app]
+  rollback: {error_rate: 0.02, baseline_delta: 0.01, min_samples: 100, window: 10m, consecutive_windows: 2}
+  low_traffic: {min_hold: 30m, synthetic_suite: synthetic}
+budget: {mode: unlimited, alert_threshold_micros: 50000000}
+limits: {run_timeout: 30m, max_attempts: 3, concurrency: 2, clarify_timeout: 72h}
+egress: {mode: allowlist, allow: [api.github.com, github.com]}
+model_routes:
+  routes:
+    coding: {provider: anthropic, model: mid, effort: low}
+    qa: {provider: anthropic, model: mid, effort: high}

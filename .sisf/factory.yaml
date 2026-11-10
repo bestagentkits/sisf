@@ -89,6 +89,8 @@ units:
     digest: sha256:5555555555555555555555555555555555555555555555555555555555555555
     lifecycle: ephemeral
     networks: [sandbox]
+    # QA runs with an identity and credentials of its own, never the runner's.
+    credentials_ref: local:zone2-qa
     mounts:
       - volume: qa-workspaces
         path: /workspace
@@ -102,6 +104,9 @@ units:
         path: /var/lib/postgresql/data
   artifacts:
     lifecycle: durable
+    mounts:
+      - volume: artifacts
+        path: /var/lib/sisf/artifacts
   edge:
     image: ghcr.io/acme/sisf-edge
     digest: sha256:7777777777777777777777777777777777777777777777777777777777777777
@@ -131,7 +136,8 @@ networks:
     internal: true
     egress_via: edge
 
-# Each volume names the only zone allowed to write to it.
+# Each volume names the only zone allowed to write to it. A shared volume is
+# kept by one unit every zone uses (state, artifacts or edge), named by holder.
 volumes:
   app-data:
     zone: application
@@ -147,6 +153,7 @@ volumes:
     zone: shared
   artifacts:
     zone: shared
+    holder: artifacts
 
 storage:
   state:
@@ -218,7 +225,8 @@ egress:
     - dl-cdn.alpinelinux.org
 
 # The model of each kind of step. The names are placeholders for the tiers a
-# deployment configures.
+# deployment configures. QA runs on another provider or model than coding; a
+# deployment with a single route states same_model_route: true instead.
 model_routes:
   routes:
     intake:

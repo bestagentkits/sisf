@@ -2,9 +2,7 @@ package conformance
 
 import (
 	"fmt"
-	"path"
 	"slices"
-	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -85,10 +83,4 @@ func (c *checker) checkTrustVolumeStorage(sup manifest.Supervisor) {
 			fmt.Sprintf("set %s to a place outside trust volume %q", store.path, sup.TrustVolume),
 			"%s places %s on trust volume %q; what agents and candidates produce may not sit beside the last known good release and the signing keys", store.path, store.holds, sup.TrustVolume)
 	}
-}
-
-// within reports whether location is root or a path below it.
-func within(location, root string) bool {
-	location, root = path.Clean(location), path.Clean(root)
-	return location == root || strings.HasPrefix(location, strings.TrimSuffix(root, "/")+"/")
 }

@@ -51,6 +51,7 @@ units:
     digest: sha256:5555555555555555555555555555555555555555555555555555555555555555
     lifecycle: ephemeral
     networks: [sandbox]
+    credentials_ref: local:zone2-qa
     mounts: [{volume: qa-workspaces, path: /workspace}]
   state:
     image: postgres
@@ -58,7 +59,9 @@ units:
     lifecycle: durable
     networks: [app, factory, control]
     mounts: [{volume: state-data, path: /var/lib/postgresql/data}]
-  artifacts: {lifecycle: durable}
+  artifacts:
+    lifecycle: durable
+    mounts: [{volume: artifacts, path: /var/lib/sisf/artifacts}]
   edge:
     image: ghcr.io/acme/sisf-edge
     digest: sha256:7777777777777777777777777777777777777777777777777777777777777777
@@ -85,6 +88,7 @@ volumes:
   control-data: {zone: control}
   trust: {zone: control}
   state-data: {zone: shared}
+  artifacts: {zone: shared, holder: artifacts}
 storage:
   state: {driver: postgres, dsn_ref: env:SISF_STATE_DSN}
   artifacts: {kind: volume, location: artifacts}

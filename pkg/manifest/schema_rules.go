@@ -121,8 +121,12 @@ var fieldRules = map[string]map[string]any{
 
 	"Unit.port":     {"minimum": 1, "maximum": 65535},
 	"Unit.networks": {"uniqueItems": true},
-	"Mount.volume":  nonEmpty,
-	"Mount.path":    nonEmpty,
+	"Unit.credentials_ref": described(
+		"Reference to a credential set of the unit's own, written env:NAME or local:path/name. The qa-runner names one that differs from the runner's.", secretRefField),
+	"Volume.holder": described("Unit that keeps a shared volume. Left out, artifacts holds the volume storage.artifacts names and state holds any other.",
+		map[string]any{"enum": names(sharedUnits())}),
+	"Mount.volume": nonEmpty,
+	"Mount.path":   nonEmpty,
 
 	"Supervisor.image":        described("The supervisor's own artifact; never the artifact of a candidate.", nonEmpty),
 	"Supervisor.digest":       described("Pins the supervisor's artifact.", nil),
@@ -150,6 +154,8 @@ var fieldRules = map[string]map[string]any{
 	"ModelRoute.provider":         nonEmpty,
 	"ModelRoute.model":            nonEmpty,
 	"ModelRoutes.max_escalations": {"minimum": 0},
+	"ModelRoutes.same_model_route": described(
+		"Owner's acknowledgement that QA runs on the coding agent's provider and model. Without it such a route table is refused; with it every QA receipt records same_model_route.", nil),
 }
 
 // typeRules holds, per struct type, the keywords merged over its object

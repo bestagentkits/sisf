@@ -78,7 +78,8 @@ func TestABreachOfAnySupervisorBoundaryConditionIsRejected(t *testing.T) {
 			func(m *manifest.Manifest) {
 				editUnit(m, manifest.UnitDispatcher, func(u *manifest.Unit) { u.Command = []string{"/usr/local/bin/sisf-supervisor", "dispatch"} })
 			}, RuleSupervisorSharesArtifact, "units.dispatcher.command"},
-		{"the supervisor is the control unit's executable under a full path", 1, docker,
+		// Where no image stands for a unit, its executable does, from any directory.
+		{"the supervisor is the control unit's executable under a full path", 1, standalone,
 			func(m *manifest.Manifest) {
 				editUnit(m, manifest.UnitControl, func(u *manifest.Unit) { u.Command = []string{"factoryd", "control"} })
 				editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) { u.Command = []string{"/usr/bin/factoryd", "supervisor"} })
