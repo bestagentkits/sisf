@@ -152,16 +152,24 @@ func (s *Service) pruneFlowsLocked(now time.Time) {
 // session rather than confirm the person, so it names the providers that
 // can. Signing in through it is unaffected.
 func (s *Service) stepUpUnsupported(providerName string) error {
-	var able []string
-	for name, p := range s.providers {
-		if _, ok := p.(FreshSignInProvider); ok {
-			able = append(able, name)
-		}
-	}
-	slices.Sort(able)
+	able := s.stepUpProviders("")
 	msg := providerName + " cannot force a fresh sign-in, so it cannot confirm your identity"
 	if len(able) == 0 {
 		return core.NewError(core.CodeNotSupported, msg+"; configure an OpenID Connect provider to confirm through")
 	}
 	return core.NewError(core.CodeNotSupported, msg+"; confirm through an OpenID Connect provider instead: "+strings.Join(able, ", "))
+}
+
+// stepUpProviders returns, sorted, the names of the providers that can force
+// a fresh sign-in and, when issuer is set, sign in identities of that
+// issuer: the ones a session of issuer can confirm itself through.
+func (s *Service) stepUpProviders(issuer string) []string {
+	able := []string{}
+	for name, p := range s.providers {
+		if _, ok := p.(FreshSignInProvider); ok && (issuer == "" || p.Issuer() == issuer) {
+			able = append(able, name)
+		}
+	}
+	slices.Sort(able)
+	return able
 }

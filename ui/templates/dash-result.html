@@ -8,7 +8,7 @@
 {{if .StepUp}}
 <h2>Confirm your identity</h2>
 <p>This action needs a fresh confirmation from you at the sign-in provider, for this exact call. Then go back and repeat it with the same values. A confirmation is spent by one call and lapses after a few minutes.</p>
-{{range .Providers}}<form method="post" action="/auth/step-up/{{.}}?return_to={{$.ReturnTo}}">{{template "csrf" $}}{{template "stepupfor" $}}<button type="submit">Confirm with {{.}}</button></form>{{end}}
+{{range .StepUpProviders}}<form method="post" action="/auth/step-up/{{.}}?return_to={{$.ReturnTo}}">{{template "csrf" $}}{{template "stepupfor" $}}<button type="submit">Confirm with {{.}}</button></form>{{else}}<p class="notice unavailable" data-state="no-step-up">Confirming your identity needs a sign-in through an OpenID Connect provider; sign in through one to continue.</p>{{end}}
 {{end}}
 {{else}}
 <div class="notice ok" data-state="done"><strong>Done.</strong> The action <code>{{.Action}}</code> ran.</div>

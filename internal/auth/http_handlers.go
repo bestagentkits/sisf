@@ -134,6 +134,10 @@ type sessionView struct {
 	Email     string    `json:"email,omitempty"`
 	ExpiresAt time.Time `json:"expires_at"`
 	CSRFToken string    `json:"csrf_token"`
+	// StepUpProviders are the providers that can confirm this person again:
+	// those that force a fresh sign-in and sign in the session's issuer.
+	// Empty means no step-up is possible in this session.
+	StepUpProviders []string `json:"step_up_providers"`
 }
 
 func (s *Service) handleSession(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +149,7 @@ func (s *Service) handleSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, sessionView{ActorID: ss.actorID, SessionID: ss.handle, Issuer: ss.ident.Issuer,
 		Subject: ss.ident.Subject, Login: ss.ident.Login, Name: ss.ident.Name, Email: ss.ident.Email,
-		ExpiresAt: ss.expires, CSRFToken: ss.csrf})
+		ExpiresAt: ss.expires, CSRFToken: ss.csrf, StepUpProviders: s.stepUpProviders(ss.ident.Issuer)})
 }
 
 func (s *Service) handleListTokens(w http.ResponseWriter, r *http.Request) {

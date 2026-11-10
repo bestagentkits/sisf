@@ -111,7 +111,7 @@ func newEnv(t *testing.T, fx *fixtures) *env {
 	e.fake = fakeoidc.NewTestServer(t, fakeoidc.WithClock(e.clock))
 	ts := httptest.NewUnstartedServer(nil)
 	e.base = "http://" + ts.Listener.Addr().String()
-	e.fake.AddClient(fakeoidc.Client{ID: "sisf", Secret: oidcSecret, RedirectURIs: []string{e.base + "/auth/callback/google"}})
+	e.fake.AddClient(fakeoidc.Client{ID: "sisf", Secret: oidcSecret, RedirectURIs: []string{e.base + "/auth/callback/google", e.base + "/auth/callback/github"}})
 	for _, u := range []fakeoidc.User{
 		{Subject: ownerSub, Email: "owner@example.test", EmailVerified: true, Login: "owner", GitHubID: 1001},
 		{Subject: viewerSub, Email: "viewer@example.test", EmailVerified: true, Login: "viewer", GitHubID: 1002}} {
@@ -122,7 +122,15 @@ func newEnv(t *testing.T, fx *fixtures) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.auth, err = auth.New(auth.Config{Providers: []identity.Provider{google}, Clock: e.clock}); err != nil {
+	// GitHub signs people in but cannot force a fresh sign-in, so it never
+	// confirms anyone.
+	github, err := auth.NewGitHubProvider(auth.GitHubConfig{Issuer: e.fake.Issuer() + "/github", AuthURL: e.fake.Issuer() + fakeoidc.GitHubAuthorizePath,
+		TokenURL: e.fake.Issuer() + fakeoidc.GitHubTokenPath, APIBase: e.fake.Issuer() + fakeoidc.GitHubAPIPrefix,
+		ClientID: "sisf", ClientSecret: core.NewSecretValue([]byte(oidcSecret)), RedirectURL: e.base + "/auth/callback/github"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.auth, err = auth.New(auth.Config{Providers: []identity.Provider{google, github}, Clock: e.clock}); err != nil {
 		t.Fatal(err)
 	}
 	keys, st, audit := intaketest.NewKeys("approval-key"), intaketest.NewState(e.clock), &intaketest.AuditLog{}
@@ -147,11 +155,12 @@ func newEnv(t *testing.T, fx *fixtures) *env {
 	for sub, role := range map[string]core.Role{ownerSub: core.RoleOwner, viewerSub: core.RoleViewer} {
 		roles[auth.ActorID(identity.Identity{Issuer: e.fake.Issuer(), Subject: sub})] = role
 	}
+	roles[auth.ActorID(identity.Identity{Issuer: e.fake.Issuer() + "/github", Subject: "1001"})] = core.RoleOwner
 	if e.svc, err = actions.NewService(actions.Config{FactoryID: testFactory, Registry: reg, Authorizer: roleAuthorizer{roles},
 		Approvals: store, Policy: policySource{}, Audit: audit, Clock: e.clock, StepUp: e.auth}); err != nil {
 		t.Fatal(err)
 	}
-	dash, err := web.New(web.Config{Actions: e.svc, Identity: rolesIdentity{e.auth, roles}, Clock: e.clock, LoginProviders: []string{"google"}})
+	dash, err := web.New(web.Config{Actions: e.svc, Identity: rolesIdentity{e.auth, roles}, Clock: e.clock, LoginProviders: []string{"google", "github"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,10 +257,16 @@ func (b *browser) hop(t *testing.T, method, target string) string {
 // signIn runs a whole sign-in as subject at the fake provider.
 func (b *browser) signIn(t *testing.T, subject string) {
 	t.Helper()
+	b.signInWith(t, "google", subject)
+}
+
+// signInWith signs subject in through provider.
+func (b *browser) signInWith(t *testing.T, provider, subject string) {
+	t.Helper()
 	if !b.e.fake.SignInAs(subject) {
 		t.Fatalf("unknown subject %s", subject)
 	}
-	loc := b.hop(t, http.MethodGet, "/auth/login/google?return_to=/")
+	loc := b.hop(t, http.MethodGet, "/auth/login/"+provider+"?return_to=/")
 	b.hop(t, http.MethodGet, b.hop(t, http.MethodGet, loc))
 }
 

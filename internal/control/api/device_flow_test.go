@@ -305,3 +305,32 @@ func TestTheVerificationPageLetsTheStepUpFormReachTheProvider(t *testing.T) {
 		t.Fatalf("verification page policy: %q", csp)
 	}
 }
+
+// The verification page offers a confirm button only for a provider that
+// can force a fresh sign-in of the person signed in; a person signed in
+// through GitHub, whom no provider can confirm, gets one plain sentence.
+func TestTheVerificationPageOffersConfirmationOnlyThroughProvidersThatCanConfirmThePerson(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, sampleRegistry)
+	_, s := e.browser(t).start(t, `{}`)
+	verify := api.DeviceVerifyPath + "?user_code=" + url.QueryEscape(s.UserCode)
+
+	anon := e.browser(t).do(t, http.MethodGet, verify, "", nil)
+	if !strings.Contains(anon.body, "/auth/login/google?") || !strings.Contains(anon.body, "/auth/login/github?") {
+		t.Fatalf("the page does not offer signing in with every provider: %s", anon.body)
+	}
+	google := e.browser(t)
+	google.signIn(t, "owner-sub")
+	page := google.do(t, http.MethodGet, verify, "", nil)
+	if !strings.Contains(page.body, `action="/auth/step-up/google?`) || strings.Contains(page.body, "/auth/step-up/github") ||
+		strings.Contains(page.body, `data-state="no-step-up"`) {
+		t.Fatalf("page for a Google sign-in: %s", page.body)
+	}
+	github := e.browser(t)
+	github.signInWith(t, "github", "owner-sub")
+	page = github.do(t, http.MethodGet, verify, "", nil)
+	if strings.Contains(page.body, "/auth/step-up/") || !strings.Contains(page.body, `data-state="no-step-up"`) ||
+		!strings.Contains(page.body, "OpenID Connect") {
+		t.Fatalf("page for a GitHub sign-in: %s", page.body)
+	}
+}

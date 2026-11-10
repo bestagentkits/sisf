@@ -79,10 +79,16 @@ func (b *browser) do(t *testing.T, method, target, body string, header map[strin
 // signIn runs a whole sign-in as subject and returns the session's CSRF header.
 func (b *browser) signIn(t *testing.T, subject string) map[string]string {
 	t.Helper()
+	return b.signInWith(t, "google", subject)
+}
+
+// signInWith signs subject in through provider and returns the CSRF header.
+func (b *browser) signInWith(t *testing.T, provider, subject string) map[string]string {
+	t.Helper()
 	if !b.e.fake.SignInAs(subject) {
 		t.Fatalf("unknown subject %s", subject)
 	}
-	loc := b.hop(t, http.MethodGet, "/auth/login/google?return_to=/", nil)
+	loc := b.hop(t, http.MethodGet, "/auth/login/"+provider+"?return_to=/", nil)
 	b.hop(t, http.MethodGet, b.hop(t, http.MethodGet, loc, nil), nil)
 	return map[string]string{auth.CSRFHeader: b.csrf(t)}
 }

@@ -31,16 +31,19 @@ const (
 
 // Frame is what the shared layout reads on every page.
 type Frame struct {
-	Nav       string
-	LoggedIn  bool
-	CSRF      string
-	Who       string
-	Providers []string
-	ReturnTo  string
+	Nav      string
+	LoggedIn bool
+	CSRF     string
+	Who      string
+	// StepUpProviders are the providers the person can confirm their
+	// identity through; a step-up button is offered for each, and none when
+	// no provider can force a fresh sign-in for this person.
+	StepUpProviders []string
+	ReturnTo        string
 }
 
 func (h *handler) frame(s *session, nav, returnTo string) Frame {
-	return Frame{Nav: nav, LoggedIn: true, CSRF: s.csrf, Who: s.who, Providers: h.cfg.LoginProviders, ReturnTo: auth.LocalReturnPath(returnTo)}
+	return Frame{Nav: nav, LoggedIn: true, CSRF: s.csrf, Who: s.who, StepUpProviders: s.stepUp, ReturnTo: auth.LocalReturnPath(returnTo)}
 }
 
 type signInView struct {

@@ -81,3 +81,17 @@ func TestAStepUpThroughAProviderThatCannotForceASignInIsRefused(t *testing.T) {
 		t.Fatalf("a step-up through GitHub: %d %s", resp.StatusCode, body)
 	}
 }
+
+// The session view names the providers that can confirm the person signed
+// in: a provider that can force a fresh sign-in of the session's issuer.
+func TestTheSessionViewNamesOnlyProvidersThatCanConfirmThePerson(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	for provider, want := range map[string]string{"google": `"step_up_providers":["google"]`, "github": `"step_up_providers":[]`} {
+		b := e.browser(t)
+		b.signIn(t, provider, "owner-sub")
+		if body := readAll(t, b.do(t, http.MethodGet, "/auth/session", "", nil).Body); !strings.Contains(body, want) {
+			t.Errorf("signed in with %s, the session view is %s", provider, body)
+		}
+	}
+}

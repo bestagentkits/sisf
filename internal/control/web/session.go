@@ -23,6 +23,9 @@ type session struct {
 	actor core.Actor
 	csrf  string
 	who   string
+	// stepUp are the providers this person can confirm their identity
+	// through; empty when none can.
+	stepUp []string
 }
 
 // sessionView is the part of the session view the dashboard reads.
@@ -33,6 +36,8 @@ type sessionView struct {
 	Issuer    string    `json:"issuer"`
 	CSRFToken string    `json:"csrf_token"`
 	StepUpAt  time.Time `json:"step_up_at"`
+	// StepUpProviders are the providers that can confirm this person again.
+	StepUpProviders []string `json:"step_up_providers"`
 }
 
 // identify returns the person behind r. The dashboard is for browser
@@ -53,7 +58,7 @@ func (h *handler) identify(r *http.Request) (*session, error) {
 		return nil, err
 	}
 	who := firstNonEmpty(view.Name, view.Login, view.Email, actor.ID)
-	return &session{actor: actor, csrf: view.CSRFToken, who: who}, nil
+	return &session{actor: actor, csrf: view.CSRFToken, who: who, stepUp: view.StepUpProviders}, nil
 }
 
 // sessionView reads the session view from the authentication service, which

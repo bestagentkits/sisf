@@ -113,7 +113,7 @@ func newEnv(t *testing.T, registry func(*recorder) (*actions.Registry, error), m
 	e.fake = fakeoidc.NewTestServer(t, fakeoidc.WithClock(e.clock))
 	ts := httptest.NewUnstartedServer(nil)
 	e.base = "http://" + ts.Listener.Addr().String()
-	e.fake.AddClient(fakeoidc.Client{ID: "sisf", Secret: oidcSecret, RedirectURIs: []string{e.base + "/auth/callback/google"}})
+	e.fake.AddClient(fakeoidc.Client{ID: "sisf", Secret: oidcSecret, RedirectURIs: []string{e.base + "/auth/callback/google", e.base + "/auth/callback/github"}})
 	for _, u := range []fakeoidc.User{{Subject: "owner-sub", Email: "owner@example.test", EmailVerified: true, Login: "owner", GitHubID: 1001},
 		{Subject: "alice-sub", Email: "alice@example.test", EmailVerified: true, Login: "alice", GitHubID: 1002}} {
 		e.fake.AddUser(u)
@@ -123,7 +123,15 @@ func newEnv(t *testing.T, registry func(*recorder) (*actions.Registry, error), m
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.auth, err = auth.New(auth.Config{Providers: []identity.Provider{google}, Clock: e.clock}); err != nil {
+	// GitHub signs people in but cannot force a fresh sign-in, so it never
+	// confirms anyone.
+	github, err := auth.NewGitHubProvider(auth.GitHubConfig{Issuer: e.fake.Issuer() + "/github", AuthURL: e.fake.Issuer() + fakeoidc.GitHubAuthorizePath,
+		TokenURL: e.fake.Issuer() + fakeoidc.GitHubTokenPath, APIBase: e.fake.Issuer() + fakeoidc.GitHubAPIPrefix,
+		ClientID: "sisf", ClientSecret: core.NewSecretValue([]byte(oidcSecret)), RedirectURL: e.base + "/auth/callback/github"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.auth, err = auth.New(auth.Config{Providers: []identity.Provider{google, github}, Clock: e.clock}); err != nil {
 		t.Fatal(err)
 	}
 	reg, err := registry(e.rec)
@@ -140,7 +148,7 @@ func newEnv(t *testing.T, registry func(*recorder) (*actions.Registry, error), m
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := api.Config{Actions: svc, Identity: e.auth, Clock: e.clock, LoginProviders: []string{"google"}, MaxBodyBytes: 2048}
+	cfg := api.Config{Actions: svc, Identity: e.auth, Clock: e.clock, LoginProviders: []string{"google", "github"}, MaxBodyBytes: 2048}
 	for _, m := range mutate {
 		m(&cfg)
 	}

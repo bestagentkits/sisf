@@ -25,15 +25,18 @@ type pageData struct {
 	Expires  time.Time
 	SignedIn bool
 	CSRF     string
-	Links    []providerLink
+	// Links are where to sign in; StepUps are where the signed-in person
+	// can confirm their identity, only through providers that can force a
+	// fresh sign-in for them.
+	Links   []providerLink
+	StepUps []providerLink
 	// StepUpAction is what the step-up forms confirm: approving the request
 	// with UserCode, which is their target.
 	StepUpAction string
 }
 
-// providerLink is where the page sends a person to sign in or to confirm
-// their identity again.
-type providerLink struct{ Name, SignIn, StepUp string }
+// providerLink is where the page sends a person through a provider.
+type providerLink struct{ Name, URL string }
 
 var verifyPage = template.Must(template.New("verify").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Sign the command line in</title>
@@ -49,11 +52,12 @@ Check that this code is the one the terminal shows: <strong>{{.UserCode}}</stron
 <form method="post" action="` + DeviceApprovePath + `">
 <input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="user_code" value="{{.UserCode}}">
 <button type="submit">Approve this command line</button></form>
-<p>Approving needs a recent identity confirmation. If it is refused for that reason, confirm and approve again:</p>
-{{range .Links}}<form method="post" action="{{.StepUp}}"><input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+{{if .StepUps}}<p>Approving needs a recent identity confirmation. If it is refused for that reason, confirm and approve again:</p>
+{{range .StepUps}}<form method="post" action="{{.URL}}"><input type="hidden" name="csrf_token" value="{{$.CSRF}}">
 <input type="hidden" name="action" value="{{$.StepUpAction}}"><input type="hidden" name="target" value="{{$.UserCode}}">
 <button type="submit">Confirm identity with {{.Name}}</button></form>{{end}}
-{{else}}{{range .Links}}<p><a href="{{.SignIn}}">Sign in with {{.Name}}</a></p>{{end}}{{end}}
+{{else}}<p data-state="no-step-up">Confirming your identity needs a sign-in through an OpenID Connect provider; sign in through one to approve.</p>{{end}}
+{{else}}{{range .Links}}<p><a href="{{.URL}}">Sign in with {{.Name}}</a></p>{{end}}{{end}}
 {{end}}
 </main></body></html>
 `))
@@ -80,13 +84,15 @@ func (h *handler) deviceVerify(w http.ResponseWriter, r *http.Request) {
 // fillGrant adds the request and the viewer's sign-in state to the page.
 func (h *handler) fillGrant(r *http.Request, data pageData, g grant) pageData {
 	data.UserCode, data.Name, data.Scopes, data.Expires = formatUserCode(g.userCode), g.name, g.scopes, g.expires
-	data.CSRF, data.SignedIn = h.sessionCSRF(r)
+	var stepUps []string
+	data.CSRF, stepUps, data.SignedIn = h.sessionCSRF(r)
 	data.StepUpAction = auth.DeviceApprovalStepUpAction
 	back := url.QueryEscape(DeviceVerifyPath + "?user_code=" + url.QueryEscape(data.UserCode))
 	for _, name := range h.cfg.LoginProviders {
-		p := url.PathEscape(name)
-		data.Links = append(data.Links, providerLink{Name: name,
-			SignIn: "/auth/login/" + p + "?return_to=" + back, StepUp: "/auth/step-up/" + p + "?return_to=" + back})
+		data.Links = append(data.Links, providerLink{Name: name, URL: "/auth/login/" + url.PathEscape(name) + "?return_to=" + back})
+	}
+	for _, name := range stepUps {
+		data.StepUps = append(data.StepUps, providerLink{Name: name, URL: "/auth/step-up/" + url.PathEscape(name) + "?return_to=" + back})
 	}
 	return data
 }
@@ -127,13 +133,14 @@ func (h *handler) pagePolicy() string {
 	return "default-src 'none'; style-src 'unsafe-inline'; form-action " + formAction + "; frame-ancestors 'none'; base-uri 'none'"
 }
 
-// sessionCSRF reads the CSRF token of the viewer's session from the
+// sessionCSRF reads the CSRF token of the viewer's session, and the
+// providers the viewer can confirm their identity through, from the
 // authentication service's own session view, so the page never touches the
 // session store. signedIn is false when no live session answers.
-func (h *handler) sessionCSRF(r *http.Request) (csrf string, signedIn bool) {
+func (h *handler) sessionCSRF(r *http.Request) (csrf string, stepUps []string, signedIn bool) {
 	probe, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "/auth/session", nil)
 	if err != nil {
-		return "", false
+		return "", nil, false
 	}
 	for _, c := range r.Cookies() {
 		probe.AddCookie(c)
@@ -141,12 +148,13 @@ func (h *handler) sessionCSRF(r *http.Request) (csrf string, signedIn bool) {
 	rec := &memoryResponse{header: http.Header{}, status: http.StatusOK}
 	h.cfg.Identity.Handler().ServeHTTP(rec, probe)
 	var view struct {
-		CSRFToken string `json:"csrf_token"`
+		CSRFToken       string   `json:"csrf_token"`
+		StepUpProviders []string `json:"step_up_providers"`
 	}
 	if rec.status != http.StatusOK || json.Unmarshal(rec.body, &view) != nil || view.CSRFToken == "" {
-		return "", false
+		return "", nil, false
 	}
-	return view.CSRFToken, true
+	return view.CSRFToken, view.StepUpProviders, true
 }
 
 // memoryResponse collects the answer of an in-process handler call.

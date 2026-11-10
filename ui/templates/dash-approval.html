@@ -32,7 +32,7 @@
 <h2>Decide</h2>
 {{if .CanDecide}}
 <div class="notice warn"><p>A decision needs a fresh confirmation of your identity for this request and the decision you will record. It is spent by that one decision and lapses after a few minutes.</p>
-{{range .Providers}}{{$provider := .}}<form method="post" action="/auth/step-up/{{.}}?return_to={{$.ReturnTo}}">{{template "csrf" $}}<input type="hidden" name="action" value="approvals.decide">{{range $.Verdicts}}<button type="submit" name="target" value="{{.Target}}">Confirm with {{$provider}} to {{.Label}}</button>{{end}}</form>{{end}}</div>
+{{range .StepUpProviders}}{{$provider := .}}<form method="post" action="/auth/step-up/{{.}}?return_to={{$.ReturnTo}}">{{template "csrf" $}}<input type="hidden" name="action" value="approvals.decide">{{range $.Verdicts}}<button type="submit" name="target" value="{{.Target}}">Confirm with {{$provider}} to {{.Label}}</button>{{end}}</form>{{else}}<p class="notice unavailable" data-state="no-step-up">Confirming your identity needs a sign-in through an OpenID Connect provider; sign in through one to continue.</p>{{end}}</div>
 <form method="post" action="/actions/approvals.decide" class="decide">
   {{template "csrf" .}}
   <input type="hidden" name="return_to" value="{{.ReturnTo}}">
