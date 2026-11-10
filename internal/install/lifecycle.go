@@ -1,0 +1,197 @@
+package install
+
+import (
+	"context"
+	"os"
+	"strconv"
+	"strings"
+	"syscall"
+
+	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/manifest"
+)
+
+// UpOptions is what `sisf up` is told.
+type UpOptions struct {
+	// Init is used when the directory holds no install yet, so one command
+	// takes a fresh clone to a running factory. When an install exists, its
+	// Mode and Sim must agree with the install: they are fixed at init.
+	Init Options
+	// Budget confirms the budget of an install that is not confirmed yet.
+	Budget *BudgetChoice
+	// Reload delivers a request to restart every unit (Standalone mode).
+	Reload <-chan struct{}
+}
+
+// Up brings the whole factory up: all three zones, from one manifest.
+func (in *Installer) Up(ctx context.Context, o UpOptions) error {
+	m, err := in.ensure(ctx, o)
+	if err != nil {
+		return err
+	}
+	if m.Mode == manifest.ModeDocker {
+		return in.upDocker(ctx, m)
+	}
+	return in.upStandalone(ctx, m, o.Reload)
+}
+
+// ensure initializes the directory if it holds no install, applies a budget
+// confirmation, and returns the manifest of the install.
+func (in *Installer) ensure(ctx context.Context, o UpOptions) (*manifest.Manifest, error) {
+	done, err := in.Layout.installed()
+	if err != nil {
+		return nil, unavailablef(err, "cannot inspect %s", in.Layout.Dir)
+	}
+	if !done {
+		o.Init.Dir = in.Layout.Dir
+		res, err := in.Init(ctx, o.Init)
+		if err != nil {
+			return nil, err
+		}
+		for _, w := range res.Warnings {
+			in.say("warning: %s\n", w)
+		}
+	}
+	m, err := in.Layout.LoadManifest()
+	if err != nil {
+		return nil, err
+	}
+	if done {
+		if o.Init.Mode != "" && o.Init.Mode != m.Mode {
+			return nil, invalidf("this install runs in %s mode; the mode is fixed when it is created", m.Mode)
+		}
+		if wantSim := o.Init.Sim; wantSim != (m.Extensions["profile"] == profileSim) {
+			return nil, invalidf("the simulation profile is fixed when the install is created")
+		}
+	}
+	if o.Budget != nil && o.Budget.Confirmed {
+		if err := in.confirmBudget(m, *o.Budget); err != nil {
+			return nil, err
+		}
+	}
+	return m, nil
+}
+
+// confirmBudget records the Owner's confirmation on an install that has none.
+// The confirmation is made once; changing it later is a policy change.
+func (in *Installer) confirmBudget(m *manifest.Manifest, c BudgetChoice) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if _, ok, err := readBudgetConfirmation(in.Layout.BudgetConfirmation()); err != nil {
+		return err
+	} else if ok {
+		return core.NewError(core.CodeAlreadyExists, "the budget is already confirmed; it is confirmed once")
+	}
+	rec, _ := c.confirmation(in.Clock.Now())
+	if err := writeBudgetConfirmation(in.Layout.BudgetConfirmation(), rec); err != nil {
+		return err
+	}
+	m.Budget = budget(c)
+	return writeManifest(in.Layout.Config(), m)
+}
+
+// Stop stops the factory and keeps everything it made.
+func (in *Installer) Stop(ctx context.Context) error {
+	m, err := in.Layout.LoadManifest()
+	if err != nil {
+		return err
+	}
+	if m.Mode == manifest.ModeDocker {
+		return in.dockerStop(ctx, m, "stop")
+	}
+	return in.signalStandalone(ctx, syscall.SIGTERM)
+}
+
+// Down stops the factory and removes what a run created. In Docker mode that
+// is the containers and networks, and with removeData the volumes too; in
+// Standalone mode there is nothing to remove but the data directory, and only
+// removeData deletes it. Secrets and the manifest are never removed here.
+func (in *Installer) Down(ctx context.Context, removeData bool) error {
+	m, err := in.Layout.LoadManifest()
+	if err != nil {
+		return err
+	}
+	if m.Mode == manifest.ModeDocker {
+		return in.dockerDown(ctx, m, removeData)
+	}
+	if err := in.signalStandalone(ctx, syscall.SIGTERM); err != nil {
+		return err
+	}
+	if removeData {
+		if err := os.RemoveAll(in.Layout.Data()); err != nil {
+			return unavailablef(err, "cannot remove %s", in.Layout.Data())
+		}
+	}
+	return nil
+}
+
+// Restart restarts every unit of the running factory.
+func (in *Installer) Restart(ctx context.Context) error {
+	m, err := in.Layout.LoadManifest()
+	if err != nil {
+		return err
+	}
+	if m.Mode == manifest.ModeDocker {
+		return in.dockerStop(ctx, m, "restart")
+	}
+	return in.signalStandalone(ctx, syscall.SIGHUP)
+}
+
+// signal sends sig to a process.
+func (in *Installer) signal(pid int, sig syscall.Signal) error {
+	if in.Signal != nil {
+		return in.Signal(pid, sig)
+	}
+	return syscall.Kill(pid, sig)
+}
+
+// runningPID returns the pid of the foreground `sisf up`, or 0 when none is
+// running. A pid file left by a process that is gone is not a running one.
+func (in *Installer) runningPID() (int, error) {
+	data, err := os.ReadFile(in.Layout.PIDFile())
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, unavailablef(err, "cannot read the pid file")
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 1 {
+		return 0, nil
+	}
+	if in.signal(pid, 0) != nil {
+		return 0, nil
+	}
+	return pid, nil
+}
+
+// signalStandalone signals the foreground process. For SIGTERM it waits until
+// the process has stopped, so a caller that goes on to delete data does not
+// race the units still writing it.
+func (in *Installer) signalStandalone(ctx context.Context, sig syscall.Signal) error {
+	pid, err := in.runningPID()
+	if err != nil {
+		return err
+	}
+	if pid == 0 {
+		return core.NewError(core.CodeNotFound, "no running standalone factory was found for "+in.Layout.Dir)
+	}
+	if err := in.signal(pid, sig); err != nil {
+		return unavailablef(err, "cannot signal the factory process")
+	}
+	if sig != syscall.SIGTERM {
+		return nil
+	}
+	for range stopWaitPolls {
+		if in.signal(pid, 0) != nil {
+			return nil
+		}
+		select {
+		case <-in.Clock.After(stopPoll):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return core.NewError(core.CodeTimeout, "the factory did not stop in time; its units are still running")
+}

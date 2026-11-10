@@ -1,0 +1,192 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// runWithOutput runs one command line and returns its status and both streams.
+func runWithOutput(t *testing.T, args ...string) (status int, stdout, stderr string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	status = commands.run(context.Background(), &Env{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut}, args)
+	return status, out.String(), errOut.String()
+}
+
+// initSim creates a simulated install of the given mode and returns its directory.
+func initSim(t *testing.T, mode string, extra ...string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "factory")
+	args := append([]string{"init", "--dir", dir, "--mode", mode, "--profile", "sim", "--repo", "acme/hello-app",
+		"--confirm-unlimited", "--alert-threshold", "50"}, extra...)
+	if status, _, stderr := runWithOutput(t, args...); status != exitOK {
+		t.Fatalf("init failed with %d: %s", status, stderr)
+	}
+	return dir
+}
+
+func TestInitCreatesAConformantInstallInEveryModeAndPrintsNoSecret(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"standalone", "docker"} {
+		dir := filepath.Join(t.TempDir(), "factory")
+		status, stdout, stderr := runWithOutput(t, "init", "--dir", dir, "--mode", mode, "--profile", "sim",
+			"--repo", "acme/hello-app", "--confirm-unlimited", "--no-alert")
+		if status != exitOK {
+			t.Fatalf("%s: init = %d: %s", mode, status, stderr)
+		}
+		token, err := os.ReadFile(filepath.Join(dir, "secrets", "control", "owner-token"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(stdout+stderr, strings.TrimSpace(string(token))) {
+			t.Errorf("%s: init printed the Owner token", mode)
+		}
+		if !strings.Contains(stdout, "lower-assurance") {
+			t.Errorf("%s: the root key warning was not shown:\n%s", mode, stdout)
+		}
+		if status, out, errOut := runWithOutput(t, "conformance", "check", filepath.Join(dir, "factory.yaml")); status != exitOK {
+			t.Errorf("%s: the generated manifest is not conformant (%d): %s %s", mode, status, out, errOut)
+		}
+	}
+}
+
+func TestInitRefusesToOverwriteAnInstall(t *testing.T) {
+	t.Parallel()
+	dir := initSim(t, "standalone")
+	status, _, stderr := runWithOutput(t, "init", "--dir", dir, "--profile", "sim", "--repo", "acme/hello-app")
+	if status != exitFailure || !strings.Contains(stderr, "ALREADY_EXISTS") {
+		t.Fatalf("second init = %d %q, want ALREADY_EXISTS", status, stderr)
+	}
+}
+
+func TestInitWithoutConfirmationLeavesTheBudgetUnconfirmedAndSaysSo(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "factory")
+	status, stdout, _ := runWithOutput(t, "init", "--dir", dir, "--profile", "sim", "--repo", "acme/hello-app")
+	if status != exitOK || !strings.Contains(stdout, "not confirmed") {
+		t.Fatalf("init = %d, output %q", status, stdout)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "budget-confirmation.json")); err == nil {
+		t.Fatal("a confirmation was recorded without the Owner's answer")
+	}
+}
+
+func TestInstallFlagMistakesAreUsageErrors(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "factory")
+	for name, args := range map[string][]string{
+		"real GitHub without a token":    {"init", "--dir", dir, "--repo", "acme/app"},
+		"no repository":                  {"init", "--dir", dir, "--github-token-env", "TOKEN"},
+		"token env with the sim profile": {"init", "--dir", dir, "--profile", "sim", "--github-token-env", "TOKEN"},
+		"bad token variable name":        {"init", "--dir", dir, "--repo", "acme/app", "--github-token-env", "A B"},
+		"unset token variable":           {"init", "--dir", dir, "--repo", "acme/app", "--github-token-env", "SISF_TEST_UNSET_TOKEN"},
+		"bad repository":                 {"init", "--dir", dir, "--profile", "sim", "--repo", "acme"},
+		"bad profile":                    {"init", "--dir", dir, "--profile", "prod", "--repo", "acme/app"},
+		"alert without confirmation":     {"init", "--dir", dir, "--profile", "sim", "--no-alert"},
+		"confirmation without an alert":  {"init", "--dir", dir, "--profile", "sim", "--confirm-unlimited"},
+		"both alert settings":            {"init", "--dir", dir, "--profile", "sim", "--confirm-unlimited", "--no-alert", "--alert-threshold", "5"},
+		"alert amount unreadable":        {"init", "--dir", dir, "--profile", "sim", "--confirm-unlimited", "--alert-threshold", "lots"},
+		"unknown flag":                   {"up", "--nope"},
+		"stray argument":                 {"stop", "extra"},
+		"down flag on stop":              {"stop", "-v"},
+	} {
+		if status, _, _ := runWithOutput(t, args...); status != exitUsage {
+			t.Errorf("%s: status %d, want %d", name, status, exitUsage)
+		}
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Error("a failed init left a directory behind")
+	}
+}
+
+func TestDebugOutsideDockerModeIsRefused(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "factory")
+	if status, _, _ := runWithOutput(t, "init", "--dir", dir, "--profile", "sim", "--debug"); status == exitOK {
+		t.Fatal("--debug was accepted in Standalone mode")
+	}
+}
+
+func TestUpKeepsTheModeOfAnExistingInstall(t *testing.T) {
+	t.Parallel()
+	dir := initSim(t, "standalone")
+	status, _, stderr := runWithOutput(t, "up", "--dir", dir, "--mode", "docker")
+	if status != exitFailure || !strings.Contains(stderr, "fixed") {
+		t.Fatalf("up in the other mode = %d %q, want a refusal", status, stderr)
+	}
+}
+
+func TestLifecycleCommandsOnAMissingInstallFail(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "none")
+	for _, cmd := range []string{"stop", "restart", "down"} {
+		if status, _, _ := runWithOutput(t, cmd, "--dir", dir); status != exitFailure {
+			t.Errorf("%s on a missing install: status %d", cmd, status)
+		}
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Error("a lifecycle command created the directory")
+	}
+}
+
+func TestDoctorFailsOnAMissingInstallAndPointsAtInit(t *testing.T) {
+	t.Parallel()
+	status, stdout, _ := runWithOutput(t, "doctor", "--dir", filepath.Join(t.TempDir(), "none"))
+	if status != exitFailure || !strings.Contains(stdout, "sisf init") {
+		t.Fatalf("doctor = %d %q", status, stdout)
+	}
+}
+
+func TestDoctorOnAnInstallThatIsNotRunningFailsAndNamesTheStartCommand(t *testing.T) {
+	t.Parallel()
+	dir := initSim(t, "standalone")
+	status, stdout, _ := runWithOutput(t, "doctor", "--dir", dir)
+	if status != exitFailure || !strings.Contains(stdout, "sisf up") {
+		t.Fatalf("doctor = %d\n%s", status, stdout)
+	}
+	token, _ := os.ReadFile(filepath.Join(dir, "secrets", "control", "github-token"))
+	if strings.Contains(stdout, strings.TrimSpace(string(token))) {
+		t.Fatal("the doctor printed the GitHub token")
+	}
+}
+
+func TestStateBootstrapPreparesASQLiteStoreAndChecksItsFlags(t *testing.T) {
+	t.Parallel()
+	db := filepath.Join(t.TempDir(), "factory.db")
+	status, stdout, stderr := runWithOutput(t, "state", "bootstrap", "--dialect", "sqlite", "--factory-id", "sisf-hello-app",
+		"--sqlite-path", db, "--confirm-unlimited", "--alert-micros", "50000000")
+	if status != exitOK || !strings.Contains(stdout, "ready") {
+		t.Fatalf("bootstrap = %d %q %q", status, stdout, stderr)
+	}
+	if _, err := os.Stat(db); err != nil {
+		t.Fatal("no database was created")
+	}
+	for name, args := range map[string][]string{
+		"no dialect":            {"state", "bootstrap", "--factory-id", "x"},
+		"no factory id":         {"state", "bootstrap", "--dialect", "sqlite"},
+		"alert without confirm": {"state", "bootstrap", "--dialect", "sqlite", "--factory-id", "x", "--no-alert"},
+		"unsettled alert":       {"state", "bootstrap", "--dialect", "sqlite", "--factory-id", "x", "--confirm-unlimited"},
+	} {
+		if status, _, _ := runWithOutput(t, args...); status != exitUsage {
+			t.Errorf("%s: status %d, want %d", name, status, exitUsage)
+		}
+	}
+	// A PostgreSQL run without its credentials is refused before any connection.
+	if status, _, stderr := runWithOutput(t, "state", "bootstrap", "--dialect", "postgres", "--factory-id", "sisf-hello-app"); status != exitFailure || !strings.Contains(stderr, "SISF_STATE_OWNER_DSN") {
+		t.Errorf("postgres without credentials = %d %q", status, stderr)
+	}
+}
+
+func TestEveryInstallCommandIsListedInTheHelp(t *testing.T) {
+	t.Parallel()
+	_, stdout, _ := runWithOutput(t, "help")
+	for _, name := range []string{"init", "up", "down", "stop", "restart", "doctor", "state bootstrap"} {
+		if !strings.Contains(stdout, name) {
+			t.Errorf("help does not list %q", name)
+		}
+	}
+}

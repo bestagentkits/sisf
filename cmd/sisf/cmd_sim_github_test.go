@@ -42,6 +42,27 @@ func TestSimGithubOnlyBindsToLoopback(t *testing.T) {
 	}
 }
 
+func TestSimGithubBindsToAnotherAddressOnlyWhenToldTo(t *testing.T) {
+	t.Parallel()
+	for _, addr := range []string{"0.0.0.0:7467", ":7467", "192.168.1.5:7467", "[::]:7467"} {
+		opts, err := parseSimGithub([]string{"--addr", addr, "--allow-non-loopback"})
+		if err != nil || opts.addr != addr || !opts.allowNonLoopback {
+			t.Errorf("--addr %q with the opt-in: %+v %v", addr, opts, err)
+		}
+		if _, err := parseSimGithub([]string{"--addr", addr}); err == nil {
+			t.Errorf("--addr %q was accepted without the opt-in", addr)
+		}
+	}
+	// The opt-in widens the address, not the syntax: an address that is not
+	// host:port is still a mistake.
+	if _, err := parseSimGithub([]string{"--addr", "7467", "--allow-non-loopback"}); err == nil {
+		t.Error("an address without a host and port was accepted")
+	}
+	if opts, err := parseSimGithub(nil); err != nil || opts.allowNonLoopback || opts.addr != simGithubAddr {
+		t.Errorf("defaults = %+v %v, want loopback and no opt-in", opts, err)
+	}
+}
+
 func TestSimGithubRejectsBadArguments(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{{"--repo", "nonsense"}, {"--repo", "a/b/c"}, {"--bogus"}, {"extra"}, {"--installation-id", "abc"}} {

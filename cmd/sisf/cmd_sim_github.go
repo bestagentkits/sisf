@@ -22,7 +22,7 @@ const webhookSecretEnv = "SISF_SIM_WEBHOOK_SECRET"
 func init() {
 	register(Command{
 		Path:    []string{"sim", "github"},
-		Args:    "[--addr host:port] [--repo owner/name]... [--webhook-url url] [--installation-id id]",
+		Args:    "[--addr host:port] [--allow-non-loopback] [--repo owner/name]... [--webhook-url url] [--installation-id id]",
 		Summary: "Run the fake GitHub used by the simulation profile",
 		Help: `
 Serves an in-memory GitHub on ` + simGithubAddr + ` until interrupted. It offers the
@@ -31,7 +31,10 @@ check runs and releases, and sends signed webhooks to --webhook-url (the
 signing secret is read from ` + webhookSecretEnv + `).
 
 It binds to a loopback address only: it holds no real data and accepts any
-bearer token, so it must not be reachable from other machines.
+bearer token, so it must not be reachable from other machines. A container
+cannot publish a port that is bound to its own loopback, so --allow-non-loopback
+lets --addr name another address; use it only where the network around the
+process is closed, as in the simulation profile's Compose project.
 
 Control endpoints, for tests that talk to it over HTTP:
   POST /_sim/repos     {"repo":"owner/name"}
@@ -50,6 +53,9 @@ type simGithubOptions struct {
 	repos          []string
 	webhookURL     string
 	installationID int64
+	// allowNonLoopback lets addr be any address. It is off unless the
+	// operator asks for it by name.
+	allowNonLoopback bool
 }
 
 // repoList collects repeated --repo flags.
@@ -67,6 +73,7 @@ func parseSimGithub(args []string) (simGithubOptions, error) {
 	fs.StringVar(&opts.addr, "addr", opts.addr, "listen address (loopback only)")
 	fs.Var(&repos, "repo", "repository to create, owner/name (repeatable)")
 	fs.StringVar(&opts.webhookURL, "webhook-url", "", "where to send webhooks")
+	fs.BoolVar(&opts.allowNonLoopback, "allow-non-loopback", false, "allow --addr to be a non-loopback address")
 	fs.Int64Var(&opts.installationID, "installation-id", opts.installationID, "installation id webhooks carry")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -77,7 +84,11 @@ func parseSimGithub(args []string) (simGithubOptions, error) {
 	if fs.NArg() > 0 {
 		return opts, usagef("unexpected argument %q", fs.Arg(0))
 	}
-	if err := requireLoopback(opts.addr); err != nil {
+	if opts.allowNonLoopback {
+		if _, _, err := net.SplitHostPort(opts.addr); err != nil {
+			return opts, usagef("--addr %q must be host:port", opts.addr)
+		}
+	} else if err := requireLoopback(opts.addr); err != nil {
 		return opts, err
 	}
 	for _, r := range repos {
@@ -100,7 +111,7 @@ func requireLoopback(addr string) error {
 		return nil
 	}
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-		return usagef("--addr %q is not a loopback address; the fake GitHub must not be reachable from other machines", addr)
+		return usagef("--addr %q is not a loopback address; the fake GitHub must not be reachable from other machines (--allow-non-loopback overrides this where the network is closed)", addr)
 	}
 	return nil
 }

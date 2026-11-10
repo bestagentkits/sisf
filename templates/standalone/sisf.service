@@ -1,0 +1,22 @@
+# systemd user unit for a Standalone SISF install.
+#
+# Copy it to ~/.config/systemd/user/{{ .Label }}.service and run
+#   systemctl --user daemon-reload && systemctl --user enable --now {{ .Label }}
+# `sisf up` runs in the foreground and supervises every process of the
+# install, so systemd only has to keep this one command alive.
+[Unit]
+Description=SISF factory {{ .FactoryID }} (Standalone)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{ .Sisf }} up --mode standalone --dir {{ .Dir }}
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+# The install directory holds the secrets; nobody else may read them.
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
