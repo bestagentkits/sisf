@@ -25,16 +25,18 @@ func TestStateRecordValidation(t *testing.T) {
 		t.Fatalf("valid record rejected: %v", err)
 	}
 	cases := map[string]func(*StateRecord){
-		"missing factory":       func(r *StateRecord) { r.FactoryID = "" },
-		"missing issue":         func(r *StateRecord) { r.IssueID = IssueRef{} },
-		"unknown state":         func(r *StateRecord) { r.State = "Releasing" },
-		"version below one":     func(r *StateRecord) { r.Version = 0 },
-		"no idempotency key":    func(r *StateRecord) { r.IdempotencyKey = "" },
-		"negative attempt":      func(r *StateRecord) { r.Attempt = -1 },
-		"negative fencing":      func(r *StateRecord) { r.FencingToken = -1 },
-		"fenced without owner":  func(r *StateRecord) { r.LeaseOwner = "" },
-		"malformed run id":      func(r *StateRecord) { r.RunID = "Run 1" },
-		"missing write instant": func(r *StateRecord) { r.UpdatedAt = time.Time{} },
+		"missing factory":          func(r *StateRecord) { r.FactoryID = "" },
+		"missing issue":            func(r *StateRecord) { r.IssueID = IssueRef{} },
+		"unknown state":            func(r *StateRecord) { r.State = "Releasing" },
+		"version below one":        func(r *StateRecord) { r.Version = 0 },
+		"no idempotency key":       func(r *StateRecord) { r.IdempotencyKey = "" },
+		"negative attempt":         func(r *StateRecord) { r.Attempt = -1 },
+		"negative fencing":         func(r *StateRecord) { r.FencingToken = -1 },
+		"fenced without owner":     func(r *StateRecord) { r.LeaseOwner = "" },
+		"malformed run id":         func(r *StateRecord) { r.RunID = "Run 1" },
+		"missing write instant":    func(r *StateRecord) { r.UpdatedAt = time.Time{} },
+		"candidate named by a tag": func(r *StateRecord) { r.CandidateDigest = "latest" },
+		"release named by a tag":   func(r *StateRecord) { r.ReleaseDigest = "v1.2.3" },
 	}
 	for name, mutate := range cases {
 		rec := validRecord()
@@ -42,6 +44,16 @@ func TestStateRecordValidation(t *testing.T) {
 		if CodeOf(rec.Validate()) != CodeInvalidArgument {
 			t.Errorf("%s: want %s, got %v", name, CodeInvalidArgument, rec.Validate())
 		}
+	}
+}
+
+func TestAStateRecordKeepsTheCandidateAndTheReleaseOfItsRun(t *testing.T) {
+	rec := validRecord()
+	rec.State = StateMonitoring
+	rec.CandidateDigest = testDigest
+	rec.ReleaseDigest = ReleaseDigest(testDigest)
+	if err := rec.Validate(); err != nil {
+		t.Fatalf("a record that names its candidate and release was rejected: %v", err)
 	}
 }
 

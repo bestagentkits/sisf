@@ -31,9 +31,15 @@ func New(clock core.Clock, guards Guards) *Machine {
 // The checks run in a fixed order and stop at the first failure:
 // INVALID_TRANSITION when the table has no edge from t.From on t.Event or the
 // edge does not lead to t.To; INVALID_ARGUMENT when the request is malformed;
-// GUARD_FAILED when the edge is guarded and its proof is absent or does not
-// hold. A guard is consulted only for a legal, well-formed request, and a
-// typed error returned by a guard keeps its own code.
+// STALE_FENCING_TOKEN when a run holds the issue and the step carries no
+// lease; GUARD_FAILED when the edge is guarded and its proof is absent or
+// does not hold, or RELEASE_HOLD when the proof shows a release that cannot
+// be observed or rolled back. A guard is consulted only for a legal,
+// well-formed request, and a typed error returned by a guard keeps its own
+// code.
+//
+// The machine sees that a step carries a lease, not whether the lease is
+// still the latest one; the store checks that as it writes.
 func (m *Machine) Check(ctx context.Context, t core.Transition) error {
 	edge, err := edgeOf(t)
 	if err != nil {
@@ -41,6 +47,14 @@ func (m *Machine) Check(ctx context.Context, t core.Transition) error {
 	}
 	if err := t.Validate(); err != nil {
 		return err
+	}
+	// The claim takes the lease it is written under, and its guard judges
+	// that lease together with the reservation. Every later step of the run
+	// must already hold one.
+	if edge.Guard != GuardClaim {
+		if err := CheckLease(t); err != nil {
+			return err
+		}
 	}
 	return m.checkGuard(ctx, edge.Guard, t)
 }
@@ -79,6 +93,8 @@ func (m *Machine) checkGuard(ctx context.Context, guard GuardKind, t core.Transi
 			return unproven(guard, t, err)
 		}
 		return checkClaim(t, proof, m.clock.Now())
+	case GuardCandidate:
+		return checkCandidate(t)
 	case GuardAttempts:
 		if m.guards.Attempts == nil {
 			return unwired(guard, t)
@@ -97,6 +113,24 @@ func (m *Machine) checkGuard(ctx context.Context, guard GuardKind, t core.Transi
 			return unproven(guard, t, err)
 		}
 		return checkQAPass(t, proof, m.clock.Now())
+	case GuardRollout:
+		if m.guards.Rollout == nil {
+			return unwired(guard, t)
+		}
+		proof, err := m.guards.Rollout.RolloutProof(ctx, t)
+		if err != nil {
+			return unproven(guard, t, err)
+		}
+		return checkRollout(t, proof)
+	case GuardCanaryHealth:
+		if m.guards.Canary == nil {
+			return unwired(guard, t)
+		}
+		proof, err := m.guards.Canary.CanaryProof(ctx, t)
+		if err != nil {
+			return unproven(guard, t, err)
+		}
+		return checkCanary(t, proof, m.clock.Now())
 	case GuardPostDeploy:
 		if m.guards.PostDeploy == nil {
 			return unwired(guard, t)
@@ -110,11 +144,11 @@ func (m *Machine) checkGuard(ctx context.Context, guard GuardKind, t core.Transi
 		if m.guards.Retry == nil {
 			return unwired(guard, t)
 		}
-		decision, err := m.guards.Retry.AuthorizeRetry(ctx, t)
+		proof, err := m.guards.Retry.RetryProof(ctx, t)
 		if err != nil {
 			return unproven(guard, t, err)
 		}
-		return checkRetry(t, decision)
+		return checkRetry(t, proof, m.clock.Now())
 	}
 	// An edge with a guard this machine does not know must not pass.
 	return refuse(guard, t, "the step is protected by an unknown guard %q", string(guard))

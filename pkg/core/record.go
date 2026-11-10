@@ -13,7 +13,9 @@ type FencingToken int64
 //
 // Version makes every write a compare-and-swap, IdempotencyKey makes a
 // replayed write a no-op, and LeaseOwner with FencingToken name the single
-// writer currently allowed to report on the issue.
+// writer currently allowed to report on the issue. RunID, CandidateDigest and
+// ReleaseDigest name what the current run is working on, so a later step
+// cannot swap in another run, candidate or release.
 type StateRecord struct {
 	FactoryID      FactoryID    `json:"factory_id"`
 	IssueID        IssueRef     `json:"issue_id"`
@@ -23,8 +25,13 @@ type StateRecord struct {
 	LeaseOwner     string       `json:"lease_owner,omitempty"`
 	FencingToken   FencingToken `json:"fencing_token,omitempty"`
 	Attempt        int          `json:"attempt"`
-	RunID          RunID        `json:"run_id,omitempty"`
-	UpdatedAt      time.Time    `json:"updated_at"`
+	// RunID is the run the latest claim started.
+	RunID RunID `json:"run_id,omitempty"`
+	// CandidateDigest is the candidate the run last submitted for evaluation.
+	CandidateDigest Digest `json:"candidate_digest,omitempty"`
+	// ReleaseDigest is the release the run started rolling out.
+	ReleaseDigest ReleaseDigest `json:"release_digest,omitempty"`
+	UpdatedAt     time.Time     `json:"updated_at"`
 }
 
 // Validate checks the structural rules of a stored record. It does not judge
@@ -53,6 +60,16 @@ func (r StateRecord) Validate() error {
 			return err
 		}
 	}
+	if r.CandidateDigest != "" {
+		if err := r.CandidateDigest.Validate(); err != nil {
+			return err
+		}
+	}
+	if r.ReleaseDigest != "" {
+		if err := r.ReleaseDigest.Validate(); err != nil {
+			return err
+		}
+	}
 	return validateLease(r.LeaseOwner, r.FencingToken)
 }
 
@@ -63,7 +80,9 @@ func (r StateRecord) Validate() error {
 // ExpectedVersion is the version the writer read; a mismatch means another
 // writer got there first. A non-zero FencingToken says the writer acts under a
 // lease and must be the latest holder. A zero token is an unleased write that
-// relies on the version check alone.
+// relies on the version check alone; it is accepted only while no run holds
+// the issue. From the claim until the release leaves Monitoring every step
+// must carry the current token, so a worker that lost its lease cannot write.
 type Transition struct {
 	IssueID         IssueRef     `json:"issue_id"`
 	From            State        `json:"from,omitempty"`
@@ -73,7 +92,9 @@ type Transition struct {
 	IdempotencyKey  string       `json:"idempotency_key"`
 	LeaseOwner      string       `json:"lease_owner,omitempty"`
 	FencingToken    FencingToken `json:"fencing_token,omitempty"`
-	// RunID, when set, becomes the record's run.
+	// RunID names the run the step belongs to. The claim starts a run and
+	// makes it the record's run; every later step of that run must name it,
+	// and no other step may name another run.
 	RunID RunID `json:"run_id,omitempty"`
 	// Attempt is the attempt number the record carries after the write. The
 	// first attempt of a run is 1, the retry after a failed evaluation
@@ -84,11 +105,13 @@ type Transition struct {
 	Reason  string `json:"reason,omitempty"`
 	// EvidenceRefs point to the receipts, reports or comments that justify the change.
 	EvidenceRefs []string `json:"evidence_refs,omitempty"`
-	// CandidateDigest names the built candidate the step is about. The step
-	// into ReleaseCandidate must carry it, and the QA receipt must be for it.
+	// CandidateDigest names the built candidate the step is about. Submitting
+	// a candidate records it; the steps into ReleaseCandidate and Canary must
+	// carry the recorded one, and the QA receipt must be for it.
 	CandidateDigest Digest `json:"candidate_digest,omitempty"`
-	// ReleaseDigest names the release the step is about. The step into
-	// Verified must carry it, and the observed revision must be that release.
+	// ReleaseDigest names the release the step is about. Starting the rollout
+	// records it; the steps into Monitoring and Verified must carry the
+	// recorded one, and the observed revision must be that release.
 	ReleaseDigest ReleaseDigest `json:"release_digest,omitempty"`
 }
 

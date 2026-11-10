@@ -1,6 +1,9 @@
 package core
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // QACheckKind separates checks that can veto from checks that only score.
 type QACheckKind string
@@ -30,15 +33,19 @@ type QACheck struct {
 }
 
 // QAReceipt is the signed statement of an independent evaluator about one
-// built candidate. It is bound to the issue and run the candidate was built
-// for, the candidate's commit and digest, the test suite, the read-only
-// baseline and the policy in force, so it cannot be reused for another issue,
-// run or commit, and it names both agents and both model routes, so
-// self-scoring and shared blind spots are visible.
+// built candidate. It is bound to the factory that judged, the issue and run
+// the candidate was built for, the candidate's commit and digest, the test
+// suite, the read-only baseline and the policy in force, so it cannot be
+// reused for another factory, issue, run or commit, and it names both agents
+// and both model routes, so self-scoring and shared blind spots are visible.
 //
 // The signature covers SigningPayload, which holds every field but the
 // signature itself.
 type QAReceipt struct {
+	// FactoryID names the factory deployment whose evaluator judged the
+	// candidate. Two factories on one upstream repository see the same issue
+	// numbers, and a receipt of one never counts in the other.
+	FactoryID FactoryID `json:"factory_id"`
 	// IssueID and RunID name the issue and the run the candidate belongs to.
 	IssueID      IssueRef  `json:"issue_id"`
 	RunID        RunID     `json:"run_id"`
@@ -87,6 +94,9 @@ func (r QAReceipt) Expired(now time.Time) bool { return !now.Before(r.ExpiresAt)
 // Validate checks that the receipt is complete and internally consistent. It
 // does not verify the signature or decide whether the candidate passes.
 func (r QAReceipt) Validate() error {
+	if err := r.FactoryID.Validate(); err != nil {
+		return err
+	}
 	if err := r.IssueID.Validate(); err != nil {
 		return err
 	}
@@ -110,9 +120,9 @@ func (r QAReceipt) Validate() error {
 		return err
 	}
 	switch {
-	case r.QAAgentIdentity == "" || r.CodingAgentIdentity == "":
+	case strings.TrimSpace(r.QAAgentIdentity) == "" || strings.TrimSpace(r.CodingAgentIdentity) == "":
 		return invalid("receipt must name both the QA agent and the coding agent")
-	case r.QAAgentIdentity == r.CodingAgentIdentity:
+	case SameIdentity(r.QAAgentIdentity, r.CodingAgentIdentity):
 		return invalid("agent %q cannot evaluate its own candidate", r.QAAgentIdentity)
 	case r.SameModelRoute != r.CodingModelRoute.SameModel(r.QAModelRoute):
 		return invalid("same_model_route must state whether QA shares the coder's provider and model")
@@ -138,10 +148,19 @@ func (r QAReceipt) Validate() error {
 	return r.Signature.Validate()
 }
 
-// Domain and field-list version of the receipt's signing payload.
+// SameIdentity reports whether two identities name the same party. Letter
+// case and surrounding white space are ignored, so an identity cannot be made
+// to look like another party by respelling it. Every check that keeps two
+// roles apart, such as the coder and its evaluator, compares with it.
+func SameIdentity(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+// Domain and field-list version of the receipt's signing payload. Version 2
+// added the factory.
 const (
 	receiptPayloadDomain  = "sisf.qa_receipt"
-	receiptPayloadVersion = 1
+	receiptPayloadVersion = 2
 )
 
 // SigningPayload returns the canonical bytes the evaluator signs and a
@@ -150,6 +169,7 @@ const (
 // yields different bytes.
 func (r QAReceipt) SigningPayload() []byte {
 	b := NewPayloadBuilder(receiptPayloadDomain, receiptPayloadVersion).
+		Text("factory_id", string(r.FactoryID)).
 		Text("issue_owner", r.IssueID.Owner).
 		Text("issue_repo", r.IssueID.Repo).
 		Int("issue_number", int64(r.IssueID.Number)).

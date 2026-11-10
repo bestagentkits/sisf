@@ -17,6 +17,7 @@ const (
 // receiptMutations changes each field of a receipt in turn, keyed by the Go
 // field name so a field added later cannot be left out of the payload unseen.
 var receiptMutations = map[string]func(*QAReceipt){
+	"FactoryID":           func(r *QAReceipt) { r.FactoryID = "other-factory" },
 	"IssueID":             func(r *QAReceipt) { r.IssueID.Number++ },
 	"RunID":               func(r *QAReceipt) { r.RunID = "run-0002" },
 	"CandidateSHA":        func(r *QAReceipt) { r.CandidateSHA = otherSHA },
@@ -94,7 +95,9 @@ func TestTheReceiptPayloadIsStableAndLeavesTheSignatureOut(t *testing.T) {
 	if !bytes.Equal(base, validReceipt().SigningPayload()) {
 		t.Fatal("two equal receipts produced different payloads")
 	}
-	if !strings.HasPrefix(string(base), "sisf-signed-record\ndomain=15:sisf.qa_receipt\nversion=1:1\n") {
+	// The field list changed when the factory was bound, so the version did
+	// too: a signature made over the earlier list never verifies.
+	if !strings.HasPrefix(string(base), "sisf-signed-record\ndomain=15:sisf.qa_receipt\nversion=1:2\nfactory_id=12:acme-factory\n") {
 		t.Fatalf("payload does not open with the receipt domain and version: %q", base)
 	}
 	receipt.Signature = Signature{KeyID: "another-key", Algorithm: "ed25519", Value: []byte{9, 9}}

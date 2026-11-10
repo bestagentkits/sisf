@@ -4,14 +4,22 @@
 // The transition table is the single list of legal steps. It holds the edge
 // that creates a record in Intake and the twenty edges between the fifteen
 // states; a step that is not in the table is refused with INVALID_TRANSITION,
-// so no component can add a state or a shortcut by writing one. Seven edges
-// are guarded: a guard supplies the facts and the machine judges them, and a
-// step whose proof is absent or does not hold is refused with GUARD_FAILED.
-// Every way into Ready and every step back to an earlier state is among them.
+// so no component can add a state or a shortcut by writing one. Ten edges are
+// guarded: a guard supplies the facts and the machine judges them, and a step
+// whose proof is absent or does not hold is refused, with GUARD_FAILED or,
+// when a release cannot be observed or rolled back, with RELEASE_HOLD. Every
+// way into Ready, every step back to an earlier state and every step that
+// moves a candidate towards users is among them. The table says, edge by
+// edge, why each of the others needs no proof.
+//
+// From the claim until the release leaves Monitoring a run holds the issue,
+// and every step must be written under its lease: RequiresLease names those
+// states and CheckLease refuses a step that carries no lease.
 //
 // The package decides whether a step is legal. Writing it, with the version
-// check and the fencing check, is the job of the operational store, which
-// asks CheckEdge again as it writes so that no caller can skip the table.
+// check, the fencing check and the check against the stored run, is the job
+// of the operational store, which asks CheckEdge, CheckLease and
+// CheckRecordBinding again as it writes so that no caller can skip them.
 package statemachine
 
 import (
@@ -22,7 +30,7 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// GuardKind names the proof an edge needs. Most edges need none.
+// GuardKind names the proof an edge needs.
 type GuardKind string
 
 const (
@@ -38,6 +46,10 @@ const (
 	// GuardClaim protects Ready to Claimed: a live lease and a held budget
 	// reservation for the run being started.
 	GuardClaim GuardKind = "claim"
+	// GuardCandidate protects Developing to QAEvaluation: the request itself
+	// must name the run and the built candidate it submits. The machine reads
+	// both from the request, so no guard has to be wired for it.
+	GuardCandidate GuardKind = "candidate"
 	// GuardAttempts protects QAEvaluation back to Developing: the run has
 	// attempts left and the retry counts as the next one.
 	GuardAttempts GuardKind = "attempts"
@@ -45,10 +57,19 @@ const (
 	// for this issue, run and candidate, every hard gate passing and the score
 	// reaching the pass score.
 	GuardQAPass GuardKind = "qa_pass"
+	// GuardRollout protects ReleaseCandidate to Canary: the rollback
+	// preflight. A verified signed artifact of this factory for the candidate
+	// QA passed, a verified revision to roll back to and readable metrics;
+	// without a way back or a way to observe, the release holds.
+	GuardRollout GuardKind = "rollout_preflight"
+	// GuardCanaryHealth protects Canary to Monitoring: the release observed
+	// running and healthy, read from the running system with its metrics.
+	GuardCanaryHealth GuardKind = "canary_health"
 	// GuardPostDeploy protects Monitoring to Verified: the released revision
 	// observed running after its observation window, with the DoD met.
 	GuardPostDeploy GuardKind = "post_deploy"
-	// GuardRetry protects Blocked to Ready: a retry someone was authorized to ask for.
+	// GuardRetry protects Blocked to Ready: a retry a person or a service was
+	// authorized to ask for, which cannot undo a denied approval.
 	GuardRetry GuardKind = "retry"
 )
 
@@ -66,26 +87,49 @@ const noRecord core.State = ""
 
 // lifecycle is the transition table, in lifecycle order. Closed is entered
 // only from Verified and has no edge out.
+//
+// An edge is left unguarded only when taking it can start no work, spend
+// nothing and release nothing, or when it moves to a safer state and must
+// never wait for a proof. The comment on each such edge says which.
 var lifecycle = []Edge{
+	// Intake grants nothing: a received issue is a request, not a permission.
 	{noRecord, core.EventIssueReceived, core.StateIntake, GuardNone},
+	// The three steps of scoping only record how far the conversation about
+	// the issue got. Nothing runs before Ready, and every way into Ready is
+	// guarded, so a scope drafted too early still proves nothing.
 	{core.StateIntake, core.EventInfoMissing, core.StateClarifying, GuardNone},
 	{core.StateClarifying, core.EventClarificationCompleted, core.StateScopeDraft, GuardNone},
 	{core.StateIntake, core.EventInfoSufficient, core.StateScopeDraft, GuardNone},
+	// Asking the Owner is the stricter of the two ways out of ScopeDraft, so
+	// taking it without need costs a decision and widens nothing.
 	{core.StateScopeDraft, core.EventApprovalRequired, core.StateApprovalPending, GuardNone},
 	{core.StateScopeDraft, core.EventScopePermitted, core.StateReady, GuardDelegation},
 	{core.StateApprovalPending, core.EventOwnerApproved, core.StateReady, GuardApproval},
+	// Blocking stops the issue. A rejected or lapsed request must always be
+	// able to block it, and the way out of Blocked is guarded.
 	{core.StateApprovalPending, core.EventApprovalDenied, core.StateBlocked, GuardNone},
 	{core.StateReady, core.EventClaimed, core.StateClaimed, GuardClaim},
+	// Starting work adds no authority to the claim: the step is written under
+	// the lease the claim took and by the run it started, which the lease
+	// check and the store's check against the stored run enforce.
 	{core.StateClaimed, core.EventDevelopmentStarted, core.StateDeveloping, GuardNone},
-	{core.StateDeveloping, core.EventCandidateSubmitted, core.StateQAEvaluation, GuardNone},
+	{core.StateDeveloping, core.EventCandidateSubmitted, core.StateQAEvaluation, GuardCandidate},
 	{core.StateQAEvaluation, core.EventQAFailed, core.StateDeveloping, GuardAttempts},
 	{core.StateQAEvaluation, core.EventQAPassed, core.StateReleaseCandidate, GuardQAPass},
-	{core.StateReleaseCandidate, core.EventRolloutStarted, core.StateCanary, GuardNone},
-	{core.StateCanary, core.EventRolloutHealthy, core.StateMonitoring, GuardNone},
+	{core.StateReleaseCandidate, core.EventRolloutStarted, core.StateCanary, GuardRollout},
+	{core.StateCanary, core.EventRolloutHealthy, core.StateMonitoring, GuardCanaryHealth},
+	// A rollback is the safe direction and must never wait for a proof that
+	// may be unobtainable while the release is failing. Only the holder of
+	// the lease can report it, and it ends in Blocked.
 	{core.StateCanary, core.EventErrorThresholdExceeded, core.StateRolledBack, GuardNone},
 	{core.StateMonitoring, core.EventPostDeployVerified, core.StateVerified, GuardPostDeploy},
+	// As above: a regression rolls the release back without a proof.
 	{core.StateMonitoring, core.EventRegressionDetected, core.StateRolledBack, GuardNone},
+	// Verified is entered only on the post-deploy proof, which is the proof
+	// that the issue may close; closing records it and adds nothing.
 	{core.StateVerified, core.EventIssueClosed, core.StateClosed, GuardNone},
+	// The recovery report is evidence for people, not a permission: Blocked
+	// grants nothing and the way out of it is guarded.
 	{core.StateRolledBack, core.EventRecoveryReported, core.StateBlocked, GuardNone},
 	{core.StateBlocked, core.EventRetryAuthorized, core.StateReady, GuardRetry},
 }

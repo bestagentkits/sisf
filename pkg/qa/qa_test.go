@@ -38,6 +38,12 @@ func TestStartingRubricWeighsFiveCategoriesToOneHundred(t *testing.T) {
 	if len(qa.Categories()) != 5 {
 		t.Fatalf("Categories() = %v", qa.Categories())
 	}
+	// The rubric is the one the release step judges a receipt against.
+	for i, category := range core.RubricCategories() {
+		if qa.Categories()[i] != qa.Category(category.Name) || rubric.Weights[qa.Category(category.Name)] != category.MaxPoints {
+			t.Errorf("category %s at %d is not the one the release step scores", category.Name, category.MaxPoints)
+		}
+	}
 	rubric.Weights[qa.CategoryCorrectness] = 0
 	if qa.DefaultRubric().Weights[qa.CategoryCorrectness] != 30 {
 		t.Fatal("a caller changed the starting rubric for everyone")
@@ -46,7 +52,15 @@ func TestStartingRubricWeighsFiveCategoriesToOneHundred(t *testing.T) {
 
 func TestRubricValidation(t *testing.T) {
 	cases := map[string]func(*qa.Rubric){
-		"weights below 100":    func(r *qa.Rubric) { r.Weights[qa.CategorySecurity] = 5 },
+		"weights below 100": func(r *qa.Rubric) { r.Weights[qa.CategorySecurity] = 5 },
+		"weight moved between categories": func(r *qa.Rubric) {
+			r.Weights[qa.CategoryCorrectness], r.Weights[qa.CategorySecurity] = 45, 10
+		},
+		"one category weighs everything": func(r *qa.Rubric) {
+			r.Weights = map[qa.Category]int{qa.CategoryCorrectness: 100, qa.CategorySecurity: 0,
+				qa.CategoryContract: 0, qa.CategoryExperience: 0, qa.CategoryObservability: 0}
+		},
+		"no weights":           func(r *qa.Rubric) { r.Weights = nil },
 		"missing category":     func(r *qa.Rubric) { delete(r.Weights, qa.CategoryObservability) },
 		"unknown category":     func(r *qa.Rubric) { r.Weights["vibes"] = 0 },
 		"negative weight":      func(r *qa.Rubric) { r.Weights[qa.CategoryContract] = -20; r.Weights[qa.CategoryCorrectness] = 70 },
@@ -80,13 +94,16 @@ func allGatesPassed() []core.QACheck {
 }
 
 // receipt records the given gate results and a score earned in full as rubric
-// points, split over two categories.
+// points: every category of the rubric is scored once, filled in order up to
+// its weight.
 func receipt(score int, checks []core.QACheck) core.QAReceipt {
-	first := min(score, 30)
-	scored := append(slices.Clone(checks),
-		core.QACheck{Name: string(qa.CategoryCorrectness), Kind: core.CheckRubric, Passed: true, Points: first, MaxPoints: 30},
-		core.QACheck{Name: string(qa.CategorySecurity), Kind: core.CheckRubric, Passed: true, Points: score - first, MaxPoints: 70},
-	)
+	scored, left := slices.Clone(checks), score
+	for _, category := range core.RubricCategories() {
+		points := min(left, category.MaxPoints)
+		left -= points
+		scored = append(scored, core.QACheck{Name: category.Name, Kind: core.CheckRubric, Passed: true,
+			Points: points, MaxPoints: category.MaxPoints})
+	}
 	return core.QAReceipt{Score: score, Checks: scored}
 }
 
@@ -117,6 +134,41 @@ func TestCandidatePassesOnlyWithTheScoreAndEveryHardGate(t *testing.T) {
 	relabelled[0].Kind = core.CheckRubric
 	if rubric.Passes(receipt(100, relabelled)) {
 		t.Fatal("a rubric entry named like a gate is not a hard-gate result")
+	}
+}
+
+func TestAScoreEarnedOutsideTheRubricDoesNotPass(t *testing.T) {
+	rubric := qa.DefaultRubric()
+	onlyRubric := func(rubricChecks ...core.QACheck) core.QAReceipt {
+		r := core.QAReceipt{Checks: append(allGatesPassed(), rubricChecks...)}
+		for _, c := range rubricChecks {
+			r.Score += c.Points
+		}
+		return r
+	}
+	correctness := core.QACheck{Name: string(qa.CategoryCorrectness), Kind: core.CheckRubric, Passed: true, Points: 30, MaxPoints: 30}
+	cases := map[string]core.QAReceipt{
+		"one category scored 90 out of 100": onlyRubric(
+			core.QACheck{Name: string(qa.CategoryCorrectness), Kind: core.CheckRubric, Passed: true, Points: 90, MaxPoints: 100}),
+		"one category three times and another at zero": onlyRubric(correctness, correctness, correctness,
+			core.QACheck{Name: string(qa.CategorySecurity), Kind: core.CheckRubric, MaxPoints: 25}),
+		"two categories that swallow the weight of the other three": onlyRubric(correctness,
+			core.QACheck{Name: string(qa.CategorySecurity), Kind: core.CheckRubric, Passed: true, Points: 60, MaxPoints: 70}),
+	}
+	for name, r := range cases {
+		if r.Score < rubric.PassScore {
+			t.Fatalf("%s: the fixture scores %d, below the pass score", name, r.Score)
+		}
+		if rubric.Passes(r) {
+			t.Errorf("%s: a score of %d earned outside the rubric passed", name, r.Score)
+		}
+	}
+	// A rubric with weights of its own cannot pass what the release step
+	// would refuse, even on a receipt that passes the starting rubric.
+	reweighed := qa.DefaultRubric()
+	reweighed.Weights[qa.CategoryCorrectness], reweighed.Weights[qa.CategorySecurity] = 45, 10
+	if reweighed.Passes(receipt(100, allGatesPassed())) {
+		t.Fatal("a rubric with other weights than the review criteria passed a receipt")
 	}
 }
 

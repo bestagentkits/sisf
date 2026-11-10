@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
@@ -179,4 +180,182 @@ func (migratorStub) SchemaVersion(context.Context) (int, error)         { return
 func (migratorStub) Pending(context.Context) ([]state.Migration, error) { return nil, nil }
 func (migratorStub) Migrate(context.Context, state.MigrateOptions) error {
 	return core.NewError(core.CodeApprovalRequired, "a migration that is not backward compatible needs the Owner")
+}
+
+// heldIssue is the record store of one issue, written the way the Records
+// contract prescribes: every check is one call into the lifecycle package.
+// It shows that the contract can be met and what a conforming store refuses.
+type heldIssue struct {
+	txStub
+	record core.StateRecord
+	// latest is the newest fencing token issued for the lease on the issue.
+	latest core.FencingToken
+}
+
+func (h *heldIssue) Transition(_ context.Context, t core.Transition) (core.StateRecord, error) {
+	if err := statemachine.CheckEdge(t); err != nil {
+		return core.StateRecord{}, err
+	}
+	if h.record.Version != t.ExpectedVersion || h.record.State != t.From {
+		return core.StateRecord{}, core.NewError(core.CodeConflict, "the record moved on")
+	}
+	if err := statemachine.CheckLease(t); err != nil {
+		return core.StateRecord{}, err
+	}
+	if t.FencingToken != 0 && t.FencingToken != h.latest {
+		return core.StateRecord{}, core.NewError(core.CodeStaleFencingToken, "a newer holder exists")
+	}
+	if err := statemachine.CheckRecordBinding(h.record, t); err != nil {
+		return core.StateRecord{}, err
+	}
+	next := h.record
+	next.State, next.Version, next.IdempotencyKey = t.To, h.record.Version+1, t.IdempotencyKey
+	next.LeaseOwner, next.FencingToken, next.Attempt = t.LeaseOwner, t.FencingToken, t.Attempt
+	switch t.Event {
+	case core.EventClaimed:
+		next.RunID, next.CandidateDigest, next.ReleaseDigest = t.RunID, "", ""
+	case core.EventCandidateSubmitted:
+		next.CandidateDigest = t.CandidateDigest
+	case core.EventRolloutStarted:
+		next.ReleaseDigest = t.ReleaseDigest
+	}
+	h.record = next
+	return next, nil
+}
+
+const (
+	build      = core.Digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	otherBuild = core.Digest("sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+)
+
+// developing is an issue a run is working on. Its first worker held token 5
+// and lost the lease; the current holder has token 6.
+func developing() *heldIssue {
+	return &heldIssue{latest: 6, record: core.StateRecord{
+		FactoryID: "acme-factory", IssueID: core.IssueRef{Owner: "acme", Repo: "app", Number: 7},
+		State: core.StateDeveloping, Version: 3, IdempotencyKey: "start:run-0001",
+		LeaseOwner: "worker-2", FencingToken: 6, Attempt: 1, RunID: "run-0001",
+		UpdatedAt: time.Date(2026, 11, 10, 6, 0, 0, 0, time.UTC),
+	}}
+}
+
+// stepOf builds the next step of the issue, written by its current holder.
+func stepOf(h *heldIssue, event core.Event, to core.State) core.Transition {
+	return core.Transition{
+		IssueID: h.record.IssueID, From: h.record.State, To: to, Event: event,
+		ExpectedVersion: h.record.Version, IdempotencyKey: string(event) + ":" + string(to),
+		LeaseOwner: "worker-2", FencingToken: h.latest, RunID: h.record.RunID, Attempt: h.record.Attempt,
+	}
+}
+
+func TestAWorkerThatLostItsLeaseCannotWriteWithItsOldTokenOrWithNone(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	hostile := map[string]func(*core.Transition){
+		"its old token":            func(w *core.Transition) { w.LeaseOwner, w.FencingToken = "worker-1", 5 },
+		"no token at all":          func(w *core.Transition) { w.LeaseOwner, w.FencingToken = "", 0 },
+		"its name and token zero":  func(w *core.Transition) { w.LeaseOwner, w.FencingToken = "worker-1", 0 },
+		"a token not yet issued":   func(w *core.Transition) { w.LeaseOwner, w.FencingToken = "worker-1", 7 },
+		"the token without a name": func(w *core.Transition) { w.LeaseOwner = "" },
+	}
+	for name, mutate := range hostile {
+		issue := developing()
+		write := stepOf(issue, core.EventCandidateSubmitted, core.StateQAEvaluation)
+		write.CandidateDigest = build
+		mutate(&write)
+		if _, err := issue.Transition(ctx, write); !core.HasCode(err, core.CodeStaleFencingToken) {
+			t.Errorf("a write with %s: want %s, got %v", name, core.CodeStaleFencingToken, err)
+		}
+		if issue.record.State != core.StateDeveloping || issue.record.Version != 3 {
+			t.Errorf("a write with %s changed the record: %+v", name, issue.record)
+		}
+	}
+
+	issue := developing()
+	write := stepOf(issue, core.EventCandidateSubmitted, core.StateQAEvaluation)
+	write.CandidateDigest = build
+	written, err := issue.Transition(ctx, write)
+	if err != nil || written.State != core.StateQAEvaluation || written.CandidateDigest != build {
+		t.Fatalf("the current holder could not submit its candidate: %+v, %v", written, err)
+	}
+}
+
+func TestARecordStaysBoundToItsRunCandidateAndRelease(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	issue := developing()
+	refused := func(name string, write core.Transition, code core.ErrorCode) {
+		t.Helper()
+		before := issue.record
+		if _, err := issue.Transition(ctx, write); !core.HasCode(err, code) {
+			t.Errorf("%s: want %s, got %v", name, code, err)
+		}
+		if issue.record != before {
+			t.Errorf("%s: the refused write changed the record", name)
+		}
+	}
+	accepted := func(name string, write core.Transition) {
+		t.Helper()
+		if _, err := issue.Transition(ctx, write); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+
+	foreign := stepOf(issue, core.EventCandidateSubmitted, core.StateQAEvaluation)
+	foreign.RunID, foreign.CandidateDigest = "run-0002", build
+	refused("another run submits a candidate", foreign, core.CodeConflict)
+
+	submit := stepOf(issue, core.EventCandidateSubmitted, core.StateQAEvaluation)
+	submit.CandidateDigest = build
+	accepted("the run submits its candidate", submit)
+
+	swapped := stepOf(issue, core.EventQAPassed, core.StateReleaseCandidate)
+	swapped.CandidateDigest = otherBuild
+	refused("QA passes another candidate than the one submitted", swapped, core.CodeConflict)
+
+	pass := stepOf(issue, core.EventQAPassed, core.StateReleaseCandidate)
+	pass.CandidateDigest = build
+	accepted("QA passes the submitted candidate", pass)
+
+	rollout := stepOf(issue, core.EventRolloutStarted, core.StateCanary)
+	rollout.CandidateDigest, rollout.ReleaseDigest = build, core.ReleaseDigest(build)
+	accepted("the rollout of the candidate starts", rollout)
+	if issue.record.CandidateDigest != build || issue.record.ReleaseDigest != core.ReleaseDigest(build) {
+		t.Fatalf("the record does not keep the candidate and the release: %+v", issue.record)
+	}
+
+	other := stepOf(issue, core.EventRolloutHealthy, core.StateMonitoring)
+	other.ReleaseDigest = core.ReleaseDigest(otherBuild)
+	refused("another release than the one rolled out is reported healthy", other, core.CodeConflict)
+
+	shortcut := stepOf(issue, core.EventIssueClosed, core.StateClosed)
+	refused("the issue is closed from Canary", shortcut, core.CodeInvalidTransition)
+}
+
+func TestANewClaimStartsANewRunAndForgetsTheOldCandidate(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	issue := developing()
+	issue.record.State, issue.record.CandidateDigest = core.StateReady, build
+	issue.record.ReleaseDigest = core.ReleaseDigest(build)
+
+	again := stepOf(issue, core.EventClaimed, core.StateClaimed)
+	if _, err := issue.Transition(ctx, again); !core.HasCode(err, core.CodeConflict) {
+		t.Fatalf("a claim that reuses the run of the last claim: want %s, got %v", core.CodeConflict, err)
+	}
+	unleased := stepOf(issue, core.EventClaimed, core.StateClaimed)
+	unleased.RunID, unleased.LeaseOwner, unleased.FencingToken = "run-0002", "", 0
+	if _, err := issue.Transition(ctx, unleased); !core.HasCode(err, core.CodeStaleFencingToken) {
+		t.Fatalf("a claim without a lease: want %s, got %v", core.CodeStaleFencingToken, err)
+	}
+
+	claim := stepOf(issue, core.EventClaimed, core.StateClaimed)
+	claim.RunID = "run-0002"
+	written, err := issue.Transition(ctx, claim)
+	if err != nil {
+		t.Fatalf("a claim that starts a new run was refused: %v", err)
+	}
+	if written.RunID != "run-0002" || written.CandidateDigest != "" || written.ReleaseDigest != "" {
+		t.Fatalf("the new run inherited the old run, candidate or release: %+v", written)
+	}
 }

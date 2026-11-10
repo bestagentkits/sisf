@@ -3,10 +3,11 @@
 // (locks, jobs, ledger).
 //
 // Every write happens inside a transaction. State changes are compare-and-swap
-// on a version, lease holders are ordered by fencing tokens, deliveries are
-// accepted once, side effects leave through an outbox, and the budget ledger
-// commits together with the claim it pays for. Consumers depend on the narrow
-// role interfaces; Tx is their union.
+// on a version, lease holders are ordered by fencing tokens and a run that
+// holds an issue is the only writer of it, deliveries are accepted once, side
+// effects leave through an outbox, and the budget ledger commits together
+// with the claim it pays for. Consumers depend on the narrow role interfaces;
+// Tx is their union.
 package state
 
 import (
@@ -63,11 +64,38 @@ type Records interface {
 	// token is still refused when the lifecycle has no such edge.
 	//
 	// The stored version must equal t.ExpectedVersion and the stored state
-	// must equal t.From; otherwise the store returns CONFLICT. A non-zero
-	// t.FencingToken must be the latest token issued for
-	// IssueLeaseResource(t.IssueID), else STALE_FENCING_TOKEN. A repeated
+	// must equal t.From; otherwise the store returns CONFLICT. A repeated
 	// t.IdempotencyKey returns the record written the first time without
 	// writing again.
+	//
+	// Fencing is not optional while a run holds the issue. For a record in a
+	// state from Claimed through Monitoring, and for the claim that enters
+	// Claimed, the step MUST carry the latest fencing token issued for
+	// IssueLeaseResource(t.IssueID). The store calls
+	// statemachine.CheckLease(t), which names those steps through
+	// statemachine.RequiresLease and returns STALE_FENCING_TOKEN for one that
+	// carries no lease owner or a zero token, and then compares the token:
+	// any non-zero t.FencingToken, on any step, must be the latest one
+	// issued, else STALE_FENCING_TOKEN. A worker that lost its lease can
+	// therefore write neither with its old token nor with none. Outside
+	// those states a zero token is an unleased write that relies on the
+	// version check alone.
+	//
+	// A step must continue what the record is about. The store calls
+	// statemachine.CheckRecordBinding(stored, t) with the record as it is
+	// before the write and returns its CONFLICT: a step whose t.RunID differs
+	// from the stored run is refused, except the claim, which starts a new
+	// run; a step that names another candidate or release than the stored
+	// one is refused, except the step that submits a candidate and the step
+	// that starts the rollout.
+	//
+	// The record written carries t.To, the next version, t.IdempotencyKey,
+	// the lease t was written under and t.Attempt. Its RunID changes only on
+	// the claim, which sets t.RunID and clears both digests. Its
+	// CandidateDigest changes only on candidate_submitted, which sets
+	// t.CandidateDigest, and its ReleaseDigest only on rollout_started,
+	// which sets t.ReleaseDigest. Every other step leaves the three as they
+	// are stored.
 	//
 	// The proof a guarded edge needs is judged by statemachine.Machine.Check
 	// before this call, because it draws on facts the store does not hold.
@@ -100,7 +128,8 @@ type Leases interface {
 	// ReleaseLease gives the resource up early. Tokens are never reused.
 	ReleaseLease(ctx context.Context, lease Lease) error
 	// CheckFencing returns STALE_FENCING_TOKEN unless token is the latest one
-	// issued for resource. Every report from a lease holder passes this check.
+	// issued for resource. Every report from a lease holder passes this
+	// check. A zero token is never the latest one: no lease was issued it.
 	CheckFencing(ctx context.Context, resource string, token core.FencingToken) error
 }
 

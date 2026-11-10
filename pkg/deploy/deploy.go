@@ -27,6 +27,10 @@ func SelfPublishAllowed(caps core.CapabilitySet) bool {
 // SigningPayload, and the trusted release supervisor rejects an artifact
 // whose signature it cannot verify over those bytes.
 type Artifact struct {
+	// FactoryID names the factory deployment the artifact was built and
+	// signed for. Two factories on one upstream repository build from the
+	// same source, and an artifact of one is never released by the other.
+	FactoryID core.FactoryID `json:"factory_id"`
 	// Unit is the runtime unit name from the manifest, for example "app".
 	Unit   string             `json:"unit"`
 	Digest core.ReleaseDigest `json:"digest"`
@@ -38,11 +42,18 @@ type Artifact struct {
 	ProvenanceRef string `json:"provenance_ref,omitempty"`
 }
 
-// Validate requires a unit, a full digest, an image reference and a signature.
-// It does not verify the signature.
+// Validate requires a unit, a full digest, an image reference and a signature,
+// and a well-formed factory when one is named. It does not verify the
+// signature, and it does not say which factory may release the artifact:
+// ValidateFor does.
 func (a Artifact) Validate() error {
 	if a.Unit == "" || a.Image == "" {
 		return core.NewError(core.CodeInvalidArgument, "artifact needs a unit and an image reference")
+	}
+	if a.FactoryID != "" {
+		if err := a.FactoryID.Validate(); err != nil {
+			return err
+		}
 	}
 	if err := a.Digest.Validate(); err != nil {
 		return err
@@ -50,18 +61,37 @@ func (a Artifact) Validate() error {
 	return a.Signature.Validate()
 }
 
-// Domain and field-list version of the artifact's signing payload.
+// ValidateFor requires a valid artifact that was built for the given factory.
+// A release path calls it with the factory it serves, so an artifact that
+// names another factory, or none, is refused before it is staged.
+func (a Artifact) ValidateFor(factory core.FactoryID) error {
+	if err := factory.Validate(); err != nil {
+		return err
+	}
+	if err := a.Validate(); err != nil {
+		return err
+	}
+	if a.FactoryID != factory {
+		return core.NewError(core.CodeInvalidArgument, "artifact was not built for this factory")
+	}
+	return nil
+}
+
+// Domain and field-list version of the artifact's signing payload. Version 2
+// added the factory.
 const (
 	artifactPayloadDomain  = "sisf.deploy_artifact"
-	artifactPayloadVersion = 1
+	artifactPayloadVersion = 2
 )
 
 // SigningPayload returns the canonical bytes the release signer signs and
 // the supervisor verifies. Every field except the signature is bound, in a
-// fixed order, so an artifact cannot be relabelled as another unit, digest,
-// image or set of supply-chain documents without invalidating its signature.
+// fixed order, so an artifact cannot be relabelled as another factory, unit,
+// digest, image or set of supply-chain documents without invalidating its
+// signature.
 func (a Artifact) SigningPayload() []byte {
 	return core.NewPayloadBuilder(artifactPayloadDomain, artifactPayloadVersion).
+		Text("factory_id", string(a.FactoryID)).
 		Text("unit", a.Unit).
 		Text("digest", string(a.Digest)).
 		Text("image", a.Image).

@@ -27,8 +27,9 @@ func validClaim(t core.Transition) ClaimProof {
 	}
 }
 
-// validQA is the proof of a complete, unexpired receipt for the test issue,
-// run and candidate, in which every required hard gate passed and the five
+// validQA is the proof of a complete, unexpired receipt of the test factory
+// for the test issue, run and candidate, issued under the policy, baseline
+// and suite in force, in which every required hard gate passed and the five
 // rubric categories add up to a score that clears the pass score.
 func validQA() QAProof {
 	var checks []core.QACheck
@@ -44,6 +45,7 @@ func validQA() QAProof {
 	)
 	return QAProof{
 		Receipt: core.QAReceipt{
+			FactoryID:           testFactory,
 			IssueID:             testIssue,
 			RunID:               testRun,
 			CandidateSHA:        testSHA,
@@ -62,27 +64,42 @@ func validQA() QAProof {
 			EvaluatorAttempt:    1,
 			Signature:           core.Signature{KeyID: "qa-2026-11", Algorithm: "ed25519", Value: []byte{1}},
 		},
-		RequiredGates: core.RequiredHardGates(),
-		PassScore:     85,
+		FactoryID:      testFactory,
+		PolicyRevision: testSHA,
+		BaselineSHA:    testSHA,
+		SuiteDigest:    testDigest,
+		RequiredGates:  core.RequiredHardGates(),
+		PassScore:      85,
 	}
 }
 
-// scored sets the receipt's score and records all of it in the first rubric
-// category, so the score still equals the points recorded.
+// scored sets the receipt's score and spreads it over the rubric categories
+// in order, each filled up to its maximum, so the score still equals the
+// points recorded and no category exceeds its weight.
 func scored(p *QAProof, score int) {
-	first := true
+	left := score
 	for i := range p.Receipt.Checks {
 		check := &p.Receipt.Checks[i]
 		if check.Kind != core.CheckRubric {
 			continue
 		}
-		check.Points = 0
-		if first {
-			check.Points, check.MaxPoints = score, max(check.MaxPoints, score)
-			first = false
-		}
+		check.Points = min(left, check.MaxPoints)
+		left -= check.Points
+	}
+	if left != 0 {
+		panic("the receipt fixture cannot record that score in its rubric categories")
 	}
 	p.Receipt.Score = score
+}
+
+// rubricCheck returns the scored result of the named rubric category.
+func rubricCheck(p *QAProof, category string) *core.QACheck {
+	for i := range p.Receipt.Checks {
+		if p.Receipt.Checks[i].Kind == core.CheckRubric && p.Receipt.Checks[i].Name == category {
+			return &p.Receipt.Checks[i]
+		}
+	}
+	panic("the receipt fixture scores no rubric category " + category)
 }
 
 // gateCheck returns the hard-gate result of the named gate.
@@ -125,13 +142,14 @@ func validDelegation(t core.Transition) DelegationProof {
 }
 
 // validApproval is the proof of a signed, unexpired, unused approval by a
-// person for the scope of t's issue under the policy in force.
+// person for the scope of t's issue, asked for in the test factory under the
+// policy in force.
 func validApproval(t core.Transition) ApprovalProof {
 	request := approvals.Request{
 		ID:             "apr-0001",
-		FactoryID:      "acme-factory",
+		FactoryID:      testFactory,
 		IssueID:        t.IssueID,
-		Action:         "scope.approve",
+		Action:         approvals.ActionApproveScope,
 		SubjectDigest:  scopeDigest,
 		PolicyRevision: testSHA,
 		Nonce:          "b3f1c2d4e5a60718",
@@ -145,6 +163,9 @@ func validApproval(t core.Transition) ApprovalProof {
 		Request: request,
 		Approval: approvals.Approval{
 			RequestID:      request.ID,
+			FactoryID:      request.FactoryID,
+			IssueID:        request.IssueID,
+			Action:         request.Action,
 			SubjectDigest:  request.SubjectDigest,
 			PolicyRevision: request.PolicyRevision,
 			Nonce:          request.Nonce,
@@ -156,6 +177,7 @@ func validApproval(t core.Transition) ApprovalProof {
 			ExpiresAt:      testNow.Add(time.Hour),
 			Signature:      core.Signature{KeyID: "approvals-2026-11", Algorithm: "ed25519", Value: []byte{1}},
 		},
+		FactoryID:      testFactory,
 		ScopeDigest:    scopeDigest,
 		PolicyRevision: testSHA,
 	}
@@ -199,8 +221,16 @@ func postDeployWith(proof PostDeployProof) PostDeployGuardFunc {
 	return func(context.Context, core.Transition) (PostDeployProof, error) { return proof, nil }
 }
 
-func retryWith(decision core.AuthzDecision) RetryGuardFunc {
-	return func(context.Context, core.Transition) (core.AuthzDecision, error) { return decision, nil }
+func rolloutWith(proof RolloutProof) RolloutGuardFunc {
+	return func(context.Context, core.Transition) (RolloutProof, error) { return proof, nil }
+}
+
+func canaryWith(proof CanaryProof) CanaryGuardFunc {
+	return func(context.Context, core.Transition) (CanaryProof, error) { return proof, nil }
+}
+
+func retryWith(proof func(core.Transition) RetryProof) RetryGuardFunc {
+	return func(_ context.Context, t core.Transition) (RetryProof, error) { return proof(t), nil }
 }
 
 // passingGuards answers every guarded step with a valid proof.
@@ -211,7 +241,9 @@ func passingGuards() Guards {
 		Claim:      claimWith(validClaim),
 		Attempts:   attemptsWith(validAttempts),
 		QA:         qaWith(validQA()),
+		Rollout:    rolloutWith(validRollout()),
+		Canary:     canaryWith(validCanary()),
 		PostDeploy: postDeployWith(validPostDeploy()),
-		Retry:      retryWith(allowed()),
+		Retry:      retryWith(validRetry),
 	}
 }

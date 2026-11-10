@@ -40,6 +40,9 @@ type ApprovalProof struct {
 	// it, both as the approval store holds them.
 	Request  approvals.Request
 	Approval approvals.Approval
+	// FactoryID is the factory deployment this machine serves. The request
+	// and the decision must both have been made for it.
+	FactoryID core.FactoryID
 	// ScopeDigest identifies the scope of work attached to the issue now. An
 	// edit after the decision changes it and voids the approval.
 	ScopeDigest core.Digest
@@ -52,9 +55,10 @@ type ApprovalProof struct {
 // verified, over the approval's SigningPayload, against the trusted approval
 // keys, and whose actor was authorized to decide; the machine cannot check
 // either. The machine checks everything else: that request and decision
-// belong together and to the issue, that a person approved, that the
-// approval is unexpired and unused, and that it covers the scope and the
-// policy in force.
+// belong together, to this factory and to the issue, that the scope of the
+// issue is what was asked to be approved, that a person approved before the
+// request lapsed, that the approval is unexpired and unused, and that it
+// covers the scope and the policy in force.
 //
 // The guard only reads. The step is the approval's one use: the caller
 // spends it with approvals.Store.Consume in the same unit of work as the

@@ -37,7 +37,8 @@ func validRequest() approvals.Request {
 
 func validApproval() approvals.Approval {
 	return approvals.Approval{
-		RequestID: "apr-0001", SubjectDigest: subject, PolicyRevision: policy, Nonce: "b3f1c2d4e5a60718",
+		RequestID: "apr-0001", FactoryID: "acme-app", IssueID: core.IssueRef{Owner: "acme", Repo: "app", Number: 7},
+		Action: "release.publish", SubjectDigest: subject, PolicyRevision: policy, Nonce: "b3f1c2d4e5a60718",
 		Decision: approvals.DecisionApprove, ActorID: "user:owner-1", ActorKind: core.ActorHuman,
 		Surface: core.SurfaceDashboard, StepUpAt: created.Add(time.Minute),
 		DecidedAt: created.Add(time.Minute), ExpiresAt: expires,
@@ -111,6 +112,10 @@ func TestApprovalValidation(t *testing.T) {
 	}
 	cases := map[string]func(*approvals.Approval){
 		"no request":          func(a *approvals.Approval) { a.RequestID = "" },
+		"no factory":          func(a *approvals.Approval) { a.FactoryID = "" },
+		"malformed factory":   func(a *approvals.Approval) { a.FactoryID = "Acme App" },
+		"no action":           func(a *approvals.Approval) { a.Action = "" },
+		"malformed issue":     func(a *approvals.Approval) { a.IssueID = core.IssueRef{Owner: "acme"} },
 		"unknown decision":    func(a *approvals.Approval) { a.Decision = "ok" },
 		"anonymous":           func(a *approvals.Approval) { a.ActorID = "" },
 		"unknown actor kind":  func(a *approvals.Approval) { a.ActorKind = "bot" },
@@ -127,6 +132,22 @@ func TestApprovalValidation(t *testing.T) {
 		if core.CodeOf(a.Validate()) != core.CodeInvalidArgument {
 			t.Errorf("%s: want %s, got %v", name, core.CodeInvalidArgument, a.Validate())
 		}
+	}
+	global := validApproval()
+	global.IssueID = core.IssueRef{}
+	if err := global.Validate(); err != nil {
+		t.Fatalf("a decision on a request that concerns no single issue is valid: %v", err)
+	}
+}
+
+func TestTheScopeApprovalActionHasOneName(t *testing.T) {
+	if approvals.ActionApproveScope != "scope.approve" {
+		t.Fatalf("ActionApproveScope = %q", approvals.ActionApproveScope)
+	}
+	spec := core.ActionSpec{Name: approvals.ActionApproveScope, Sensitivity: core.SensitivitySensitive,
+		Roles: []core.Role{core.RoleOwner}}
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("the scope-approval action is not a well-formed action name: %v", err)
 	}
 }
 
@@ -168,6 +189,9 @@ func TestApprovalAuthorizesOnlyTheSubjectAndPolicyItWasGivenFor(t *testing.T) {
 // field name so a field added later cannot be left out of the payload unseen.
 var approvalMutations = map[string]func(*approvals.Approval){
 	"RequestID":      func(a *approvals.Approval) { a.RequestID = "apr-0002" },
+	"FactoryID":      func(a *approvals.Approval) { a.FactoryID = "other-app" },
+	"IssueID":        func(a *approvals.Approval) { a.IssueID.Number++ },
+	"Action":         func(a *approvals.Approval) { a.Action = approvals.ActionApproveScope },
 	"SubjectDigest":  func(a *approvals.Approval) { a.SubjectDigest = other },
 	"PolicyRevision": func(a *approvals.Approval) { a.PolicyRevision = policy2 },
 	"Nonce":          func(a *approvals.Approval) { a.Nonce = "0000000000000000" },
@@ -215,6 +239,33 @@ func TestChangingAnyBoundApprovalFieldChangesTheSigningPayload(t *testing.T) {
 	}
 }
 
+func TestADecisionCannotBeMovedToAnotherFactoryIssueOrAction(t *testing.T) {
+	t.Parallel()
+	// The request is not signed, so everything that says what a decision is
+	// about has to be in the decision's own payload.
+	base := signedApproval().SigningPayload()
+	cases := map[string]func(*approvals.Approval){
+		"another factory on the same upstream":  func(a *approvals.Approval) { a.FactoryID = "acme-app-2" },
+		"no factory":                            func(a *approvals.Approval) { a.FactoryID = "" },
+		"another issue of the repository":       func(a *approvals.Approval) { a.IssueID.Number = 8 },
+		"the same number in another repository": func(a *approvals.Approval) { a.IssueID.Repo = "other" },
+		"the same issue under another owner":    func(a *approvals.Approval) { a.IssueID.Owner = "other" },
+		"no single issue":                       func(a *approvals.Approval) { a.IssueID = core.IssueRef{} },
+		"another action":                        func(a *approvals.Approval) { a.Action = approvals.ActionApproveScope },
+		"no action":                             func(a *approvals.Approval) { a.Action = "" },
+		"text moved from the action to the factory": func(a *approvals.Approval) {
+			a.FactoryID, a.Action = a.FactoryID+"r", a.Action[1:]
+		},
+	}
+	for name, mutate := range cases {
+		moved := signedApproval()
+		mutate(&moved)
+		if bytes.Equal(base, moved.SigningPayload()) {
+			t.Errorf("%s: the signing payload did not change", name)
+		}
+	}
+}
+
 func TestTheApprovalPayloadIsStableAndLeavesTheSignatureOut(t *testing.T) {
 	t.Parallel()
 	approval := signedApproval()
@@ -222,7 +273,9 @@ func TestTheApprovalPayloadIsStableAndLeavesTheSignatureOut(t *testing.T) {
 	if !bytes.Equal(base, signedApproval().SigningPayload()) {
 		t.Fatal("two equal approvals produced different payloads")
 	}
-	if !strings.HasPrefix(string(base), "sisf-signed-record\ndomain=13:sisf.approval\nversion=1:1\n") {
+	// The field list changed when factory, issue and action were bound, so the
+	// version did too: a signature made over the earlier list never verifies.
+	if !strings.HasPrefix(string(base), "sisf-signed-record\ndomain=13:sisf.approval\nversion=1:2\n") {
 		t.Fatalf("payload does not open with the approval domain and version: %q", base)
 	}
 	approval.Signature = core.Signature{KeyID: "another-key", Algorithm: "ed25519", Value: []byte{9}}

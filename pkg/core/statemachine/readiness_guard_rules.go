@@ -32,10 +32,11 @@ func checkDelegation(t core.Transition, p DelegationProof) error {
 }
 
 // checkApproval requires a complete, signed decision by a person that
-// belongs to a request about this issue, is approved and not yet used, and
-// authorizes the scope and the policy in force at this instant. The decision
-// carries a full digest and a full commit, so a scope or policy in force
-// that is unknown or unpinned can never equal what was approved.
+// belongs to a request to approve the scope of this issue in this factory,
+// was made while the request could still be decided, is approved and not yet
+// used, and authorizes the scope and the policy in force at this instant. The
+// decision carries a full digest and a full commit, so a scope or policy in
+// force that is unknown or unpinned can never equal what was approved.
 func checkApproval(t core.Transition, p ApprovalProof, now time.Time) error {
 	request, approval := p.Request, p.Approval
 	if err := request.Validate(); err != nil {
@@ -47,16 +48,26 @@ func checkApproval(t core.Transition, p ApprovalProof, now time.Time) error {
 	switch {
 	case approval.Signature.Validate() != nil:
 		return refuse(GuardApproval, t, "the approval is not signed")
+	case p.FactoryID.Validate() != nil || request.FactoryID != p.FactoryID:
+		return refuse(GuardApproval, t, "the approval was requested in another factory")
 	case request.IssueID != t.IssueID:
 		return refuse(GuardApproval, t, "the approval concerns another issue")
+	case request.Action != approvals.ActionApproveScope:
+		return refuse(GuardApproval, t, "the approval is for action %q, not for the scope of the issue", request.Action)
 	case approval.RequestID != request.ID || approval.Nonce != request.Nonce:
 		return refuse(GuardApproval, t, "the decision does not belong to the approval request")
+	case approval.FactoryID != request.FactoryID || approval.IssueID != request.IssueID || approval.Action != request.Action:
+		return refuse(GuardApproval, t, "the decision covers another factory, issue or action than the request")
 	case approval.SubjectDigest != request.SubjectDigest || approval.PolicyRevision != request.PolicyRevision:
 		return refuse(GuardApproval, t, "the decision covers another subject or policy than the request")
 	case approval.ActorKind != core.ActorHuman:
 		return refuse(GuardApproval, t, "an approval must be decided by a person, not by %s", string(approval.ActorKind))
 	case approval.DecidedAt.After(now):
 		return refuse(GuardApproval, t, "the approval is dated after the current instant")
+	case approval.DecidedAt.Before(request.CreatedAt):
+		return refuse(GuardApproval, t, "the approval is dated before its request was made")
+	case request.Expired(approval.DecidedAt):
+		return refuse(GuardApproval, t, "the approval was decided after its request had expired")
 	}
 	if request.Status != approvals.StatusApproved {
 		message := "the approval request is %q, not approved"
