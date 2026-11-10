@@ -1,0 +1,33 @@
+{{define "title"}}Overview{{end}}
+{{define "content"}}
+<h1>Overview</h1>
+{{with .Status}}
+<p class="summary">Factory <code>{{.FactoryID}}</code>:
+  <strong data-field="healthy">{{if .Healthy}}all zones healthy{{else}}degraded{{end}}</strong>.
+  Updated <time datetime="{{iso .GeneratedAt}}">{{utc .GeneratedAt}}</time>.</p>
+
+<h2>Zones</h2>
+<table class="grid">
+  <thead><tr><th>Zone</th><th>Status</th><th>Detail</th></tr></thead>
+  <tbody>
+  {{range .Zones}}
+  <tr data-zone="{{.Zone}}" data-status="{{.Status}}"><td>{{.Zone}}</td><td class="status-{{.Status}}">{{.Status}}</td><td>{{.Detail}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+
+<h2>Issues by state</h2>
+<table class="grid">
+  <thead><tr><th>State</th><th>Issues</th></tr></thead>
+  <tbody>
+  {{range .IssueCounts}}
+  <tr data-state-count="{{.State}}"><td><a href="/workboard?state={{.State}}">{{.State}}</a></td><td>{{.Count}}</td></tr>
+  {{end}}
+  </tbody>
+  <tfoot><tr><th>Total</th><th data-field="issue-total">{{.IssueTotal}}</th></tr></tfoot>
+</table>
+
+<p>Webhook deliveries waiting to be processed: <strong data-field="pending-deliveries">{{.PendingDeliveries}}</strong></p>
+{{end}}
+<p><label><input type="checkbox" id="auto-refresh"> Refresh every 15 seconds</label></p>
+{{end}}
