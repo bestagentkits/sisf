@@ -131,8 +131,8 @@ func TestUpStartsNothingWhenAnIsolationCheckFails(t *testing.T) {
 	in, exec, _ := newTestInstaller(t)
 	exec.answer = buildAnswers
 	mustInit(t, in, manifest.ModeDocker)
-	// An owner token anyone can read breaks the secrets rule.
-	if err := os.Chmod(in.Layout.Secret(areaControl, "owner-token"), 0o644); err != nil {
+	// A webhook secret anyone can read breaks the secrets rule.
+	if err := os.Chmod(in.Layout.Secret(areaControl, "webhook-secret"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err := in.Up(t.Context(), UpOptions{Init: initOptions(in, manifest.ModeDocker)})

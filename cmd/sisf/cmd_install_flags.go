@@ -25,7 +25,9 @@ type installFlags struct {
 	githubTokenEnv, githubAPIURL                string
 	debug                                       bool
 	confirmUnlimited, noAlert                   bool
-	alertThreshold                              string
+	alertThreshold, budgetCap, runEstimate      string
+	identity                                    identityFlags
+	agents                                      agentFlags
 }
 
 // bindInstallFlags registers the flags of init and up.
@@ -40,8 +42,12 @@ func bindInstallFlags(fs *flag.FlagSet, f *installFlags) {
 	fs.StringVar(&f.githubAPIURL, "github-api-url", "", "GitHub API root (https, or http on loopback)")
 	fs.BoolVar(&f.debug, "debug", false, "docker mode: publish the state store on 127.0.0.1:7469")
 	fs.BoolVar(&f.confirmUnlimited, "confirm-unlimited", false, "confirm the unlimited budget")
-	fs.StringVar(&f.alertThreshold, "alert-threshold", "", "with --confirm-unlimited: alert above this amount")
+	fs.StringVar(&f.budgetCap, "budget-cap", "", "confirm a capped budget of this amount instead of the unlimited one")
+	fs.StringVar(&f.runEstimate, "run-estimate", "", "with --budget-cap: amount each run sets aside before it is claimed (default a fifth of the cap)")
+	fs.StringVar(&f.alertThreshold, "alert-threshold", "", "with --confirm-unlimited or --budget-cap: alert above this amount")
 	fs.BoolVar(&f.noAlert, "no-alert", false, "with --confirm-unlimited: no budget alert")
+	f.identity.bind(fs)
+	f.agents.bind(fs)
 }
 
 // newFlagSet returns a flag set whose errors become usage errors.
@@ -84,38 +90,18 @@ func resolveDir(dir string) (string, error) {
 	return abs, nil
 }
 
-// budget turns the flags into the Owner's answer; given says whether the
-// Owner answered on the command line at all.
-func (f installFlags) budget() (choice install.BudgetChoice, given bool, err error) {
-	given = f.confirmUnlimited || f.noAlert || f.alertThreshold != ""
-	if !given {
-		return choice, false, nil
-	}
-	if !f.confirmUnlimited {
-		return choice, true, usagef("--alert-threshold and --no-alert need --confirm-unlimited")
-	}
-	if f.noAlert == (f.alertThreshold != "") {
-		return choice, true, usagef("--confirm-unlimited needs exactly one of --alert-threshold and --no-alert")
-	}
-	if f.noAlert {
-		return install.BudgetChoice{Confirmed: true, AlertOff: true}, true, nil
-	}
-	choice, err = install.ParseAlert(f.alertThreshold)
-	if err != nil {
-		return choice, true, usagef("--alert-threshold: %v", err)
-	}
-	return choice, true, nil
-}
-
 // options builds the init options from the flags. Secrets are read from the
 // environment here and travel no further than the installer.
 func (f installFlags) options(dir string, getenv func(string) string) (install.Options, error) {
 	o := install.Options{
 		Dir: dir, Mode: manifest.Mode(f.mode), Sim: f.profile == "sim", FactoryID: core.FactoryID(f.factoryID),
-		GitHubAPIURL: f.githubAPIURL, Debug: f.debug,
+		GitHubAPIURL: f.githubAPIURL, Debug: f.debug, Dev: f.identity.dev, GitHubCredential: f.identity.githubCredential,
 	}
 	if f.profile != "" && f.profile != "sim" {
 		return o, usagef("--profile must be \"sim\" or empty")
+	}
+	if f.identity.dev && o.Sim {
+		return o, usagef("--dev and --profile sim are different profiles; choose one")
 	}
 	if f.repo != "" {
 		owner, name, ok := strings.Cut(f.repo, "/")
@@ -124,7 +110,19 @@ func (f installFlags) options(dir string, getenv func(string) string) (install.O
 		}
 		o.Repo = manifest.Repository{Owner: owner, Repo: name}
 	}
+	var err error
+	if o.Identity, err = f.identity.identity(getenv); err != nil {
+		return o, err
+	}
+	if err := f.agents.apply(&o); err != nil {
+		return o, err
+	}
 	switch {
+	case f.githubTokenEnv != "" && f.identity.githubCredential != "":
+		return o, usagef("give the GitHub token one way: --github-token-env or --github-credential")
+	case f.identity.githubCredential != "":
+		// The installer runs `gh auth token` itself; the token never
+		// passes through the command line.
 	case f.githubTokenEnv != "" && !envNamePattern.MatchString(f.githubTokenEnv):
 		return o, usagef("--github-token-env must be the name of an environment variable")
 	case f.githubTokenEnv != "" && o.Sim:
@@ -136,7 +134,7 @@ func (f installFlags) options(dir string, getenv func(string) string) (install.O
 		}
 		o.GitHubToken = core.NewSecretValue([]byte(token))
 	case !o.Sim:
-		return o, usagef("a real GitHub repository needs --github-token-env NAME (or use --profile sim)")
+		return o, usagef("a real GitHub repository needs --github-token-env NAME or, with --dev, --github-credential gh-cli (or use --profile sim)")
 	}
 	if o.Repo == (manifest.Repository{}) && !o.Sim {
 		return o, usagef("--repo owner/name is required")

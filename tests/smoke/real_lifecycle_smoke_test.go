@@ -57,13 +57,21 @@ func TestRealLifecycleSmoke(t *testing.T) {
 		r.fatalf("%v", err)
 	}
 	facts := preflight(ctx, r)
+	choices := choicesFrom(os.Getenv, filepath.Join(root, "sandbox"))
+	requireOutsideHome(r, home, choices.operatorHome)
 	bins := buildBinaries(ctx, r, filepath.Join(root, "bin"))
-	probeFlags(ctx, r, flagProbes(bins, home, repoRoot()), home)
+	probeFlags(ctx, r, flagProbes(bins, home, repoRoot(), choices))
+	// The coding agent's workspaces are checked out from a local clone of
+	// the private sandbox, made with the operator's gh login; no credential
+	// is written into the install.
+	if _, err := r.run(ctx, 5*time.Minute, nil, "gh", "repo", "clone", sandboxRepo, choices.workspaceSource); err != nil {
+		r.fatalf("clone the sandbox for the coding agent's workspaces: %v", err)
+	}
 	rep.phase("preflight and build", started)
 
 	stage, started = "install", time.Now()
 	env := sisfEnv("SISF_HOME=" + home)
-	out, err := r.run(ctx, 2*time.Minute, env, bins.sisf, initArgs(home)...)
+	out, err := r.run(ctx, 2*time.Minute, env, bins.sisf, initArgs(home, choices)...)
 	seedInstallSecrets(r, home)
 	if err != nil {
 		r.fatalf("sisf init: %v", err)

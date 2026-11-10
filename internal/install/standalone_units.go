@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
@@ -61,29 +62,26 @@ func (in *Installer) standaloneUnits(m *manifest.Manifest) ([]unit, []io.Closer,
 	if err != nil {
 		return nil, nil, err
 	}
-	o := Options{Sim: sim}
-	o.lifecycleExtensions(m)
+	o, err := in.installedOptions(m)
+	if err != nil {
+		return nil, nil, err
+	}
 	choice := lifecycleChoice(o, manifest.ModeStandalone)
 	if err := choice.check(); err != nil {
 		return nil, nil, err
 	}
 
 	bin := l.Bin
-	dispatcher := []string{"dispatcher", "--admin-listen=" + addr(PortDispatcherAdmin)}
-	if sim {
-		dispatcher = append(dispatcher, "--agent=fake", "--fake-agent-work="+choice.AgentWork,
-			"--fake-agent-patch="+filepath.Join(l.SimAgentDir(), simPatchFile))
-	}
 	units := []unit{
 		{"supervisor", Cmd{Name: bin("sisf-supervisor"), Args: in.standaloneSupervisorArgs(m, choice),
 			Env: join(supervisorEnv, "SISF_GITHUB_API_URL="+ext)}},
-		{"control", Cmd{Name: bin("factoryd"), Args: []string{"control"}, Env: join(common, control,
+		{"control", Cmd{Name: bin("factoryd"), Args: []string{"control"}, Env: join(common, control, in.standaloneControlEnv(o),
 			"SISF_LISTEN="+addr(PortControl), "SISF_GITHUB_API_URL="+ext,
 			"SISF_APP_HEALTH_URL=http://"+addr(PortEdge)+"/healthz",
 			"SISF_DISPATCHER_HEALTH_URL=http://"+addr(PortDispatcher)+"/healthz",
 			// The edge forwards a reporter's address from loopback.
 			"SISF_TRUSTED_PROXIES=127.0.0.1/32")}},
-		{"dispatcher", Cmd{Name: bin("factoryd"), Args: dispatcher, Env: join(common, agent,
+		{"dispatcher", Cmd{Name: bin("factoryd"), Args: in.standaloneDispatcherArgs(choice, sim), Env: join(common, agent,
 			"SISF_LISTEN="+addr(PortDispatcher))}},
 		{"edge", Cmd{Name: bin("sisf-edge"), Args: []string{
 			"--listen=" + addr(PortEdge), "--upstream=http://" + addr(PortApp), "--revision=" + string(m.Units[manifest.UnitApp].Digest),
@@ -101,6 +99,11 @@ func (in *Installer) standaloneUnits(m *manifest.Manifest) ([]unit, []io.Closer,
 			"--webhook-url=http://" + addr(PortControl) + "/webhooks/github",
 		}, Env: simEnv}})
 	}
+	if o.Identity.usesFake() {
+		// The fake identity provider holds no secret: its client is public.
+		// It starts first: control discovers the provider when it starts.
+		units = append([]unit{{"sim-oidc", Cmd{Name: in.Sisf, Args: []string{"sim", "oidc", "--addr=" + addr(PortFakeOIDC)}}}}, units...)
+	}
 
 	if err := os.MkdirAll(l.Logs(), 0o700); err != nil {
 		return nil, nil, unavailablef(err, "cannot create the log directory")
@@ -116,6 +119,47 @@ func (in *Installer) standaloneUnits(m *manifest.Manifest) ([]unit, []io.Closer,
 		units[i].cmd.Stdout, units[i].cmd.Stderr = file, file
 	}
 	return units, closers, nil
+}
+
+// standaloneControlEnv is the control process's sign-in contract, its way
+// to the supervisor's admin socket and the edge's counters, and the docs
+// tree of the source checkout when there is one.
+func (in *Installer) standaloneControlEnv(o Options) []string {
+	env := append(o.Identity.controlEnv(),
+		wiring.EnvSupervisorAdminAddr+"="+addr(PortSupervisor),
+		wiring.EnvEdgeCountersURL+"=http://"+addr(PortEdgeAdmin),
+		wiring.EnvLocalStoreDir+"="+in.Layout.Data("control", "secrets"))
+	docs := filepath.Join(in.SourceDir, "docs")
+	if info, err := os.Stat(docs); err == nil && info.IsDir() && pathPattern.MatchString(docs) {
+		env = append(env, wiring.EnvDocsDir+"="+docs)
+	}
+	return env
+}
+
+// standaloneDispatcherArgs is the dispatcher's command line: the scripted
+// agent of the simulation, or the real coding agent with its workspaces,
+// and the amount each run sets aside from a capped budget.
+func (in *Installer) standaloneDispatcherArgs(c LifecycleChoice, sim bool) []string {
+	l := in.Layout
+	args := []string{"dispatcher", "--admin-listen=" + addr(PortDispatcherAdmin)}
+	switch {
+	case sim:
+		args = append(args, "--agent=fake", "--fake-agent-work="+c.AgentWork, "--fake-agent-patch="+filepath.Join(l.SimAgentDir(), simPatchFile))
+	case c.Agents.real():
+		a := c.Agents
+		args = append(args, "--agent="+a.Coder, "--workspace-root="+l.Data("workspaces"),
+			"--workspace-source="+a.WorkspaceSource, "--artifact-dir="+l.Data("artifacts"))
+		if a.AgentHome != "" {
+			args = append(args, "--agent-home="+a.AgentHome)
+		}
+		if a.CoderModel != "" {
+			args = append(args, "--agent-model="+a.CoderModel)
+		}
+	}
+	if c.RunEstimateMicros > 0 {
+		args = append(args, "--run-estimate-micros="+itoa64(c.RunEstimateMicros))
+	}
+	return args
 }
 
 // join concatenates env lists and extra assignments.

@@ -135,7 +135,7 @@ func TestAHealthyDockerFactoryPassesAndSeesZonesThroughTheirContainers(t *testin
 	// reaches the admin address.
 	found := false
 	for _, l := range in.Exec.(*fakeExec).lines() {
-		found = found || strings.Contains(l, "exec -T supervisor supervisor status --admin=127.0.0.1:7464")
+		found = found || strings.Contains(l, "exec -T supervisor supervisor status --admin=unix:/run/sisf/admin/supervisor.sock")
 	}
 	if !found {
 		t.Error("rollback readiness was not read from the supervisor container")

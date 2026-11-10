@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/bestagentkits/sisf/adapters/agent/fake"
@@ -106,6 +107,16 @@ func runControl(ctx context.Context, args []string, getenv func(string) string, 
 	decisions, err := decisionsFromEnv(getenv)
 	if err != nil {
 		return err
+	}
+	// The control zone's secret providers list references for
+	// secrets.list_refs and resolve a System One credential.
+	secretSet, err := wiring.ControlSecretsFromEnv(core.ZoneControl, getenv, os.Environ)
+	if err != nil {
+		return err
+	}
+	surfaces.SecretProviders = secretSet.Providers
+	if decisions != nil {
+		decisions.Secrets = secretSet.Resolver
 	}
 	c, err := newControl(s, log, surfaces, decisions)
 	if err != nil {

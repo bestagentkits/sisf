@@ -26,7 +26,9 @@ func (in *Installer) checkBudget(c *collector, _ *manifest.Manifest) {
 	case err != nil:
 		c.fail("budget", "%v", err)
 	case !ok:
-		c.warn("budget", "not confirmed: the factory takes in issues but starts no work; confirm with `sisf up --confirm-unlimited`")
+		c.warn("budget", "not confirmed: the factory takes in issues but starts no work; confirm with `sisf up --confirm-unlimited` or `--budget-cap`")
+	case rec.Mode == core.BudgetCapped:
+		c.ok("budget", "capped at %g, confirmed; each run sets aside %g", float64(rec.CapMicros)/microsPerUnit, float64(rec.RunEstimateMicros)/microsPerUnit)
 	case rec.AlertOff:
 		c.ok("budget", "unlimited, confirmed, no alert")
 	default:
@@ -232,7 +234,7 @@ func (in *Installer) supervisorStatus(ctx context.Context, m *manifest.Manifest)
 		}
 		return supervisor.FetchStatus(ctx, admin)
 	}
-	out, err := in.Exec.Run(ctx, Cmd{Name: "docker", Args: in.composeArgs(m, "exec", "-T", "supervisor", "supervisor", "status", "--admin="+admin)})
+	out, err := in.Exec.Run(ctx, Cmd{Name: "docker", Args: in.composeArgs(m, "exec", "-T", "supervisor", "supervisor", "status", "--admin=unix:"+supervisorAdminSocket)})
 	if err != nil {
 		return supervisor.Status{}, err
 	}

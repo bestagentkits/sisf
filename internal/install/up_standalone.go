@@ -24,6 +24,9 @@ func (in *Installer) upStandalone(ctx context.Context, m *manifest.Manifest, rel
 	if err != nil {
 		return err
 	}
+	if err := in.refreshGHToken(ctx, m); err != nil {
+		return err
+	}
 	for _, dir := range []string{"state", "app", "control", "trust", "workspaces", "qa-workspaces", "artifacts"} {
 		if err := os.MkdirAll(in.Layout.Data(dir), 0o700); err != nil {
 			return unavailablef(err, "cannot create the data directory %s", dir)

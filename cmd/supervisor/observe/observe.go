@@ -20,8 +20,9 @@ import (
 // SecretEnv names the environment variables that hold secrets in any
 // factory process. Their values are redacted wherever they would appear.
 var SecretEnv = []string{
-	"SISF_STATE_DSN", "SISF_OWNER_TOKEN", "SISF_WEBHOOK_SECRET", "SISF_GITHUB_TOKEN", "SISF_APPROVAL_KEY",
-	"SISF_DISPATCHER_ADMIN_TOKEN", "EDGE_ADMIN_TOKEN", "SISF_ROOT_PUBLIC_KEY",
+	"SISF_STATE_DSN", "SISF_WEBHOOK_SECRET", "SISF_GITHUB_TOKEN", "SISF_APPROVAL_KEY",
+	"SISF_DISPATCHER_ADMIN_TOKEN", "EDGE_ADMIN_TOKEN", "EDGE_COUNTERS_TOKEN", "SISF_ROOT_PUBLIC_KEY",
+	"SISF_AUTH_OIDC_CLIENT_SECRET", "SISF_AUTH_GITHUB_CLIENT_SECRET",
 }
 
 // Process is one process's redacted logger and telemetry.
@@ -63,7 +64,7 @@ func (e logExporter) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpa
 	for _, s := range spans {
 		attrs := []any{"span", s.Name(), "duration", s.EndTime().Sub(s.StartTime()).String(), "status", s.Status().Code.String()}
 		for _, kv := range s.Attributes() {
-			attrs = append(attrs, string(kv.Key), kv.Value.Emit())
+			attrs = append(attrs, string(kv.Key), kv.Value.String())
 		}
 		e.log.Info("telemetry span", attrs...)
 	}

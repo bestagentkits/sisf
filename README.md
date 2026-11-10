@@ -7,7 +7,8 @@ An open-source framework for a closed-loop *software factory*: it takes in reque
 The factory core is implemented and tested in this repository (Go 1.25, see [ADR 0019](docs/adr/0019-go-1-25-toolchain.md)). The authoritative record of what a test proves is the [acceptance matrix](docs/acceptance-matrix.md).
 
 - **Implemented:** the three-zone conformance checker, install and lifecycle tooling (`sisf init`, `up`, `doctor`, `down`), signed Owner approvals, the audit log, the dispatcher with fencing, independent QA with hard gates, the trusted release supervisor with automatic rollback, the emergency stop, identity (GitHub/OIDC login, device-flow CLI login), one action service behind the REST API, the `sisf` CLI, remote MCP, WebMCP and the dashboard, the Decision Layer on the edge's counters (rules, with an optional System One), and budget modes. Identity, MCP and WebMCP are tested against fakes; a real GitHub App, real Google SSO and real MCP clients are not yet exercised.
-- **Not yet proven:** the end-to-end lifecycle on Compose and the real smoke run (`make smoke`), which has not been run. Do not rely on them yet.
+- **Sign-in:** there is no Owner token. People sign in at an OpenID Connect or GitHub provider and the Owner is named at `sisf init` (`--owner issuer#subject`); the simulation and the loopback-only `--dev` install sign in at a fake identity provider the install runs itself.
+- **Not yet proven:** the real smoke run (`make smoke`), which has not been run, and agent-written candidate builds in Standalone mode, which are held in this release. Do not rely on them yet.
 - **Supported operating modes:** Standalone (trusted code only) and Docker Compose. Kubernetes, Vercel, Cloudflare, TOSE and Railway are unsupported or experimental; see the [capability matrix](docs/capability-matrix.md).
 - **Quickstart:** [docs/guides/quickstart.md](docs/guides/quickstart.md) runs a local factory against a simulated GitHub.
 

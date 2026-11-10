@@ -42,6 +42,7 @@ var (
 func loopbackAddr(port int) string { return "127.0.0.1:" + strconv.Itoa(port) }
 
 type standaloneDeployment struct {
+	ownerSignIn
 	t       *testing.T
 	root    string // the test's temporary directory, holding everything below
 	home    string // SISF_HOME: the install directory
@@ -138,15 +139,6 @@ func get(url string) error {
 
 func (d *standaloneDeployment) github() simGitHub {
 	return newSimGitHub("http://"+standaloneGitHub, d.m.Repository.Owner+"/"+d.m.Repository.Repo)
-}
-
-func (d *standaloneDeployment) control(t *testing.T) (string, string) {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(d.home, "secrets", "control", "owner-token"))
-	if err != nil {
-		t.Fatal("the Owner token cannot be read from the install")
-	}
-	return "http://" + standaloneControl, strings.TrimSpace(string(raw))
 }
 
 func (d *standaloneDeployment) factoryYAML(t *testing.T) []byte {
@@ -252,6 +244,9 @@ func (d *standaloneDeployment) journey(t *testing.T, issue string) []string {
 func TestStandaloneFactoryTakesAnIssueToARunAndSurvivesADispatcherKill(t *testing.T) {
 	d := newStandaloneDeployment(t)
 	runLifecycle(t, d)
+	// The same factory serves every surface to a person who signed in; it
+	// shares the bring-up to keep the suite's wall time down.
+	t.Run("surfaces through sign-in", func(t *testing.T) { runSurfaces(t, d) })
 	// `sisf down` stops every unit `sisf up` started and `sisf up` itself;
 	// the cleanup then checks that the ports are free.
 	d.down(t)

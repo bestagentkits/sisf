@@ -52,7 +52,7 @@ func TestInitNeverPrintsOrReturnsASecretValue(t *testing.T) {
 	res := mustInit(t, in, manifest.ModeDocker)
 
 	var secrets []string
-	for _, name := range []string{"owner-token", "webhook-secret", "root-key.pem", "github-token"} {
+	for _, name := range []string{"webhook-secret", "root-key.pem", "github-token"} {
 		data, err := os.ReadFile(in.Layout.Secret(areaControl, name))
 		if err != nil {
 			t.Fatal(err)
@@ -108,7 +108,7 @@ func TestInitRefusesToOverwriteAnInstall(t *testing.T) {
 	t.Parallel()
 	in, _, _ := newTestInstaller(t)
 	first := mustInit(t, in, manifest.ModeStandalone)
-	token, _ := os.ReadFile(first.OwnerTokenFile)
+	token, _ := os.ReadFile(in.Layout.Secret(areaControl, "webhook-secret"))
 
 	o := initOptions(in, manifest.ModeStandalone)
 	o.FactoryID = "another-factory"
@@ -117,9 +117,9 @@ func TestInitRefusesToOverwriteAnInstall(t *testing.T) {
 	if !asCoreError(err, &typed) || typed.Code != core.CodeAlreadyExists {
 		t.Fatalf("second Init = %v, want ALREADY_EXISTS", err)
 	}
-	after, _ := os.ReadFile(first.OwnerTokenFile)
-	if string(after) != string(token) {
-		t.Fatal("a refused init changed the Owner token")
+	after, _ := os.ReadFile(in.Layout.Secret(areaControl, "webhook-secret"))
+	if len(token) == 0 || string(after) != string(token) {
+		t.Fatal("a refused init changed the webhook secret")
 	}
 	m, _ := in.Layout.LoadManifest()
 	if m.FactoryID != first.FactoryID {

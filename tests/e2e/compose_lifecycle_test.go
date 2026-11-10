@@ -25,6 +25,7 @@ import (
 
 // composeDeployment is a running Docker install.
 type composeDeployment struct {
+	ownerSignIn
 	dir     string
 	project string
 	repo    string
@@ -79,15 +80,6 @@ func (d *composeDeployment) docker(t *testing.T, args ...string) (string, error)
 
 func (d *composeDeployment) github() simGitHub {
 	return newSimGitHub("http://127.0.0.1:7467", d.repo)
-}
-
-func (d *composeDeployment) control(t *testing.T) (string, string) {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(d.dir, "secrets", "control", "owner-token"))
-	if err != nil {
-		t.Fatal("the Owner token cannot be read from the install")
-	}
-	return "http://127.0.0.1:7463", strings.TrimSpace(string(raw))
 }
 
 func (d *composeDeployment) factoryYAML(t *testing.T) []byte {
@@ -161,4 +153,10 @@ func (d *composeDeployment) journey(t *testing.T, issue string) []string {
 
 func TestComposeFactoryTakesAnIssueToARunAndSurvivesADispatcherKill(t *testing.T) {
 	runLifecycle(t, newComposeDeployment(t))
+}
+
+// The Docker factory serves every surface to a person who signed in at the
+// fake identity provider the simulation runs beside control.
+func TestComposeServesEverySurfaceToASignedInPerson(t *testing.T) {
+	runSurfaces(t, newComposeDeployment(t))
 }

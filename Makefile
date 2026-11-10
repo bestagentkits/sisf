@@ -27,8 +27,11 @@ e2e:
 	"$$bin" doctor && \
 	go test -tags e2e ./tests/e2e/... -count=1 -timeout 30m
 
+# smoke is the one real run against bestagentkits/sisf-sandbox: it needs
+# SISF_SMOKE_REPO=bestagentkits/sisf-sandbox, gh, claude and codex logged in,
+# and TMPDIR outside $$HOME. It runs the real release defaults, so it is slow.
 smoke:
-	go test -tags smoke ./tests/smoke/... -count=1 -v -timeout 45m
+	go test -tags smoke ./tests/smoke/... -count=1 -v -timeout 150m
 
 up:
 	go run ./cmd/sisf up $(ARGS)

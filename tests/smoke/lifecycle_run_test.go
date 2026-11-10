@@ -14,8 +14,11 @@ import (
 )
 
 const (
-	// runDeadline bounds the run from the opened issue to its closing.
-	runDeadline = 30 * time.Minute
+	// runDeadline bounds the run from the opened issue to its closing. The
+	// release keeps the real defaults: canary steps of one 10-minute window
+	// each, two observation windows and, at the sandbox's low traffic, the
+	// 30-minute synthetic hold; the coding and judging come on top.
+	runDeadline = 100 * time.Minute
 	// runPollInterval is the pause between two looks at the run.
 	runPollInterval = 15 * time.Second
 )

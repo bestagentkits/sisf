@@ -61,7 +61,7 @@ func TestTheDoctorWarnsWhenAProductionDockerInstallHasNoQALauncher(t *testing.T)
 	t.Parallel()
 	in, _, _ := newTestInstaller(t)
 	o := initOptions(in, manifest.ModeDocker)
-	o.Sim, o.Repo = false, manifest.Repository{Owner: "acme", Repo: "shop"}
+	production(&o)
 	if _, err := in.Init(t.Context(), o); err != nil {
 		t.Fatal(err)
 	}

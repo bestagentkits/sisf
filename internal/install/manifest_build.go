@@ -58,6 +58,8 @@ func buildManifest(o Options) *manifest.Manifest {
 		ModelRoutes: modelRoutes(),
 		Extensions:  map[string]any{"github_api_url": o.GitHubAPIURL, "profile": profile(o.Sim)},
 	}
+	o.Identity.extensions(m.Extensions)
+	o.agentExtensions(m.Extensions)
 	if docker {
 		m.Storage.State = manifest.StateStore{Driver: manifest.StatePostgres, DSNRef: "env:SISF_STATE_DSN"}
 		m.Adapters.Execution, m.Adapters.Deploy = manifest.AdapterRef{Name: "docker"}, manifest.AdapterRef{Name: "compose"}
@@ -125,8 +127,11 @@ func budget(c BudgetChoice) manifest.Budget {
 		Mode: core.BudgetUnlimited, Period: manifest.PeriodMonthly,
 		AlertThresholdMicros: c.AlertThresholdMicros, AlertOff: c.AlertOff,
 	}
-	if !c.Confirmed {
+	switch {
+	case !c.Confirmed:
 		b.AlertThresholdMicros = unconfirmedAlertMicros
+	case c.Capped():
+		b.Mode, b.CapMicros = core.BudgetCapped, c.CapMicros
 	}
 	return b
 }

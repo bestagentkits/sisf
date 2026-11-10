@@ -88,7 +88,14 @@ type Config struct {
 	Policy    PolicyInForce
 	// Audit is optional; it records each release decision.
 	Audit core.AuditLog
-	Clock core.Clock
+	// Budget is optional; with it every rollback reserves through the
+	// rollback reserve and records its spend. A refused reservation never
+	// blocks the rollback.
+	Budget RollbackBudget
+	// RollbackCost is what a rollback is reserved and recorded at;
+	// DefaultRollbackCost when zero.
+	RollbackCost core.Micros
+	Clock        core.Clock
 
 	LeaseOwner string
 	LeaseTTL   time.Duration
@@ -116,6 +123,9 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.Clock == nil {
 		c.Clock = core.SystemClock{}
+	}
+	if c.RollbackCost == 0 {
+		c.RollbackCost = DefaultRollbackCost
 	}
 	if c.LeaseOwner == "" {
 		c.LeaseOwner = DefaultLeaseOwner
@@ -182,6 +192,8 @@ func (c Config) validate() error {
 		return invalid("the pass score must be within 1-100")
 	case c.StepWindows < 1 || c.ObservationWindows < 1:
 		return invalid("each traffic step and the observation need at least one window")
+	case c.RollbackCost < 0:
+		return invalid("the cost of a rollback cannot be negative")
 	case c.LowTraffic.MinHold <= 0 || c.LowTraffic.MaxExtensions < 0:
 		return invalid("the low-traffic hold must be positive")
 	case len(c.Protected) == 0:

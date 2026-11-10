@@ -23,6 +23,7 @@ type dispatcherFlags struct {
 	agent, patchFile, adminListen               string
 	workspaceRoot, workspaceSource, artifactDir string
 	agentBinary, agentEnv, agentHome            string
+	agentModel                                  string
 	sandboxed                                   bool
 	// estimate is what each run sets aside from a capped budget.
 	estimate int64
@@ -39,6 +40,7 @@ func (d *dispatcherFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&d.agentBinary, "agent-binary", "", "absolute path of a launcher that runs the real coding agent in a sandbox and keeps its standard input and output")
 	fs.StringVar(&d.agentEnv, "agent-env", "", "comma-separated names of variables passed to a real coding agent besides its credential variables; SISF_, EDGE_ and DOCKER_ names are refused")
 	fs.StringVar(&d.agentHome, "agent-home", "", "absolute HOME, such as the operator's own, a real coding agent runs with to find the login kept there; only under trusted_code_only, without --sandboxed or --agent-binary, and apart from the factory's secrets, state and trust; TMPDIR stays private")
+	fs.StringVar(&d.agentModel, "agent-model", "", "model a real coding agent runs in place of the model of the coding route, such as when the route names a tier")
 	fs.Int64Var(&d.estimate, "run-estimate-micros", 0, "amount each run sets aside from a capped budget, in micro-units; a capped budget needs it")
 	fs.StringVar(&d.adminListen, "admin-listen", "", "address of the run control route the supervisor's emergency stop calls; needs "+runcontrol.EnvToken)
 }
@@ -122,7 +124,7 @@ func newAgentZone(s zoneSetup, df dispatcherFlags, getenv func(string) string) (
 		WorkspaceRoot: df.workspaceRoot, WorkspaceSource: df.workspaceSource, ArtifactDir: df.artifactDir,
 		Sandboxed: df.sandboxed, Owner: "exporter@" + wiring.DispatcherOwner(),
 		Binary: df.agentBinary, Manifest: s.manifest, AgentEnv: agentenv.Names(df.agentEnv),
-		Home: df.agentHome, ProtectedDirs: protectedDirs(s),
+		Home: df.agentHome, Model: df.agentModel, ProtectedDirs: protectedDirs(s),
 		LookupEnv: func(name string) (string, bool) {
 			v := getenv(name)
 			return v, v != ""

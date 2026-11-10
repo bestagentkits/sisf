@@ -40,12 +40,20 @@ func TestInitCreatesAConformantInstallInEveryModeAndPrintsNoSecret(t *testing.T)
 		if status != exitOK {
 			t.Fatalf("%s: init = %d: %s", mode, status, stderr)
 		}
-		token, err := os.ReadFile(filepath.Join(dir, "secrets", "control", "owner-token"))
-		if err != nil {
-			t.Fatal(err)
+		for _, name := range []string{"webhook-secret", "github-token"} {
+			secret, err := os.ReadFile(filepath.Join(dir, "secrets", "control", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(stdout+stderr, strings.TrimSpace(string(secret))) {
+				t.Errorf("%s: init printed the %s", mode, name)
+			}
 		}
-		if strings.Contains(stdout+stderr, strings.TrimSpace(string(token))) {
-			t.Errorf("%s: init printed the Owner token", mode)
+		if _, err := os.Stat(filepath.Join(dir, "secrets", "control", "owner-token")); err == nil {
+			t.Errorf("%s: init wrote an Owner token; the Owner signs in", mode)
+		}
+		if !strings.Contains(stdout, "sign in at http://127.0.0.1:7463 as the Owner http://127.0.0.1:7468#owner") {
+			t.Errorf("%s: init does not say where to sign in:\n%s", mode, stdout)
 		}
 		if !strings.Contains(stdout, "lower-assurance") {
 			t.Errorf("%s: the root key warning was not shown:\n%s", mode, stdout)
@@ -81,20 +89,31 @@ func TestInstallFlagMistakesAreUsageErrors(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "factory")
 	for name, args := range map[string][]string{
-		"real GitHub without a token":    {"init", "--dir", dir, "--repo", "acme/app"},
-		"no repository":                  {"init", "--dir", dir, "--github-token-env", "TOKEN"},
-		"token env with the sim profile": {"init", "--dir", dir, "--profile", "sim", "--github-token-env", "TOKEN"},
-		"bad token variable name":        {"init", "--dir", dir, "--repo", "acme/app", "--github-token-env", "A B"},
-		"unset token variable":           {"init", "--dir", dir, "--repo", "acme/app", "--github-token-env", "SISF_TEST_UNSET_TOKEN"},
-		"bad repository":                 {"init", "--dir", dir, "--profile", "sim", "--repo", "acme"},
-		"bad profile":                    {"init", "--dir", dir, "--profile", "prod", "--repo", "acme/app"},
-		"alert without confirmation":     {"init", "--dir", dir, "--profile", "sim", "--no-alert"},
-		"confirmation without an alert":  {"init", "--dir", dir, "--profile", "sim", "--confirm-unlimited"},
-		"both alert settings":            {"init", "--dir", dir, "--profile", "sim", "--confirm-unlimited", "--no-alert", "--alert-threshold", "5"},
-		"alert amount unreadable":        {"init", "--dir", dir, "--profile", "sim", "--confirm-unlimited", "--alert-threshold", "lots"},
-		"unknown flag":                   {"up", "--nope"},
-		"stray argument":                 {"stop", "extra"},
-		"down flag on stop":              {"stop", "-v"},
+		"real GitHub without a token":     {"init", "--dir", dir, "--repo", "acme/app"},
+		"no repository":                   {"init", "--dir", dir, "--github-token-env", "TOKEN"},
+		"token env with the sim profile":  {"init", "--dir", dir, "--profile", "sim", "--github-token-env", "TOKEN"},
+		"bad token variable name":         {"init", "--dir", dir, "--repo", "acme/app", "--github-token-env", "A B"},
+		"unset token variable":            {"init", "--dir", dir, "--repo", "acme/app", "--github-token-env", "SISF_TEST_UNSET_TOKEN"},
+		"bad repository":                  {"init", "--dir", dir, "--profile", "sim", "--repo", "acme"},
+		"bad profile":                     {"init", "--dir", dir, "--profile", "prod", "--repo", "acme/app"},
+		"alert without confirmation":      {"init", "--dir", dir, "--profile", "sim", "--no-alert"},
+		"confirmation without an alert":   {"init", "--dir", dir, "--profile", "sim", "--confirm-unlimited"},
+		"both alert settings":             {"init", "--dir", dir, "--profile", "sim", "--confirm-unlimited", "--no-alert", "--alert-threshold", "5"},
+		"alert amount unreadable":         {"init", "--dir", dir, "--profile", "sim", "--confirm-unlimited", "--alert-threshold", "lots"},
+		"unknown flag":                    {"up", "--nope"},
+		"stray argument":                  {"stop", "extra"},
+		"down flag on stop":               {"stop", "-v"},
+		"a client secret as a flag value": {"init", "--dir", dir, "--profile", "sim", "--oidc-client-secret", "x"},
+		"dev with the simulation":         {"init", "--dir", dir, "--profile", "sim", "--dev"},
+		"gh credential and a token env":   {"init", "--dir", dir, "--dev", "--repo", "acme/app", "--github-credential", "gh-cli", "--github-token-env", "T"},
+		"cap and unlimited":               {"init", "--dir", dir, "--profile", "sim", "--budget-cap", "10", "--confirm-unlimited"},
+		"cap and no alert":                {"init", "--dir", dir, "--profile", "sim", "--budget-cap", "10", "--no-alert"},
+		"alert at the cap":                {"init", "--dir", dir, "--profile", "sim", "--budget-cap", "10", "--alert-threshold", "10"},
+		"run estimate without a cap":      {"init", "--dir", dir, "--profile", "sim", "--confirm-unlimited", "--no-alert", "--run-estimate", "1"},
+		"agent judge in the simulation":   {"init", "--dir", dir, "--profile", "sim", "--qa-judge", "agent"},
+		"docker exec in standalone":       {"init", "--dir", dir, "--profile", "sim", "--mode", "standalone", "--exec", "docker"},
+		"both client secret sources": {"init", "--dir", dir, "--repo", "acme/app", "--oidc-client-secret-file", "/x",
+			"--oidc-client-secret-env", "X"},
 	} {
 		if status, _, _ := runWithOutput(t, args...); status != exitUsage {
 			t.Errorf("%s: status %d, want %d", name, status, exitUsage)

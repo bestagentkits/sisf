@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"regexp"
+	"strings"
 	"text/template"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -46,12 +47,25 @@ type ComposeData struct {
 	AppDigest, AppContainer string
 	Host                    HostFacts
 	Lifecycle               LifecycleChoice
+	// Identity is the sign-in contract of control, and Owners its Owner
+	// identities joined by commas.
+	Identity Identity
+	Owners   string
+	// SupervisorAdmin is the supervisor's admin socket, in
+	// SupervisorAdminDir, the one volume the supervisor and control share.
+	SupervisorAdmin, SupervisorAdminDir string
 
 	PostgresImage                                                  string
 	PortEdge, PortApp, PortControl, PortSupervisor, PortDispatcher int
 	PortFakeGitHub, PortPostgres, PortEgress, PortEdgeAdmin        int
-	PortDockerFilter, PortDispatcherAdmin                          int
+	PortDockerFilter, PortDispatcherAdmin, PortFakeOIDC            int
 }
+
+// The supervisor's admin socket in Docker mode.
+const (
+	supervisorAdminDir    = "/run/sisf/admin"
+	supervisorAdminSocket = supervisorAdminDir + "/supervisor.sock"
+)
 
 // newComposeData fills the fixed parts of the data for an install.
 func newComposeData(l Layout, o Options, images Images, bootstrap []string, host HostFacts) (ComposeData, error) {
@@ -73,10 +87,12 @@ func newComposeData(l Layout, o Options, images Images, bootstrap []string, host
 		BootstrapCommand: string(cmd), PostgresImage: PostgresImage,
 		AppDigest: string(app), AppContainer: deployedContainer(o.FactoryID, "app", app),
 		Host: host, Lifecycle: lifecycleChoice(o, manifest.ModeDocker),
+		Identity: o.Identity, Owners: strings.Join(o.Identity.Owners, ","),
+		SupervisorAdmin: supervisorAdminSocket, SupervisorAdminDir: supervisorAdminDir,
 		PortEdge: PortEdge, PortApp: PortApp, PortControl: PortControl, PortSupervisor: PortSupervisor,
 		PortDispatcher: PortDispatcher, PortFakeGitHub: PortFakeGitHub, PortPostgres: PortPostgres,
 		PortEgress: PortEgress, PortEdgeAdmin: PortEdgeAdmin, PortDockerFilter: PortDockerFilter,
-		PortDispatcherAdmin: PortDispatcherAdmin,
+		PortDispatcherAdmin: PortDispatcherAdmin, PortFakeOIDC: PortFakeOIDC,
 	}, nil
 }
 
@@ -102,6 +118,15 @@ func (d ComposeData) check() error {
 	}
 	if err := d.Host.check(); err != nil {
 		return err
+	}
+	for _, v := range []string{d.Identity.ExternalURL, d.Owners, d.Identity.OIDCIssuer, d.Identity.OIDCClientID,
+		d.Identity.GitHubClientID, d.Identity.GitHubURL, d.Identity.GitHubAPIURL} {
+		if !identityValue.MatchString(v) {
+			return invalidf("the sign-in setting %q has characters Compose files cannot carry", v)
+		}
+	}
+	if d.Identity.ExternalURL == "" || d.Owners == "" {
+		return invalidf("the control zone needs its external URL and an Owner identity")
 	}
 	return d.Lifecycle.check()
 }

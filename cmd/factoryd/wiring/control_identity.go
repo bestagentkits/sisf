@@ -25,6 +25,31 @@ const (
 // permission API.
 const identityTimeout = 15 * time.Second
 
+// discoveryWait bounds how long control waits at start for its OIDC
+// provider to answer discovery. A provider that starts after control, such
+// as the simulation's fake identity provider in control's own network
+// namespace, or one briefly unreachable, is waited for; a misconfigured
+// issuer still fails the start once the wait is over.
+const discoveryWait = time.Minute
+
+// discoverOIDC discovers the provider, trying again every interval while it
+// is UNAVAILABLE, until wait has passed or ctx ends. Any other refusal, such
+// as a provider reporting another issuer, fails at once.
+func discoverOIDC(ctx context.Context, cfg auth.OIDCConfig, wait, interval time.Duration) (*auth.OIDCProvider, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		p, err := auth.NewOIDCProvider(ctx, cfg)
+		if err == nil || !core.HasCode(err, core.CodeUnavailable) || !time.Now().Add(interval).Before(deadline) {
+			return p, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(interval):
+		}
+	}
+}
+
 // signIn is the authentication service and what the surfaces show of it.
 type signIn struct {
 	service   *auth.Service
@@ -42,8 +67,9 @@ func newSignIn(ctx context.Context, cfg IdentityConfig, scopes []string, clock c
 	var out signIn
 	var providers []identity.Provider
 	if cfg.OIDC != nil {
-		p, err := auth.NewOIDCProvider(ctx, auth.OIDCConfig{Name: ProviderOIDC, Issuer: cfg.OIDC.Issuer, ClientID: cfg.OIDC.ClientID,
-			ClientSecret: cfg.OIDC.ClientSecret, RedirectURL: callback(cfg.ExternalURL, ProviderOIDC), HTTPClient: client, Clock: clock})
+		p, err := discoverOIDC(ctx, auth.OIDCConfig{Name: ProviderOIDC, Issuer: cfg.OIDC.Issuer, ClientID: cfg.OIDC.ClientID,
+			ClientSecret: cfg.OIDC.ClientSecret, RedirectURL: callback(cfg.ExternalURL, ProviderOIDC), HTTPClient: client, Clock: clock},
+			discoveryWait, time.Second)
 		if err != nil {
 			return out, err
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
@@ -30,6 +31,13 @@ func (in *Installer) bootstrapCommand(m *manifest.Manifest) ([]string, error) {
 	if err != nil || !ok {
 		return cmd, err
 	}
+	if rec.Mode == core.BudgetCapped {
+		cmd = append(cmd, "--cap-micros="+itoa64(int64(rec.CapMicros)), "--run-estimate-micros="+itoa64(int64(rec.RunEstimateMicros)))
+		if rec.AlertThresholdMicros > 0 {
+			cmd = append(cmd, "--alert-micros="+itoa64(int64(rec.AlertThresholdMicros)))
+		}
+		return cmd, nil
+	}
 	cmd = append(cmd, "--confirm-unlimited")
 	if rec.AlertOff {
 		return append(cmd, "--no-alert"), nil
@@ -51,12 +59,10 @@ func (in *Installer) upDocker(ctx context.Context, m *manifest.Manifest) error {
 	if err != nil {
 		return err
 	}
-	opts := Options{
-		Dir: in.Layout.Dir, FactoryID: m.FactoryID, Repo: m.Repository,
-		Sim: m.Extensions["profile"] == profileSim, Debug: in.Debug,
+	opts, err := in.installedOptions(m)
+	if err != nil {
+		return err
 	}
-	opts.GitHubAPIURL, _ = m.Extensions["github_api_url"].(string)
-	opts.lifecycleExtensions(m)
 	if vs, err := CheckSecrets(in.Layout, m.Mode); err != nil {
 		return err
 	} else if len(vs) > 0 {

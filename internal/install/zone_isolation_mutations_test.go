@@ -70,7 +70,28 @@ func TestTheCheckerCatchesEveryWayOfBreakingTheBoundaries(t *testing.T) {
 		"a container lacks the prefix": {ruleNaming, func(s, _ map[string]any) { svc(s, "app")["container_name"] = "hello" }},
 		"a service is privileged":      {ruleHardening, func(s, _ map[string]any) { svc(s, "app")["privileged"] = true }},
 		"a secret is written inline": {ruleSecretInline, func(s, _ map[string]any) {
-			svc(s, "control")["environment"].(map[string]any)["SISF_OWNER_TOKEN"] = "x"
+			svc(s, "control")["environment"].(map[string]any)["EDGE_ADMIN_TOKEN"] = "x"
+		}},
+		"the sign-in client secret is written inline": {ruleSecretInline, func(s, _ map[string]any) {
+			svc(s, "control")["environment"].(map[string]any)["SISF_AUTH_OIDC_CLIENT_SECRET"] = "x"
+		}},
+		"the counters token is written inline": {ruleSecretInline, func(s, _ map[string]any) {
+			svc(s, "control")["environment"].(map[string]any)["EDGE_COUNTERS_TOKEN"] = "x"
+		}},
+		"the fake identity provider is published on every interface": {rulePort, func(s, _ map[string]any) {
+			svc(s, "control")["ports"] = append(svc(s, "control")["ports"].([]any), "0.0.0.0:7468:7468")
+		}},
+		"the fake identity provider leaves control's namespace": {ruleNetwork, func(s, _ map[string]any) {
+			svc(s, "sim-oidc")["network_mode"] = "service:app"
+		}},
+		"the app mounts the supervisor's admin socket": {ruleVolume, func(s, _ map[string]any) {
+			svc(s, "app")["volumes"] = []any{"supervisor-admin:/run/sisf/admin"}
+		}},
+		"the dispatcher mounts the supervisor's admin socket": {ruleVolume, func(s, _ map[string]any) {
+			svc(s, "dispatcher")["volumes"] = []any{"supervisor-admin:/run/sisf/admin"}
+		}},
+		"the edge mounts the supervisor's admin socket": {ruleVolume, func(s, _ map[string]any) {
+			svc(s, "edge")["volumes"] = []any{"supervisor-admin:/run/sisf/admin"}
 		}},
 		"zone 1 mounts a control volume": {ruleVolume, func(s, _ map[string]any) {
 			svc(s, "app")["volumes"] = []any{"trust:/trust"}

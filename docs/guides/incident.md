@@ -15,7 +15,7 @@ It records the stop in the state store (this alone freezes publishing and holds 
 - Check whether a stop is in force: `sisf emergency-stop --factory-id <id> --reason "<why>" --status`.
 - Lift it, after the cause is fixed: `--lift`. Only the store route can lift a stop; the supervisor socket cannot.
 
-The code is in `internal/supervisor/killswitch`; the dashboard overview offers the same stop as the `factory.emergency_stop` action (`internal/control/web`).
+The code is in `internal/supervisor/killswitch`; the dashboard overview offers the same stop as the `factory.emergency_stop` action (`internal/control/web`). The dashboard needs a signed-in Owner (there is no Owner token); `sisf emergency-stop` on the host needs neither.
 
 ## 2. Assess
 
@@ -24,7 +24,7 @@ The code is in `internal/supervisor/killswitch`; the dashboard overview offers t
 
 ## 3. Roll back
 
-Automatic rollback to the last known good release is the supervisor's job (`internal/supervisor/release`). If it failed, an Owner-approved rollback is the `deployments.rollback` action, documented in [`api/openapi.yaml`](../../api/openapi.yaml): `sisf call deployments.rollback --dry-run` previews it, and without an approval it files a request and answers that approval is required. The supervisor admin socket also accepts an approved rollback with a unit and a reason (`internal/supervisor/admin_rollback_and_freeze.go`). The action is wired to the supervisor's admin socket (`SISF_SUPERVISOR_ADMIN_ADDR`); the control process never calls a deploy backend, and the supervisor spends the approval. Verify it on your install before relying on it. Afterwards, confirm with `sisf doctor` that the observed revision is healthy: an accepted API call is not proof of recovery.
+Automatic rollback to the last known good release is the supervisor's job (`internal/supervisor/release`). If it failed, an Owner-approved rollback is the `deployments.rollback` action, documented in [`api/openapi.yaml`](../../api/openapi.yaml): `sisf call deployments.rollback --dry-run` previews it, and without an approval it files a request and answers that approval is required. Deciding the approval and running the approved rollback are step-up actions: they run only from their dashboard forms, after you confirm your identity at the provider for that one call; the CLI, REST, MCP and WebMCP answer `STEP_UP_REQUIRED` and point at the dashboard. The supervisor admin socket also accepts an approved rollback with a unit and a reason (`internal/supervisor/admin_rollback_and_freeze.go`). The action is wired to the supervisor's admin socket (`SISF_SUPERVISOR_ADMIN_ADDR`); the control process never calls a deploy backend, and the supervisor spends the approval. An automatic or approved rollback is never blocked by an exhausted budget. Verify it on your install before relying on it. Afterwards, confirm with `sisf doctor` that the observed revision is healthy: an accepted API call is not proof of recovery.
 
 Customer data in Zone 1 must survive a rollback intact; verify it before declaring recovery.
 

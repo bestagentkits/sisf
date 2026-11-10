@@ -49,9 +49,13 @@ People sign in to the dashboard with the providers the control process is given 
 | `SISF_SUPERVISOR_ADMIN_ADDR` | the supervisor's admin socket, which the emergency stop and rollback actions call |
 | `SISF_DOCS_DIR` | directory `docs.list` reads; unset means none |
 | `SISF_EDGE_COUNTERS_URL`, `EDGE_COUNTERS_TOKEN` | the edge's admin listener and its read-only counters token; setting the URL turns on the Decision Layer. The control process never holds `EDGE_ADMIN_TOKEN` |
+| `SISF_LOCAL_STORE_DIR` | the control zone's encrypted local secret store (`local:` references); its key is made on the first start |
+| `SISF_CONTROL_SECRET_<NAME>` | a secret the `env` provider serves as `env:<NAME>`; only in `secrets/control/runtime.env` |
 | `SISF_TRUSTED_PROXIES` | networks the edge connects from; the public bug-report route limits clients by the address the edge forwards only from these (default loopback) |
 
-In the simulation profile, sign-in defaults to the fake identity provider of `sisf sim oidc` on `127.0.0.1:7468`, which also stands in for GitHub sign-in, with the subject `owner` as the Owner. A real install must name at least one provider and one Owner.
+`sisf init` writes these: the non-secret settings into `factory.yaml` and from there into the Compose file or the Standalone unit, the client secrets and `EDGE_COUNTERS_TOKEN` into `secrets/control/runtime.env` only. In the simulation profile and a `--dev` install, sign-in is the fake identity provider of `sisf sim oidc` on `127.0.0.1:7468`, which the install starts itself and which also stands in for GitHub sign-in, with the subject `owner` as the Owner. A real install must name at least one provider and one Owner; `sisf init` refuses otherwise, and refuses the fake. `sisf doctor` checks the same: a provider and an Owner are configured, the external URL is sane, the fake is used only by the simulation (and, with a loud warning, a development install), and control reads the edge's counters with its own token and holds no edge admin token.
+
+In Docker mode control reaches the supervisor's admin socket as `unix:/run/sisf/admin/supervisor.sock` on the `supervisor-admin` volume the two share; in Standalone it is `127.0.0.1:7464`.
 
 Sessions, tokens, step-up confirmations and OAuth grants are held in memory in this release. Restarting the control process signs everyone out and voids every token.
 
@@ -59,7 +63,7 @@ An action that needs step-up (deciding an approval, a rollback, a budget change)
 
 ## State and budget
 
-`sisf state bootstrap` prepares the state store (migrations, one role per zone, the budget record). `sisf up` does this for you. The budget mode default and its confirmation are in [ADR 0007](../adr/0007-budget-default-unlimited.md); code is in `internal/budget`. `factoryd dispatcher --run-estimate-micros N` is the amount each run sets aside from the budget when it is claimed; the default 0 suits an unlimited budget, and a capped budget needs it set.
+`sisf state bootstrap` prepares the state store (migrations, one role per zone, the budget record). `sisf up` does this for you. The budget mode default and its confirmation are in [ADR 0007](../adr/0007-budget-default-unlimited.md); code is in `internal/budget`. `factoryd dispatcher --run-estimate-micros N` is the amount each run sets aside from the budget when it is claimed; `sisf init --budget-cap` sets it from `--run-estimate` (default a fifth of the cap), and an unlimited budget leaves it at 0. A rollback reserves through the rollback reserve that ordinary runs cannot reach and is never blocked by an exhausted budget; its nominal cost is recorded in the ledger either way (`internal/supervisor/release/rollback_budget.go`).
 
 ## Decision Layer
 
@@ -74,17 +78,28 @@ decision:
     endpoint: https://system-one.example.test   # HTTPS, or HTTP on loopback
     version: "1"            # an explicit protocol version, never "latest"
     timeout: 30s            # above zero, at most 2m
-    credential: secret://local/system-one       # optional secret reference, never a value
+    credential: env:SYSTEM_ONE_KEY  # optional secret reference ("env:NAME" or "local:path/name"), never a value
     model:
       provider: jev
       model: jev-1          # judgments reporting another route are refused
 ```
 
-The schema is `schemas/factory.schema.json`; the checks are in `pkg/manifest/decision_system_one.go`. The adapter refuses redirects, so a request and its credential only ever reach the configured endpoint. The control process has no secret provider configured yet, so a backend that needs a credential cannot be used in this release.
+The schema is `schemas/factory.schema.json`; the checks are in `pkg/manifest/decision_system_one.go`. The adapter refuses redirects, so a request and its credential only ever reach the configured endpoint.
+
+## Secrets of the control zone
+
+The control process opens two secret providers, and no other zone opens any (`cmd/factoryd/wiring/control_secret_providers.go`). `secrets.list_refs` lists their references, never values; a System One credential resolves through them.
+
+- `env:NAME` reads `SISF_CONTROL_SECRET_NAME` from the control zone's env file, `secrets/control/runtime.env`. Add the line there and restart; the variable is refused in every other zone's file, and nothing else in the environment is reachable through a reference.
+- `local:path/name` reads the encrypted store in `SISF_LOCAL_STORE_DIR` (`/var/lib/sisf/control/secrets` in the `control-data` volume, `<dir>/data/control/secrets` in Standalone). The store has no writing command yet, so use `env:` references for now.
+
+## Agents and builds
+
+Real coding and QA agents run only in Standalone mode under `trusted_code_only`; the flags and the refusal of `--agent-home` and `--qa-home` near the factory's protected paths are in the [quickstart](quickstart.md#real-agents-in-standalone). Candidate builds are held there in this release: the supervisor refuses to build an agent's code with the local backend.
 
 ## Edge tokens
 
-The edge (`cmd/edge`) reads two tokens from its environment. `EDGE_ADMIN_TOKEN` guards its admin listener (`--admin-listen`) and can change the traffic split; only the release supervisor holds it. `EDGE_COUNTERS_TOKEN` is optional and authorizes `GET /counters` and nothing else; every other request with it is refused with 403. The two must differ, or the edge refuses to start. The control process reads the counters with `EDGE_COUNTERS_TOKEN` through a client that has no way to change the split (`internal/edge/admin_client.go`).
+The edge (`cmd/edge`) reads two tokens from its environment. `EDGE_ADMIN_TOKEN` guards its admin listener (`--admin-listen`) and can change the traffic split; only the release supervisor holds it. `EDGE_COUNTERS_TOKEN`, which `sisf init` writes for the edge and the control process alike, authorizes `GET /counters` and nothing else; every other request with it is refused with 403. The two must differ, or the edge refuses to start. The control process reads the counters with `EDGE_COUNTERS_TOKEN` through a client that has no way to change the split (`internal/edge/admin_client.go`).
 
 ## Ports
 

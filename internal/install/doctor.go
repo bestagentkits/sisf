@@ -98,6 +98,7 @@ func (in *Installer) Doctor(ctx context.Context) (Report, error) {
 	in.checkManifest(&c, m)
 	in.checkRelease(ctx, &c, m)
 	in.checkSecrets(&c, m)
+	in.checkIdentity(&c, m)
 	if m.Mode == manifest.ModeDocker {
 		in.checkCompose(&c)
 	}

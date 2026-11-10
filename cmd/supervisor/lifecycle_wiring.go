@@ -9,6 +9,7 @@ import (
 	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/audit"
+	"github.com/bestagentkits/sisf/internal/budget"
 	"github.com/bestagentkits/sisf/internal/intake/prgate"
 	"github.com/bestagentkits/sisf/internal/redact"
 	"github.com/bestagentkits/sisf/internal/signing"
@@ -121,7 +122,10 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 		GitHub: client, Judge: judge, QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
 		QASigner: keys.QA, ArtifactSigner: keys.Artifact, Verifier: keys.Verifier, ApprovalVerifier: approvalVerifier,
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
-		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor},
+		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor,
+			// A rollback reserves through the rollback reserve and records
+			// its spend; an exhausted budget never blocks it.
+			Budget: budget.NewGate(budget.Config{Clock: d.clock})},
 	})
 }
 

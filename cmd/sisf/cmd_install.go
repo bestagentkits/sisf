@@ -13,23 +13,43 @@ import (
 func init() {
 	register(Command{
 		Path:    []string{"init"},
-		Args:    "--repo owner/name (--github-token-env NAME | --profile sim) [--mode standalone|docker] [--dir path]",
-		Summary: "Create a factory install: identity, secrets and manifest",
+		Args:    "--repo owner/name (--github-token-env NAME | --profile sim | --dev --github-credential gh-cli) [sign-in flags] [--mode standalone|docker] [--dir path]",
+		Summary: "Create a factory install: identity, sign-in, secrets and manifest",
 		Help: `
 Creates one factory in the install directory (default $` + homeEnv + ` or ~/.sisf/factory)
-with a factory_id of its own, a bootstrap Owner token, one credential set
-per zone, a root signing key and factory.yaml. Nothing is built or started.
+with a factory_id of its own, one credential set per zone, a root signing
+key and factory.yaml. Nothing is built or started.
 
 Secrets are written to <dir>/secrets with owner-only permissions and are
-never printed; the Owner token is in <dir>/secrets/control/owner-token. The
-GitHub token is read from the environment variable --github-token-env names,
-never from the command line.
+never printed. The GitHub token is read from the environment variable
+--github-token-env names, never from the command line.
+
+People sign in to the dashboard, REST, MCP and the CLI (sisf login) with
+OpenID Connect or GitHub; the Owner is granted locally, by identity:
+  --external-url URL     origin people reach control at (default http://127.0.0.1:7463)
+  --owner ISSUER#SUBJECT the Owner's sign-in identity (repeatable)
+  --oidc-issuer URL --oidc-client-id ID [--oidc-client-secret-file F | --oidc-client-secret-env NAME]
+  --github-login-client-id ID (--github-login-client-secret-file F | --github-login-client-secret-env NAME)
+     [--github-login-url URL] [--github-login-api-url URL]
+Client secrets are read from a file or a variable, never from a flag value.
+Outside the simulation, init refuses without a provider and an Owner.
+
+--profile sim runs against a fake GitHub on 127.0.0.1:7467 and signs in at
+the fake identity provider on 127.0.0.1:7468, as the Owner "owner".
+--dev (Standalone only, loopback only) signs in at that fake provider too,
+so no person has to click; with --github-credential gh-cli the GitHub token
+is taken from ` + "`gh auth token`" + ` at init and at every start. sisf doctor warns
+loudly about a development install.
 
 The default budget mode is unlimited. Confirm it with --confirm-unlimited and
-either --alert-threshold AMOUNT or --no-alert. Until confirmed, the factory
-takes in issues and starts no work.
+either --alert-threshold AMOUNT or --no-alert, or confirm a cap with
+--budget-cap AMOUNT [--alert-threshold AMOUNT] [--run-estimate AMOUNT]. Until
+confirmed, the factory takes in issues and starts no work.
 
---profile sim runs against a fake GitHub on 127.0.0.1:7467 instead of GitHub.`,
+A Standalone install can run real agents as local processes under
+trusted_code_only: --coder-agent claude|codex [--coder-model M] [--agent-home DIR]
+[--workspace-source URL|PATH], --qa-judge agent --qa-agent codex|claude
+[--qa-model M] [--qa-home DIR], --build-command CMD, --exec local.`,
 		Run: runInit,
 	})
 	register(Command{
@@ -75,67 +95,6 @@ func newInstaller(env *Env, dir, source string, debug bool) *install.Installer {
 		in.SourceDir, _ = os.Getwd() // an unknown directory is reported when a build needs it
 	}
 	return in
-}
-
-func runInit(ctx context.Context, env *Env, args []string) error {
-	var f installFlags
-	fs := newFlagSet("init")
-	bindInstallFlags(fs, &f)
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	dir, err := resolveDir(f.dir)
-	if err != nil {
-		return err
-	}
-	if f.mode == "" {
-		f.mode = string(manifest.ModeStandalone)
-	}
-	o, err := f.options(dir, os.Getenv)
-	if err != nil {
-		return err
-	}
-	if o.Budget, err = budgetFor(env, f); err != nil {
-		return err
-	}
-	res, err := newInstaller(env, dir, f.source, f.debug).Init(ctx, o)
-	if err != nil {
-		return err
-	}
-	return printInit(env, res)
-}
-
-// budgetFor takes the budget answer from the flags, or asks when the Owner
-// is at a terminal and gave none. Without either it is left unconfirmed.
-func budgetFor(env *Env, f installFlags) (install.BudgetChoice, error) {
-	choice, given, err := f.budget()
-	if err != nil || given || !isTerminal(env) {
-		return choice, err
-	}
-	return install.Prompt(env.Stdin, env.Stdout)
-}
-
-// isTerminal reports whether input comes from a person at a terminal.
-func isTerminal(env *Env) bool {
-	file, ok := env.Stdin.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
-}
-
-func printInit(env *Env, res install.InitResult) error {
-	if err := env.Printf("factory %s created in %s\nOwner token: %s (owner-only file; it is not printed)\n",
-		res.FactoryID, res.Options.Dir, res.OwnerTokenFile); err != nil {
-		return err
-	}
-	for _, w := range res.Warnings {
-		if err := env.Printf("warning: %s\n", w); err != nil {
-			return err
-		}
-	}
-	return env.Printf("next: sisf up --dir %s\n", res.Options.Dir)
 }
 
 func runUp(ctx context.Context, env *Env, args []string) error {

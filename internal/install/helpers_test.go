@@ -45,6 +45,17 @@ func initOptions(in *Installer, mode manifest.Mode) Options {
 	}
 }
 
+// production turns simulated options into those of a production install of
+// acme/shop signing in at a real OpenID Connect provider.
+func production(o *Options) {
+	o.Sim, o.Repo = false, manifest.Repository{Owner: "acme", Repo: "shop"}
+	o.Identity = Identity{
+		ExternalURL: "https://factory.example.com", Owners: []string{"https://accounts.example.com#owner-1"},
+		OIDCIssuer: "https://accounts.example.com", OIDCClientID: "sisf-factory",
+		OIDCClientSecret: core.NewSecretValue([]byte("oidc-client-secret-for-tests")),
+	}
+}
+
 // mustInit runs Init and fails the test on an error.
 func mustInit(t *testing.T, in *Installer, mode manifest.Mode) InitResult {
 	t.Helper()

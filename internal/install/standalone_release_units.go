@@ -35,6 +35,15 @@ func (in *Installer) standaloneSupervisorArgs(m *manifest.Manifest, c LifecycleC
 		if c.QAAgentBinary != "" {
 			args = append(args, "--qa-agent-binary="+c.QAAgentBinary)
 		}
+		if c.Agents.QAModel != "" {
+			args = append(args, "--qa-model="+c.Agents.QAModel)
+		}
+		if c.Agents.QAHome != "" {
+			args = append(args, "--qa-home="+c.Agents.QAHome)
+		}
+	}
+	if c.BuildCommand != "" {
+		args = append(args, "--build-command="+c.BuildCommand)
 	}
 	if c.ReleaseWindow != "" {
 		args = append(args, "--release-window="+c.ReleaseWindow, "--release-min-samples="+strconv.Itoa(c.ReleaseMinSamples))

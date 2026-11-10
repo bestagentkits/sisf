@@ -24,8 +24,9 @@ import (
 // deployment is one way of running the factory: Compose or Standalone.
 type deployment interface {
 	github() simGitHub
-	// control is the control plane's base URL and the Owner token.
-	control(t *testing.T) (base, ownerToken string)
+	// control is the control plane's base URL and the session cookie of the
+	// Owner, signed in through the fake identity provider.
+	control(t *testing.T) (base, session string)
 	// factoryYAML is the install's manifest, committed as the policy file.
 	factoryYAML(t *testing.T) []byte
 	// approvePolicy puts revision in force, as the Owner on the factory's host.
@@ -112,10 +113,10 @@ func foundation(t *testing.T, manifest []byte) map[string]string {
 // states reads the issue's state from the API and the dashboard.
 func states(t *testing.T, d deployment, issue string) (api, dashboard string) {
 	t.Helper()
-	base, owner := d.control(t)
+	base, session := d.control(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	api, dashboard, err := harness.SurfaceStates(ctx, base, owner, issue)
+	api, dashboard, err := harness.SurfaceStates(ctx, base, session, issue)
 	if err != nil {
 		return "error: " + err.Error(), ""
 	}

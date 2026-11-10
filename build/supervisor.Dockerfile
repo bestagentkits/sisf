@@ -18,6 +18,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/supervisor ./cmd/s
 FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
 RUN addgroup -S -g 10001 sisf && adduser -S -u 10001 -G sisf -H -s /sbin/nologin sisf
 RUN mkdir -p /var/lib/sisf/trust && chown -R sisf:sisf /var/lib/sisf/trust && chmod 700 /var/lib/sisf/trust
+# The supervisor's admin socket lives here, on a volume only the supervisor
+# and control mount; a new volume takes this owner and mode.
+RUN mkdir -p /run/sisf/admin && chown sisf:sisf /run/sisf/admin && chmod 700 /run/sisf/admin
 COPY --from=build /out/supervisor /usr/local/bin/supervisor
 USER 10001:10001
 CMD ["supervisor"]

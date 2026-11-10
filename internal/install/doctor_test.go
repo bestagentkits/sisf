@@ -54,8 +54,8 @@ func TestTheReportNeverContainsAnyTokenOrKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	key, _ := os.ReadFile(in.Layout.Secret(areaControl, "root-key.pem"))
-	owner, _ := os.ReadFile(in.Layout.Secret(areaControl, "owner-token"))
-	for _, secret := range [][]byte{token, key, owner} {
+	webhook, _ := os.ReadFile(in.Layout.Secret(areaControl, "webhook-secret"))
+	for _, secret := range [][]byte{token, key, webhook} {
 		if v := strings.TrimSpace(string(secret)); v != "" && strings.Contains(out.String(), v) {
 			t.Fatal("the report contains a secret")
 		}
@@ -243,7 +243,7 @@ func TestATamperedReleaseIsCaught(t *testing.T) {
 func TestSecretsReadableByOthersFailTheReport(t *testing.T) {
 	t.Parallel()
 	in := builtStandalone(t, healthyNet(), nil)
-	if err := os.Chmod(in.Layout.Secret(areaControl, "owner-token"), 0o644); err != nil {
+	if err := os.Chmod(in.Layout.Secret(areaControl, "webhook-secret"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if v := verdictOf(runDoctor(t, in), "secrets"); len(v) == 0 || v[0] != VerdictFail {
