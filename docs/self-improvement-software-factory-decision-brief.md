@@ -5,6 +5,7 @@
 > Nguồn xuất phát: `saasvn/tose-app`, HHP decision #574, kiến trúc phác thảo do Owner cung cấp.  
 > Mục đích: đưa cho coding agent trong **fresh context** để triển khai theo từng lát cắt có kiểm chứng.  
 > **Không** tự coi tài liệu này là quyền thay đổi production hay làm rộng quyền của agent.
+> English: [self-improvement-software-factory-decision-brief.en.md](self-improvement-software-factory-decision-brief.en.md). Bản tiếng Việt là bản gốc; khi hai bản lệch nhau thì bản tiếng Việt có hiệu lực.
 
 ## 0. Tóm tắt quyết định không được thay đổi
 
@@ -20,6 +21,20 @@
 10. **Authentication:** đăng nhập GitHub hoặc Google SSO. Cả hai ánh xạ vào actor/role nội bộ; GitHub App installation là quyền đối với repo, **khác** đăng nhập GitHub của người dùng. MCP từ xa dùng cơ chế OAuth 2.1 phù hợp đặc tả; browser WebMCP không có quyền vượt backend.
 11. **Ngân sách mặc định:** `unlimited` theo yêu cầu Owner; vẫn metering, hiển thị chi phí, cảnh báo và có thể cấu hình hard cap; không đồng nghĩa provider API cho phép chi vô hạn, không bao giờ dùng giá trị này để bỏ giới hạn security, concurrency, thời lượng hoặc số lần thử.
 12. **Feature mới và upstream contribution:** Owner quyết định tính năng mới, mở rộng phạm vi/permissions, thay đổi policy quan trọng, gửi contribution về package gốc. Trong phạm vi đã ủy quyền, agent có thể tự cải tiến chức năng đã có. Cải tiến vẫn thuộc **một factory deployment** trừ khi Owner chủ động chia sẻ.
+
+## 0.1 Thuật ngữ
+
+| Thuật ngữ | Nghĩa trong tài liệu này |
+|---|---|
+| Owner | Người sở hữu một factory deployment; là người duy nhất được mở rộng quyền, duyệt feature mới và thay policy. |
+| SoW / DoD | Scope of Work (phạm vi công việc) và Definition of Done (tiêu chí hoàn thành đo được) của một nhiệm vụ. |
+| LKG | Last Known Good: bản phát hành gần nhất đã được xác minh chạy tốt, dùng làm đích rollback. |
+| HHP | Hybrid Harness Platform, thiết kế nội bộ của TOSE mà SISF kế thừa ý tưởng (mục 16). |
+| Policy A/B/C | Ba chế độ ủy quyền theo từng deployment, kế thừa từ HHP: **A** theo yêu cầu (agent chỉ chạy khi con người khởi động), **B** chủ động đề xuất (agent đề xuất, con người cho phép trước khi sửa hoặc phát hành), **C** tự chủ có giới hạn (thay đổi qua mọi deterministic gate không cần duyệt kỹ thuật từng lần). Hành động của Publisher như gửi contribution upstream luôn cần con người. |
+| Decision Layer | Thành phần Zone 3 biến tín hiệu telemetry và feedback thành đề xuất có căn cứ. Nó chỉ khuyến nghị và phân loại, không cấp quyền. |
+| System One | Lớp model quyết định trả về phán đoán có kiểu (typed) thay vì văn bản tự do, được Decision Layer gọi qua adapter. |
+| Jev, Clef | Hai lựa chọn model System One cho adapter của Decision Layer; cấu hình được và ghim phiên bản. Lỗi, timeout hoặc câu trả lời sai schema thì fail closed. |
+| Trusted control surface | Supervisor, khóa ký, policy enforcement, QA baseline và quy tắc rollback: phần mà một ứng viên không được tự sửa (mục 6.3). |
 
 ## 1. Mục tiêu và anti-goals
 
@@ -190,10 +205,10 @@ Mọi protocol có cùng `list approvals`, `get proposal + evidence + diff + aff
 
 ### 6.1 QA độc lập
 
-- Coding agent khác identity/workspace với QA agent. QA có test baseline **read-only**, được khóa với commit và policy SHA, chạy deterministic suite + threat negative tests; có thể dùng judge model cho tiêu chí ngữ nghĩa.
+- Coding agent khác identity/workspace với QA agent. Khi deployment có từ hai model route trở lên, QA phải dùng model hoặc nhà cung cấp khác với coding agent để tránh chung điểm mù; nếu chỉ có một route thì receipt ghi `same_model_route: true` và policy có thể yêu cầu Owner duyệt thay vì tự publish. QA có test baseline **read-only**, được khóa với commit và policy SHA, chạy deterministic suite + threat negative tests; có thể dùng judge model cho tiêu chí ngữ nghĩa.
 - **Rubric khởi điểm cần hiệu chỉnh:** correctness/regression 30, security + auth 25, contract + data safety 20, UX/performance/output 15, observability + rollback 10. Default proposal `score >= 85/100`, không có một hard-gate failure nào; số này là **mức khởi điểm thiết kế**, không phải ngưỡng được nghiên cứu chứng minh.
 - *Hard gates:* tests/contract, permissions, migrations, secrets, confidence of observed build, independent evaluator, resource/budget policy, rollback readiness. QA score cao không được override hard failure.
-- Ghi `qa_receipt` ký bởi trusted evaluator: candidate digest, suite digest, baseline SHA, QA agent identity, checks, score, timestamp, expires, evaluator attempt.
+- Ghi `qa_receipt` ký bởi trusted evaluator: candidate digest, suite digest, baseline SHA, QA agent identity, `model_route` của cả coding agent và QA agent, checks, score, timestamp, expires, evaluator attempt.
 - QA không thể chấm mã chưa xây xong hoặc mượn receipt của commit khác.
 
 ### 6.2 Release pipeline
@@ -202,6 +217,7 @@ Mọi protocol có cùng `list approvals`, `get proposal + evidence + diff + aff
 
 - Có thể bắt đầu bằng **blue-green + smoke + monitor**, khi environment hỗ trợ canary traffic thì `5%→25%→100%` là **mặc định đề xuất, phải hiệu chỉnh**, không được ép platform không có traffic split.
 - Auto rollback khi metric vượt `rollback_error_rate` sau `min_sample_count` trong `window` và vượt baseline có ý nghĩa; ví dụ cấu hình minh họa: 5xx > 2% và tăng > 1 điểm phần trăm so baseline, `min_samples=100`, `window=10m`, 2 cửa sổ liên tiếp. Tất cả là thông số *khởi điểm* cần đánh giá trên lưu lượng thực; critical security/health failure rollback hoặc dừng ngay. Với lưu lượng thấp, không kết luận từ 1 request lỗi; dùng smoke/synthetic + hold.
+- **Chế độ lưu lượng thấp:** khi lưu lượng thực không đạt `min_sample_count` trong `window`, release chuyển sang đánh giá bằng synthetic checks bắt buộc. Synthetic suite phải phủ các luồng nêu trong DoD và chạy lặp lại suốt `low_traffic.min_hold` (ví dụ khởi điểm 30 phút, cần hiệu chỉnh). Đạt khi mọi lượt synthetic qua, health check ổn định và không có lỗi mới ở mức critical trong logs. Một lỗi từ request thật trong thời gian hold không tự kích hoạt rollback nhưng kéo dài hold và được ghi vào evidence. App không có synthetic suite thì không được tự publish ở chế độ này.
 - Khi thiếu metrics/không có bản phục hồi/broken deployment adapter: `pause/hold`, không tự coi thành công.
 - Rollback chỉ thay code/config tương thích; không tự ghi đè dữ liệu khách hàng bằng snapshot cũ. Cần versioned storage migrations tương thích ngược hoặc Owner approval.
 - Release monitor không được cập nhật lại QA baseline bởi chính bản đang được thử nghiệm.
@@ -210,6 +226,7 @@ Mọi protocol có cùng `list approvals`, `get proposal + evidence + diff + aff
 
 - Factory source bao gồm code của cả ba zone, cho phép làm ticket/sửa lỗi của Zone 2/3, **không** giới hạn tự cải tiến vào Webapp của người dùng.
 - Trusted release supervisor ở Zone 3 là tiến trình/image nhỏ, riêng và pinned, giữ LKG bên ngoài vùng sửa của ứng viên, nhưng **vẫn thuộc một factory deployment**. Không cần service ngoài factory để cứu factory.
+- **Ranh giới của supervisor:** "cùng deployment" nghĩa là supervisor được khai báo trong cùng `factory.yaml`, chung `factory_id` và lifecycle cài/gỡ. "Ngoài vùng sửa của ứng viên" nghĩa là cả bốn điều sau đều đúng: (1) supervisor chạy từ image riêng ghim digest, không build từ cùng artifact với ứng viên; (2) LKG, khóa ký và cấu hình rollback nằm trên volume hoặc store mà process của Zone 1/2 và mọi agent workspace không có quyền ghi; (3) release pipeline thông thường không có quyền thay digest của supervisor, chỉ chu kỳ governance có human approval mới làm được; (4) supervisor tự kiểm tra digest của chính nó khi khởi động và từ chối chạy nếu lệch manifest đã ký. Conformance checker của P0 kiểm cả bốn điều; thiếu điều nào thì self-update bị tắt.
 - Trong một lượt tự nâng cấp bản thân, candidate không được thay đồng thời trusted supervisor, signing keys, policy enforcement, QA baseline hoặc rollback rules. Những thay đổi đó là **governance change có human approval**, đi qua một chu kỳ cập nhật riêng.
 - DoD phải có thử nghiệm update Zone 3 không nhạy cảm (ví dụ trang read-only dashboard), self-monitor và auto-recover; chứng minh Zone 1 vẫn phục vụ khi Zone 2/3 khởi động lại.
 
@@ -225,6 +242,7 @@ Mọi protocol có cùng `list approvals`, `get proposal + evidence + diff + aff
 ## 8. Ngân sách và chi phí
 
 - Mặc định **`budget.mode: unlimited`**, vẫn có usage ledger, dashboard expense/retry alerts, per-provider key controls và cancel. `unlimited` là không áp *hạn mức tiền do SISF tự đặt*, không cam kết chi phí thực tế vô hạn hoặc dùng provider miễn phí.
+- **An toàn khi cài mới:** trình cài đặt hiển thị rõ mặc định `unlimited` và yêu cầu Owner xác nhận một lần, đồng thời đặt `budget.alert_threshold` hoặc chọn rõ là không đặt. Chưa xác nhận thì factory chỉ nhận intake, không claim nhiệm vụ. Vượt ngưỡng cảnh báo thì gửi thông báo, không tự dừng trừ khi Owner chọn `capped`.
 - Chủ factory có thể chọn `budget.mode: capped`, reset kỳ chi/one-time, dự phòng rollback. Đồng bộ chi phí theo provider adapter; chênh lệch/usage chưa đo được hiển thị `unverified`, không thổi phồng guarantee.
 - Dù unlimited tiền, mọi task có timeout, max attempts, concurrency, cancellation, rate limit và resource quotas để chống vòng lặp. Không tự nâng role/scope.
 - Khi người dùng đặt hard cap, giữ chỗ trước khi bắt đầu; side effects phải idempotent và chi phí vượt dự toán được phản ánh/suspend. Factory local không thể cưỡng chế nhà cung cấp model nếu provider không có hard limit: báo mức bảo đảm công khai.
@@ -283,20 +301,20 @@ sisf/                                      # OSS repo: github.com/bestagentkits/
   docs/adr/ docs/guides/ docs/security/
   .sisf/                                   # example instance policy/config
   AGENTS.md REVIEW.md DECISIONS.md FEATURES.md
-  LICENSE NOTICE.md SECURITY.md CONTRIBUTING.md
+  LICENSE NOTICE SECURITY.md CONTRIBUTING.md
 ```
 
 **Kế thừa:** ứng viên tái sử dụng từ `saasvn/tose-app/internal/harnessplatform` gồm `delegation`, `decision`, `scope`, `budget`, `promotion`, `upstream`. Phải loại `tose-v2/internal/policy`, TOSE OAuth/wallet/K8s binding và xác minh provenance/license trước khi public. `internal/services/piadapter` hiện gắn chặt vào K8s/agentsec; chỉ tái sử dụng contract và phần adapter giao thức, không mang cả TOSE agent service sang OSS. Giữ nguyên vận hành TOSE hiện tại trong lúc trích xuất.
 
-**Giấy phép:** MIT, Owner đã chốt ngày 2026-11-10 (`LICENSE`, bản quyền AgentKit.best). Giấy phép này áp dụng cho mã và tài liệu viết mới trong repo; mã trích từ TOSE chỉ được đưa vào sau khi audit provenance và dependencies, tài liệu này không tự cấp phép mã nguồn cũ. MIT không có điều khoản cấp bằng sáng chế như Apache-2.0; nếu sau này cần thì đổi giấy phép là một quyết định của Owner qua ADR.
+**Giấy phép:** Apache-2.0, Owner đã chốt ngày 2026-11-10 (`LICENSE` và `NOTICE`, bản quyền AgentKit.best). Giấy phép này áp dụng cho mã và tài liệu viết mới trong repo; mã trích từ TOSE chỉ được đưa vào sau khi audit provenance và dependencies, tài liệu này không tự cấp phép mã nguồn cũ.
 
 ## 12. SoW và thứ tự triển khai (fixed scope cho coding agent)
 
 ### P0: ADR + kiến trúc bất biến + khảo sát quyền tái sử dụng
 
-**Trong phạm vi:** lập ADR three-zones-one-deployment, trust roots, policy precedence; license/provenance; interface contracts; kịch bản test single-deployment; đánh dấu adapter capability matrix.
+**Trong phạm vi:** tách các bất biến ở mục 0 thành ADR riêng trong `docs/adr/` (three-zones-one-deployment, trust roots và ranh giới supervisor, policy precedence, GitHub SSOT) và để tài liệu này trỏ tới chúng thay vì lặp lại; duy trì bản tiếng Anh của brief song song với bản tiếng Việt; license/provenance; interface contracts; kịch bản test single-deployment; đánh dấu adapter capability matrix.
 
-**DoD:** tài liệu + tests/conformance checker từ chối cấu hình thiếu zone; tách được danh tính factory/runtime IDs; không thay production TOSE; owner chấp thuận thay đổi API/format.
+**DoD:** tài liệu + tests/conformance checker từ chối cấu hình thiếu zone hoặc supervisor không đạt ranh giới ở mục 6.3; mỗi bất biến ở mục 0 có một ADR; bản EN và VI của brief khớp nhau; tách được danh tính factory/runtime IDs; không thay production TOSE; owner chấp thuận thay đổi API/format.
 
 ### P1: Bản chạy ba zone local/Compose + GitHub workflow
 
@@ -306,13 +324,13 @@ sisf/                                      # OSS repo: github.com/bestagentkits/
 
 ### P2: Built-in agents + QA + phát hành có rollback
 
-**Trong phạm vi:** hai built-in agent adapter thực đầu tiên, đề xuất Claude CLI và Codex; Pi là adapter built-in thứ ba trước khi tuyên bố v1 hoàn thiện; QA độc lập, baseline & typed QA receipts, preview, blue-green hoặc canary, observed revision, metrics threshold, automatic rollback, issue close sau verification; chứng minh factory tự cập nhật phần Zone 3 không nhạy cảm.
+**Trong phạm vi:** hai built-in agent adapter thực đầu tiên, đề xuất Claude CLI và Codex; Pi là adapter built-in thứ ba trước khi tuyên bố v1 hoàn thiện; QA độc lập, baseline & typed QA receipts, preview, blue-green hoặc canary, observed revision, metrics threshold, automatic rollback, issue close sau verification; chứng minh factory tự cập nhật phần Zone 3 không nhạy cảm; **một lát mỏng của Decision Layer**: một loại tín hiệu telemetry thật của Zone 1 (ví dụ error rate theo endpoint) đi hết luồng ở mục 4.2 và sinh ra proposal có evidence, chưa cần Jev/Clef, phân loại bằng quy tắc deterministic là đủ.
 
-**DoD:** agent A làm patch, agent B QA, score và hard gates xác minh, triển khai Zone 1, inject lỗi khiến rollback tự động, issue mở lại/blocked với evidence; một self-update của factory và rollback được kiểm thử trên cùng deployment.
+**DoD:** agent A làm patch, agent B QA, score và hard gates xác minh, triển khai Zone 1, inject lỗi khiến rollback tự động, issue mở lại/blocked với evidence; một self-update của factory và rollback được kiểm thử trên cùng deployment; tín hiệu telemetry có đủ mẫu tạo đúng một proposal kèm evidence, tín hiệu thiếu mẫu cho kết quả `ignore` hoặc `collect_more_evidence` và không tạo issue.
 
 ### P3: Auth/surfaces/Decision Layer/observability hoàn chỉnh
 
-**Trong phạm vi:** GitHub/Google SSO; role/grant; dashboard đầy đủ; API/OpenAPI, CLI, remote MCP OAuth 2.1, WebMCP feature-detected; `DECISIONS.md` với typed model adapter Jev/Clef, telemetry-driven goal proposals, feature catalog/changelog/docs/ADR, approvals cross-surface, secrets, budgets default unlimited và tùy chọn capped.
+**Trong phạm vi:** GitHub/Google SSO; role/grant; dashboard đầy đủ; API/OpenAPI, CLI, remote MCP OAuth 2.1, WebMCP feature-detected; `DECISIONS.md` với typed model adapter Jev/Clef, mở rộng lát Decision Layer của P2 thành telemetry-driven goal proposals đầy đủ, feature catalog/changelog/docs/ADR, approvals cross-surface, secrets, budgets default unlimited và tùy chọn capped.
 
 **DoD:** cùng quyền và hành vi trên 5 surfaces; login 2 IdP và cross-role/cross-repo tests; Decision Layer đưa ra đề xuất có dẫn chứng và chọn do-nothing khi thiếu bằng chứng; Owner duyệt feature từ bất kỳ surface nào nhưng final human verification không thể bị agent bypass; budget measured và stop honored.
 
@@ -327,6 +345,15 @@ sisf/                                      # OSS repo: github.com/bestagentkits/
 - Tuyên bố full support tất cả host trước E2E.
 - Tự phát hành phiên bản sửa trust root, auth provider, policy evaluator hoặc rollback supervisor mà không có human approval.
 - Public multi-tenant billing/marketplace hoặc network Git server thay GitHub.
+
+### Đề xuất chờ Owner duyệt: thứ tự giao của v1
+
+> **Chưa có hiệu lực.** Mục này không thay đổi quyết định nào ở mục 0 và coding agent không được coi nó là phạm vi đã duyệt. Nó chỉ đề xuất đổi **thứ tự giao**, không bỏ tính năng.
+
+- **Đề xuất:** gọi P0–P2 là v1 và phát hành công khai ngay sau P2, với Docker Compose, CLI và dashboard chỉ đọc. Remote MCP, WebMCP, Google SSO và các profile serverless vẫn là quyết định sản phẩm, nhưng giao sau v1 theo P3–P4.
+- **Lý do:** P3 hiện gom 5 surfaces, 2 IdP, Decision Layer đầy đủ, secrets và budgets, tương đương một sản phẩm riêng. Phát hành sau P2 cho phép đo các chỉ số giá trị ở mục 13 trên người dùng thật trước khi đầu tư phần còn lại.
+- **Đánh đổi:** v1 chỉ có đăng nhập GitHub và chưa điều khiển được qua MCP; ai cần Google SSO hoặc agent điều khiển từ xa phải chờ.
+- **Cách duyệt:** Owner chấp thuận bằng một ADR; khi đó mục này chuyển thành phạm vi chính thức và P4 không còn là điều kiện của bản phát hành OSS đầu tiên.
 
 ## 13. DoD hệ thống tổng thể (acceptance matrix)
 
@@ -345,7 +372,7 @@ sisf/                                      # OSS repo: github.com/bestagentkits/
 | SISF-11 | `DECISIONS.md` đổi qua PR của agent không duyệt | Policy baseline cũ tiếp tục có hiệu lực; Decision Layer không có quyền thay tiêu chuẩn |
 | SISF-12 | GitHub/Google SSO & OAuth | issuer/sub/audience, session, scopes, repo install mapping, approval step-up, revoke, CSRF negative tests đạt |
 | SISF-13 | API/CLI/MCP/WebMCP/Dashboard | Cùng action service, phân quyền tương đương; WebMCP thiếu hỗ trợ vẫn có fallback |
-| SISF-14 | Budget default unlimited/capped | Unlimited là default rõ ràng; chi phí được ghi nhận; capped reserve & stop, provider không hỗ trợ hard cap được đánh dấu |
+| SISF-14 | Budget default unlimited/capped | Unlimited là default rõ ràng và Owner đã xác nhận lúc cài; cảnh báo phát khi vượt `alert_threshold`; chi phí được ghi nhận; capped reserve & stop, provider không hỗ trợ hard cap được đánh dấu |
 | SISF-15 | Hai factory deployments cùng upstream | Cải tiến cục bộ A không đổi B hoặc upstream; contribution cần người dùng kích hoạt |
 | SISF-16 | Chạy trên backend mới | Conformance matrix đủ lifecycle/isolation/rollback/observability; nếu thiếu thì đánh dấu unsupported |
 | SISF-17 | No-activity / no-benefit telemetry | Không tạo issue vô hạn; có `ignore`/`observe`/`stop` đúng triết lý sản phẩm |
@@ -354,6 +381,20 @@ sisf/                                      # OSS repo: github.com/bestagentkits/
 | SISF-20 | Release thiếu metrics hoặc khả năng rollback | Hold/blocked, không tự publish trên mô hình giả định thành công |
 
 **Release GO** chỉ khi không có High/Critical security issue chưa xử lý, có báo cáo E2E thật và phần nào ghi experimental được đánh dấu trung thực. **Dừng/MODIFY** nếu không chứng minh một deployment 3 zone, nếu factory mất khả năng phục hồi, nếu agent tự cấp quyền, nếu tự close issue chưa đạt DoD, hoặc nếu không tạo giá trị hơn workflow GitHub+agents đơn giản.
+
+### Chỉ số giá trị
+
+Điều kiện "tạo giá trị hơn workflow GitHub+agents đơn giản" được đo bằng cách chạy cùng một tập issue qua hai đường: SISF và một baseline gồm GitHub Actions gọi một coding agent rồi con người review và merge. Thu thập từ P2 trở đi, trên ít nhất một repo thật:
+
+| Chỉ số | Cách đo | SISF phải |
+|---|---|---|
+| Tỷ lệ issue hoàn tất không cần người can thiệp | Issue đạt `Verified` mà không có thao tác thủ công ngoài approval bắt buộc, chia tổng issue đã claim | Cao hơn baseline |
+| Tỷ lệ thay đổi lỗi | Release bị rollback hoặc issue bị reopen trong cửa sổ quan sát, chia tổng release | Không cao hơn baseline |
+| Thời gian từ issue đến verified | Trung vị từ `Ready` đến `Verified` | Không chậm hơn baseline quá mức Owner chấp nhận |
+| Chi phí mỗi issue verified | Chi phí model và hạ tầng từ usage ledger, chia số issue `Verified` | Được báo cáo; Owner quyết định mức chấp nhận |
+| Tỷ lệ proposal hữu ích | Proposal từ Decision Layer được Owner chấp thuận, chia tổng proposal | Được báo cáo; quá thấp là tín hiệu STOP cho Decision Layer |
+
+Ngưỡng cụ thể do Owner đặt sau khi có số liệu baseline đầu tiên; quyết định GO/MODIFY/STOP ở P4 phải trích các chỉ số này.
 
 ## 14. Implementation instructions for the coding agent
 
@@ -375,7 +416,7 @@ sisf/                                      # OSS repo: github.com/bestagentkits/
 
 - QA score khởi điểm 85/100 **cộng** hard gates; canary 5→25→100 khi platform hỗ trợ; threshold lỗi ví dụ 5xx>2% và delta>1pp với đủ mẫu. Không áp dụng máy móc cho app không có HTTP request hoặc lưu lượng thấp.
 - Local SQLite WAL, multi-worker Postgres; Compose là full-deployment profile đầu tiên; 2 built-in agents đầu tiên Claude CLI + Codex, tiếp Pi. Có thể thay nếu proof chỉ ra adapter khác khả thi hơn mà vẫn đủ hai backend.
-- GitHub App OAuth cho repository workflow, OIDC Google cho SSO, role mapping cần rõ. Repo OSS là `bestagentkits/sisf`, giấy phép MIT (đã chốt); mã kế thừa từ TOSE vẫn phải qua audit quyền sở hữu trước khi đưa vào.
+- GitHub App OAuth cho repository workflow, OIDC Google cho SSO, role mapping cần rõ. Repo OSS là `bestagentkits/sisf`, giấy phép Apache-2.0 (đã chốt); mã kế thừa từ TOSE vẫn phải qua audit quyền sở hữu trước khi đưa vào.
 
 ## 16. Evidence & nguồn nghiên cứu
 
