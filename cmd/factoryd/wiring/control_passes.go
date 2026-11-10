@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/intake"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
@@ -158,7 +159,7 @@ func (c *Control) failed(id string, now time.Time) {
 // carries a hidden marker, so an effect performed twice shows once; a failed
 // one is tried again after a growing wait. Messages of other topics belong
 // to other components and are left alone. The supervisor's recovery
-// reports are delivered here too, as issue comments.
+// reports and held build notices are delivered here too, as issue comments.
 func (c *Control) deliverOutbox(ctx context.Context) error {
 	var pending []state.OutboxMessage
 	err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
@@ -177,6 +178,8 @@ func (c *Control) deliverOutbox(ctx context.Context) error {
 			sendErr = intake.Deliver(ctx, c.cfg.GitHub, m)
 		case release.TopicRecoveryReport:
 			sendErr = c.deliverRecoveryReport(ctx, m)
+		case handoff.TopicBuildHeld:
+			sendErr = c.deliverBuildHeld(ctx, m)
 		default:
 			continue
 		}

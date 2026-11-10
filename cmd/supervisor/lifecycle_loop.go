@@ -26,7 +26,7 @@ func runStages(ctx context.Context, st *stages.Stages, l *lifecycleFlags, clock 
 			log.Info("patch refused by the builder; the run's next attempt follows", "issue", issue.String())
 		}
 		for _, issue := range res.Build.Held {
-			log.Warn("candidate build held: it failed repeatedly on GitHub, the image builder or the configuration, and is retried without spending an attempt", "issue", issue.String())
+			log.Warn("candidate build held: it failed repeatedly on GitHub, the image builder or the configuration; no attempt was spent and it waits for the Owner's retry of the issue", "issue", issue.String())
 		}
 		select {
 		case <-ctx.Done():
@@ -48,6 +48,7 @@ func (l *lifecycleFlags) startLifecycle(ctx context.Context, d lifecycleDeps, op
 		return nil, err
 	}
 	opts.Rollback = st.Pipeline.OwnerRollback
+	opts.HeldBuilds = heldBuilds(d.stop.store)
 	return func(ctx context.Context) {
 		if l.adopter != nil && !l.adopter.until(ctx, l, d.clock, d.log) {
 			return

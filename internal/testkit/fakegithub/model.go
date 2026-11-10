@@ -151,6 +151,8 @@ type repo struct {
 	releases    []*release
 	// commits holds the files of each commit made with Commit, by SHA.
 	commits map[string]map[string][]byte
+	// entryKinds marks "commit:path" entries that are not plain files.
+	entryKinds map[string]string
 }
 
 func repoKey(owner, name string) string { return strings.ToLower(owner + "/" + name) }

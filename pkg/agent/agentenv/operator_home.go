@@ -3,6 +3,8 @@ package agentenv
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 )
@@ -34,10 +36,21 @@ func CheckOperatorHome(home string, protected ...string) error {
 	return nil
 }
 
+// caseInsensitivePaths is set where the default file system ignores the
+// letter case of names, as on macOS and Windows.
+var caseInsensitivePaths = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+
 // Overlaps reports whether a and b are the same directory or one lies
-// inside the other, after symbolic links are resolved.
-func Overlaps(a, b string) bool {
+// inside the other, after symbolic links are resolved. Where the default
+// file system ignores letter case, so does the comparison: /Users/x/Trust
+// and /users/x/trust are one directory there.
+func Overlaps(a, b string) bool { return overlaps(a, b, caseInsensitivePaths) }
+
+func overlaps(a, b string, foldCase bool) bool {
 	a, b = resolved(a), resolved(b)
+	if foldCase {
+		a, b = strings.ToLower(a), strings.ToLower(b)
+	}
 	inside := func(child, parent string) bool {
 		rel, err := filepath.Rel(parent, child)
 		return err == nil && (rel == "." || filepath.IsLocal(rel))

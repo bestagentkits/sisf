@@ -86,6 +86,10 @@ func (r *recordingRepo) ReadFile(_ context.Context, _ github.RepoRef, _ core.Com
 	return []byte(content), nil
 }
 
+func (r *recordingRepo) CommitExists(context.Context, github.RepoRef, core.CommitSHA) error {
+	return nil
+}
+
 func (r *recordingRepo) CommitToBranch(context.Context, github.RepoRef, github.BranchCommit) (core.CommitSHA, error) {
 	r.commits++
 	if r.commitErr != nil {

@@ -139,7 +139,8 @@ func TestTheTrustedCodeOnlyModelIsAlwaysAWarning(t *testing.T) {
 	t.Parallel()
 	r := runDoctor(t, builtStandalone(t, healthyNet(), nil))
 	if v := verdictOf(r, "trust model"); len(v) != 1 || v[0] != VerdictWarn || !strings.Contains(detailOf(r, "trust model"), "trusted_code_only") ||
-		!strings.Contains(detailOf(r, "trust model"), "--agent-home") || !strings.Contains(detailOf(r, "trust model"), "--qa-home") {
+		!strings.Contains(detailOf(r, "trust model"), "--agent-home") || !strings.Contains(detailOf(r, "trust model"), "--qa-home") ||
+		!strings.Contains(detailOf(r, "trust model"), "--agent-binary") || !strings.Contains(detailOf(r, "trust model"), "--qa-agent-binary") {
 		t.Fatalf("trust model = %v %q", v, detailOf(r, "trust model"))
 	}
 }

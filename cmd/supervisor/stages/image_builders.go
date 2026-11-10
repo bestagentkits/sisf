@@ -131,7 +131,9 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 		}
 	}
 	if out.Digest.Validate() != nil || out.Image == "" {
-		return ImageResult{}, core.NewError(core.CodeUnavailable, "the sandboxed build reported no image and digest")
+		// The command ran and succeeded on the candidate, whose own build
+		// scripts decide what it prints: the candidate's fault.
+		return ImageResult{}, refuse(core.CodeGuardFailed, RefusalNoImageReported, "", "the build command reported no image and digest for the candidate")
 	}
 	return out, nil
 }

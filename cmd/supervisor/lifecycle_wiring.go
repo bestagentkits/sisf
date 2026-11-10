@@ -35,6 +35,9 @@ type lifecycleDeps struct {
 // buildLifecycle wires the build, QA and release stages of the factory.
 // Keys are loaded here and handed on only as signers.
 func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*stages.Stages, error) {
+	if l.buildOutageLimit < 1 {
+		return nil, core.NewError(core.CodeInvalidArgument, "--build-outage-limit must be at least 1")
+	}
 	if d.stop == nil {
 		return nil, core.NewError(core.CodeInvalidArgument, "the lifecycle needs the state store; set the variable --state-dsn-env names")
 	}
@@ -121,7 +124,8 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 		GitHub: client, Judge: judge, QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
 		QASigner: keys.QA, ArtifactSigner: keys.Artifact, Verifier: keys.Verifier, ApprovalVerifier: approvalVerifier,
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
-		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor},
+		BuildRetry: stages.BuildRetry{HoldAfter: l.buildOutageLimit},
+		Release:    release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor},
 	})
 }
 

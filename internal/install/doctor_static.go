@@ -32,7 +32,7 @@ func (in *Installer) checkManifest(c *collector, m *manifest.Manifest) {
 		c.warn("artifacts", "not built yet, with placeholder digests: %s; a release must build them before tasks can run", strings.Join(unbuiltUnits, ", "))
 	}
 	if m.TrustedCodeOnly {
-		c.warn("trust model", "trusted_code_only: agents run as local processes of your user, unconfined and able to read the factory's processes and their environment; run only code and agents you trust here. With the dispatcher's --agent-home or the supervisor's --qa-home an agent also runs with that home, such as your own, and can read and change everything in it")
+		c.warn("trust model", "trusted_code_only: agents run as local processes of your user, unconfined and able to read the factory's processes and their environment; run only code and agents you trust here. With the dispatcher's --agent-home or the supervisor's --qa-home an agent also runs with that home, such as your own, and can read and change everything in it. A launcher named by --agent-binary or --qa-agent-binary is trusted on your word to run the agent in a sandbox; nothing checks that it does")
 	}
 }
 

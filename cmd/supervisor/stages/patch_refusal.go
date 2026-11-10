@@ -31,6 +31,21 @@ const (
 	// RefusalBuildTimeout: the build command ran on the candidate past its
 	// timeout.
 	RefusalBuildTimeout RefusalReason = "build_timeout"
+	// RefusalNoImageReported: the build command exited 0 on the candidate
+	// without reporting a valid image and digest, which the candidate's own
+	// build scripts decide.
+	RefusalNoImageReported RefusalReason = "no_image_reported"
+	// RefusalPathRejected: the patch names a path no commit can hold, such
+	// as one inside .git, or GitHub refused the tree of its paths.
+	RefusalPathRejected RefusalReason = "path_rejected"
+	// RefusalNotARegularFile: the patch edits a path the base holds as a
+	// directory, a submodule or a link.
+	RefusalNotARegularFile RefusalReason = "not_a_regular_file"
+	// RefusalBaseFileTooLarge: the patch edits a base file larger than
+	// GitHub's contents API returns (1 MB).
+	RefusalBaseFileTooLarge RefusalReason = "base_file_too_large"
+	// RefusalCommitTooLarge: GitHub refused the patch's files as too large.
+	RefusalCommitTooLarge RefusalReason = "commit_too_large"
 )
 
 // PatchRefusal is a build failure that lies in the patch. The build stage

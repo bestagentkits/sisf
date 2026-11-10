@@ -63,9 +63,25 @@ func (c *RESTClient) BranchHead(ctx context.Context, repo RepoRef, branch string
 	return sha, sha.Validate()
 }
 
+// CommitExists returns nil when repo holds commit, and NOT_FOUND when it
+// does not or the repository cannot be seen. Its errors name the step
+// StepBaseCommit.
+func (c *RESTClient) CommitExists(ctx context.Context, repo RepoRef, commit core.CommitSHA) error {
+	if err := validateRepo(repo); err != nil {
+		return err
+	}
+	if err := commit.Validate(); err != nil {
+		return err
+	}
+	_, err := c.call(ctx, http.MethodGet, repoPath(repo, "git", "commits", string(commit)), nil, nil, nil)
+	return atStep(err, StepBaseCommit)
+}
+
 // CommitToBranch writes the files of bc as one commit on top of its base and
 // points its branch at that commit, creating the branch when it does not
 // exist. It never touches any other branch. It returns the new commit.
+// Every error names the step it came from (ErrorStep), and a path no
+// commit can hold (see ValidTreePath) is refused before any write.
 func (c *RESTClient) CommitToBranch(ctx context.Context, repo RepoRef, bc BranchCommit) (core.CommitSHA, error) {
 	if err := validateRepo(repo); err != nil {
 		return "", err
@@ -89,12 +105,12 @@ func (c *RESTClient) CommitToBranch(ctx context.Context, repo RepoRef, bc Branch
 		err = decode(resp, &base)
 	}
 	if err != nil {
-		return "", err
+		return "", atStep(err, StepBaseCommit)
 	}
 	entries := make([]map[string]any, 0, len(bc.Files))
 	for _, path := range slices.Sorted(maps.Keys(bc.Files)) {
-		if !plainPath(path) {
-			return "", core.NewError(core.CodeInvalidArgument, "file path "+path+" is not a plain path inside the repository")
+		if !ValidTreePath(path) {
+			return "", contentFault(core.CodeInvalidArgument, StepTree, ContentBadPath, "file path "+path+" is not a path a commit can hold")
 		}
 		entry := map[string]any{"path": path, "mode": "100644", "type": "blob", "sha": nil}
 		if content := bc.Files[path]; content != nil {
@@ -111,7 +127,7 @@ func (c *RESTClient) CommitToBranch(ctx context.Context, repo RepoRef, bc Branch
 		err = decode(resp, &tree)
 	}
 	if err != nil {
-		return "", err
+		return "", atStep(err, StepTree)
 	}
 	body := map[string]any{"message": bc.Message, "tree": tree.SHA, "parents": []string{string(bc.Base)}}
 	if bc.Author != "" {
@@ -122,13 +138,13 @@ func (c *RESTClient) CommitToBranch(ctx context.Context, repo RepoRef, bc Branch
 		err = decode(resp, &commit)
 	}
 	if err != nil {
-		return "", err
+		return "", atStep(err, StepCommit)
 	}
 	sha := core.CommitSHA(commit.SHA)
 	if err := sha.Validate(); err != nil {
-		return "", err
+		return "", atStep(err, StepCommit)
 	}
-	return sha, c.pointBranch(ctx, repo, bc.Branch, sha)
+	return sha, atStep(c.pointBranch(ctx, repo, bc.Branch, sha), StepBranch)
 }
 
 // pointBranch creates branch at sha, or moves it there when it exists.
