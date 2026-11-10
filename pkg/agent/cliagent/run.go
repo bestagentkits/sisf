@@ -56,18 +56,20 @@ type run struct {
 	// done is closed when the run has finished and its state is final.
 	done chan struct{}
 
-	mu       sync.Mutex
-	phase    agent.Phase
-	detail   string
-	updated  time.Time
-	events   []agent.Event
-	dropped  bool
-	usage    *Usage
-	turns    int
-	final    *Outcome
-	stopped  stopReason
-	exited   bool
-	logTails []byte
+	mu      sync.Mutex
+	phase   agent.Phase
+	detail  string
+	updated time.Time
+	events  []agent.Event
+	dropped bool
+	// truncated is set when an output line over the size limit was skipped.
+	truncated bool
+	usage     *Usage
+	turns     int
+	final     *Outcome
+	stopped   stopReason
+	exited    bool
+	logTails  []byte
 }
 
 func newRun(b *Backend, ref agent.RunRef, in Input, version string) *run {
@@ -221,6 +223,7 @@ func (r *run) readOutput(f *os.File) {
 		line, over, err := readLine(br, maxLine)
 		if over {
 			r.mu.Lock()
+			r.truncated = true
 			r.appendLocked(agent.EventError, map[string]any{"detail": "an output line over the size limit was skipped"})
 			r.mu.Unlock()
 		}

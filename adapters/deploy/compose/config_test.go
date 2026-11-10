@@ -43,6 +43,8 @@ func TestMalformedConfigurationIsRefused(t *testing.T) {
 		"environment without value":  func(c *compose.Config) { c.Env = []string{"JUSTANAME"} },
 		"volume mounted at the root": func(c *compose.Config) { c.Volumes = []compose.VolumeMount{{Name: "data", Target: "/"}} },
 		"volume with a dot segment":  func(c *compose.Config) { c.Volumes = []compose.VolumeMount{{Name: "data", Target: "/a/../etc"}} },
+		"a negative memory limit":    func(c *compose.Config) { c.Limits.MemoryBytes = -1 },
+		"a negative process limit":   func(c *compose.Config) { c.Limits.Pids = -1 },
 	} {
 		cfg := validConfig(brokenEdge{})
 		mutate(&cfg)

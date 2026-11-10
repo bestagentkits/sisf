@@ -40,7 +40,7 @@ func TestFreshDockerInstallIsOneComposeProjectOfOneFactory(t *testing.T) {
 			}
 		}
 	}
-	want := []string{"up -d --wait state", "run --rm --no-deps state-bootstrap", "up -d --wait"}
+	want := []string{"up -d --wait state", "run --rm --no-deps state-bootstrap", "--profile bootstrap run --rm --no-deps trust-bootstrap", "up -d --wait"}
 	if len(composeCalls) != len(want) {
 		t.Fatalf("compose calls = %v", composeCalls)
 	}
@@ -50,8 +50,8 @@ func TestFreshDockerInstallIsOneComposeProjectOfOneFactory(t *testing.T) {
 		}
 	}
 	// The state store is healthy and prepared before any zone starts.
-	if !strings.Contains(composeCalls[2], "--profile sim") {
-		t.Errorf("the simulation profile was not enabled: %s", composeCalls[2])
+	if !strings.Contains(composeCalls[3], "--profile sim") {
+		t.Errorf("the simulation profile was not enabled: %s", composeCalls[3])
 	}
 
 	rendered, err := os.ReadFile(in.Layout.Compose())
@@ -97,7 +97,7 @@ func TestEveryDockerCommandNamesOnlyThingsOfThisInstall(t *testing.T) {
 				t.Errorf("image tag outside this install's prefix: %s", l)
 			}
 		}
-		for _, danger := range []string{"docker rm", "docker stop", "docker kill", "docker volume", "docker network", "docker system", "prune"} {
+		for _, danger := range []string{"docker rm", "docker stop", "docker kill", "docker volume", "docker network create", "docker network rm", "docker system", "prune"} {
 			if strings.Contains(l, danger) {
 				t.Errorf("up runs %q", l)
 			}
@@ -191,8 +191,16 @@ func TestDockerStopRestartAndDownActOnTheOneProject(t *testing.T) {
 			t.Errorf("%s ran %q", step.want, last)
 		}
 	}
-	if got := len(exec.lines()) - before; got != 4 {
-		t.Errorf("four lifecycle commands ran %d programs", got)
+	// Each down first lists the containers the supervisor deployed for this
+	// factory, which Compose does not know of; there are none here.
+	var extra []string
+	for _, l := range exec.lines()[before:] {
+		if !strings.HasPrefix(l, "docker compose") {
+			extra = append(extra, l)
+		}
+	}
+	if len(extra) != 2 || extra[0] != "docker ps -aq --filter label=sisf.factory=sisf-hello-app" || extra[1] != extra[0] {
+		t.Errorf("the lifecycle commands ran %v besides Compose", extra)
 	}
 	// Removing volumes never touches the install's secrets or manifest.
 	if _, err := os.Stat(in.Layout.Config()); err != nil {
@@ -218,7 +226,7 @@ func TestTheSupervisorIsMeasuredInAContainerWithNothingMountedAndNoNetwork(t *te
 	_, exec := upDocker(t)
 	var measure string
 	for _, l := range exec.lines() {
-		if strings.HasPrefix(l, "docker run") {
+		if strings.HasPrefix(l, "docker run") && strings.Contains(l, "--entrypoint supervisor") {
 			measure = l
 		}
 	}

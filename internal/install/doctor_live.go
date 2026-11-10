@@ -155,7 +155,7 @@ func (in *Installer) checkGitHub(ctx context.Context, c *collector, m *manifest.
 	}
 	token := core.NewSecretValue([]byte(strings.TrimSpace(string(raw))))
 	url := strings.TrimRight(api, "/") + "/repos/" + m.Repository.Owner + "/" + m.Repository.Repo
-	code, body, err := in.httpGet(ctx, url, http.Header{
+	code, header, body, err := in.httpProbe(ctx, url, http.Header{
 		"Authorization": {"Bearer " + string(token.Reveal())},
 		"Accept":        {"application/vnd.github+json"},
 	})
@@ -181,6 +181,29 @@ func (in *Installer) checkGitHub(ctx context.Context, c *collector, m *manifest.
 	default:
 		c.ok("github", "%s is reachable and the token may write to it", repo)
 	}
+	if code == http.StatusOK {
+		checkTokenScopes(c, header)
+	}
+}
+
+// checkTokenScopes warns when a classic token carries the workflow scope.
+// The supervisor pushes agents' candidates to sisf/** branches with this
+// token; with the workflow scope a candidate that slipped past the
+// builder's protected-path refusal could add or change a workflow. GitHub
+// reports a classic token's scopes in X-OAuth-Scopes; fine-grained and app
+// tokens send no such header, and then nothing is said.
+func checkTokenScopes(c *collector, header http.Header) {
+	raw, ok := header["X-Oauth-Scopes"]
+	if !ok {
+		return
+	}
+	for _, scope := range strings.Split(strings.Join(raw, ","), ",") {
+		if strings.TrimSpace(scope) == "workflow" {
+			c.warn("github token scope", "the token carries the workflow scope, so code pushed with it can change CI workflows; issue a token without it")
+			return
+		}
+	}
+	c.ok("github token scope", "the token does not carry the workflow scope")
 }
 
 // checkRollback proves the supervisor is running its self-check and that a

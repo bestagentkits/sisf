@@ -7,6 +7,7 @@ import (
 	"text/template"
 
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/manifest"
 	"github.com/bestagentkits/sisf/templates"
 )
 
@@ -15,6 +16,12 @@ import (
 // an image built on this host; neither can move.
 type Images struct {
 	Factoryd, Supervisor, Edge, App, Sisf string
+	// Runner and QARunner are the sandboxes candidate builds and QA run in.
+	Runner, QARunner string
+}
+
+func (i Images) all() []string {
+	return []string{i.Factoryd, i.Supervisor, i.Edge, i.App, i.Sisf, i.Runner, i.QARunner}
 }
 
 // ComposeData is what the Compose template is filled with. Nothing in it is
@@ -24,33 +31,52 @@ type ComposeData struct {
 	Project    string
 	FactoryID  core.FactoryID
 	Repository string
-	// SecretsDir, ConfigFile and ReleaseFile are absolute host paths.
-	SecretsDir, ConfigFile, ReleaseFile string
-	GitHubAPIURL                        string
-	Images                              Images
-	Sim, Debug                          bool
+	// SecretsDir, ConfigFile, ReleaseFile and SimAgentDir are absolute host
+	// paths.
+	SecretsDir, ConfigFile, ReleaseFile, SimAgentDir string
+	GitHubAPIURL                                     string
+	Images                                           Images
+	Sim, Debug                                       bool
 	// BootstrapCommand is the command of the one-shot state step, as a
 	// JSON array (which is also a YAML flow sequence).
 	BootstrapCommand string
+	// AppDigest is the release of the application `sisf up` installs, and
+	// AppContainer the name the supervisor's deployment backend gives its
+	// container, so the backend observes it as the last known good release.
+	AppDigest, AppContainer string
+	Host                    HostFacts
+	Lifecycle               LifecycleChoice
 
 	PostgresImage                                                  string
 	PortEdge, PortApp, PortControl, PortSupervisor, PortDispatcher int
-	PortFakeGitHub, PortPostgres                                   int
+	PortFakeGitHub, PortPostgres, PortEgress, PortEdgeAdmin        int
+	PortDockerFilter, PortDispatcherAdmin                          int
 }
 
 // newComposeData fills the fixed parts of the data for an install.
-func newComposeData(l Layout, o Options, images Images, bootstrap []string) (ComposeData, error) {
+func newComposeData(l Layout, o Options, images Images, bootstrap []string, host HostFacts) (ComposeData, error) {
 	cmd, err := json.Marshal(bootstrap)
 	if err != nil {
 		return ComposeData{}, invalidf("the bootstrap command cannot be encoded")
 	}
+	proj := project(o.FactoryID)
+	if proj != string(o.FactoryID) {
+		// The supervisor names the containers it deploys after the factory,
+		// so the factory's name must already carry the project's prefix.
+		return ComposeData{}, invalidf("Docker mode needs a factory id that starts with sisf- and has no dot, not %q", o.FactoryID)
+	}
+	app := digestOf(images.App)
 	return ComposeData{
-		Project: project(o.FactoryID), FactoryID: o.FactoryID, Repository: o.Repo.Owner + "/" + o.Repo.Repo,
-		SecretsDir: l.Dir + "/secrets", ConfigFile: l.Config(), ReleaseFile: l.ReleaseManifest(),
+		Project: proj, FactoryID: o.FactoryID, Repository: o.Repo.Owner + "/" + o.Repo.Repo,
+		SecretsDir: l.Dir + "/secrets", ConfigFile: l.Config(), ReleaseFile: l.ReleaseManifest(), SimAgentDir: l.SimAgentDir(),
 		GitHubAPIURL: o.GitHubAPIURL, Images: images, Sim: o.Sim, Debug: o.Debug,
 		BootstrapCommand: string(cmd), PostgresImage: PostgresImage,
+		AppDigest: string(app), AppContainer: deployedContainer(o.FactoryID, "app", app),
+		Host: host, Lifecycle: lifecycleChoice(o, manifest.ModeDocker),
 		PortEdge: PortEdge, PortApp: PortApp, PortControl: PortControl, PortSupervisor: PortSupervisor,
 		PortDispatcher: PortDispatcher, PortFakeGitHub: PortFakeGitHub, PortPostgres: PortPostgres,
+		PortEgress: PortEgress, PortEdgeAdmin: PortEdgeAdmin, PortDockerFilter: PortDockerFilter,
+		PortDispatcherAdmin: PortDispatcherAdmin,
 	}, nil
 }
 
@@ -61,7 +87,7 @@ var pathPattern = regexp.MustCompile(`^/[A-Za-z0-9_./+-]*$`)
 
 // check refuses data that would let a value break out of its place in the file.
 func (d ComposeData) check() error {
-	for _, p := range []string{d.SecretsDir, d.ConfigFile, d.ReleaseFile} {
+	for _, p := range []string{d.SecretsDir, d.ConfigFile, d.ReleaseFile, d.SimAgentDir} {
 		if !pathPattern.MatchString(p) {
 			return invalidf("the install path %q has characters Compose files cannot carry; use letters, digits and . _ + - /", p)
 		}
@@ -69,12 +95,15 @@ func (d ComposeData) check() error {
 	if err := checkGitHubURL(d.GitHubAPIURL); err != nil {
 		return err
 	}
-	for _, image := range []string{d.Images.Factoryd, d.Images.Supervisor, d.Images.Edge, d.Images.App, d.Images.Sisf} {
+	for _, image := range d.Images.all() {
 		if !digestPinned(image) {
 			return invalidf("image %q is not pinned by digest", image)
 		}
 	}
-	return nil
+	if err := d.Host.check(); err != nil {
+		return err
+	}
+	return d.Lifecycle.check()
 }
 
 // RenderCompose fills the Compose template. It refuses images that are not

@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/bestagentkits/sisf/cmd/factoryd/lifecycle"
 	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/cmd/supervisor/runcontrol"
+	"github.com/bestagentkits/sisf/pkg/agent/agentenv"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -20,6 +22,7 @@ type dispatcherFlags struct {
 	work                                        time.Duration
 	agent, patchFile, adminListen               string
 	workspaceRoot, workspaceSource, artifactDir string
+	agentBinary, agentEnv, agentHome            string
 	sandboxed                                   bool
 	// estimate is what each run sets aside from a capped budget.
 	estimate int64
@@ -32,7 +35,10 @@ func (d *dispatcherFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&d.workspaceRoot, "workspace-root", "", "absolute directory of the fresh per-attempt workspaces of a real agent")
 	fs.StringVar(&d.workspaceSource, "workspace-source", "", "repository URL or path, without credentials, workspaces are checked out from")
 	fs.StringVar(&d.artifactDir, "artifact-dir", "", "absolute directory real agents write their artifacts to")
-	fs.BoolVar(&d.sandboxed, "sandboxed", false, "declare that this process runs inside a sandbox (required for pi)")
+	fs.BoolVar(&d.sandboxed, "sandboxed", false, "declare that this process runs inside a sandbox; with an isolating execution backend in the manifest it lets a real agent run as its child (always required for pi)")
+	fs.StringVar(&d.agentBinary, "agent-binary", "", "absolute path of a launcher that runs the real coding agent in a sandbox and keeps its standard input and output")
+	fs.StringVar(&d.agentEnv, "agent-env", "", "comma-separated names of variables passed to a real coding agent besides its credential variables; SISF_, EDGE_ and DOCKER_ names are refused")
+	fs.StringVar(&d.agentHome, "agent-home", "", "absolute HOME, such as the operator's own, a real coding agent runs with to find the login kept there; only under trusted_code_only, without --sandboxed or --agent-binary, and apart from the factory's secrets, state and trust; TMPDIR stays private")
 	fs.Int64Var(&d.estimate, "run-estimate-micros", 0, "amount each run sets aside from a capped budget, in micro-units; a capped budget needs it")
 	fs.StringVar(&d.adminListen, "admin-listen", "", "address of the run control route the supervisor's emergency stop calls; needs "+runcontrol.EnvToken)
 }
@@ -57,7 +63,7 @@ func runDispatcher(ctx context.Context, args []string, getenv func(string) strin
 		return err
 	}
 	defer func() { _ = s.store.Close() }()
-	zone, err := newAgentZone(s, df)
+	zone, err := newAgentZone(s, df, getenv)
 	if err != nil {
 		return err
 	}
@@ -102,7 +108,7 @@ func runDispatcher(ctx context.Context, args []string, getenv func(string) strin
 
 // newAgentZone builds the coding agent and the patch exporter. The agent
 // zone has no GitHub client: it never holds the repository's credentials.
-func newAgentZone(s zoneSetup, df dispatcherFlags) (*wiring.AgentZone, error) {
+func newAgentZone(s zoneSetup, df dispatcherFlags, getenv func(string) string) (*wiring.AgentZone, error) {
 	patch := ""
 	if df.patchFile != "" {
 		raw, err := os.ReadFile(df.patchFile)
@@ -115,7 +121,25 @@ func newAgentZone(s zoneSetup, df dispatcherFlags) (*wiring.AgentZone, error) {
 		Store: s.store, Clock: s.clock, Agent: df.agent, FakeWork: df.work, FakePatch: patch,
 		WorkspaceRoot: df.workspaceRoot, WorkspaceSource: df.workspaceSource, ArtifactDir: df.artifactDir,
 		Sandboxed: df.sandboxed, Owner: "exporter@" + wiring.DispatcherOwner(),
+		Binary: df.agentBinary, Manifest: s.manifest, AgentEnv: agentenv.Names(df.agentEnv),
+		Home: df.agentHome, ProtectedDirs: protectedDirs(s),
+		LookupEnv: func(name string) (string, bool) {
+			v := getenv(name)
+			return v, v != ""
+		},
 	})
+}
+
+// protectedDirs are the factory's directories this process knows of: the
+// manifest's, which in a Standalone install is the install directory that
+// holds the secrets, the state and the trust volume, and the SQLite state
+// store's.
+func protectedDirs(s zoneSetup) []string {
+	dirs := []string{wiring.StateStoreDir(string(s.env.StateDSN.Reveal()))}
+	if config, err := filepath.Abs(s.env.Config); err == nil {
+		dirs = append(dirs, filepath.Dir(config))
+	}
+	return dirs
 }
 
 // exportLoop runs the exporter every poll interval until ctx ends.

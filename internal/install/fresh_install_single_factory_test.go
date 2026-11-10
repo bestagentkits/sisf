@@ -131,12 +131,20 @@ func TestStandaloneUnitsGetOnlyTheEnvironmentOfTheirOwnZone(t *testing.T) {
 			t.Errorf("the dispatcher, Zone 2, was given %s", want)
 		}
 	}
-	for _, name := range []string{"hello-app", "sisf-edge"} {
-		env := envOf(r.proc(t, name))
-		for _, key := range controlOnlyKeys {
-			if strings.Contains(env, key+"=") {
-				t.Errorf("%s was given %s", name, key)
-			}
+	// The edge holds its admin token and nothing else of the secrets.
+	if edge := r.proc(t, "sisf-edge").cmd.Env; len(edge) != 1 || !strings.HasPrefix(edge[0], "EDGE_ADMIN_TOKEN=") {
+		t.Errorf("the edge was given %d variables, want its admin token alone", len(edge))
+	}
+	// The supervisor holds what releasing needs; the dispatcher none of it.
+	supervisor := envOf(r.proc(t, "sisf-supervisor"))
+	for _, want := range []string{"SISF_GITHUB_TOKEN=", "EDGE_ADMIN_TOKEN=", "SISF_APPROVAL_PUBLIC_KEY=", "SISF_STATE_DSN=", "SISF_DISPATCHER_ADMIN_TOKEN="} {
+		if !strings.Contains(supervisor, want) {
+			t.Errorf("the supervisor lacks %s", want)
+		}
+	}
+	for _, banned := range []string{"EDGE_ADMIN_TOKEN=", "SISF_APPROVAL_PUBLIC_KEY="} {
+		if strings.Contains(dispatcher, banned) {
+			t.Errorf("the dispatcher, Zone 2, was given %s", banned)
 		}
 	}
 	for _, p := range r.procs {

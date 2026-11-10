@@ -164,7 +164,7 @@ func (s *session) Line(line []byte) cliagent.Update {
 		if r.IsError || subtype != "success" {
 			u.Final = &cliagent.Outcome{Detail: "the CLI reported " + subtype + ": " + cliagent.Clip(r.Result, 512)}
 		} else {
-			u.Final = &cliagent.Outcome{OK: true}
+			u.Final = &cliagent.Outcome{OK: true, Result: r.Result, HasResult: true}
 			u.Events = append(u.Events, cliagent.Emit{Kind: agent.EventMessage, Payload: map[string]any{"text": cliagent.Clip(r.Result, clip), "final": true}})
 		}
 		return u

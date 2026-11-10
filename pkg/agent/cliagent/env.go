@@ -42,17 +42,15 @@ func cleanEnv(env []string) []string {
 	return out
 }
 
-// findBinary resolves name against the PATH of env. An entry that is not an
-// absolute directory is skipped, so a binary planted in the working
-// directory is never picked up. A name with a path separator is used as is.
+// findBinary resolves name against the PATH of env, never this process's
+// own. An entry that is not an absolute directory is skipped, so a binary
+// planted in the working directory is never picked up. A name with a path
+// separator is used as is.
 func findBinary(name string, env []string) (string, error) {
 	if strings.ContainsRune(name, filepath.Separator) {
 		return exec.LookPath(name)
 	}
-	path, ok := envValue(env, "PATH")
-	if !ok {
-		path = os.Getenv("PATH")
-	}
+	path, _ := envValue(env, "PATH")
 	for _, dir := range filepath.SplitList(path) {
 		if !filepath.IsAbs(dir) {
 			continue

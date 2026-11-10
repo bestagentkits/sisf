@@ -2,6 +2,7 @@ package install
 
 import (
 	"errors"
+	"github.com/bestagentkits/sisf/internal/signing"
 	"net/http"
 	"strings"
 	"testing"
@@ -20,16 +21,36 @@ const dockerPS = `{"Service":"state","State":"running","Health":"healthy"}
 
 const supervisorJSON = `{"factory_id":"sisf-hello-app","self_check":{"passed":true},"lkg":{"recorded":true}}`
 
-// dockerFactory is a Docker install that was brought up with fakes; ps is
-// what `docker compose ps` answers afterwards.
-func dockerFactory(t *testing.T, ps, status string) *Installer {
+// dockerHost is what the fake Docker host answers about the release
+// topology: who is on the docker network, who reaches the filters and the
+// edge's admin listener, what the edge publishes, and the trust volume.
+type dockerHost struct {
+	dockerNetwork    string
+	dispatcherReach  bool
+	edgePorts        string
+	adminRefusal     string
+	missingImage     bool
+	trust            map[string][]byte
+	supervisorBlocks bool
+}
+
+// healthyDockerHost is a host on which every topology check passes; the
+// trust volume holds the delegations `sisf up` issues.
+func healthyDockerHost(t *testing.T, in *Installer) dockerHost {
 	t.Helper()
-	in, exec, _ := newTestInstaller(t)
-	exec.answer = buildAnswers
-	if err := in.Up(t.Context(), UpOptions{Init: initOptions(in, manifest.ModeDocker)}); err != nil {
-		t.Fatalf("Up: %v", err)
+	m, err := in.Layout.LoadManifest()
+	must(t, err)
+	files, err := in.trustMaterial(t.Context(), m.FactoryID, signing.SignedManifest{})
+	must(t, err)
+	return dockerHost{
+		dockerNetwork: "sisf-hello-app-supervisor sisf-hello-app-docker-filter-runner sisf-hello-app-docker-filter-deploy",
+		edgePorts:     "7460/tcp=127.0.0.1:7460 ", adminRefusal: "wget: server returned error: HTTP/1.1 401 Unauthorized", trust: files,
 	}
-	exec.answer = func(c Cmd) ([]byte, error) {
+}
+
+// answer is the fake Docker CLI of a running project.
+func (h dockerHost) answer(ps, status string) func(Cmd) ([]byte, error) {
+	return func(c Cmd) ([]byte, error) {
 		args := strings.Join(c.Args, " ")
 		switch {
 		case strings.Contains(args, " ps "):
@@ -39,9 +60,58 @@ func dockerFactory(t *testing.T, ps, status string) *Installer {
 				return nil, errors.New("no such container")
 			}
 			return []byte(status), nil
+		case strings.HasPrefix(args, "network inspect"):
+			return []byte(h.dockerNetwork), nil
+		case strings.HasPrefix(args, "inspect --format"):
+			return []byte(h.edgePorts), nil
+		case strings.HasPrefix(args, "image inspect"):
+			if h.missingImage {
+				return nil, errors.New("no such image")
+			}
+			return []byte("sha256:x"), nil
+		case strings.Contains(args, " exec -T supervisor wget") && strings.Contains(args, "edge-admin"):
+			return nil, errors.New("docker compose: exit status 1: " + h.adminRefusal)
+		case strings.Contains(args, " exec -T supervisor wget"):
+			if h.supervisorBlocks {
+				return nil, errors.New("exit status 1")
+			}
+			return nil, nil
+		case strings.Contains(args, " exec -T dispatcher wget"):
+			if h.dispatcherReach {
+				return nil, nil
+			}
+			return []byte("wget: bad address"), errors.New("exit status 1")
+		case strings.Contains(args, " exec -T supervisor cat /var/lib/sisf/trust/"):
+			data, ok := h.trust[c.Args[len(c.Args)-1][len("/var/lib/sisf/trust/"):]]
+			if !ok {
+				return nil, errors.New("no such file")
+			}
+			return data, nil
 		}
 		return nil, nil
 	}
+}
+
+// dockerFactory is a Docker install that was brought up with fakes; ps is
+// what `docker compose ps` answers afterwards.
+func dockerFactory(t *testing.T, ps, status string) *Installer {
+	t.Helper()
+	return dockerFactoryOn(t, ps, status, nil)
+}
+
+// dockerFactoryOn is dockerFactory on a host the test may change.
+func dockerFactoryOn(t *testing.T, ps, status string, change func(*dockerHost)) *Installer {
+	t.Helper()
+	in, exec, _ := newTestInstaller(t)
+	exec.answer = buildAnswers
+	if err := in.Up(t.Context(), UpOptions{Init: initOptions(in, manifest.ModeDocker)}); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	host := healthyDockerHost(t, in)
+	if change != nil {
+		change(&host)
+	}
+	exec.answer = host.answer(ps, status)
 	in.HTTP = &http.Client{Transport: healthyNet().without("127.0.0.1:7465/healthz"), Timeout: time.Second}
 	return in
 }
@@ -51,16 +121,12 @@ func TestAHealthyDockerFactoryPassesAndSeesZonesThroughTheirContainers(t *testin
 	in := dockerFactory(t, dockerPS, supervisorJSON)
 	r := runDoctor(t, in)
 	for _, c := range r.Checks {
-		if c.Verdict != VerdictOK && c.Name != "artifacts" && c.Name != "container sandbox" {
+		if c.Verdict != VerdictOK && c.Name != "artifacts" {
 			t.Errorf("%s: %s %s", c.Name, c.Verdict, c.Detail)
 		}
 	}
-	// Container sandboxing is not available yet, and the doctor says so
-	// as a warning rather than claiming isolation it does not have.
-	if v := verdictOf(r, "container sandbox"); len(v) != 1 || v[0] != VerdictWarn {
-		t.Errorf("container sandbox = %v, want one warning", v)
-	}
-	for _, name := range []string{"container app", "container dispatcher", "container state", "compose isolation"} {
+	for _, name := range []string{"container app", "container dispatcher", "container state", "compose isolation",
+		"docker filters", "edge admin", "runner images", "delegated keys", "lifecycle"} {
 		if len(verdictOf(r, name)) == 0 {
 			t.Errorf("no %q check ran", name)
 		}

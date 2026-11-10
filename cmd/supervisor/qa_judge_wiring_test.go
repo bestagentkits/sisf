@@ -91,7 +91,7 @@ func judgeSetup(t *testing.T, env map[string]string) (*lifecycleFlags, judgeDeps
 		return v, ok
 	}
 	return l, judgeDeps{
-		manifest: &manifest.Manifest{FactoryID: "acme-hello"}, docker: isolatingExec{proven: true}, trustDir: t.TempDir(),
+		manifest: &manifest.Manifest{FactoryID: "acme-hello"}, docker: isolatingExec{proven: true}, protected: []string{t.TempDir()},
 		dsnEnv: "STATE_DSN", rootKeyEnv: "ROOT_KEY", lookupEnv: lookup, clock: core.SystemClock{},
 		materials: agentjudge.MaterialsFunc(func(context.Context, qa.Candidate) (agentjudge.Materials, error) {
 			return agentjudge.Materials{}, nil
@@ -149,7 +149,7 @@ func TestTheQAAgentSeesItsOwnCredentialsAndNoneOfTheSupervisors(t *testing.T) {
 	}
 	l, d := judgeSetup(t, secrets)
 	l.qa.env = "PROXY_CA"
-	env, err := l.qa.environment(d, "/qa/home")
+	env, err := l.qa.environment(d, "/qa/home", "/qa/home/tmp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,12 +159,12 @@ func TestTheQAAgentSeesItsOwnCredentialsAndNoneOfTheSupervisors(t *testing.T) {
 	}
 	for _, name := range []string{"SISF_GITHUB_TOKEN", "EDGE_ADMIN_TOKEN", "ROOT_KEY", "STATE_DSN", "sisf_anything", "DOCKER_HOST", "HOME"} {
 		l.qa.env = name
-		if _, err := l.qa.environment(d, "/qa/home"); !core.HasCode(err, core.CodePermissionDenied) {
+		if _, err := l.qa.environment(d, "/qa/home", "/qa/home/tmp"); !core.HasCode(err, core.CodePermissionDenied) {
 			t.Errorf("passing %s to the QA agent: %v", name, err)
 		}
 	}
 	l.qa.env = "NOT A NAME"
-	if _, err := l.qa.environment(d, "/qa/home"); !core.HasCode(err, core.CodeInvalidArgument) {
+	if _, err := l.qa.environment(d, "/qa/home", "/qa/home/tmp"); !core.HasCode(err, core.CodeInvalidArgument) {
 		t.Errorf("a malformed variable name: %v", err)
 	}
 }
@@ -172,9 +172,8 @@ func TestTheQAAgentSeesItsOwnCredentialsAndNoneOfTheSupervisors(t *testing.T) {
 func TestTheQAAgentsDirectoriesLieApartFromTheTrustVolume(t *testing.T) {
 	t.Parallel()
 	for name, change := range map[string]func(l *lifecycleFlags, d judgeDeps){
-		"workspace inside the trust volume": func(l *lifecycleFlags, d judgeDeps) { l.qa.workspaceRoot = filepath.Join(d.trustDir, "qa") },
-		"home is the trust volume":          func(l *lifecycleFlags, d judgeDeps) { l.qa.home = d.trustDir },
-		"workspace holds the trust volume":  func(l *lifecycleFlags, d judgeDeps) { l.qa.workspaceRoot = filepath.Dir(d.trustDir) },
+		"workspace inside the trust volume": func(l *lifecycleFlags, d judgeDeps) { l.qa.workspaceRoot = filepath.Join(d.protected[0], "qa") },
+		"workspace holds the trust volume":  func(l *lifecycleFlags, d judgeDeps) { l.qa.workspaceRoot = filepath.Dir(d.protected[0]) },
 	} {
 		l, d := judgeSetup(t, nil)
 		change(l, d)
@@ -183,9 +182,9 @@ func TestTheQAAgentsDirectoriesLieApartFromTheTrustVolume(t *testing.T) {
 		}
 	}
 	l, d := judgeSetup(t, nil)
-	l.qa.home = "relative/home"
-	if _, err := l.judge(context.Background(), d); !core.HasCode(err, core.CodeInvalidArgument) || strings.Contains(err.Error(), "relative/home") {
-		t.Errorf("a relative home: %v", err)
+	l.qa.workspaceRoot = "relative/qa"
+	if _, err := l.judge(context.Background(), d); !core.HasCode(err, core.CodeInvalidArgument) || strings.Contains(err.Error(), "relative/qa") {
+		t.Errorf("a relative workspace root: %v", err)
 	}
 }
 

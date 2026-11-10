@@ -50,6 +50,16 @@ func TestUntrustedCodeIsBuiltOnlyInAnIsolatingSandbox(t *testing.T) {
 	if err != nil || b.Name() != "sandbox:docker" {
 		t.Fatalf("with the docker backend: %v, %v", b, err)
 	}
+	// A sandboxed builder with no command would fail every build, so the
+	// choice itself is refused, before any patch is charged for it.
+	for name, choice := range map[string]ExecutionChoice{
+		"no command": {Profile: ProfileProduction, Agent: "claude", Docker: isolating{}, BuildTimeout: time.Minute},
+		"no timeout": {Profile: ProfileProduction, Agent: "claude", Docker: isolating{}, BuildArgv: []string{"build"}},
+	} {
+		if _, err := SelectImageBuilder(ctx, choice); !core.HasCode(err, core.CodeInvalidArgument) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
 	// The local backend cannot be passed off as the isolating one.
 	if _, err := (SandboxImages{Exec: local, Argv: []string{"x"}, Timeout: time.Minute}).BuildImage(ctx, ImageRequest{Untrusted: true}); !core.HasCode(err, core.CodePermissionDenied) {
 		t.Fatalf("an untrusted build on the local backend: %v", err)

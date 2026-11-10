@@ -117,7 +117,10 @@ func (f *Filter) containerAction(w http.ResponseWriter, r *http.Request, rt rout
 	if err := json.Unmarshal(body, &seen); err != nil || !fullID.MatchString(seen.ID) {
 		return deny(http.StatusBadGateway, "the daemon's inspect answer is not understood")
 	}
-	if seen.Config.Labels[f.cfg.RunnerLabel] != string(f.cfg.RunnerValue) {
+	if f.cfg.Role == RoleDeploy && !f.deployed(seen.Config.Labels) {
+		return deny(http.StatusForbidden, "the container is not a deployed unit of this factory")
+	}
+	if f.cfg.Role != RoleDeploy && seen.Config.Labels[f.cfg.RunnerLabel] != string(f.cfg.RunnerValue) {
 		return deny(http.StatusForbidden, "the container is not a runner of this factory")
 	}
 	if rt.endpoint == endpointInspect {

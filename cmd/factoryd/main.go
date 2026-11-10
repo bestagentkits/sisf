@@ -52,6 +52,7 @@ const usage = `usage:
   factoryd control
   factoryd dispatcher [--agent fake|claude|codex|pi] [--fake-agent-work DURATION] [--fake-agent-patch FILE]
                       [--workspace-root DIR --workspace-source REPO --artifact-dir DIR] [--sandboxed]
+                      [--agent-binary LAUNCHER] [--agent-env NAME,...] [--agent-home DIR]
                       [--admin-listen ADDR] [--run-estimate-micros N]
   factoryd policy request --revision SHA
   factoryd policy approve --revision SHA [--approval ID]

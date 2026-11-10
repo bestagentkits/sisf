@@ -14,9 +14,9 @@ import (
 
 // Helpers that bring a fake-backed Standalone install up and keep it running.
 
-// standaloneUnitCount is supervisor, app, control, dispatcher, edge and the
+// standaloneUnitCount is supervisor, control, dispatcher, edge and the
 // fake GitHub of the simulation profile.
-const standaloneUnitCount = 6
+const standaloneUnitCount = 5
 
 // buildAnswers makes the fake "go build" write a distinct file and the fake
 // docker answer like a daemon that built and measured everything.
@@ -31,8 +31,12 @@ func buildAnswers(c Cmd) ([]byte, error) {
 		return nil, os.WriteFile(out, []byte("program "+out), 0o755)
 	case c.Name == "docker" && c.Args[0] == "image":
 		return digest(c.Args[len(c.Args)-1]), nil
+	case c.Name == "docker" && c.Args[0] == "run" && slices.Contains(c.Args, "stat"):
+		return []byte("20\n"), nil
 	case c.Name == "docker" && c.Args[0] == "run":
 		return digest("supervisor executable"), nil
+	case c.Name == "docker" && c.Args[0] == "network" && c.Args[1] == "inspect":
+		return []byte("172.30.0.0/16 fd00::/64 \n"), nil
 	}
 	return nil, nil
 }

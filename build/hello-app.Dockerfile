@@ -19,5 +19,8 @@ FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34
 RUN addgroup -S -g 10001 sisf && adduser -S -u 10001 -G sisf -H -s /sbin/nologin sisf
 RUN mkdir -p /data && chown -R sisf:sisf /data
 COPY --from=build /out/hello-app /usr/local/bin/hello-app
+# Defaults for a revision the supervisor deploys, which is given only its
+# SISF_REVISION: listen on the app port of its network, keep data on /tmp.
+ENV HELLO_ADDR=0.0.0.0:7461 HELLO_DATA_DIR=/tmp/hello-data
 USER 10001:10001
 CMD ["hello-app"]

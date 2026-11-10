@@ -22,6 +22,7 @@ const (
 	endpointWait
 	endpointLogs
 	endpointRemove
+	endpointList
 )
 
 // route is a request the filter recognised: the endpoint, the API version
@@ -70,7 +71,7 @@ func (f *Filter) parseRoute(r *http.Request) (route, *denial) {
 	switch {
 	case r.URL == nil || !strings.HasPrefix(r.RequestURI, "/"):
 		return route{}, deny(http.StatusBadRequest, "the request target must be a plain path")
-	case strings.ContainsAny(r.RequestURI, "%\\#") || r.URL.RawPath != "" || r.URL.Fragment != "":
+	case strings.ContainsAny(requestPath(r.RequestURI), "%\\#") || strings.Contains(r.RequestURI, "#") || r.URL.RawPath != "" || r.URL.Fragment != "":
 		return route{}, deny(http.StatusBadRequest, "encoded or escaped request paths are refused")
 	case path.Clean(r.URL.Path) != r.URL.Path || strings.Contains(r.URL.Path, "//"):
 		return route{}, deny(http.StatusBadRequest, "the request path must be clean")
@@ -91,17 +92,33 @@ func (f *Filter) parseRoute(r *http.Request) (route, *denial) {
 		rt.endpoint = endpointInfo
 	case rest == "/containers/create" && r.Method == http.MethodPost:
 		rt.endpoint = endpointCreate
+	case rest == "/containers/json" && r.Method == http.MethodGet && f.cfg.Role == RoleDeploy:
+		rt.endpoint = endpointList
 	default:
 		if d := rt.containerEndpoint(r.Method, rest); d != nil {
 			return route{}, d
 		}
 	}
-	query, d := checkQuery(r.URL.RawQuery, queryRules[rt.endpoint])
+	rules := queryRules[rt.endpoint]
+	if f.cfg.Role == RoleDeploy {
+		if !deployEndpoints[rt.endpoint] {
+			return route{}, deny(http.StatusForbidden, "endpoint "+r.Method+" "+rest+" is not allowed")
+		}
+		rules = deployQueryRules[rt.endpoint]
+	}
+	query, d := checkQuery(r.URL.RawQuery, rules)
 	if d != nil {
 		return route{}, d
 	}
 	rt.query = query
 	return rt, nil
+}
+
+// requestPath is the request target up to its query. The query is parsed and
+// each value checked on its own, so only the path must be free of encoding.
+func requestPath(target string) string {
+	p, _, _ := strings.Cut(target, "?")
+	return p
 }
 
 // containerEndpoint recognises an action on one container.

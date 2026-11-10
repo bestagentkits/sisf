@@ -1,10 +1,14 @@
 // Package dockerfilter is the only way any part of the factory reaches the
 // Docker API. It is an HTTP reverse proxy in front of the Docker socket that
-// lets through exactly what the docker execution adapter needs to run
-// ephemeral runner containers, and nothing else. Everything it does not
-// recognise is refused: deny by default.
+// lets through exactly what one client needs, and nothing else. Everything
+// it does not recognise is refused: deny by default.
 //
-// # What passes
+// A filter serves one role. The runner role, described here, lets the
+// docker execution adapter run ephemeral runner containers. The deploy role
+// (deploy_role.go) lets the supervisor's Compose deployment backend run the
+// revisions of the factory's units. The two never share a filter.
+//
+// # What passes in the runner role
 //
 //   - GET or HEAD /vX/_ping, so the adapter can tell the daemon is up.
 //   - GET /vX/info, answered by the filter itself with the names of the

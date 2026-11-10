@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -21,8 +22,21 @@ const (
 // env file. If another zone's file has one, that zone holds a secret of
 // Zone 3, which the isolation rule forbids.
 var controlOnlyKeys = []string{"SISF_OWNER_TOKEN", "SISF_WEBHOOK_SECRET", "SISF_GITHUB_TOKEN", "SISF_APPROVAL_KEY",
-	"SISF_ROOT_PUBLIC_KEY",
+	"SISF_ROOT_PUBLIC_KEY", "EDGE_ADMIN_TOKEN",
 	"SISF_STATE_OWNER_DSN", "POSTGRES_PASSWORD"}
+
+// allowedKeys is everything the env file of a unit outside the shared
+// control runtime may hold, by path below secrets/. A key beyond these is a
+// secret the unit does not need: the supervisor holds what releasing needs
+// and the GitHub token, the agent zone its store role and the token of its
+// own run control route, the edge only its admin token.
+var allowedKeys = map[string][]string{
+	"control/supervisor.env": {"SISF_ROOT_PUBLIC_KEY", "SISF_STATE_DSN", "SISF_APPROVAL_PUBLIC_KEY", "EDGE_ADMIN_TOKEN",
+		"SISF_DISPATCHER_ADMIN_TOKEN", "SISF_GITHUB_TOKEN"},
+	"agent/runtime.env":       {"SISF_ZONE", "SISF_STATE_DSN", "SISF_DISPATCHER_ADMIN_TOKEN"},
+	"application/runtime.env": {"SISF_ZONE", "SISF_STATE_DSN"},
+	"edge/runtime.env":        {"EDGE_ADMIN_TOKEN"},
+}
 
 // CheckSecrets verifies the secrets directory of an install: that only its
 // owner can read it, that each zone has a credential of its own, that each
@@ -99,6 +113,22 @@ func CheckSecrets(l Layout, mode manifest.Mode) ([]Violation, error) {
 				add(ruleZoneKeys, "the %s zone's area holds the root private key", z)
 			}
 		}
+	}
+	for _, rel := range sortedKeys(allowedKeys) {
+		env, err := readEnvFile(filepath.Join(root, rel))
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range sortedKeys(env) {
+			if !slices.Contains(allowedKeys[rel], key) {
+				add(ruleZoneKeys, "%s holds %s, which its unit does not need", rel, key)
+			}
+		}
+	}
+	if sup, err := readEnvFile(l.Secret(areaControl, "supervisor.env")); err != nil {
+		return nil, err
+	} else if mode == manifest.ModeDocker {
+		checkZoneDSN(core.ZoneControl, sup["SISF_STATE_DSN"], creds[core.ZoneControl], add)
 	}
 	return out, nil
 }

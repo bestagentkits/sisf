@@ -47,6 +47,11 @@ type Usage struct {
 type Outcome struct {
 	OK     bool
 	Detail string
+	// Result is the final result text the tool reported, unclipped, when
+	// HasResult is set: an explicit end-of-run marker some tools have and
+	// others do not.
+	Result    string
+	HasResult bool
 }
 
 // Update is what a protocol session returns for one input line.

@@ -54,6 +54,12 @@ func SelectImageBuilder(ctx context.Context, c ExecutionChoice) (ImageBuilder, e
 		if !execution.UntrustedCodeAllowed(caps) {
 			return nil, untrustedRefused(c.Docker.Name())
 		}
+		// Without a build command every build would fail; refusing here
+		// keeps a configuration error from being charged to agents' patches.
+		if len(c.BuildArgv) == 0 || c.BuildTimeout <= 0 {
+			return nil, core.NewError(core.CodeInvalidArgument,
+				"candidates are built in a sandbox, which needs a build command (--build-command) and a positive build timeout (--build-timeout)")
+		}
 		return SandboxImages{Exec: c.Docker, Specs: c.Specs, Argv: c.BuildArgv, Timeout: c.BuildTimeout}, nil
 	}
 	if c.Local != nil {

@@ -26,6 +26,8 @@ type GitData struct {
 	refs  map[string]map[string]string // repo key -> branch -> commit SHA
 	// commitTree maps "repo key@commit" to the tree of a commit made here.
 	commitTree map[string]string
+	// writes counts the requests that ask to write git data.
+	writes int
 }
 
 // NewGitData wraps s.
@@ -46,6 +48,11 @@ func NewGitData(s *Server) *GitData {
 
 // ServeHTTP serves the git data routes and passes everything else on.
 func (g *GitData) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.Contains(r.URL.Path, "/git/") && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		g.mu.Lock()
+		g.writes++
+		g.mu.Unlock()
+	}
 	if strings.Contains(r.URL.Path, "/git/") || strings.Contains(r.URL.Path, "/compare/") {
 		if !g.s.authorized(r) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
@@ -53,6 +60,14 @@ func (g *GitData) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	g.mux.ServeHTTP(w, r)
+}
+
+// Writes returns how many requests asked to write git data (trees,
+// commits or refs), whether or not they were authorized.
+func (g *GitData) Writes() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.writes
 }
 
 // SetBranch points branch of repoName at commit, a SHA made with Commit or

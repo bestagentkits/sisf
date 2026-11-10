@@ -38,9 +38,10 @@ func (in *Installer) bootstrapCommand(m *manifest.Manifest) ([]string, error) {
 }
 
 // upDocker builds and pins the images, renders and checks the Compose
-// project, prepares the state store with its per-zone roles, and starts every
-// service. The project is checked before anything runs, so the file that runs
-// is the file that passed the isolation rules.
+// project, prepares the state store with its per-zone roles, places the
+// supervisor's delegated keys on its trust volume, and starts every
+// service. The project is checked before anything runs, so the file that
+// runs is the file that passed the isolation rules.
 func (in *Installer) upDocker(ctx context.Context, m *manifest.Manifest) error {
 	b, err := in.release(ctx, m)
 	if err != nil {
@@ -55,7 +56,60 @@ func (in *Installer) upDocker(ctx context.Context, m *manifest.Manifest) error {
 		Sim: m.Extensions["profile"] == profileSim, Debug: in.Debug,
 	}
 	opts.GitHubAPIURL, _ = m.Extensions["github_api_url"].(string)
-	data, err := newComposeData(in.Layout, opts, b.images, bootstrap)
+	opts.lifecycleExtensions(m)
+	if vs, err := CheckSecrets(in.Layout, m.Mode); err != nil {
+		return err
+	} else if len(vs) > 0 {
+		return violationsError(vs)
+	}
+	if opts.Sim {
+		if err := in.ensureSimPatch(); err != nil {
+			return err
+		}
+	}
+	host := HostFacts{TrustedProxies: in.controlSubnets(ctx, m)}
+	if host.SocketGID, err = in.socketGroup(ctx, m, b.images.Sisf); err != nil {
+		return err
+	}
+	if err := in.writeCompose(opts, b.images, bootstrap, host); err != nil {
+		return err
+	}
+	if host.TrustedProxies == "" {
+		// The control network gets its addresses when it is created; the
+		// project is created first, then rendered again with them.
+		if err := in.compose(ctx, m, "up", "--no-start"); err != nil {
+			return unavailablef(err, "the project's networks could not be created")
+		}
+		if host.TrustedProxies = in.controlSubnets(ctx, m); host.TrustedProxies == "" {
+			return unavailablef(nil, "the control network has no IPv4 subnet")
+		}
+		if err := in.writeCompose(opts, b.images, bootstrap, host); err != nil {
+			return err
+		}
+	}
+	in.say("starting the state store\n")
+	if err := in.compose(ctx, m, "up", "-d", "--wait", "state"); err != nil {
+		return unavailablef(err, "the state store did not become healthy")
+	}
+	in.say("preparing the state store and its zone roles\n")
+	if err := in.compose(ctx, m, "run", "--rm", "--no-deps", "state-bootstrap"); err != nil {
+		return unavailablef(err, "the state store could not be prepared")
+	}
+	if err := in.installTrust(ctx, m, b); err != nil {
+		return err
+	}
+	in.say("starting the three zones\n")
+	if err := in.compose(ctx, m, "up", "-d", "--wait"); err != nil {
+		return unavailablef(err, "the factory did not become healthy")
+	}
+	in.say("factory %s is up: control http://%s, app via edge http://%s\n", m.FactoryID, addr(PortControl), addr(PortEdge))
+	return nil
+}
+
+// writeCompose renders the project, checks it against the isolation rules
+// and writes it.
+func (in *Installer) writeCompose(o Options, images Images, bootstrap []string, host HostFacts) error {
+	data, err := newComposeData(in.Layout, o, images, bootstrap, host)
 	if err != nil {
 		return err
 	}
@@ -68,27 +122,9 @@ func (in *Installer) upDocker(ctx context.Context, m *manifest.Manifest) error {
 	} else if len(vs) > 0 {
 		return violationsError(vs)
 	}
-	if vs, err := CheckSecrets(in.Layout, m.Mode); err != nil {
-		return err
-	} else if len(vs) > 0 {
-		return violationsError(vs)
-	}
 	if err := os.WriteFile(in.Layout.Compose(), rendered, 0o644); err != nil {
 		return unavailablef(err, "cannot write %s", in.Layout.Compose())
 	}
-	in.say("starting the state store\n")
-	if err := in.compose(ctx, m, "up", "-d", "--wait", "state"); err != nil {
-		return unavailablef(err, "the state store did not become healthy")
-	}
-	in.say("preparing the state store and its zone roles\n")
-	if err := in.compose(ctx, m, "run", "--rm", "--no-deps", "state-bootstrap"); err != nil {
-		return unavailablef(err, "the state store could not be prepared")
-	}
-	in.say("starting the three zones\n")
-	if err := in.compose(ctx, m, "up", "-d", "--wait"); err != nil {
-		return unavailablef(err, "the factory did not become healthy")
-	}
-	in.say("factory %s is up: control http://%s, app via edge http://%s\n", m.FactoryID, addr(PortControl), addr(PortEdge))
 	return nil
 }
 
@@ -108,6 +144,10 @@ func (in *Installer) dockerDown(ctx context.Context, m *manifest.Manifest, remov
 	args := []string{"down", "--remove-orphans"}
 	if removeData {
 		args = append(args, "--volumes")
+	}
+	// The containers the supervisor deployed hold the project's networks.
+	if err := in.removeDeployed(ctx, m); err != nil {
+		return err
 	}
 	// The bootstrap profile is enabled so a leftover one-shot container goes too.
 	full := in.composeArgs(m, "--profile", "bootstrap")

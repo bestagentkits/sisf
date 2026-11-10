@@ -29,6 +29,20 @@ type VolumeMount struct {
 	Target string
 }
 
+// ResourceLimits bound one revision's container.
+type ResourceLimits struct {
+	// MemoryBytes is also the memory-and-swap limit: a revision never swaps.
+	MemoryBytes int64
+	// NanoCPUs is in billionths of a CPU.
+	NanoCPUs int64
+	Pids     int64
+}
+
+// DefaultResourceLimits give a revision 512 MiB of memory, one CPU and 512
+// processes; the deploy role of the Docker request filter refuses a
+// revision without limits or above its maxima.
+var DefaultResourceLimits = ResourceLimits{MemoryBytes: 512 << 20, NanoCPUs: 1_000_000_000, Pids: 512}
+
 // Config is what a backend is built from.
 type Config struct {
 	// Endpoint is the supervisor-only Docker endpoint, unix:///path or
@@ -46,6 +60,9 @@ type Config struct {
 	Env []string
 	// Volumes are mounted into every revision.
 	Volumes []VolumeMount
+	// Limits bound each revision's container; DefaultResourceLimits fills
+	// a zero field.
+	Limits ResourceLimits
 	// Edge divides traffic and reports what each revision served. Required.
 	Edge edge.Controller
 	// Resolve maps a container name to the base URL where the backend and the
@@ -93,6 +110,18 @@ func (c Config) withDefaults() (Config, error) {
 		if !networkPattern.MatchString(v.Name) || !strings.HasPrefix(v.Target, "/") || v.Target == "/" || strings.Contains(v.Target, "..") {
 			return bad("a volume needs a named volume and an absolute target path")
 		}
+	}
+	if c.Limits.MemoryBytes < 0 || c.Limits.NanoCPUs < 0 || c.Limits.Pids < 0 {
+		return bad("the resource limits of a revision must be positive")
+	}
+	if c.Limits.MemoryBytes == 0 {
+		c.Limits.MemoryBytes = DefaultResourceLimits.MemoryBytes
+	}
+	if c.Limits.NanoCPUs == 0 {
+		c.Limits.NanoCPUs = DefaultResourceLimits.NanoCPUs
+	}
+	if c.Limits.Pids == 0 {
+		c.Limits.Pids = DefaultResourceLimits.Pids
 	}
 	if c.APIVersion == "" {
 		c.APIVersion = "1.43"

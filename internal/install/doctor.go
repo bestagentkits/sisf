@@ -106,5 +106,6 @@ func (in *Installer) Doctor(ctx context.Context) (Report, error) {
 	in.checkGitHub(ctx, &c, m)
 	in.checkState(ctx, &c, m)
 	in.checkRollback(ctx, &c, m)
+	in.checkTopology(ctx, &c, m)
 	return c.report, ctx.Err()
 }

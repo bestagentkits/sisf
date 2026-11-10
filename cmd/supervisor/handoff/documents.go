@@ -35,8 +35,9 @@ const maxPatchBytes = 1 << 20
 
 // PatchDoc is the patch a run's coding agent left for one evaluator
 // attempt, exported by the agent zone with what the agent zone knows of the
-// run. The supervisor trusts none of it beyond the patch itself: it reads
-// the base and the policy from the run's brief and judges the result.
+// run. The supervisor trusts none of it beyond the patch itself: the base
+// and the policy come from the policy in force, the attempt from the run's
+// state record and the coder's identity from the run's dispatch record.
 type PatchDoc struct {
 	IssueID core.IssueRef `json:"issue_id"`
 	RunID   core.RunID    `json:"run_id"`
@@ -46,7 +47,9 @@ type PatchDoc struct {
 	AgentAttempt int    `json:"agent_attempt"`
 	Diff         string `json:"diff"`
 	// Digest is the artifact digest the agent backend reported.
-	Digest        core.Digest     `json:"digest"`
+	Digest core.Digest `json:"digest"`
+	// CoderIdentity is what the exporter says wrote the patch. It is
+	// informational only; see TrustedCoderIdentity.
 	CoderIdentity string          `json:"coder_identity"`
 	Policy        core.PolicyRefs `json:"policy"`
 	Summary       string          `json:"summary,omitempty"`
@@ -70,8 +73,10 @@ func ReadPatch(ctx context.Context, kv state.KV, run core.RunID, attempt int) (P
 type CandidateDoc struct {
 	Candidate qa.Candidate `json:"candidate"`
 	// BuildFailure says why the patch could not be built; the evaluator then
-	// fails the candidate without judging it.
+	// fails the candidate without judging it. BuildRefusal is the typed
+	// reason of the refusal, for example "protected_path".
 	BuildFailure string `json:"build_failure,omitempty"`
+	BuildRefusal string `json:"build_refusal,omitempty"`
 	// Unit is the runtime unit the candidate is a build of.
 	Unit  string `json:"unit"`
 	Image string `json:"image"`

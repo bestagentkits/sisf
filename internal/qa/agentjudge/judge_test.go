@@ -4,6 +4,8 @@ package agentjudge_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -209,4 +211,37 @@ func withField(j map[string]any, key string, v any) map[string]any {
 func without(j map[string]any, category qa.Category) map[string]any {
 	delete(j["scores"].(map[string]any), string(category))
 	return j
+}
+
+// When the adapter's record of the run is not the whole of what the agent
+// said, the last message it kept may be an earlier one than the agent's
+// last word, so a judgment found there is refused and no score is given.
+func TestAJudgmentIsRefusedWhenTheAgentsOutputWasCutShort(t *testing.T) {
+	t.Parallel()
+	early := codexMessage("m1", block(wireJudgment(30)))
+	retraction := codexMessage("m2", "I withdraw the judgment above; the change breaks the build.")
+	flood := make([]clitest.Step, 0, 5100)
+	for i := range 5100 {
+		flood = append(flood, clitest.Step{Emit: codexLine(map[string]any{"type": "item.started",
+			"item": map[string]any{"id": fmt.Sprintf("c%d", i), "type": "command_execution", "command": "true"}})})
+	}
+	cases := map[string][]clitest.Step{
+		"events past the cap":  codexRun(append(append([]clitest.Step{early}, flood...), retraction)...),
+		"an oversized message": codexRun(early, codexMessage("m2", strings.Repeat("x", 4<<20+1))),
+	}
+	for name, steps := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := newJudge(t, steps, nil)
+			card, err := s.judge.Score(context.Background(), request())
+			wantCode(t, err, core.CodeLimitExceeded)
+			var typed *core.Error
+			if !errors.As(err, &typed) || typed.Details["reason"] != agentjudge.ReasonTranscriptIncomplete {
+				t.Fatalf("error %v carries no incomplete-transcript reason", err)
+			}
+			if len(card.Points) != 0 || card.EvidenceRef != "" {
+				t.Fatalf("a cut-short run still gave scores: %+v", card)
+			}
+		})
+	}
 }

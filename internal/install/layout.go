@@ -10,13 +10,15 @@ import (
 
 // Areas of the secrets directory. Each zone has an area of its own, and no
 // unit is ever given the files of an area that is not its zone's. The state
-// area belongs to the state store alone, and sim to the fake GitHub.
+// area belongs to the state store alone, sim to the fake GitHub, and edge to
+// the edge, which holds the admin token of its traffic split.
 const (
 	areaApplication = "application"
 	areaAgent       = "agent"
 	areaControl     = "control"
 	areaState       = "state"
 	areaSim         = "sim"
+	areaEdge        = "edge"
 )
 
 // zoneArea returns the secrets area of a zone.
@@ -51,6 +53,10 @@ func (l Layout) Compose() string { return filepath.Join(l.Dir, "compose.yaml") }
 func (l Layout) BudgetConfirmation() string {
 	return filepath.Join(l.Dir, "budget-confirmation.json")
 }
+
+// SimAgentDir holds the scripted agent's patch of the simulation profile.
+// It is not secret: the dispatcher reads it, mounted read-only in Docker mode.
+func (l Layout) SimAgentDir() string { return filepath.Join(l.Dir, "sim", "agent") }
 
 // SecretsDir is the directory of one secrets area.
 func (l Layout) SecretsDir(area string) string { return filepath.Join(l.Dir, "secrets", area) }

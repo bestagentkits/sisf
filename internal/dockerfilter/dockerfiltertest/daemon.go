@@ -148,6 +148,8 @@ func (d *Daemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		d.info(w)
 	case path == "/containers/create" && r.Method == http.MethodPost:
 		d.create(w, r, body)
+	case path == "/containers/json" && r.Method == http.MethodGet:
+		d.list(w, r)
 	case len(parts) >= 2 && parts[0] == "containers":
 		d.container(w, r, parts[1], strings.Join(parts[2:], "/"))
 	default:
@@ -186,6 +188,43 @@ func (d *Daemon) create(w http.ResponseWriter, r *http.Request, body []byte) {
 	c := d.newContainer(r.URL.Query().Get("name"))
 	c.Image, c.Cmd, c.Env, c.User, c.Labels, c.Host = cfg.Image, cfg.Cmd, cfg.Env, cfg.User, cfg.Labels, cfg.HostConfig
 	writeJSON(w, http.StatusCreated, map[string]any{"Id": c.ID, "Warnings": []string{}})
+}
+
+// list answers a container list, applying its label filters.
+func (d *Daemon) list(w http.ResponseWriter, r *http.Request) {
+	var filters map[string][]string
+	if raw := r.URL.Query().Get("filters"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &filters); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"message": "bad filters"})
+			return
+		}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := []map[string]any{}
+	for _, id := range d.order {
+		c, ok := d.containers[id]
+		if !ok || !hasLabels(c.Labels, filters["label"]) {
+			continue
+		}
+		state := "created"
+		if c.Running {
+			state = "running"
+		}
+		out = append(out, map[string]any{"Id": c.ID, "Names": []string{"/" + c.Name}, "Labels": c.Labels, "State": state})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// hasLabels reports whether labels carry every key=value of want.
+func hasLabels(labels map[string]string, want []string) bool {
+	for _, kv := range want {
+		k, v, _ := strings.Cut(kv, "=")
+		if got, ok := labels[k]; !ok || got != v {
+			return false
+		}
+	}
+	return true
 }
 
 // find resolves a full ID, an ID prefix or a name. The caller holds d.mu.

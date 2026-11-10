@@ -27,6 +27,10 @@ type hostConfig struct {
 	SecurityOpt    []string          `json:"SecurityOpt"`
 	Tmpfs          map[string]string `json:"Tmpfs"`
 	Mounts         []mount           `json:"Mounts,omitempty"`
+	Memory         int64             `json:"Memory"`
+	MemorySwap     int64             `json:"MemorySwap"`
+	NanoCpus       int64             `json:"NanoCpus"`
+	PidsLimit      int64             `json:"PidsLimit"`
 }
 
 type restartPolicy struct {
@@ -63,6 +67,8 @@ func (b *Backend) spec(a deploy.Artifact) createSpec {
 			NetworkMode: b.cfg.Network, RestartPolicy: restartPolicy{Name: "unless-stopped"},
 			ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"},
 			Tmpfs: map[string]string{"/tmp": "rw,noexec,nosuid,size=64m"}, Mounts: mounts,
+			Memory: b.cfg.Limits.MemoryBytes, MemorySwap: b.cfg.Limits.MemoryBytes,
+			NanoCpus: b.cfg.Limits.NanoCPUs, PidsLimit: b.cfg.Limits.Pids,
 		},
 	}
 }

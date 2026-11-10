@@ -60,6 +60,15 @@ type Options struct {
 	// Budget is the Owner's install-time confirmation; the zero value means
 	// not confirmed, and the factory then accepts intake but claims nothing.
 	Budget BudgetChoice
+	// QAAgent and QAAgentBinary configure the agent judge of a production
+	// install: the QA agent, and in Docker mode the absolute path of the
+	// launcher that runs it in a sandbox. They come from the manifest's
+	// extensions qa_agent and qa_agent_binary.
+	QAAgent, QAAgentBinary string
+	// BuildCommand is the command, split on spaces, the supervisor runs in a
+	// runner sandbox to build a candidate in Docker mode; from the
+	// manifest's extension build_command. Without it the stages are off.
+	BuildCommand string
 	// Debug publishes the state store on 127.0.0.1:7469 (Docker mode only).
 	Debug bool
 }

@@ -1,4 +1,4 @@
-# sisf: the sisf command line, used for the one-shot state step and the fake GitHub of the simulation profile.
+# sisf: the sisf command line, used for the one-shot state and trust steps, the Docker request filters and the fake GitHub of the simulation profile.
 #
 # Built by `sisf up` from the repository root:
 #   docker build -f build/sisf.Dockerfile -t <project>-sisf:build .
@@ -17,6 +17,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/sisf ./cmd/sisf
 
 FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
 RUN addgroup -S -g 10001 sisf && adduser -S -u 10001 -G sisf -H -s /sbin/nologin sisf
+# The trust volume, for the one-shot trust step: owned by the supervisor's
+# user and writable by it alone, as the supervisor requires.
+RUN mkdir -p /var/lib/sisf/trust && chown -R sisf:sisf /var/lib/sisf/trust && chmod 700 /var/lib/sisf/trust
 COPY --from=build /out/sisf /usr/local/bin/sisf
 USER 10001:10001
 CMD ["sisf"]
