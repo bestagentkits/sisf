@@ -230,7 +230,7 @@ footer{padding:32px 0 56px;color:var(--muted);font-size:13.5px;border-top:1px so
 
   <section id="deploy"><div class="sec-n mono">13 / PORTABILITY</div><h2 data-t="h_deploy"></h2><p class="sub" data-t="s_deploy"></p><div class="tbl" id="deployBody"></div></section>
 
-  <section id="road"><div class="sec-n mono">14 / ROADMAP &amp; ACCEPTANCE</div><h2 data-t="h_road"></h2><p class="sub" data-t="s_road"></p><div class="road" id="roadBody"></div><h3 style="margin:26px 0 10px" data-t="h_tests"></h3><div class="tests" id="tests"></div></section>
+  <section id="road"><div class="sec-n mono">14 / ROADMAP &amp; ACCEPTANCE</div><h2 data-t="h_road"></h2><p class="sub" data-t="s_road"></p><div class="road" id="roadBody"></div><h3 style="margin:26px 0 10px" data-t="h_tests"></h3><div class="tests" id="tests"></div><h3 style="margin:26px 0 6px" data-t="h_open"></h3><p class="sub" data-t="s_open"></p><div class="grid g3" id="openBody"></div></section>
 </main>
 <footer><div class="wrap" data-t="foot"></div></footer>
 
@@ -270,6 +270,8 @@ s_sec:{vi:'Ba yêu cầu đầu phải có trước khi factory chạy mã khôn
 h_deploy:{vi:'Chạy ở đâu',en:'Where it runs'},
 s_deploy:{vi:'Một nền tảng chỉ được ghi là hỗ trợ đầy đủ sau khi qua kiểm thử end-to-end.',en:'A platform is marked fully supported only after it passes end-to-end tests.'},
 h_road:{vi:'Lộ trình và tiêu chí nghiệm thu',en:'Roadmap and acceptance'},
+h_open:{vi:'Điểm còn mở, chờ Owner quyết',en:'Open points awaiting an Owner decision'},
+s_open:{vi:'Chưa có hiệu lực. Đây là khoảng trống đã biết, không phải yêu cầu. Mỗi điểm được đóng bằng một ADR: thành yêu cầu có phase và test, hoặc thành non-goal có chủ đích.',en:'Not in effect. These are known gaps, not requirements. Each is closed by an ADR: a requirement with a phase and a test, or a deliberate non-goal.'},
 s_road:{vi:'Năm giai đoạn, mỗi giai đoạn có đầu ra kiểm chứng được.',en:'Five phases, each with a verifiable outcome.'},
 h_tests:{vi:'20 phép thử nghiệm thu',en:'20 acceptance tests'},
 foot:{vi:'Tài liệu thiết kế, không phải phiên bản đã triển khai. Chi tiết đầy đủ nằm trong decision brief cùng thư mục. Giấy phép Apache-2.0.',en:'Design document, not an implemented release. Full detail lives in the decision brief in this folder. Apache-2.0 licensed.'}
@@ -358,7 +360,7 @@ function render(){
   $('#loopsBody').innerHTML=LOOPS.map(l=>`<div class="loop-h"><span class="pill" style="background:${l.c}"></span>${t(l.h)}</div><div class="steps">${l.s.map((s,i)=>`<div class="step" style="border-top:3px solid ${l.c}"><i class="mono">${String(i+1).padStart(2,'0')}</i><b>${s[0]}</b>${t(s[1])}</div>`).join('')}</div>`).join('');
   $('#paths').innerHTML=PATHS.map((p,i)=>`<button class="btn" data-p="${i}">▶ ${t(p.n)}</button>`).join('')+`<span class="small" id="pstat"></span>`;
   showState(ssel);
-  renderDecide(); renderFlows(); renderQA(); renderSurf(); renderTrust(); renderModels(); renderSec(); renderUnits();
+  renderDecide(); renderFlows(); renderQA(); renderSurf(); renderTrust(); renderModels(); renderSec(); renderUnits(); renderOpen();
   $('#deployBody').innerHTML=`<table><thead><tr><th>Profile</th><th>${L==='vi'?'Cách đóng gói':'Packaging'}</th><th>${L==='vi'?'Trạng thái':'Status'}</th></tr></thead><tbody>${DEP.map(d=>`<tr><td><b>${d[0]}</b></td><td>${t(d[1])}</td><td><span class="tag ${d[2]}">${t(d[3])}</span></td></tr>`).join('')}</tbody></table>`;
   $('#roadBody').innerHTML=ROAD.map(r=>`<div class="card"><span class="tag z3">${r[0]}</span><h3 style="margin-top:8px">${t(r[1])}</h3><div class="small">${t(r[2])}</div></div>`).join('');
   $('#tests').innerHTML=TESTS.map((x,i)=>`<div class="test"><b>SISF-${String(i+1).padStart(2,'0')}</b>${t(x)}</div>`).join('');
@@ -444,6 +446,18 @@ function renderUnits(){$('#modeTabs').innerHTML=MODES.map((m,i)=>`<button class=
   $('#modeBody').innerHTML=UNITS.map((u,i)=>`<div class="unit ${u[1]}"><span class="tag ${u[1]}">${u[1]?'Zone '+u[1][1]:(L==='vi'?'Dùng chung':'Shared')}</span> <code>${u[0]}</code><b>${tt(m.u[i])}</b><div class="small">${t(u[2])}</div></div>`).join('');
   $('#modeNote').innerHTML=`<h3>${m.n}</h3><div class="small">${t(m.note)}</div>`}
 $('#modeTabs').addEventListener('click',e=>{const b=e.target.closest('[data-m]');if(b){msel=+b.dataset.m;renderUnits()}});
+
+const OPEN=[
+[{vi:'Yêu cầu mới chưa có chỗ trong SoW',en:'New requirements have no place in the SoW'},{vi:'Model routing, trải nghiệm, bảo mật bổ sung và thiết kế triển khai chưa được gán vào DoD của P0 đến P4 và chưa có test SISF-xx.',en:'Model routing, experience, additional security and the deployment design are not assigned to the DoD of P0 to P4 and have no SISF-xx tests.'},1],
+[{vi:'Phạm vi v1',en:'v1 scope'},{vi:'Đề xuất phát hành sau P2 vẫn chờ duyệt, trong khi phạm vi đã tăng thêm.',en:'The proposal to release after P2 still awaits approval, while the scope has grown.'},1],
+[{vi:'Sao lưu và khôi phục',en:'Backup and restore'},{vi:'Chưa có quy định về backup <code>state</code> và <code>artifacts</code>, mục tiêu RPO và RTO, và cách dựng lại factory từ GitHub khi mất database.',en:'No rules for backing up <code>state</code> and <code>artifacts</code>, RPO and RTO targets, or rebuilding the factory from GitHub when the database is lost.'}],
+[{vi:'Migration schema khi tự cập nhật',en:'Schema migration on self-update'},{vi:'Rollback code đã có quy tắc; rollback sau khi schema database đã đổi thì chưa.',en:'Code rollback has rules; rollback after the database schema has changed does not.'}],
+[{vi:'Nhiều repo và nhiều app',en:'Multiple repos and apps'},{vi:'Chưa rõ một factory phục vụ một hay nhiều repo, và các repo có chung policy, budget, secret hay không.',en:'It is not stated whether one factory serves one repo or several, and whether they share policy, budget and secrets.'}],
+[{vi:'Giới hạn của nhà cung cấp',en:'Provider limits'},{vi:'Chưa xử lý rate limit của GitHub API và model provider khi nhiều run song song, và khi một provider ngừng hoạt động.',en:'No handling for GitHub API and model-provider rate limits under parallel runs, or for a provider outage.'}],
+[{vi:'Quản trị dự án OSS',en:'OSS project governance'},{vi:'Chưa có <code>CONTRIBUTING.md</code>, quy tắc đóng góp (DCO hoặc CLA), cách đánh version và cam kết tương thích cho các interface.',en:'No <code>CONTRIBUTING.md</code>, contribution rule (DCO or CLA), versioning scheme or interface compatibility commitment.'}],
+[{vi:'Pháp lý và dữ liệu',en:'Legal and data'},{vi:'Chưa nói về giấy phép của code do agent sinh ra, dữ liệu gửi tới model provider, và nơi lưu dữ liệu theo vùng.',en:'Nothing on the license of agent-generated code, data sent to model providers, or regional data residency.'}],
+[{vi:'Con người khi có sự cố',en:'People during an incident'},{vi:'Chưa có kênh thông báo ngoài GitHub, người trực, và quy trình khi auto-rollback cũng thất bại.',en:'No notification channel outside GitHub, no on-call owner, and no procedure for when auto-rollback also fails.'}]];
+function renderOpen(){$('#openBody').innerHTML=OPEN.map((x,i)=>`<div class="card"><span class="tag ${x[2]?'warn':''}">${String(i+1).padStart(2,'0')}${x[2]?(L==='vi'?' · trước P0':' · before P0'):''}</span><h3 style="margin-top:8px">${t(x[0])}</h3><div class="small">${t(x[1])}</div></div>`).join('')}
 
 let fsel=0;
 function renderFlows(){$('#flowTabs').innerHTML=FLOWS.map((f,i)=>`<button class="btn" data-f="${i}" aria-pressed="${i===fsel}">${t(f.n)}</button>`).join('');
