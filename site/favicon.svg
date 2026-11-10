@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>
+    .sheet { fill: #F3F6F9; stroke: #0E2A47; }
+    .band { stroke: #0E2A47; }
+    .issue { fill: #B93C0A; }
+    @media (prefers-color-scheme: dark) {
+      .sheet { fill: #0A2240; stroke: #E8F0F8; }
+      .band { stroke: #E8F0F8; }
+      .issue { fill: #FF8A3D; }
+    }
+  </style>
+  <!-- One deployment (frame), three zones (bands), one issue (signal square). -->
+  <rect class="sheet" x="2" y="2" width="28" height="28" stroke-width="2.5"/>
+  <path class="band" d="M2 11.5h28M2 20.5h28" stroke-width="1.5" fill="none"/>
+  <rect class="issue" x="12.25" y="12.25" width="7.5" height="7.5"/>
+</svg>

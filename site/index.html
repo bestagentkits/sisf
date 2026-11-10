@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SISF — Self-improvement Software Factory | Software is solved. Here is the drawing.</title>
+<meta name="description" content="SISF is a free, open-source software factory specified as one deployment: a GitHub issue goes in, agents write the fix, an independent QA gate signs it off, and a trusted supervisor ships it by canary and rolls it back on its own. Design complete; Go implementation in progress; nothing released yet.">
+<meta name="theme-color" content="#F3F6F9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0A2240" media="(prefers-color-scheme: dark)">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/assets/fonts/archivo-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/assets/fonts/ibm-plex-mono-latin-500.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/styles.css?v=20261110">
+<link rel="canonical" href="https://factory.agentkit.best/">
+<link rel="alternate" type="text/markdown" href="https://factory.agentkit.best/index.md" title="This page as Markdown">
+<link rel="alternate" type="text/plain" href="https://factory.agentkit.best/llms.txt" title="llms.txt">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="author" content="AgentKit.best">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="SISF">
+<meta property="og:url" content="https://factory.agentkit.best/">
+<meta property="og:title" content="Software is solved. Here is the drawing. | SISF">
+<meta property="og:description" content="SISF is a free, open-source software factory: a GitHub issue goes in, agents write the fix, an independent QA gate signs it off, and a trusted supervisor ships it by canary and rolls it back. Design complete; implementation in progress.">
+<meta property="og:image" content="https://factory.agentkit.best/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Engineering drawing of the SISF software factory with the headline: Software is solved. Here is the drawing.">
+<meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Software is solved. Here is the drawing. | SISF">
+<meta name="twitter:description" content="A free, open-source software factory: agents write the fix, an independent QA gate signs it off, a trusted supervisor ships by canary and rolls back. Design complete; implementation in progress.">
+<meta name="twitter:image" content="https://factory.agentkit.best/og.png">
+<meta name="twitter:image:alt" content="Engineering drawing of the SISF software factory with the headline: Software is solved. Here is the drawing.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://factory.agentkit.best/#website",
+      "url": "https://factory.agentkit.best/",
+      "name": "SISF — Self-improvement Software Factory",
+      "inLanguage": "en",
+      "publisher": {
+        "@id": "https://agentkit.best/#organization"
+      }
+    },
+    {
+      "@type": "Organization",
+      "@id": "https://agentkit.best/#organization",
+      "name": "AgentKit.best",
+      "url": "https://agentkit.best"
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "@id": "https://factory.agentkit.best/#software",
+      "name": "SISF — Self-improvement Software Factory",
+      "alternateName": "SISF",
+      "description": "An open-source framework for a closed-loop software factory. One deployment with three zones takes a GitHub issue through a 15-state lifecycle: agents write the fix, an independent QA agent grades it against hard gates, and a trusted release supervisor ships it by canary with automatic rollback. The design is complete and the implementation is in progress; nothing has been released yet.",
+      "url": "https://factory.agentkit.best/",
+      "codeRepository": "https://github.com/bestagentkits/sisf",
+      "programmingLanguage": "Go",
+      "license": "https://www.apache.org/licenses/LICENSE-2.0",
+      "isAccessibleForFree": true,
+      "creativeWorkStatus": "Design complete, implementation in progress",
+      "author": {
+        "@id": "https://agentkit.best/#organization"
+      },
+      "copyrightHolder": {
+        "@id": "https://agentkit.best/#organization"
+      }
+    }
+  ]
+}
+</script>
+<script>
+/* The only inline script: mark JS as available and apply a saved theme before first paint (no flash). */
+(function (d) {
+  d.className = d.className.replace('no-js', 'js');
+  try { var t = localStorage.getItem('sisf-theme'); if (t === 'light' || t === 'dark') d.setAttribute('data-theme', t); } catch (e) {}
+})(document.documentElement);
+</script>
+<script src="/assets/app.js?v=20261110" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- Shared SVG definitions, kept outside both drawings so a hidden layout never breaks the references. -->
+<svg class="defs" aria-hidden="true" focusable="false">
+  <defs>
+    <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect class="hatch-bg" width="6" height="6"/><line class="hatch-ln" x1="0" y1="0" x2="0" y2="6"/>
+    </pattern>
+    <marker id="ar-soft" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="ar-soft" d="M0 0 L8 4 L0 8 z"/></marker>
+    <marker id="ar-fault" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="ar-fault" d="M0 0 L8 4 L0 8 z"/></marker>
+  </defs>
+</svg>
+
+<header class="site-head">
+  <div class="head-in">
+    <a class="brand" href="#top" aria-label="SISF, Self-improvement Software Factory, back to top">
+      <svg viewBox="0 0 26 26" aria-hidden="true"><rect x="1.5" y="1.5" width="23" height="23" fill="none" stroke="currentColor" stroke-width="2"/><path d="M1.5 9.2h23M1.5 16.8h23" stroke="currentColor" stroke-width="1.2"/><rect class="brand-issue" x="10" y="10.2" width="6" height="5.6"/></svg>
+      <span class="brand-name">SISF</span>
+      <span class="brand-sub">Self-improvement<br>Software Factory</span>
+    </a>
+    <nav class="nav-desk" aria-label="Primary">
+      <a href="#how"><span class="idx">01</span>How it works</a>
+      <a href="#what"><span class="idx">02</span>What it is</a>
+      <a href="#architecture"><span class="idx">03</span>Architecture</a>
+      <a href="#philosophy"><span class="idx">04</span>Rules</a>
+      <a href="#roadmap"><span class="idx">05</span>Roadmap</a>
+      <a href="#start"><span class="idx">06</span>Get started</a>
+      <a href="#docs"><span class="idx">07</span>Docs</a>
+    </nav>
+    <div class="head-act">
+      <a class="navbtn" href="https://github.com/bestagentkits/sisf" aria-label="GitHub repository">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span class="lbl">GitHub</span>
+      </a>
+      <button type="button" class="iconbtn theme-btn" data-theme-toggle aria-label="Switch to dark theme">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 2.75a7.25 7.25 0 0 1 0 14.5z" fill="currentColor"/></svg>
+      </button>
+      <details class="menu">
+        <summary class="iconbtn" aria-label="Menu">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5.5h14M3 10h14M3 14.5h14" stroke="currentColor" stroke-width="1.6"/></svg>
+        </summary>
+        <nav class="menu-panel" aria-label="Primary">
+          <a href="#how"><span class="idx">01</span>How it works</a>
+          <a href="#what"><span class="idx">02</span>What it is</a>
+          <a href="#architecture"><span class="idx">03</span>Architecture</a>
+          <a href="#philosophy"><span class="idx">04</span>Seven rules</a>
+          <a href="#roadmap"><span class="idx">05</span>Roadmap</a>
+          <a href="#start"><span class="idx">06</span>Get started</a>
+          <a href="#docs"><span class="idx">07</span>Docs</a>
+        </nav>
+      </details>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ================= SHEET 01 · Title + Run the line ================= -->
+<div class="sheet sheet--lead" id="top">
+  <div class="ruler-x" aria-hidden="true"><span>A</span><span>B</span><span>C</span><span>D</span><span>E</span><span>F</span><span>G</span><span>H</span></div>
+  <div class="ruler-y" aria-hidden="true"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span></div>
+  <div class="sheet-in">
+    <p class="sheet-tab" aria-hidden="true">Sheet 01 / 07 · General arrangement</p>
+
+    <section class="hero wrap" aria-labelledby="hero-h">
+      <p class="status h-status"><span class="status-rev">REV P0</span><span class="status-txt"><span class="status-sq" aria-hidden="true"></span><span>Design complete. Go implementation of P0–P3 in progress. Nothing released yet.</span></span></p>
+      <p class="credit h-credit"><span class="nw"><strong>Free and open source</strong> · <a href="https://github.com/bestagentkits/sisf/blob/main/LICENSE">Apache-2.0</a> ·</span> <span class="nw">From the creator of <a href="https://agentkit.best">AgentKit.best</a></span></p>
+      <h1 id="hero-h" class="h-title">Software is solved. <span>Here is the drawing.</span></h1>
+      <p class="h-lede">A free, open-source software factory, specified as one deployment. A GitHub issue goes in; agents write the fix, an independent QA gate signs it off, and a trusted supervisor ships it by canary and rolls it back on its own. The drawing is finished. The build has started.</p>
+      <div class="h-cta">
+        <div class="cta-row">
+          <a class="btn btn--primary" href="https://github.com/bestagentkits/sisf">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 .6l2.2 4.6 5 .7-3.6 3.5.9 5L8 12.1 3.5 14.4l.9-5L.8 5.9l5-.7z"/></svg>
+            Star on GitHub
+          </a>
+          <a class="btn" href="#start">Get started
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h11M9 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          </a>
+        </div>
+        <button type="button" class="btn btn--planned" data-tose-deploy aria-disabled="true" aria-describedby="tose-note-hero">Deploy on TOSE <span class="tag-na">Coming soon</span></button>
+        <p class="cta-note" id="tose-note-hero">In development, not available yet. Dotted outline = not built yet.</p>
+      </div>
+    </section>
+
+    <!-- ===== How it works: Run the line ===== -->
+    <section class="how wrap" id="how" aria-labelledby="how-h">
+      <div class="how-head">
+        <div>
+          <p class="eyebrow">01 · How it works</p>
+          <h2 id="how-h">Run the line.</h2>
+        </div>
+        <p class="lead">Fifteen states, from a labelled issue to a verified release. Watch a pass, step through it, or inject a canary fault and watch the rollback. This is the lifecycle as designed in the brief (§5.2), not a recording of running software.</p>
+      </div>
+
+      <div class="how-body">
+      <figure class="line">
+        <div class="line-stage" role="group" aria-label="The line: one issue travelling through the factory" aria-describedby="line-keys">
+
+          <!-- WIDE drawing (>= 1100px): horizontal swimlanes, time runs left to right -->
+          <svg class="schem schem--wide" viewBox="0 0 1200 462" role="img" aria-labelledby="sw-t sw-d"
+               data-stops="open:0,intake:1,approve:2,agent:5,qa:6,sup:9,canary:12,monitor:13,closed:16">
+            <title id="sw-t">Schematic of one SISF factory: three zones and the line an issue travels</title>
+            <desc id="sw-d">A GitHub issue labelled sisf:ready enters the factory boundary. In Zone 3, the control plane, it is taken in and scoped, and new features wait at an Owner gate. In Zone 2, the agent factory, a coding agent writes the fix and a separate QA gate grades it; a failure goes back for retry. The trusted supervisor in Zone 3, which agents cannot write to, receives the release candidate and releases it into Zone 1, the application, by canary at 5, 25 and then 100 percent. A monitor checks the revision that is actually running; only then is the issue closed on GitHub. If errors cross the threshold, the supervisor rolls back to the last known good release and the issue is blocked with evidence. Values marked with an asterisk are starting points, to be calibrated.</desc>
+
+            <g class="fade d0"><rect class="boundary" x="100" y="88" width="1090" height="336"/></g>
+            <line class="lane-line" x1="200" y1="88" x2="200" y2="424" pathLength="1"/>
+            <line class="lane-line" x1="100" y1="200" x2="1190" y2="200" pathLength="1"/>
+            <line class="lane-line" x1="100" y1="312" x2="1190" y2="312" pathLength="1"/>
+
+            <g class="fade d1">
+              <text class="t-lane" x="108" y="30">GITHUB</text>
+              <text class="t-note" x="108" y="44">source of truth,</text>
+              <text class="t-note" x="108" y="56">outside the factory</text>
+              <text class="t-zone" x="110" y="131">Z3</text>
+              <text class="t-lane" x="110" y="151">CONTROL</text>
+              <text class="t-lane" x="110" y="164">PLANE</text>
+              <text class="t-zone" x="110" y="243">Z2</text>
+              <text class="t-lane" x="110" y="263">AGENT</text>
+              <text class="t-lane" x="110" y="276">FACTORY</text>
+              <text class="t-zone" x="110" y="355">Z1</text>
+              <text class="t-lane" x="110" y="375">APPLICATION</text>
+            </g>
+
+            <g class="fade d2">
+              <rect class="label-bg" x="294" y="82" width="268" height="12"/>
+              <text class="t-note t-ink" x="300" y="91">FACTORY BOUNDARY · ONE DEPLOYMENT · factory_id</text>
+              <text class="t-note" x="264" y="84" text-anchor="end">IN</text>
+              <text class="t-note" x="1176" y="84">OUT</text>
+            </g>
+
+            <g class="fade d3">
+              <rect class="eq-box" x="490" y="114" width="248" height="44"/>
+              <text class="eq-l1" x="502" y="132">CONTROL SURFACES</text>
+              <text class="eq-l2" x="502" y="148">Dashboard · API · CLI · MCP · WebMCP</text>
+              <rect class="eq-box" x="218" y="226" width="248" height="44"/>
+              <text class="eq-l1" x="230" y="244">AGENT RUNTIMES</text>
+              <text class="eq-l2" x="230" y="260">Claude CLI · Codex · Pi (built-in)</text>
+              <rect class="eq-box" x="218" y="338" width="656" height="44"/>
+              <text class="eq-l1" x="230" y="356">APPLICATION · SERVES THE VERIFIED REVISION</text>
+              <text class="eq-l2" x="230" y="372">Webapp · API · MCP · WebMCP — emits traces, logs, sessions and feedback</text>
+            </g>
+
+            <polyline class="route" pathLength="1" points="274,70 274,176 410,176 478,176 478,288 546,288 682,288 750,288 750,176 818,176 886,176 886,400 954,400 1090,400 1168,400 1168,70 1090,70"/>
+            <polyline class="trail" points="274,70 274,176 410,176 478,176 478,288 546,288 682,288 750,288 750,176 818,176 886,176 886,400 954,400 1090,400 1168,400 1168,70 1090,70"/>
+
+            <g class="fade d6">
+              <path class="retry" d="M676 295 V301 H552 V296" marker-end="url(#ar-soft)"/>
+              <text class="t-note" x="688" y="305">fail → retry</text>
+              <polyline class="rb-path" points="954,400 954,412 1022,412 1022,136 893,136" marker-end="url(#ar-fault)"/>
+              <text class="t-note t-fault" x="1036" y="256" text-anchor="middle" transform="rotate(-90 1036 256)">ROLLBACK · 5xx &gt; 2%*</text>
+            </g>
+            <polyline class="rb-trail" points="954,400 954,412 1022,412 1022,136 893,136"/>
+
+            <circle class="port" cx="274" cy="88" r="4.5"/>
+            <circle class="port" cx="1168" cy="88" r="4.5"/>
+
+            <!-- the issue: drawn beneath the stations, seen on the conveyor at each stop -->
+            <g class="token" transform="translate(274 70)">
+              <rect class="token-halo" x="-12" y="-12" width="24" height="24"/>
+              <rect class="token-body" x="-6.5" y="-6.5" width="13" height="13"/>
+              <path class="token-x" d="M-3.5 -3.5 L3.5 3.5 M3.5 -3.5 L-3.5 3.5"/>
+            </g>
+
+            <g class="st fade d1" data-st="open">
+              <rect class="st-box" x="218" y="16" width="112" height="40"/>
+              <text class="t-l1" x="274" y="33">NEW ISSUE</text><text class="t-l2" x="274" y="48">label sisf:ready</text>
+              <circle class="balloon" cx="218" cy="16" r="7.5"/><text class="t-bal" x="218" y="19.2">1</text>
+            </g>
+            <g class="st fade d2" data-st="intake">
+              <rect class="st-box" x="218" y="114" width="112" height="44"/>
+              <text class="t-l1" x="274" y="133">INTAKE</text><text class="t-l2" x="274" y="148">scope + DoD</text>
+              <circle class="balloon" cx="218" cy="114" r="7.5"/><text class="t-bal" x="218" y="117.2">2</text>
+            </g>
+            <g class="st fade d3" data-st="approve">
+              <rect class="st-box" x="354" y="114" width="112" height="44"/>
+              <text class="t-l1" x="410" y="133">OWNER GATE</text><text class="t-l2" x="410" y="148">new features</text>
+              <circle class="balloon" cx="354" cy="114" r="7.5"/><text class="t-bal" x="354" y="117.2">3</text>
+            </g>
+            <g class="st fade d4" data-st="agent">
+              <rect class="st-box" x="490" y="226" width="112" height="44"/>
+              <text class="t-l1" x="546" y="245">CODING AGENT</text><text class="t-l2" x="546" y="260">writes the fix</text>
+              <circle class="balloon" cx="490" cy="226" r="7.5"/><text class="t-bal" x="490" y="229.2">4</text>
+            </g>
+            <g class="st fade d5" data-st="qa">
+              <rect class="st-box" x="626" y="226" width="112" height="44"/>
+              <text class="t-l1" x="682" y="245">QA GATE</text><text class="t-l2" x="682" y="260">85/100* + gates</text>
+              <circle class="balloon" cx="626" cy="226" r="7.5"/><text class="t-bal" x="626" y="229.2">5</text>
+            </g>
+            <g class="st fade d6" data-st="sup">
+              <rect class="hatch" x="756" y="108" width="124" height="56"/>
+              <rect class="st-box" x="762" y="114" width="112" height="44"/>
+              <text class="t-l1" x="818" y="133">SUPERVISOR</text><text class="t-l2" x="818" y="148">trusted · LKG</text>
+              <circle class="balloon" cx="756" cy="108" r="7.5"/><text class="t-bal" x="756" y="111.2">6</text>
+            </g>
+            <g class="fade d7">
+              <path class="leader" d="M897 177 L882 166"/>
+              <text class="t-note t-ink" x="900" y="184">TRUSTED BOUNDARY</text>
+              <text class="t-note" x="900" y="196">no agent write access</text>
+            </g>
+            <g class="st fade d7" data-st="canary">
+              <rect class="st-box" x="898" y="338" width="112" height="44"/>
+              <text class="t-l1" x="954" y="355">CANARY</text><text class="t-l2" x="954" y="368">5 → 25 → 100%*</text>
+              <rect class="seg" data-seg="0" x="908" y="373" width="29" height="4"/>
+              <rect class="seg" data-seg="1" x="939.5" y="373" width="29" height="4"/>
+              <rect class="seg" data-seg="2" x="971" y="373" width="29" height="4"/>
+              <circle class="balloon" cx="898" cy="338" r="7.5"/><text class="t-bal" x="898" y="341.2">7</text>
+            </g>
+            <g class="st fade d8" data-st="monitor">
+              <rect class="st-box" x="1034" y="338" width="112" height="44"/>
+              <text class="t-l1" x="1090" y="357">MONITOR</text><text class="t-l2" x="1090" y="372">observed DoD</text>
+              <circle class="balloon" cx="1034" cy="338" r="7.5"/><text class="t-bal" x="1034" y="341.2">8</text>
+            </g>
+            <g class="st fade d9" data-st="closed">
+              <rect class="st-box" x="1034" y="16" width="112" height="40"/>
+              <text class="t-l1" x="1090" y="33">ISSUE CLOSED</text><text class="t-l2" x="1090" y="48">when verified</text>
+              <circle class="balloon" cx="1034" cy="16" r="7.5"/><text class="t-bal" x="1034" y="19.2">9</text>
+            </g>
+
+            <g class="receipt"><g transform="rotate(-4 686 210)"><rect x="634" y="202" width="104" height="16"/><text x="686" y="213">qa_receipt · signed</text></g></g>
+            <g class="tag-blocked"><rect x="906" y="112" width="110" height="16"/><text x="961" y="123">BLOCKED · EVIDENCE</text></g>
+            <g class="tag-rb"><rect x="906" y="144" width="110" height="16"/><text x="961" y="155">LKG RESTORED</text></g>
+
+            <g class="stamp fade d10"><g transform="rotate(-2.5 690 37)">
+              <rect x="560" y="14" width="260" height="46"/><rect class="stamp-in" x="563.5" y="17.5" width="253" height="39"/>
+              <text class="t-stamp" x="690" y="37">PRELIMINARY</text>
+              <text class="t-stamp2" x="690" y="51">DESIGN COMPLETE · BUILD IN PROGRESS</text>
+            </g></g>
+
+            <g class="dim fade d10">
+              <line x1="100" y1="430" x2="100" y2="452"/><line x1="1190" y1="430" x2="1190" y2="452"/>
+              <line x1="100" y1="446" x2="1190" y2="446"/>
+              <path d="M95 451 l10 -10 M1185 451 l10 -10"/>
+              <rect class="label-bg" x="476" y="440" width="338" height="12"/>
+              <text class="t-note" x="645" y="449" text-anchor="middle">ONE DEPLOYMENT · THREE ZONES · ONE LIFECYCLE · 15 STATES</text>
+            </g>
+          </svg>
+
+          <!-- TALL drawing (< 1100px): vertical swimlanes, time runs top to bottom -->
+          <svg class="schem schem--tall" viewBox="0 0 340 610" role="img" aria-labelledby="st-t sw-d"
+               data-stops="open:0,intake:1,approve:2,agent:5,qa:6,sup:9,canary:12,monitor:13,closed:14">
+            <title id="st-t">Schematic of one SISF factory: three zones and the line an issue travels</title>
+
+            <g class="fade d0"><rect class="boundary" x="4" y="60" width="332" height="464"/></g>
+            <line class="lane-line" x1="4" y1="94" x2="336" y2="94" pathLength="1"/>
+            <line class="lane-line" x1="116" y1="60" x2="116" y2="524" pathLength="1"/>
+            <line class="lane-line" x1="226" y1="60" x2="226" y2="524" pathLength="1"/>
+
+            <g class="fade d1">
+              <text class="t-lane" x="124" y="21">GITHUB</text>
+              <text class="t-note" x="124" y="34">source of truth,</text>
+              <text class="t-note" x="124" y="46">outside the factory</text>
+              <text class="t-zone t-zone--sm" x="11" y="79">Z3</text><text class="t-lane t-lane--sm" x="12" y="90">CONTROL PLANE</text>
+              <text class="t-zone t-zone--sm" x="121" y="79">Z2</text><text class="t-lane t-lane--sm" x="122" y="90">AGENT FACTORY</text>
+              <text class="t-zone t-zone--sm" x="231" y="79">Z1</text><text class="t-lane t-lane--sm" x="232" y="90">APPLICATION</text>
+              <rect class="label-bg" x="126" y="54" width="176" height="12"/>
+              <text class="t-note t-ink" x="131" y="63">FACTORY BOUNDARY · factory_id</text>
+            </g>
+
+            <polyline class="route" pathLength="1" points="108,28 108,126 108,186 108,216 218,216 218,246 218,306 218,336 108,336 108,366 108,396 328,396 328,426 328,486 328,560"/>
+            <polyline class="trail" points="108,28 108,126 108,186 108,216 218,216 218,246 218,306 218,336 108,336 108,366 108,396 328,396 328,426 328,486 328,560"/>
+            <g class="fade d6">
+              <polyline class="rb-path" points="328,426 328,456 54,456 54,404" marker-end="url(#ar-fault)"/>
+              <text class="t-note t-fault" x="12" y="476">AUTO-ROLLBACK</text>
+              <text class="t-note" x="12" y="488">if 5xx &gt; 2%*</text>
+            </g>
+            <polyline class="rb-trail" points="328,426 328,456 54,456 54,404"/>
+
+            <circle class="port" cx="108" cy="60" r="4.5"/>
+            <circle class="port" cx="328" cy="524" r="4.5"/>
+
+            <g class="token" transform="translate(108 28)">
+              <rect class="token-halo" x="-12" y="-12" width="24" height="24"/>
+              <rect class="token-body" x="-6.5" y="-6.5" width="13" height="13"/>
+              <path class="token-x" d="M-3.5 -3.5 L3.5 3.5 M3.5 -3.5 L-3.5 3.5"/>
+            </g>
+
+            <g class="st fade d1" data-st="open">
+              <rect class="st-box" x="12" y="8" width="84" height="40"/>
+              <text class="t-l1" x="54" y="25">NEW ISSUE</text><text class="t-l2" x="54" y="40">sisf:ready</text>
+            </g>
+            <g class="st fade d2" data-st="intake">
+              <rect class="st-box" x="12" y="104" width="84" height="44"/>
+              <text class="t-l1" x="54" y="123">INTAKE</text><text class="t-l2" x="54" y="138">scope + DoD</text>
+            </g>
+            <g class="st fade d3" data-st="approve">
+              <rect class="st-box" x="12" y="164" width="84" height="44"/>
+              <text class="t-l1" x="54" y="183">OWNER GATE</text><text class="t-l2" x="54" y="198">new features</text>
+            </g>
+            <g class="st fade d4" data-st="agent">
+              <rect class="st-box" x="122" y="224" width="84" height="44"/>
+              <text class="t-l1" x="164" y="243">AGENT</text><text class="t-l2" x="164" y="258">writes a fix</text>
+            </g>
+            <g class="st fade d5" data-st="qa">
+              <rect class="st-box" x="122" y="284" width="84" height="44"/>
+              <text class="t-l1" x="164" y="303">QA GATE</text><text class="t-l2" x="164" y="318">85* + gates</text>
+            </g>
+            <g class="st fade d6" data-st="sup">
+              <rect class="hatch" x="8" y="340" width="92" height="52"/>
+              <rect class="st-box" x="12" y="344" width="84" height="44"/>
+              <text class="t-l1" x="54" y="363">SUPERVISOR</text><text class="t-l2" x="54" y="378">trusted · LKG</text>
+            </g>
+            <g class="fade d7">
+              <path class="leader" d="M134 359 H123 M127 355.5 L123 359 L127 362.5"/>
+              <text class="t-note t-ink" x="138" y="362">TRUSTED</text>
+              <text class="t-note" x="124" y="375">agents cannot</text>
+              <text class="t-note" x="124" y="387">write here</text>
+            </g>
+            <g class="st fade d7" data-st="canary">
+              <rect class="st-box" x="232" y="404" width="84" height="44"/>
+              <text class="t-l1" x="274" y="421">CANARY</text><text class="t-l2" x="274" y="434">5→25→100%*</text>
+              <rect class="seg" data-seg="0" x="240" y="439" width="21" height="4"/>
+              <rect class="seg" data-seg="1" x="263.5" y="439" width="21" height="4"/>
+              <rect class="seg" data-seg="2" x="287" y="439" width="21" height="4"/>
+            </g>
+            <g class="st fade d8" data-st="monitor">
+              <rect class="st-box" x="232" y="464" width="84" height="44"/>
+              <text class="t-l1" x="274" y="483">MONITOR</text><text class="t-l2" x="274" y="498">observed DoD</text>
+            </g>
+            <g class="st fade d9" data-st="closed">
+              <rect class="st-box" x="232" y="540" width="84" height="40"/>
+              <text class="t-l1" x="274" y="557">CLOSED</text><text class="t-l2" x="274" y="572">when verified</text>
+            </g>
+
+            <g class="receipt"><g transform="rotate(-4 56 306)"><rect x="12" y="298" width="88" height="16"/><text x="56" y="309">qa_receipt signed</text></g></g>
+            <g class="tag-rb"><rect x="12" y="414" width="88" height="14"/><text x="56" y="424">LKG RESTORED</text></g>
+            <g class="tag-blocked"><rect x="12" y="432" width="88" height="14"/><text x="56" y="442">BLOCKED</text></g>
+
+            <g class="stamp fade d10"><g transform="rotate(-3 108 559)">
+              <rect x="12" y="538" width="192" height="42"/><rect class="stamp-in" x="15.5" y="541.5" width="185" height="35"/>
+              <text class="t-stamp" x="108" y="558">PRELIMINARY</text>
+              <text class="t-stamp2" x="108" y="571">DESIGN COMPLETE · BUILD IN PROGRESS</text>
+            </g></g>
+
+            <g class="dim fade d10">
+              <line x1="4" y1="588" x2="4" y2="602"/><line x1="336" y1="588" x2="336" y2="602"/>
+              <line x1="4" y1="596" x2="336" y2="596"/>
+              <path d="M0 601 l9 -9 M332 601 l9 -9"/>
+              <rect class="label-bg" x="64" y="590" width="212" height="12"/>
+              <text class="t-note" x="170" y="599" text-anchor="middle">ONE DEPLOYMENT · 3 ZONES · 15 STATES</text>
+            </g>
+          </svg>
+        </div>
+      </figure>
+
+      <div class="line-foot">
+        <div class="readout" id="readout" aria-live="off">
+          <div class="ro-head">
+            <span class="ro-k">State</span>
+            <span class="ro-state" id="ro-state">Intake → Closed</span>
+            <span class="ro-zone" id="ro-zone">15 states</span>
+          </div>
+          <p class="ro-note" id="ro-note">A labelled GitHub issue is scoped, built by one agent, graded by another, released by canary, and closed only after the running revision meets its Definition of Done. The full schedule of states is listed below.</p>
+          <ol class="ruler" aria-hidden="true">
+            <li data-s="Intake">INT</li><li data-s="Clarifying">CLR</li><li data-s="ScopeDraft">SCP</li><li data-s="ApprovalPending">APR</li><li data-s="Ready">RDY</li><li data-s="Claimed">CLM</li><li data-s="Developing">DEV</li><li data-s="QAEvaluation">QA</li><li data-s="ReleaseCandidate">RC</li><li data-s="Canary">CAN</li><li data-s="Monitoring">MON</li><li data-s="Verified">VER</li><li data-s="Closed">CLS</li><li class="fail" data-s="RolledBack">RB</li><li class="fail" data-s="Blocked">BLK</li>
+          </ol>
+          <div class="controls">
+            <button type="button" class="ctl" data-line="play">
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path class="i-pause" d="M2.5 1.5h2.5v9H2.5zM7 1.5h2.5v9H7z" fill="currentColor"/><path class="i-play" d="M2.5 1.2L10.5 6 2.5 10.8z" fill="currentColor"/></svg>
+              <span data-line-label>Pause</span>
+            </button>
+            <button type="button" class="ctl" data-line="back">
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10.5 1.5L4.5 6l6 4.5z" fill="currentColor"/><path d="M1.5 1.5h2v9h-2z" fill="currentColor"/></svg>
+              Back
+            </button>
+            <button type="button" class="ctl" data-line="step">
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 1.5L7.5 6 1.5 10.5z" fill="currentColor"/><path d="M8.5 1.5h2v9h-2z" fill="currentColor"/></svg>
+              Step
+            </button>
+            <button type="button" class="ctl ctl--fault" data-line="fault" aria-pressed="false" aria-describedby="fault-hint">
+              <span class="ctl-box" aria-hidden="true"></span>Inject fault
+            </button>
+          </div>
+          <p class="keys" id="line-keys"><span id="fault-hint">A fault applies at the next canary.</span> Keyboard: focus the drawing, then <kbd>←</kbd> <kbd>→</kbd> to step, <kbd>Space</kbd> to play or pause, <kbd>F</kbd> for a fault, <kbd>Home</kbd> to restart.</p>
+        </div>
+
+        <dl class="tblock" aria-label="Title block">
+          <div class="tb s3"><dt>Project</dt><dd>SISF · Self-improvement Software Factory</dd></div>
+          <div class="tb half"><dt>Dwg no.</dt><dd class="mono">SISF-001</dd></div>
+          <div class="tb s3"><dt>Status</dt><dd><strong>Preliminary.</strong> Design complete. Go implementation of P0–P3 in progress. Nothing released yet.</dd></div>
+          <div class="tb half"><dt>Rev</dt><dd class="mono">P0</dd></div>
+          <div class="tb s2 half"><dt>License</dt><dd><a href="https://github.com/bestagentkits/sisf/blob/main/LICENSE">Apache-2.0</a>, free</dd></div>
+          <div class="tb s2 half"><dt>Drawn by</dt><dd><a href="https://agentkit.best">AgentKit.best</a></dd></div>
+          <div class="tb s4"><dt>Notes</dt><dd>
+            <ul class="legend">
+              <li><svg viewBox="0 0 26 8" aria-hidden="true"><line x1="0" y1="4" x2="26" y2="4"/></svg>main line</li>
+              <li><svg viewBox="0 0 26 8" aria-hidden="true"><line x1="0" y1="4" x2="26" y2="4" stroke-dasharray="4 3"/></svg>conditional path</li>
+              <li><svg viewBox="0 0 26 8" aria-hidden="true"><line x1="0" y1="4" x2="26" y2="4" stroke-dasharray="1.5 3"/></svg>planned, not built yet</li>
+              <li><svg viewBox="0 0 26 8" aria-hidden="true"><line x1="0" y1="4" x2="26" y2="4" stroke-dasharray="9 2.5 2 2.5"/></svg>factory boundary</li>
+              <li>* starting value, to be calibrated</li>
+            </ul>
+          </dd></div>
+        </dl>
+      </div>
+      </div>
+
+      <details class="schedule" open>
+        <summary><h3>State schedule</h3><span class="sum-meta">15 states and their transitions · brief §5.2</span></summary>
+        <ol class="states">
+          <li data-state="Intake"><span class="s-n">01</span><span class="s-name">Intake</span><span class="s-zone">Z3 · Control plane</span><p class="s-note">A labelled issue arrives through a signed webhook or reconciliation and is recorded exactly once. The label asks for work; it grants no permission.</p><p class="s-next">Next: Clarifying if information is missing, otherwise ScopeDraft.</p></li>
+          <li data-state="Clarifying"><span class="s-n">02</span><span class="s-name">Clarifying</span><span class="s-zone">Z3 · Control plane</span><p class="s-note">The factory asks its questions in one comment that it keeps updating. No answer before the timeout means needs-info, not endless spending.</p><p class="s-next">Next: ScopeDraft once the answer is complete.</p></li>
+          <li data-state="ScopeDraft"><span class="s-n">03</span><span class="s-name">ScopeDraft</span><span class="s-zone">Z3 · Control plane</span><p class="s-note">A versioned Scope of Work and Definition of Done are attached to the issue. A significant edit after approval invalidates that approval.</p><p class="s-next">Next: ApprovalPending for a new feature or work outside delegation, otherwise Ready.</p></li>
+          <li data-state="ApprovalPending"><span class="s-n">04</span><span class="s-name">ApprovalPending</span><span class="s-zone">Z3 · Control plane</span><p class="s-note">New features, wider permissions and policy changes wait in the Owner's approval inbox. Approvals are signed, single-use and expire.</p><p class="s-next">Next: Ready if approved; Blocked if rejected or expired.</p></li>
+          <li data-state="Ready"><span class="s-n">05</span><span class="s-name">Ready</span><span class="s-zone">Z3 · Control plane</span><p class="s-note">Approved by the Owner, or inside the scope the Owner has delegated.</p><p class="s-next">Next: Claimed.</p></li>
+          <li data-state="Claimed"><span class="s-n">06</span><span class="s-name">Claimed</span><span class="s-zone">Z2 · Agent factory</span><p class="s-note">One worker takes an atomic lease and reserves budget. Duplicate or reordered webhooks cannot start a second run.</p><p class="s-next">Next: Developing.</p></li>
+          <li data-state="Developing"><span class="s-n">07</span><span class="s-name">Developing</span><span class="s-zone">Z2 · Agent factory</span><p class="s-note">A coding agent writes the fix in its own sandboxed workspace, with filesystem, network and time limits.</p><p class="s-next">Next: QAEvaluation, with a patch, tests and artifacts.</p></li>
+          <li data-state="QAEvaluation"><span class="s-n">08</span><span class="s-name">QAEvaluation</span><span class="s-zone">Z2 · Agent factory</span><p class="s-note">A different agent grades the change against a read-only baseline: rubric score ≥ 85/100* and every hard gate. One failed gate vetoes any score.</p><p class="s-next">Next: Developing if it fails and a retry is allowed; ReleaseCandidate if score and gates pass.</p></li>
+          <li data-state="ReleaseCandidate"><span class="s-n">09</span><span class="s-name">ReleaseCandidate</span><span class="s-zone">Z3 · Supervisor</span><p class="s-note">An immutable candidate and its signed qa_receipt go to the trusted supervisor, the only unit that holds release rights. Rollback preflight runs first.</p><p class="s-next">Next: Canary.</p></li>
+          <li data-state="Canary"><span class="s-n">10</span><span class="s-name">Canary</span><span class="s-zone">Z1 · Application</span><p class="s-note">Traffic moves 5% → 25% → 100%* while the error rate is compared with the baseline. Platforms without traffic splitting use blue-green with smoke tests.</p><p class="s-next">Next: Monitoring if healthy; RolledBack if the error threshold is exceeded.</p></li>
+          <li data-state="Monitoring"><span class="s-n">11</span><span class="s-name">Monitoring</span><span class="s-zone">Z1 · Application</span><p class="s-note">The factory measures the revision that is actually running, not the one it meant to ship. Low traffic switches to synthetic checks and a hold.</p><p class="s-next">Next: Verified after the post-deploy DoD and observation; RolledBack on regression.</p></li>
+          <li data-state="Verified"><span class="s-n">12</span><span class="s-name">Verified</span><span class="s-zone">Z1 · Application</span><p class="s-note">The observed revision meets the Definition of Done through the monitoring window.</p><p class="s-next">Next: Closed.</p></li>
+          <li data-state="Closed"><span class="s-n">13</span><span class="s-name">Closed</span><span class="s-zone">GitHub</span><p class="s-note">Only now is the issue closed, with the changelog and feature catalogue updated. A merged pull request alone is not completion.</p><p class="s-next">End of the line.</p></li>
+          <li data-state="RolledBack" class="is-fail"><span class="s-n">14</span><span class="s-name">RolledBack</span><span class="s-zone">Z3 · Supervisor</span><p class="s-note">The supervisor restores the last known good release on its own. Code and config are replaced; customer data is not overwritten.</p><p class="s-next">Next: Blocked, with evidence and a recovery report.</p></li>
+          <li data-state="Blocked" class="is-fail"><span class="s-n">15</span><span class="s-name">Blocked</span><span class="s-zone">Z3 · Control plane</span><p class="s-note">The issue stays open with evidence and a recovery report. Nothing is marked as a success.</p><p class="s-next">Next: Ready, only through a safe, authorized retry.</p></li>
+        </ol>
+      </details>
+    </section>
+  </div>
+</div>
+
+<!-- ================= SHEET 02 · What SISF is ================= -->
+<section class="sheet" id="what" aria-labelledby="what-h">
+  <div class="sheet-in">
+    <p class="sheet-tab" aria-hidden="true">Sheet 02 / 07 · General notes</p>
+    <div class="wrap">
+      <header class="sec-head">
+        <p class="eyebrow">02 · What SISF is</p>
+        <h2 id="what-h">One deployment. Three zones. One line.</h2>
+        <p class="lead">SISF is an open-source framework for a closed-loop software factory. It takes in requests, writes and independently verifies code, publishes, monitors, rolls back and improves itself, all inside one deployment you own.</p>
+      </header>
+
+      <ol class="notes">
+        <li><span class="note-n">N1</span><h3>One deployment, not three products.</h3><p>Application, agent factory and control plane share one <code>factory_id</code>, one release manifest and one lifecycle. They may run as several processes or containers; they are never split into separate services.</p></li>
+        <li><span class="note-n">N2</span><h3>GitHub is the source of truth.</h3><p>Source, policy, decisions and work items live in GitHub. Locks, jobs, the ledger and sessions live in the factory's own database, always pointing back to a commit or an issue.</p></li>
+        <li><span class="note-n">N3</span><h3>Two ways in.</h3><p>A labelled GitHub issue, or telemetry and feedback that the Decision Layer turns into an evidence-based proposal. Both loops close on a verified release.</p></li>
+        <li><span class="note-n">N4</span><h3>Yours, not a service.</h3><p>You run it on your own infrastructure with your own GitHub repository. Improvements stay in your deployment unless you choose to share them upstream.</p></li>
+      </ol>
+
+      <div class="what-foot">
+        <div class="excl">
+          <h3 class="h-mini">Not in the first release</h3>
+          <ul class="xlist">
+            <li>A multi-tenant SaaS, a marketplace or license sales.</li>
+            <li>A replacement for GitHub Actions, or its own Git server, registry or identity provider.</li>
+            <li>Opening new features on its own, or letting an outsider's issue widen permissions.</li>
+            <li>Claiming support for a platform before it passes end-to-end tests.</li>
+          </ul>
+        </div>
+        <div class="plate">
+          <p class="plate-big">Free and open source.</p>
+          <p class="plate-sub">Apache-2.0 · Copyright AgentKit.best</p>
+          <p>Use it, change it, run it for your own product. The license applies to the code and documents in the repository.</p>
+          <a class="plate-link" href="https://github.com/bestagentkits/sisf/blob/main/LICENSE">Read the license</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SHEET 03 · Architecture ================= -->
+<section class="sheet" id="architecture" aria-labelledby="arch-h">
+  <div class="sheet-in">
+    <p class="sheet-tab" aria-hidden="true">Sheet 03 / 07 · Sections and details</p>
+    <div class="wrap">
+      <header class="sec-head">
+        <p class="eyebrow">03 · Architecture</p>
+        <h2 id="arch-h">Drawn to be trusted, not just to work.</h2>
+        <p class="lead">Five details from the design. Every number marked * is a starting value, to be calibrated on real traffic before anyone relies on it.</p>
+      </header>
+
+      <!-- Detail A -->
+      <article class="detail" aria-labelledby="det-a">
+        <div class="detail-head">
+          <p class="detail-tag">Detail A</p>
+          <h3 id="det-a">Three zones, one deployment.</h3>
+          <p>Zones may run as several processes or containers. They share one <code>factory_id</code>, one release manifest, one gateway and one authority plane. Nine runtime units keep the same names on every platform; only their realization changes.</p>
+        </div>
+        <div class="plan">
+          <p class="plan-gh"><span>GitHub</span> source of truth, outside the factory</p>
+          <div class="plan-boundary dd">
+            <p class="plan-label">Factory boundary · one deployment · <code>factory_id</code></p>
+            <div class="zones">
+              <div class="zone">
+                <p class="zone-k">Z1</p>
+                <h4>Application</h4>
+                <p class="zone-d">The app your users use: Webapp, API, MCP and WebMCP. It emits traces, logs, sessions and feedback, and keeps serving the verified revision while Zones 2 and 3 restart.</p>
+                <ul class="units">
+                  <li><code>app</code><span>Long-running. Stable and canary revisions; scales horizontally.</span></li>
+                </ul>
+              </div>
+              <div class="zone">
+                <p class="zone-k">Z2</p>
+                <h4>Agent factory</h4>
+                <p class="zone-d">Claims work and runs coding agents (Claude CLI, Codex and Pi built in; remote executors optional) and an independent QA agent.</p>
+                <ul class="units">
+                  <li><code>dispatcher</code><span>Long-running. One instance holds the lease; creates and destroys runners.</span></li>
+                  <li><code>runner</code><span>Ephemeral, one per run. No inbound connections, egress by policy, only that run's secrets.</span></li>
+                  <li><code>qa-runner</code><span>Ephemeral. Identity and credentials separate from the runner.</span></li>
+                </ul>
+              </div>
+              <div class="zone">
+                <p class="zone-k">Z3</p>
+                <h4>Control plane</h4>
+                <p class="zone-d">Dashboard, API, CLI, MCP and WebMCP; GitHub and Google sign-in with roles; approvals, policies, budget and secrets; the trusted release supervisor.</p>
+                <ul class="units">
+                  <li><code>control</code><span>Long-running. Not public by default, except the webhook route and the report endpoint.</span></li>
+                  <li class="unit--trusted"><code>supervisor</code><span>A separate process. The only unit with deploy rights and the delegated signing keys.</span></li>
+                </ul>
+              </div>
+            </div>
+            <div class="shared">
+              <p class="zone-k zone-k--sm">Shared</p>
+              <ul class="units units--row">
+                <li><code>state</code><span>SQLite WAL or PostgreSQL; one role per zone.</span></li>
+                <li><code>artifacts</code><span>Volume or object store for artifacts, logs and snapshots.</span></li>
+                <li><code>edge</code><span>Reverse proxy and TLS; splits stable and canary traffic.</span></li>
+              </ul>
+            </div>
+          </div>
+          <p class="fine">Four network segments: <code>app</code>, <code>factory</code>, <code>control</code>, <code>sandbox</code>. Runners live in <code>sandbox</code> and reach the outside only through an egress proxy that enforces the Owner's allowlist.</p>
+        </div>
+      </article>
+
+      <!-- Detail B -->
+      <article class="detail" aria-labelledby="det-b">
+        <div class="detail-head">
+          <p class="detail-tag">Detail B</p>
+          <h3 id="det-b">The QA gate: one score, eight vetoes, one signed receipt.</h3>
+          <p>QA runs under its own identity, against a read-only test baseline locked to the commit and the policy SHA. It may use a judge model for semantic criteria; deterministic checks keep the veto.</p>
+        </div>
+        <div class="qa-grid">
+          <div class="rubric-wrap">
+            <h4 class="h-mini">Rubric · starting values*</h4>
+            <div class="rubric" role="img" aria-label="Starting rubric out of 100: correctness and regression 30, security and auth 25, contract and data safety 20, UX, performance and output 15, observability and rollback 10. Pass mark 85 out of 100, to be calibrated.">
+              <span>30</span><span>25</span><span>20</span><span>15</span><span>10</span>
+            </div>
+            <p class="pass" aria-hidden="true"><span>pass ≥ 85 / 100*</span></p>
+            <ol class="rubric-legend">
+              <li><b>30</b> Correctness and regression</li>
+              <li><b>25</b> Security and auth</li>
+              <li><b>20</b> Contract and data safety</li>
+              <li><b>15</b> UX, performance and output</li>
+              <li><b>10</b> Observability and rollback</li>
+            </ol>
+            <p class="fine">* A design starting point, not a threshold proven by research. It is calibrated against real work.</p>
+          </div>
+          <div class="gates">
+            <h4 class="h-mini">Eight hard gates · any one fails, no release</h4>
+            <ol class="gate-list">
+              <li>Tests and contract</li>
+              <li>Permissions</li>
+              <li>Migrations</li>
+              <li>Secrets</li>
+              <li>Confidence of the observed build</li>
+              <li>Independent evaluator</li>
+              <li>Resource and budget policy</li>
+              <li>Rollback readiness</li>
+            </ol>
+            <p class="fine">A high score never overrides a failed gate.</p>
+          </div>
+          <div class="receipt-card">
+            <h4 class="h-mini"><code>qa_receipt</code> · signed by the trusted evaluator</h4>
+            <dl class="receipt-dl">
+              <div><dt>candidate_digest</dt><dd>sha256:&lt;digest&gt;</dd></div>
+              <div><dt>suite_digest</dt><dd>sha256:&lt;digest&gt;</dd></div>
+              <div><dt>baseline_sha</dt><dd>&lt;commit&gt;</dd></div>
+              <div><dt>qa_agent</dt><dd>&lt;identity&gt;</dd></div>
+              <div><dt>model_route</dt><dd>coder &lt;route&gt; · qa &lt;route&gt;</dd></div>
+              <div><dt>checks</dt><dd>&lt;8 hard gates&gt;</dd></div>
+              <div><dt>score</dt><dd>&lt;0–100&gt;</dd></div>
+              <div><dt>timestamp · expires</dt><dd>&lt;time&gt; · &lt;time&gt;</dd></div>
+              <div><dt>evaluator_attempt</dt><dd>&lt;n&gt;</dd></div>
+            </dl>
+            <p class="fine">With two or more model routes, QA uses a different model or provider from the coding agent. With one, the receipt records <code>same_model_route: true</code> and policy may require the Owner instead. QA cannot grade an unfinished build or borrow another commit's receipt.</p>
+          </div>
+        </div>
+      </article>
+
+      <!-- Detail C -->
+      <article class="detail" aria-labelledby="det-c">
+        <div class="detail-head">
+          <p class="detail-tag">Detail C</p>
+          <h3 id="det-c">Canary and rollback: measured, never assumed.</h3>
+          <p>A release goes out in steps and comes back on its own. Every value here is a starting point*, to be calibrated on real traffic.</p>
+        </div>
+        <ol class="pipeline" aria-label="Release pipeline">
+          <li>Build immutable candidate</li><li>Preview</li><li>QA</li><li>Rollback preflight</li><li>Canary or blue-green</li><li>Observed revision + metrics</li><li>Promote or restore</li>
+        </ol>
+        <div class="canary-grid">
+          <figure class="chart">
+            <svg viewBox="0 0 300 176" role="img" aria-labelledby="ch-t ch-d">
+              <title id="ch-t">Illustration of a canary release with automatic rollback</title>
+              <desc id="ch-d">Traffic to the new revision steps from 5 to 25 to 100 percent. A healthy error rate stays near the baseline, under the threshold. A faulty release crosses the threshold during the 25 percent step and the supervisor rolls back to the last known good release. Illustration only; values are starting points.</desc>
+              <g class="ch-steps">
+                <rect x="34" y="8" width="70" height="18"/><rect x="104" y="8" width="80" height="18"/><rect x="184" y="8" width="108" height="18"/>
+                <text x="69" y="21">5%*</text><text x="144" y="21">25%*</text><text x="238" y="21">100%*</text>
+              </g>
+              <line class="ch-axis" x1="34" y1="36" x2="34" y2="150"/><line class="ch-axis" x1="34" y1="150" x2="292" y2="150"/>
+              <text class="ch-lbl" x="28" y="44" text-anchor="end">err</text>
+              <text class="ch-lbl" x="292" y="164" text-anchor="end">time →</text>
+              <line class="ch-thr" x1="34" y1="78" x2="292" y2="78"/>
+              <text class="ch-lbl ch-lbl--fault" x="290" y="73" text-anchor="end">threshold 2%*</text>
+              <line class="ch-base" x1="34" y1="128" x2="292" y2="128"/>
+              <text class="ch-lbl" x="290" y="123" text-anchor="end">baseline</text>
+              <polyline class="ch-ok" points="34,132 60,129 84,133 104,130 130,127 156,131 184,129 210,132 236,128 262,130 292,129"/>
+              <polyline class="ch-bad" points="104,130 122,118 138,96 150,66 156,60"/>
+              <circle class="ch-x" cx="150" cy="70" r="4"/>
+              <path class="ch-rb" d="M158 60 C 176 60, 176 128, 196 130" marker-end="url(#ar-fault)"/>
+              <text class="ch-lbl ch-lbl--fault" x="182" y="98">rollback → LKG</text>
+            </svg>
+            <figcaption class="fine">Illustration only. Solid: healthy release. Dashed: a faulty release crossing the threshold at the 25%* step, then restored to the last known good release.</figcaption>
+          </figure>
+          <dl class="rules-dl">
+            <div><dt>Roll back when</dt><dd>The error rate exceeds the threshold after enough samples within a window, clearly above baseline. For example: 5xx &gt; 2%* and more than 1 point over baseline*, at least 100 samples*, a 10-minute window*, two windows in a row*.</dd></div>
+            <div><dt>Stop at once when</dt><dd>A critical security or health check fails.</dd></div>
+            <div><dt>Hold when</dt><dd>Metrics are missing, there is no recovery version, or the deployment adapter is broken. Success is never assumed, and a successful deploy API call is not a healthy release.</dd></div>
+            <div><dt>Low-traffic hold</dt><dd>If real traffic cannot reach the sample count in the window, mandatory synthetic checks covering the DoD flows run throughout a hold of 30 minutes*. A real error during the hold extends it and is recorded; it does not trigger a rollback by itself. No synthetic suite, no self-publishing.</dd></div>
+            <div><dt>Never</dt><dd>Overwrite customer data with an old snapshot. Rollback replaces compatible code and config only.</dd></div>
+          </dl>
+        </div>
+        <p class="fine">Canary steps of 5% → 25% → 100%* apply where the platform can split traffic. Elsewhere the release starts with blue-green, smoke tests and monitoring.</p>
+      </article>
+
+      <!-- Detail D -->
+      <article class="detail" aria-labelledby="det-d">
+        <div class="detail-head">
+          <p class="detail-tag">Section A–A</p>
+          <h3 id="det-d">The supervisor boundary.</h3>
+          <p>The supervisor belongs to the same deployment (same <code>factory.yaml</code>, same <code>factory_id</code>, same install and uninstall lifecycle) but sits outside everything a candidate can change. All four conditions must hold.</p>
+        </div>
+        <div class="cut">
+          <div class="cut-side">
+            <p class="cut-k">Candidate side</p>
+            <ul class="cut-list"><li>Zone 1 and Zone 2 processes</li><li>Every agent workspace</li><li>The normal release pipeline</li></ul>
+          </div>
+          <div class="cut-wall" aria-hidden="true"><span>A</span><span>A</span></div>
+          <div class="cut-side cut-side--sup">
+            <p class="cut-k">Supervisor side</p>
+            <ul class="cut-list"><li>Its own digest-pinned image</li><li>Last known good release (LKG)</li><li>Delegated signing keys</li><li>Rollback configuration</li></ul>
+          </div>
+        </div>
+        <ol class="cond">
+          <li><b>Own image.</b> The supervisor runs from its own digest-pinned image and is never built from the candidate's artifact.</li>
+          <li><b>Out of reach.</b> The LKG, signing keys and rollback configuration live on storage that Zone 1 and 2 processes and every agent workspace cannot write.</li>
+          <li><b>Human-gated changes.</b> The normal release pipeline cannot change the supervisor's digest; only a governance cycle with human approval can.</li>
+          <li><b>Self-check.</b> At startup the supervisor checks its own digest and refuses to run if it deviates from the signed manifest.</li>
+        </ol>
+        <p class="fine">The P0 conformance checker verifies all four. If any one is missing, self-update is disabled, and a mode whose supervisor cannot be separated from the candidate must not self-publish.</p>
+      </article>
+
+      <!-- Detail E -->
+      <article class="detail" aria-labelledby="det-e">
+        <div class="detail-head">
+          <p class="detail-tag">Detail E · roadmap P3</p>
+          <h3 id="det-e">Five surfaces, one service layer.</h3>
+          <p>Every surface calls the same policy and action service. No surface defines permissions of its own, and a tool description never grants one.</p>
+        </div>
+        <div class="ports">
+          <ul class="port-list">
+            <li><b>Dashboard</b><span>Overview, workboard, run graph, telemetry and the approval inbox.</span></li>
+            <li><b>API</b><span>REST and OpenAPI: the contract every other surface uses.</span></li>
+            <li><b>CLI</b><span>Scripted operations, with device-flow verification for sensitive steps.</span></li>
+            <li><b>MCP</b><span>Remote MCP with OAuth 2.1 and resource-bound scopes.</span></li>
+            <li><b>WebMCP</b><span>Optional, in browsers that support it; falls back to API, MCP or the dashboard.</span></li>
+          </ul>
+          <p class="bus"><span>One action service</span><span>Same permissions everywhere</span></p>
+          <p class="fine">Sensitive writes always go plan → approval → execute → audit, with step-up confirmation by a person. A browser agent cannot borrow the Owner's session to approve.</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SHEET 04 · Philosophy: seven rules ================= -->
+<section class="sheet" id="philosophy" aria-labelledby="phil-h">
+  <div class="sheet-in">
+    <p class="sheet-tab" aria-hidden="true">Sheet 04 / 07 · Specification</p>
+    <div class="wrap">
+      <header class="sec-head">
+        <p class="eyebrow">04 · Philosophy</p>
+        <h2 id="phil-h">Seven rules for software that agents write.</h2>
+        <p class="lead">Every factory carries a written philosophy, signed by its Owner. Markdown guides the models; deterministic checks enforce the rules. Each rule below has a contract: how it is enforced, which acceptance test proves it, and where the brief defines it.</p>
+      </header>
+
+      <div class="rules-bar">
+        <p class="fine">Status of every rule: designed, not yet built.</p>
+        <button type="button" class="ctl expand-all" data-expand-all aria-controls="rules">Expand all</button>
+      </div>
+
+      <ol class="rules" id="rules">
+        <li><details class="rule">
+          <summary><span class="rule-n">I.</span><span class="rule-t"><h3>New features belong to the Owner.</h3><span class="rule-g">Agents improve only what is already authorized.</span></span><span class="rule-tog" aria-hidden="true"></span></summary>
+          <dl class="contract">
+            <div><dt>Enforcement</dt><dd>ScopeDraft classifies every issue. A new feature, a wider permission or a policy change goes to ApprovalPending and waits for the Owner. A reporter, a label or an outside issue cannot widen scope or deployment permissions.</dd></div>
+            <div><dt>Acceptance test</dt><dd><span class="tid">SISF-03</span> An issue from a user without permission, or an unapproved feature, expands nothing; the feature lands in the approval inbox and needs an Owner decision.</dd></div>
+            <div><dt>Brief</dt><dd>§0 decision 12 · §5.3 · §5.4</dd></div>
+            <div><dt>Status</dt><dd class="status-dd">Designed, not yet built</dd></div>
+          </dl>
+        </details></li>
+        <li><details class="rule">
+          <summary><span class="rule-n">II.</span><span class="rule-t"><h3>The agent that writes a change never grades it.</h3><span class="rule-g">Separate identity, workspace and, with two routes, model.</span></span><span class="rule-tog" aria-hidden="true"></span></summary>
+          <dl class="contract">
+            <div><dt>Enforcement</dt><dd>The coding agent and the QA agent run under different identities and workspaces. With two or more model routes, QA uses a different model or provider; with one, the receipt records <code>same_model_route: true</code> and policy may require the Owner. The QA baseline is read-only and pinned to the commit and policy SHA.</dd></div>
+            <div><dt>Acceptance test</dt><dd><span class="tid">SISF-06</span> A QA agent that scores its own patch is rejected; the receipt is pinned to the candidate SHA and an independent baseline.</dd></div>
+            <div><dt>Brief</dt><dd>§6.1</dd></div>
+            <div><dt>Status</dt><dd class="status-dd">Designed, not yet built</dd></div>
+          </dl>
+        </details></li>
+        <li><details class="rule">
+          <summary><span class="rule-n">III.</span><span class="rule-t"><h3>A score never overrides a hard gate.</h3><span class="rule-g">Eight hard gates veto any score.</span></span><span class="rule-tog" aria-hidden="true"></span></summary>
+          <dl class="contract">
+            <div><dt>Enforcement</dt><dd>Tests and contract, permissions, migrations, secrets, confidence of the observed build, independent evaluator, resource and budget policy, rollback readiness. One failure blocks the release, whatever the rubric score (starting pass mark 85/100*).</dd></div>
+            <div><dt>Acceptance test</dt><dd><span class="tid">SISF-07</span> A QA score that passes while security or contract fails publishes nothing.</dd></div>
+            <div><dt>Brief</dt><dd>§6.1</dd></div>
+            <div><dt>Status</dt><dd class="status-dd">Designed, not yet built</dd></div>
+          </dl>
+        </details></li>
+        <li><details class="rule">
+          <summary><span class="rule-n">IV.</span><span class="rule-t"><h3>No way back, no release.</h3><span class="rule-g">No safe rollback or no metrics means hold.</span></span><span class="rule-tog" aria-hidden="true"></span></summary>
+          <dl class="contract">
+            <div><dt>Enforcement</dt><dd>Rollback preflight runs before the canary. Missing metrics, no recovery version or a broken deployment adapter puts the release on hold; a successful deploy API call is never taken as a healthy release.</dd></div>
+            <div><dt>Acceptance test</dt><dd><span class="tid">SISF-20</span> A release without metrics or rollback capability is held or blocked; nothing self-publishes on an assumed success.</dd></div>
+            <div><dt>Brief</dt><dd>§3.3 · §6.2 · §10</dd></div>
+            <div><dt>Status</dt><dd class="status-dd">Designed, not yet built</dd></div>
+          </dl>
+        </details></li>
+        <li><details class="rule">
+          <summary><span class="rule-n">V.</span><span class="rule-t"><h3>Done means observed.</h3><span class="rule-g">An issue closes only when the deployed revision meets its DoD.</span></span><span class="rule-tog" aria-hidden="true"></span></summary>
+          <dl class="contract">
+            <div><dt>Enforcement</dt><dd>The factory reads the revision that is actually running, measures it against the versioned Definition of Done through the monitoring window, and only then closes the issue and updates the changelog and feature catalogue. A merged pull request is not completion.</dd></div>
+            <div><dt>Acceptance tests</dt><dd><span class="tid">SISF-02</span> A labelled issue goes from intake to close with every milestone visible on GitHub and in the UI. <span class="tid">SISF-08</span> Zone 1 goes up at the correct digest and the observed revision is checked.</dd></div>
+            <div><dt>Brief</dt><dd>§5.2 · §6.2</dd></div>
+            <div><dt>Status</dt><dd class="status-dd">Designed, not yet built</dd></div>
+          </dl>
+        </details></li>
+        <li><details class="rule">
+          <summary><span class="rule-n">VI.</span><span class="rule-t"><h3>The factory may improve itself, never its own judge.</h3><span class="rule-g">Supervisor, keys, QA baseline and rollback rules change only through a human-approved governance cycle.</span></span><span class="rule-tog" aria-hidden="true"></span></summary>
+          <dl class="contract">
+            <div><dt>Enforcement</dt><dd>The factory can fix code in all three zones. A candidate cannot, in the same cycle, change the trusted supervisor, signing keys, policy enforcement, QA baseline or rollback rules; those are governance changes with human approval in a separate cycle. An unapproved agent PR to <code>DECISIONS.md</code> leaves the old policy in force.</dd></div>
+            <div><dt>Acceptance tests</dt><dd><span class="tid">SISF-10</span> The factory fixes a non-sensitive part of Zone 3 by itself, inside the same deployment, without the candidate replacing the supervisor. <span class="tid">SISF-11</span> An unapproved agent change to <code>DECISIONS.md</code> leaves the old policy baseline in effect.</dd></div>
+            <div><dt>Brief</dt><dd>§4.1 · §6.3</dd></div>
+            <div><dt>Status</dt><dd class="status-dd">Designed, not yet built</dd></div>
+          </dl>
+        </details></li>
+        <li><details class="rule">
+          <summary><span class="rule-n">VII.</span><span class="rule-t"><h3>When evidence is thin, do nothing.</h3><span class="rule-g">The Decision Layer chooses ignore or collect_more_evidence.</span></span><span class="rule-tog" aria-hidden="true"></span></summary>
+          <dl class="contract">
+            <div><dt>Enforcement</dt><dd>A signal needs data quality, enough samples, a baseline and a time range before it can become a proposal. With too little data the Decision Layer returns <code>ignore</code>, <code>observe</code> or <code>collect_more_evidence</code> and creates no issue. Model judgments can only raise caution; deterministic checks keep the veto.</dd></div>
+            <div><dt>Acceptance test</dt><dd><span class="tid">SISF-17</span> Telemetry with no activity or no benefit does not create issues indefinitely; the answer is ignore, observe or stop.</dd></div>
+            <div><dt>Brief</dt><dd>§4.2</dd></div>
+            <div><dt>Status</dt><dd class="status-dd">Designed, not yet built</dd></div>
+          </dl>
+        </details></li>
+      </ol>
+
+      <div class="foundation">
+        <h3 class="h-mid">Foundation files</h3>
+        <p class="fine">The written philosophy of a factory lives in its own repository. Who may edit each file is part of the contract.</p>
+        <table class="spec resp">
+          <thead><tr><th scope="col">File</th><th scope="col">Holds</th><th scope="col">Who may edit</th></tr></thead>
+          <tbody>
+            <tr><td data-label="File"><code>AGENTS.md</code></td><td data-label="Holds">Product context, ways of working, technical principles for agents.</td><td data-label="Who may edit">Agents may propose a PR; it carries no authority to change policy.</td></tr>
+            <tr><td data-label="File"><code>REVIEW.md</code></td><td data-label="Holds">QA and release criteria, required evidence, the review checklist.</td><td data-label="Who may edit">PR with Owner approval. Agents never lower thresholds.</td></tr>
+            <tr><td data-label="File"><code>DECISIONS.md</code></td><td data-label="Holds">Philosophy, goals, no-gos, and how the Decision Layer classifies and prioritizes.</td><td data-label="Who may edit">PR with Owner approval, pinned to a SHA and a schema version.</td></tr>
+            <tr><td data-label="File"><code>FEATURES.md</code> / <code>features.yaml</code></td><td data-label="Holds">Functionality approved by a person; behaviour and limits.</td><td data-label="Who may edit">Every new feature needs Owner approval.</td></tr>
+            <tr><td data-label="File"><code>docs/adr/</code></td><td data-label="Holds">Architectural constraints and the reasons behind them.</td><td data-label="Who may edit">Kept with history; the Owner reviews any change of decision.</td></tr>
+            <tr><td data-label="File"><code>.sisf/factory.yaml</code></td><td data-label="Holds">The three zones, adapters, desired configuration and release policy.</td><td data-label="Who may edit">The Owner, behind branch protection.</td></tr>
+          </tbody>
+        </table>
+        <p class="fine">Order of precedence: safety invariants in code and verified delegated authority, then Owner-approved policy at a protected SHA, then <code>DECISIONS.md</code>, <code>REVIEW.md</code>, <code>FEATURES.md</code> and ADRs, then <code>AGENTS.md</code>, then issues, comments and logs. A conflict means hold.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SHEET 05 · Roadmap ================= -->
+<section class="sheet" id="roadmap" aria-labelledby="road-h">
+  <div class="sheet-in">
+    <p class="sheet-tab" aria-hidden="true">Sheet 05 / 07 · Revision table</p>
+    <div class="wrap">
+      <header class="sec-head">
+        <p class="eyebrow">05 · Roadmap</p>
+        <h2 id="road-h">Revision table.</h2>
+        <p class="lead">What is being built, and what is still a drawing. The Go implementation of P0–P3 is in progress, Standalone and Docker modes first. Nothing is released yet.</p>
+      </header>
+      <table class="rev resp">
+        <caption class="vh">Roadmap phases P0 to P4 with outcome, completion test and status</caption>
+        <thead><tr><th scope="col">Rev</th><th scope="col">Outcome</th><th scope="col">Done when</th><th scope="col">Status</th></tr></thead>
+        <tbody>
+          <tr><th scope="row" data-label="Rev">P0</th><td data-label="Outcome">ADRs, three-zone conformance checker, interface contracts.</td><td data-label="Done when">A configuration missing a zone, or a supervisor outside the boundary, is rejected.</td><td data-label="Status"><span class="chip chip--prog">In progress</span></td></tr>
+          <tr><th scope="row" data-label="Rev">P1</th><td data-label="Outcome">Local and Compose three-zone deployment, GitHub issue lifecycle, durable state.</td><td data-label="Done when">A fresh clone installs with one entrypoint; a labelled issue reaches Claimed; duplicate webhooks never start two runs.</td><td data-label="Status"><span class="chip chip--prog">In progress</span></td></tr>
+          <tr><th scope="row" data-label="Rev">P2</th><td data-label="Outcome">Two built-in agents, independent QA, publish with automatic rollback, factory self-update.</td><td data-label="Done when">Agent A patches, agent B grades, and an injected fault rolls back automatically.</td><td data-label="Status"><span class="chip chip--prog">In progress</span></td></tr>
+          <tr><th scope="row" data-label="Rev">P3</th><td data-label="Outcome">GitHub and Google sign-in, five control surfaces, Decision Layer, budgets.</td><td data-label="Done when">Permissions and behaviour are the same on all five surfaces.</td><td data-label="Status"><span class="chip chip--prog">In progress</span></td></tr>
+          <tr><th scope="row" data-label="Rev">P4</th><td data-label="Outcome">Remote agent adapters, Kubernetes and serverless profiles, a public conformance matrix.</td><td data-label="Done when">Two independent full deployment environments pass, and GO, MODIFY or STOP is decided on data.</td><td data-label="Status"><span class="chip chip--plan">Planned</span></td></tr>
+        </tbody>
+      </table>
+      <div class="modes">
+        <h3 class="h-mid">Deployment modes</h3>
+        <ul class="plates">
+          <li><b>Standalone</b><span>First · in progress</span></li>
+          <li><b>Docker</b><span>First · in progress</span></li>
+          <li class="planned"><b>Kubernetes</b><span>Planned</span></li>
+          <li class="planned"><b>Vercel</b><span>Planned</span></li>
+          <li class="planned"><b>Cloudflare</b><span>Planned</span></li>
+          <li class="planned"><b>TOSE</b><span>Planned</span></li>
+          <li class="planned"><b>Railway</b><span>Planned</span></li>
+        </ul>
+        <p class="fine">A platform is marked supported only after it passes end-to-end tests for one deployment, durable tasks, safe execution and rollback. Open points still awaiting an Owner decision are listed in section 15 of the <a href="https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-decision-brief.en.md">decision brief</a>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SHEET 06 · Get started ================= -->
+<section class="sheet" id="start" aria-labelledby="start-h">
+  <div class="sheet-in">
+    <p class="sheet-tab" aria-hidden="true">Sheet 06 / 07 · Installation (pending)</p>
+    <div class="wrap">
+      <header class="sec-head">
+        <p class="eyebrow">06 · Get started</p>
+        <h2 id="start-h">Nothing to install yet. Three things to do today.</h2>
+        <p class="lead">The repository holds the design. You can read it, follow the build, and tell us where it is wrong while it is still cheap to fix.</p>
+      </header>
+      <ol class="steps">
+        <li>
+          <span class="step-n">1</span>
+          <h3>Read the design</h3>
+          <p>The decision brief fixes the product decisions, interfaces, state machine, QA and release rules, and the acceptance matrix.</p>
+          <ul class="links">
+            <li><a href="https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-decision-brief.en.md">Decision brief (English)</a></li>
+            <li><a href="https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-decision-brief.md">Decision brief (Vietnamese original)</a></li>
+            <li><a href="https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-architecture.html">Architecture page (HTML source)</a></li>
+          </ul>
+        </li>
+        <li>
+          <span class="step-n">2</span>
+          <h3>Clone and follow the build</h3>
+          <p>Cloning gives you the documents today. Star and watch the repository to follow the Go implementation.</p>
+          <div class="cmd">
+            <code id="cmd-clone">git clone https://github.com/<wbr>bestagentkits/<wbr>sisf</code>
+            <button type="button" class="copy" data-copy="cmd-clone" aria-label="Copy the git clone command">Copy</button>
+          </div>
+          <p class="copy-status" role="status" data-copy-status></p>
+          <ul class="links"><li><a href="https://github.com/bestagentkits/sisf">Star the repository on GitHub</a></li></ul>
+        </li>
+        <li>
+          <span class="step-n">3</span>
+          <h3>Review the design</h3>
+          <p>Weaknesses in the design are cheapest to fix now. Report security problems privately; open an issue for everything else.</p>
+          <ul class="links">
+            <li><a href="https://github.com/bestagentkits/sisf/security/advisories/new">Report a vulnerability privately</a></li>
+            <li><a href="https://github.com/bestagentkits/sisf/issues">Open an issue</a></li>
+            <li><a href="https://github.com/bestagentkits/sisf/blob/main/docs/SECURITY.md">Security policy</a></li>
+          </ul>
+        </li>
+      </ol>
+
+      <div class="soon">
+        <div class="soon-head">
+          <h3 class="h-mid">Coming with the build</h3>
+          <span class="tag-na">Not available yet</span>
+        </div>
+        <div class="cmd cmd--planned">
+          <code>sisf doctor</code>
+          <span class="tag-na">Not available yet</span>
+        </div>
+        <ul class="soon-list">
+          <li><code>sisf doctor</code> checks all three zones, GitHub permissions, the state store and rollback readiness before a real run.</li>
+          <li>A first-run wizard checks the GitHub App, sign-in and budget, then runs a sample issue through the whole lifecycle.</li>
+          <li>A local simulation mode with a fake GitHub and a fake agent runs the full lifecycle without spending tokens.</li>
+        </ul>
+        <div class="soon-tose">
+          <button type="button" class="btn btn--planned" data-tose-deploy aria-disabled="true" aria-describedby="tose-note-start">Deploy on TOSE <span class="tag-na">Coming soon</span></button>
+          <p class="cta-note" id="tose-note-start">One-click deployment on <a href="https://tose.sh">TOSE</a>, the creator's deployment platform, is in development and not available yet. SISF never requires it.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SHEET 07 · Drawing index + final CTA ================= -->
+<section class="sheet" id="docs" aria-labelledby="docs-h">
+  <div class="sheet-in">
+    <p class="sheet-tab" aria-hidden="true">Sheet 07 / 07 · Drawing index</p>
+    <div class="wrap">
+      <header class="sec-head">
+        <p class="eyebrow">07 · Docs</p>
+        <h2 id="docs-h">Drawing index.</h2>
+        <p class="lead">Everything that defines SISF today. The HTML pages are interactive: download them and open them in a browser.</p>
+      </header>
+      <ol class="index">
+        <li><span class="ix-n">D-01</span><a class="ix-t" href="https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-decision-brief.en.md">Decision brief, English</a><span class="ix-d">Fixed decisions, interfaces, the issue state machine, QA and release rules, phases P0–P4, acceptance matrix SISF-01 to SISF-20.</span></li>
+        <li><span class="ix-n">D-02</span><a class="ix-t" href="https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-decision-brief.md">Decision brief, Vietnamese original</a><span class="ix-d">The authoritative version if the two ever differ.</span></li>
+        <li><span class="ix-n">D-03</span><a class="ix-t" href="https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-architecture.html">Architecture page</a><span class="ix-d">Topology, workflows, a playable state graph, trust boundary, deployment design per mode, roadmap. HTML source.</span></li>
+        <li><span class="ix-n">D-04</span><a class="ix-t" href="https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-architecture-review.html">Architecture review</a><span class="ix-d">A visual summary of the architecture. HTML source.</span></li>
+        <li><span class="ix-n">D-05</span><a class="ix-t" href="https://github.com/bestagentkits/sisf/blob/main/docs/SECURITY.md">Security policy</a><span class="ix-d">What is in scope and how to report a weakness privately.</span></li>
+        <li><span class="ix-n">D-06</span><a class="ix-t" href="https://github.com/bestagentkits/sisf/blob/main/LICENSE">License</a><span class="ix-d">Apache-2.0.</span></li>
+      </ol>
+
+      <section class="final" aria-labelledby="final-h">
+        <div class="final-copy">
+          <p class="eyebrow">End of drawing set</p>
+          <h2 id="final-h">Free and open source. Apache-2.0.</h2>
+          <p class="lead">Star the repository to follow the build, read the design, or tell us where it is wrong.</p>
+        </div>
+        <div class="final-cta">
+          <div class="cta-row">
+            <a class="btn btn--primary" href="https://github.com/bestagentkits/sisf">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 .6l2.2 4.6 5 .7-3.6 3.5.9 5L8 12.1 3.5 14.4l.9-5L.8 5.9l5-.7z"/></svg>
+              Star on GitHub
+            </a>
+            <a class="btn" href="https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-decision-brief.en.md">Read the design</a>
+          </div>
+          <button type="button" class="btn btn--planned" data-tose-deploy aria-disabled="true" aria-describedby="tose-note-final">Deploy on TOSE <span class="tag-na">Coming soon</span></button>
+          <p class="cta-note" id="tose-note-final">In development, not available yet. Dotted outline = not built yet.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="foot-in">
+    <div class="fc fc--brand">
+      <p class="foot-brand">
+        <svg viewBox="0 0 26 26" aria-hidden="true"><rect x="1.5" y="1.5" width="23" height="23" fill="none" stroke="currentColor" stroke-width="2"/><path d="M1.5 9.2h23M1.5 16.8h23" stroke="currentColor" stroke-width="1.2"/><rect class="brand-issue" x="10" y="10.2" width="6" height="5.6"/></svg>
+        <span>SISF · Self-improvement Software Factory</span>
+      </p>
+      <p class="foot-tag">Software is solved. Here is the drawing.</p>
+      <p class="foot-credit">From the creator of <a href="https://agentkit.best">AgentKit.best</a></p>
+    </div>
+    <nav class="fc" aria-label="Footer">
+      <p class="fk">Links</p>
+      <ul class="foot-links">
+        <li><a href="https://github.com/bestagentkits/sisf">GitHub repository</a></li>
+        <li><a href="https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-decision-brief.en.md">Decision brief</a></li>
+        <li><a href="https://github.com/bestagentkits/sisf/blob/main/docs/SECURITY.md">Security policy</a></li>
+        <li><a href="https://github.com/bestagentkits/sisf/issues">Issues</a></li>
+        <li><a href="https://tose.sh">TOSE</a> <span class="foot-note">the creator's deployment platform; not required</span></li>
+      </ul>
+    </nav>
+    <div class="fc">
+      <p class="fk">Status</p>
+      <p>Design complete. Go implementation of P0–P3 in progress. Nothing released yet.</p>
+      <p class="fk fk--gap">License</p>
+      <p><strong>Free and open source</strong> · <a href="https://github.com/bestagentkits/sisf/blob/main/LICENSE">Apache-2.0</a> · © AgentKit.best</p>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

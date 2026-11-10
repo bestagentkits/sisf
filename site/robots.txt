@@ -1,0 +1,5 @@
+# SISF landing page. Everything here is public; AI crawlers are welcome.
+User-agent: *
+Allow: /
+
+Sitemap: https://factory.agentkit.best/sitemap.xml

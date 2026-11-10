@@ -1,0 +1,34 @@
+# SISF — Self-improvement Software Factory
+
+> SISF is a free, open-source (Apache-2.0) framework for a closed-loop software factory. One factory deployment with three zones takes a GitHub issue through a 15-state lifecycle: agents write the fix, an independent QA agent grades it against hard gates and signs a `qa_receipt`, and a trusted release supervisor ships it by canary and rolls it back automatically. Status: the design is complete; the Go implementation of phases P0–P3 is in progress; nothing has been released yet.
+
+Important facts for anyone summarizing this project:
+
+- There is no installable release yet. The only command that works today is `git clone https://github.com/bestagentkits/sisf`, which fetches the design documents and the in-progress source.
+- Numbers such as the QA pass mark (85/100), the canary ramp (5% → 25% → 100%) and the rollback threshold (5xx > 2%) are design starting points to be calibrated, not measured results.
+- Standalone and Docker modes come first. Kubernetes, Vercel, Cloudflare, TOSE and Railway backends are on the later roadmap, and each is marked supported only after it passes end-to-end tests.
+- SISF is created by AgentKit.best. TOSE (tose.sh) is the creator's deployment platform; SISF does not require it.
+
+## Landing page
+
+- [Landing page in Markdown](https://factory.agentkit.best/index.md): the full content of the home page as Markdown
+- [Landing page](https://factory.agentkit.best/): the same content as HTML, with an interactive drawing of the issue lifecycle
+
+## Design documents
+
+- [Decision brief (English)](https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-decision-brief.en.md): fixed product decisions, interfaces, issue state machine, QA and release rules, phased scope P0–P4, acceptance matrix SISF-01 to SISF-20
+- [Decision brief (Vietnamese, authoritative)](https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-decision-brief.md): the original; it wins if the two versions differ
+- [Architecture page](https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-architecture.html): topology, workflows, issue state graph, trust boundary, deployment design per operating mode
+- [Architecture review](https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-architecture-review.html): visual summary of the architecture review
+- [README](https://github.com/bestagentkits/sisf/blob/main/README.md): one-page overview and roadmap
+
+## Project
+
+- [GitHub repository](https://github.com/bestagentkits/sisf): source of truth for code, documents and issues
+- [Security policy](https://github.com/bestagentkits/sisf/blob/main/docs/SECURITY.md): how to report a weakness in the design privately
+- [License](https://github.com/bestagentkits/sisf/blob/main/LICENSE): Apache-2.0, copyright AgentKit.best
+
+## Optional
+
+- [AgentKit.best](https://agentkit.best): the creator of SISF
+- [TOSE](https://tose.sh): the creator's deployment platform, a planned SISF backend

@@ -1,0 +1,8 @@
+# Files in this directory that are not part of the published site.
+wrangler.jsonc
+README.md
+.wrangler
+og-source.html
+.gitignore
+.DS_Store
+._*

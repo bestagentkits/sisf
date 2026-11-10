@@ -1,0 +1,17 @@
+// Cloudflare Workers static assets: serves this directory as-is, no server code.
+// Deploy from this directory with: npx wrangler deploy
+{
+  "$schema": "https://unpkg.com/wrangler@4/config-schema.json",
+  "name": "sisf-landing",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": ".",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    { "pattern": "factory.agentkit.best", "custom_domain": true }
+  ],
+  "workers_dev": false,
+  "preview_urls": false
+}
