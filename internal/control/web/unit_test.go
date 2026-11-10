@@ -5,16 +5,18 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/bestagentkits/sisf/internal/auth"
 )
 
-func TestLocalPathRefusesEveryOffSiteTarget(t *testing.T) {
+func TestReturnTargetsRefuseEveryOffSiteTarget(t *testing.T) {
 	t.Parallel()
 	for target, want := range map[string]string{
 		"/workboard?state=Ready": "/workboard?state=Ready", "": "/", "workboard": "/", "https://evil.test/": "/", "//evil.test": "/",
-		"/\\evil.test": "/", "/a\r\nSet-Cookie: x=1": "/",
+		"/\\evil.test": "/", "/a\r\nSet-Cookie: x=1": "/", "/\t/evil.test": "/", "/%09/evil.test": "/",
 	} {
-		if got := localPath(target); got != want {
-			t.Errorf("localPath(%q) = %q, want %q", target, got, want)
+		if got := auth.LocalReturnPath(target); got != want {
+			t.Errorf("LocalReturnPath(%q) = %q, want %q", target, got, want)
 		}
 	}
 }

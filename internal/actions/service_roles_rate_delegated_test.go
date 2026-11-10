@@ -46,7 +46,7 @@ func newConfigured(t *testing.T, edit func(*actions.Config, *actions.Registry, *
 		t.Fatal(err)
 	}
 	cfg := actions.Config{FactoryID: testFactory, Registry: reg, Authorizer: f.authz, Approvals: f.approvals,
-		Policy: f.policy, Audit: f.audit, Clock: f.clock}
+		Policy: f.policy, Audit: f.audit, Clock: f.clock, StepUp: f.stepUps}
 	edit(&cfg, reg, f.approvals)
 	svc, err := actions.NewService(cfg)
 	if err != nil {

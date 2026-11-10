@@ -133,7 +133,8 @@ paths:
                   description: Report exactly what would change and change nothing.
                   type: boolean
                 idempotency_key:
-                  description: Makes a retried write apply once.
+                  description: A retry with the same key and input within 24 hours gets the first answer without the write running again; the same key with another input is CONFLICT.
+                  maxLength: 256
                   type: string
                 input:
                   additionalProperties: false
@@ -378,7 +379,8 @@ paths:
                   description: Report exactly what would change and change nothing.
                   type: boolean
                 idempotency_key:
-                  description: Makes a retried write apply once.
+                  description: A retry with the same key and input within 24 hours gets the first answer without the write running again; the same key with another input is CONFLICT.
+                  maxLength: 256
                   type: string
                 input:
                   additionalProperties: false
@@ -512,7 +514,8 @@ paths:
                   description: Report exactly what would change and change nothing.
                   type: boolean
                 idempotency_key:
-                  description: Makes a retried write apply once.
+                  description: A retry with the same key and input within 24 hours gets the first answer without the write running again; the same key with another input is CONFLICT.
+                  maxLength: 256
                   type: string
                 input:
                   additionalProperties: false
@@ -589,7 +592,8 @@ paths:
                   description: Report exactly what would change and change nothing.
                   type: boolean
                 idempotency_key:
-                  description: Makes a retried write apply once.
+                  description: A retry with the same key and input within 24 hours gets the first answer without the write running again; the same key with another input is CONFLICT.
+                  maxLength: 256
                   type: string
                 input:
                   additionalProperties: false
@@ -717,7 +721,8 @@ paths:
                   description: Report exactly what would change and change nothing.
                   type: boolean
                 idempotency_key:
-                  description: Makes a retried write apply once.
+                  description: A retry with the same key and input within 24 hours gets the first answer without the write running again; the same key with another input is CONFLICT.
+                  maxLength: 256
                   type: string
                 input:
                   additionalProperties: false
@@ -1181,7 +1186,8 @@ paths:
                   description: Report exactly what would change and change nothing.
                   type: boolean
                 idempotency_key:
-                  description: Makes a retried write apply once.
+                  description: A retry with the same key and input within 24 hours gets the first answer without the write running again; the same key with another input is CONFLICT.
+                  maxLength: 256
                   type: string
                 input:
                   additionalProperties: false

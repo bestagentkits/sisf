@@ -24,7 +24,7 @@ func usagef(format string, a ...any) error { return usageError{fmt.Sprintf(forma
 // options is everything the listeners are built from.
 type options struct {
 	listen, adminListen, egressListen string
-	revision, adminToken              string
+	revision, adminToken, countsToken string
 	allowPublic                       bool
 	providers                         listFlags
 	stable                            edge.Target
@@ -50,6 +50,9 @@ func newServers(ctx context.Context, opts options, log *slog.Logger) (_ *servers
 	if opts.adminListen != "" && opts.adminToken == "" {
 		return nil, usagef("--admin-listen needs the token in %s", adminTokenEnv)
 	}
+	if opts.countsToken != "" && opts.countsToken == opts.adminToken {
+		return nil, usagef("%s must differ from %s, so reading the counters never grants moving traffic", countsTokenEnv, adminTokenEnv)
+	}
 	splitter, err := edge.NewSplitter(core.SystemClock{}, log, opts.stable)
 	if err != nil {
 		return nil, usagef("%v", err)
@@ -59,7 +62,11 @@ func newServers(ctx context.Context, opts options, log *slog.Logger) (_ *servers
 		return nil, usagef("%v", err)
 	}
 	if opts.adminListen != "" {
-		if s.admin, err = edge.NewAdminHandler(splitter, opts.adminToken); err != nil {
+		var counts []edge.AdminOption
+		if opts.countsToken != "" {
+			counts = append(counts, edge.WithCountsToken(opts.countsToken))
+		}
+		if s.admin, err = edge.NewAdminHandler(splitter, opts.adminToken, counts...); err != nil {
 			return nil, usagef("%v", err)
 		}
 	}

@@ -46,12 +46,14 @@ type securityView struct {
 	Secrets      Panel
 	SecretTable  Table
 	Capabilities Table
+	CanSetBudget bool
 }
 
 // security shows the budget, the secret references (never values) and what
 // each role may run, read from the registry every surface shares.
 func (h *handler) security(w http.ResponseWriter, r *http.Request, s *session) {
-	view := securityView{Frame: h.frame(s, "security", "/security"), Capabilities: h.capabilities()}
+	view := securityView{Frame: h.frame(s, "security", "/security"), Capabilities: h.capabilities(),
+		CanSetBudget: h.registered(actionBudgetSet)}
 	view.Money, view.Budget = h.budgetView(r, s)
 	view.Secrets = h.read(r, s, pendingactions.ActionSecretsListRefs, nil)
 	if view.Secrets.OK() {

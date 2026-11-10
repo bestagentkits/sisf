@@ -8,7 +8,9 @@
 // The default upstream is the stable revision, labelled by --revision. A
 // canary is added and removed through the admin listener (--admin-listen,
 // guarded by the token in EDGE_ADMIN_TOKEN), which also serves the
-// per-revision counters a release monitor reads.
+// per-revision counters a release monitor reads. EDGE_COUNTERS_TOKEN, when
+// set, is a second token that reads the counters and nothing else; it must
+// differ from the admin token, or the edge refuses to start.
 //
 // The egress proxy of the agent sandbox listens next to it on
 // --egress-listen (default 127.0.0.1:7466, empty turns it off) with the
@@ -53,9 +55,13 @@ const (
 	defaultEgressListen = "127.0.0.1:7466"
 )
 
-// adminTokenEnv names the variable that carries the admin bearer token, so
-// the token never appears in a process listing.
-const adminTokenEnv = "EDGE_ADMIN_TOKEN"
+// adminTokenEnv names the variable that carries the admin bearer token, and
+// countsTokenEnv the read-only counters token, so neither token ever
+// appears in a process listing.
+const (
+	adminTokenEnv  = "EDGE_ADMIN_TOKEN"
+	countsTokenEnv = "EDGE_COUNTERS_TOKEN"
+)
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -117,8 +123,13 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	if err != nil {
 		return usage("--upstream: %v", err)
 	}
-	opts.stable, opts.routes, opts.adminToken = edge.Target{Revision: opts.revision, URL: def.String()}, routes, os.Getenv(adminTokenEnv)
-	proc, err := observe.Start(stderr, os.Getenv, core.SystemClock{})
+	opts.stable, opts.routes = edge.Target{Revision: opts.revision, URL: def.String()}, routes
+	opts.adminToken, opts.countsToken = os.Getenv(adminTokenEnv), os.Getenv(countsTokenEnv)
+	var extra []string
+	if opts.countsToken != "" {
+		extra = append(extra, opts.countsToken)
+	}
+	proc, err := observe.Start(stderr, os.Getenv, core.SystemClock{}, extra...)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "edge: %v\n", err)
 		return exitFailure

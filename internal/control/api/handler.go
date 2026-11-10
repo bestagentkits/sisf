@@ -59,6 +59,10 @@ type Config struct {
 	// LoginProviders are the provider names the verification page offers for
 	// signing in and for step-up.
 	LoginProviders []string
+	// FormOrigins are the sign-in provider origins the verification page's
+	// step-up form is redirected to. They join 'self' in the page's
+	// form-action directive; pass the ones the dashboard uses.
+	FormOrigins []string
 	// MaxBodyBytes bounds a request body.
 	MaxBodyBytes int64
 	// DeviceCodeTTL is how long a login request stays open.

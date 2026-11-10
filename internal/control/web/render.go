@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/bestagentkits/sisf/internal/auth"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/ui"
 )
@@ -39,7 +40,7 @@ type Frame struct {
 }
 
 func (h *handler) frame(s *session, nav, returnTo string) Frame {
-	return Frame{Nav: nav, LoggedIn: true, CSRF: s.csrf, Who: s.who, Providers: h.cfg.LoginProviders, ReturnTo: localPath(returnTo)}
+	return Frame{Nav: nav, LoggedIn: true, CSRF: s.csrf, Who: s.who, Providers: h.cfg.LoginProviders, ReturnTo: auth.LocalReturnPath(returnTo)}
 }
 
 type signInView struct {

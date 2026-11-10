@@ -27,7 +27,9 @@ type Reply struct {
 	ContentType string
 	// Version is sent in the version header.
 	Version string
-	Body    []byte
+	// Location is sent as the Location header, for redirects.
+	Location string
+	Body     []byte
 }
 
 // Server is the fake backend. Its zero behaviour answers HTTP 503.
@@ -134,6 +136,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		if reply.Version != "" {
 			w.Header().Set(systemone.HeaderVersion, reply.Version)
+		}
+		if reply.Location != "" {
+			w.Header().Set("Location", reply.Location)
 		}
 		w.WriteHeader(reply.Status)
 		_, _ = bytes.NewReader(reply.Body).WriteTo(w)

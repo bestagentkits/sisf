@@ -30,16 +30,18 @@ func surfacesFromEnv(getenv func(string) string, s zoneSetup, proc *observe.Proc
 		Telemetry: proc.Telemetry, Docs: docs}, nil
 }
 
-// decisionsFromEnv turns the decision layer on when the edge's admin URL is
-// set; its token is then required. Without the URL nothing is decided.
+// decisionsFromEnv turns the decision layer on when the edge's counters URL
+// is set; the read-only counters token is then required. Without the URL
+// nothing is decided. The client built here reads counts only: the control
+// zone never holds a credential or a client that can change the split.
 func decisionsFromEnv(getenv func(string) string) (*wiring.DecisionConfig, error) {
-	base := strings.TrimSpace(getenv(wiring.EnvEdgeAdminURL))
+	base := strings.TrimSpace(getenv(wiring.EnvEdgeCountersURL))
 	if base == "" {
 		return nil, nil
 	}
-	admin, err := edge.NewAdminClient(base, strings.TrimSpace(getenv(wiring.EnvEdgeAdminToken)), nil)
+	counts, err := edge.NewCountsClient(base, strings.TrimSpace(getenv(wiring.EnvEdgeCountersToken)), nil)
 	if err != nil {
 		return nil, err
 	}
-	return &wiring.DecisionConfig{Counters: wiring.EdgeCounters{Edge: admin}}, nil
+	return &wiring.DecisionConfig{Counters: wiring.EdgeCounters{Edge: counts}}, nil
 }

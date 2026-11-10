@@ -99,16 +99,14 @@ func TestApprovalPipelineRefusals(t *testing.T) {
 		"missing step-up": {func(t *testing.T, f fixture) (core.Actor, string, string) {
 			id := f.plan(t, f.maintainer(), "widgets.purge", purgeW1)
 			f.approve(t, id, approvals.DecisionApprove)
-			actor := f.maintainer()
-			actor.StepUpAt = time.Time{}
-			return actor, purgeW1, id
+			f.stepUps.setStrict()
+			return f.maintainer(), purgeW1, id
 		}, "widgets.purge", core.CodeStepUpRequired},
 		"stale step-up": {func(t *testing.T, f fixture) (core.Actor, string, string) {
 			id := f.plan(t, f.maintainer(), "widgets.purge", purgeW1)
 			f.approve(t, id, approvals.DecisionApprove)
-			actor := f.maintainer()
-			f.clock.Advance(time.Hour)
-			return actor, purgeW1, id
+			f.stepUps.setAge(time.Hour)
+			return f.maintainer(), purgeW1, id
 		}, "widgets.purge", core.CodeStepUpRequired},
 		"agent with an ambient Owner session on an Owner-only action": {func(t *testing.T, f fixture) (core.Actor, string, string) {
 			id := f.plan(t, f.owner(), "keys.rotate", purgeW1)

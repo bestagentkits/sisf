@@ -4,19 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 )
-
-// localPath keeps a return address on this site: an absolute path that is
-// not protocol-relative. Anything else becomes "/".
-func localPath(p string) string {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.ContainsAny(p, "\\\r\n") {
-		return "/"
-	}
-	return p
-}
 
 // writeError answers with the typed error and its HTTP status. The message
 // is the caller-safe one; the cause is never written.

@@ -17,11 +17,12 @@ import (
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
-// The edge the decision layer reads its counters from. The token is the one
-// the edge's admin handler checks; the supervisor reads the same variable.
+// The edge the decision layer reads its counters from. The token is the
+// edge's read-only counters token, never its admin token: the control zone
+// reads what each revision served and has no way to move traffic.
 const (
-	EnvEdgeAdminURL   = "SISF_EDGE_ADMIN_URL"
-	EnvEdgeAdminToken = "EDGE_ADMIN_TOKEN"
+	EnvEdgeCountersURL   = "SISF_EDGE_COUNTERS_URL"
+	EnvEdgeCountersToken = "EDGE_COUNTERS_TOKEN"
 )
 
 // DecisionInterval is how often the control zone reads the edge's counters.

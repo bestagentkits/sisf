@@ -23,10 +23,17 @@ type WebTool struct {
 	Path        string          `json:"path"`
 }
 
-// WebTools lists the tools of specs, in their order.
+// WebTools lists the tools of specs, in their order, leaving out every
+// action that needs step-up. Those run only from the dashboard's own forms
+// after the person confirms that exact call, so a browser agent in the
+// page is never offered them; the action service refuses them on the REST
+// surface the WebMCP script calls as well.
 func WebTools(specs []core.ActionSpec) []WebTool {
 	out := make([]WebTool, 0, len(specs))
 	for _, spec := range specs {
+		if spec.StepUp {
+			continue
+		}
 		out = append(out, WebTool{Name: spec.Name, Description: Describe(spec), InputSchema: InputSchema(spec),
 			ReadOnly: !spec.Mutates(), Path: apispec.PathPrefix + spec.Name})
 	}

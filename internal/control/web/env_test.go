@@ -3,11 +3,13 @@ package web_test
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -146,7 +148,7 @@ func newEnv(t *testing.T, fx *fixtures) *env {
 		roles[auth.ActorID(identity.Identity{Issuer: e.fake.Issuer(), Subject: sub})] = role
 	}
 	if e.svc, err = actions.NewService(actions.Config{FactoryID: testFactory, Registry: reg, Authorizer: roleAuthorizer{roles},
-		Approvals: store, Policy: policySource{}, Audit: audit, Clock: e.clock}); err != nil {
+		Approvals: store, Policy: policySource{}, Audit: audit, Clock: e.clock, StepUp: e.auth}); err != nil {
 		t.Fatal(err)
 	}
 	dash, err := web.New(web.Config{Actions: e.svc, Identity: rolesIdentity{e.auth, roles}, Clock: e.clock, LoginProviders: []string{"google"}})
@@ -253,15 +255,34 @@ func (b *browser) signIn(t *testing.T, subject string) {
 	b.hop(t, http.MethodGet, b.hop(t, http.MethodGet, loc))
 }
 
-// stepUp confirms the signed-in person's identity again at the provider.
-func (b *browser) stepUp(t *testing.T, subject string) {
+// stepUpFor confirms the signed-in person's identity again at the
+// provider, for the one call named by action and target.
+func (b *browser) stepUpFor(t *testing.T, subject, action, target string) {
 	t.Helper()
 	b.e.fake.SignInAs(subject)
-	r := b.postRaw(t, "/auth/step-up/google", url.Values{"csrf_token": {b.csrf(t)}})
+	r := b.postRaw(t, "/auth/step-up/google", url.Values{"csrf_token": {b.csrf(t)}, "action": {action}, "target": {target}})
 	if r.header.Get("Location") == "" {
 		t.Fatalf("step-up did not redirect: %d %.200s", r.status, r.body)
 	}
 	b.hop(t, http.MethodGet, b.hop(t, http.MethodGet, r.header.Get("Location")))
+}
+
+var (
+	stepUpAction = regexp.MustCompile(`action="/auth/step-up/google[^"]*">.*?name="action" value="([^"]+)">`)
+	stepUpTarget = regexp.MustCompile(`action="/auth/step-up/google[^"]*">.*?name="target" value="([^"]+)">`)
+)
+
+// stepUpFromPage submits the step-up form a page offers, as the person
+// would, and returns the call it confirmed.
+func (b *browser) stepUpFromPage(t *testing.T, subject, page string) (action, target string) {
+	t.Helper()
+	a, g := stepUpAction.FindStringSubmatch(page), stepUpTarget.FindStringSubmatch(page)
+	if a == nil || g == nil {
+		t.Fatalf("the page offers no step-up for a named call: %.600s", page)
+	}
+	action, target = html.UnescapeString(a[1]), html.UnescapeString(g[1])
+	b.stepUpFor(t, subject, action, target)
+	return action, target
 }
 
 func (b *browser) csrf(t *testing.T) string {

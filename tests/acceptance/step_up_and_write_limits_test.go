@@ -9,23 +9,28 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// A step-up counts only while it is fresh: an Owner whose confirmation went
-// stale is sent to confirm again, and the decision then goes through.
+// A step-up counts only while it is fresh: an Owner whose confirmation of
+// a request went stale is sent to confirm it again, and the decision then
+// goes through.
 func TestAStaleStepUpIsRefusedAndAFreshOneDecides(t *testing.T) {
 	f := harness.New(t, harness.Options{})
 	owner := f.SignInOwner()
 	c := newClients(t, f, owner)
-	set := call{Input: raw(`{"mode":"unlimited"}`)}
-	if got := c.on(t, surfaceWebMCP, "budget.set", set); got.Code != core.CodeApprovalRequired {
+	if got := c.confirmed(t, "budget.set", call{Input: raw(`{"mode":"unlimited"}`)}); got.Code != core.CodeApprovalRequired {
 		t.Fatalf("plan: %q %s", got.Code, got.Message)
 	}
 	req := openRequest(t, c, "budget.set")
 
+	owner.StepUpFor("approvals.decide", req.ID)
 	f.Clock.Advance(6 * time.Minute)
-	if got := c.on(t, surfaceDashboard, "approvals.decide", call{Input: decideInput(req)}); got.Code != core.CodeStepUpRequired {
+	got := c.on(t, surfaceDashboard, "approvals.decide", call{Input: decideInput(req)})
+	if got.Code != core.CodeStepUpRequired {
 		t.Fatalf("a stale step-up decided: %q %s", got.Code, got.Message)
 	}
-	owner.StepUp()
+	if got.Details["step_up_action"] != "approvals.decide" || got.Details["step_up_target"] != req.ID {
+		t.Fatalf("the refusal offers a step-up for %+v, want this request", got.Details)
+	}
+	owner.StepUpFor("approvals.decide", req.ID)
 	if got := c.on(t, surfaceDashboard, "approvals.decide", call{Input: decideInput(req)}); got.Code != "" {
 		t.Fatalf("a fresh step-up could not decide: %q %s", got.Code, got.Message)
 	}

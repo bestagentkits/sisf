@@ -32,8 +32,8 @@ func TestStepUpFailsWithoutARealReauthenticationOrByAnotherPerson(t *testing.T) 
 	if status := stepUp("mallory-sub"); status != http.StatusUnauthorized {
 		t.Fatalf("another person completed the Owner's step-up: %d", status)
 	}
-	if after, _ := b.session(t); !after.StepUpAt.IsZero() {
-		t.Fatalf("a failed step-up was recorded: %v", after.StepUpAt)
+	if status, _, _ := mint(t, b, csrf, `{"scopes":["prs:write"]}`); status != http.StatusForbidden {
+		t.Fatalf("a failed step-up was recorded: minting answered %d", status)
 	}
 	token, err := e.svc.IssueServiceToken(auth.ServiceTokenRequest{ActorID: "agent:coder", Kind: core.ActorAgent, Scopes: []string{"runs:write"}})
 	if err != nil {

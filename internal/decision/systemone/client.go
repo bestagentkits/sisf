@@ -17,7 +17,8 @@ import (
 // Deps are what a Client calls out to.
 type Deps struct {
 	// HTTP sends the requests; nil means a client with no timeout of its
-	// own, since the configured timeout is enforced on Clock.
+	// own, since the configured timeout is enforced on Clock. Redirects are
+	// refused whatever this client's own policy says.
 	HTTP *http.Client
 	// Secrets resolves the credential; required when one is configured.
 	Secrets secrets.SecretProvider
@@ -42,9 +43,13 @@ func New(cfg Config, deps Deps) (*Client, error) {
 	if _, ok, _ := cfg.CredentialRef(); ok && deps.Secrets == nil {
 		return nil, invalid("system one has a credential configured but no secret provider to resolve it")
 	}
-	if deps.HTTP == nil {
-		deps.HTTP = &http.Client{}
+	// A copy, so the caller's client keeps its own redirect policy.
+	httpClient := http.Client{}
+	if deps.HTTP != nil {
+		httpClient = *deps.HTTP
 	}
+	httpClient.CheckRedirect = refuseRedirect
+	deps.HTTP = &httpClient
 	if deps.Clock == nil {
 		deps.Clock = core.SystemClock{}
 	}
@@ -90,6 +95,11 @@ func (c *Client) Judge(ctx context.Context, req pkgdecision.Request) (pkgdecisio
 	}
 	return c.check(reply, req)
 }
+
+// refuseRedirect stops at the first redirect: following one would send the
+// request and its credential to a place the configuration never named. The
+// redirect reply itself is then refused as a non-200 answer.
+func refuseRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // post sends the request and reads a bounded reply body.
 func (c *Client) post(ctx context.Context, body []byte) ([]byte, error) {

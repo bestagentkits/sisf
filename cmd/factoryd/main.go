@@ -73,7 +73,7 @@ func main() {
 // run executes one command line and returns the exit status.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	var extra []string
-	for _, name := range wiring.IdentitySecretEnv {
+	for _, name := range append([]string{wiring.EnvEdgeCountersToken}, wiring.IdentitySecretEnv...) {
 		if v := strings.TrimSpace(getenv(name)); v != "" {
 			extra = append(extra, v)
 		}

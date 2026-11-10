@@ -12,7 +12,8 @@
 // scope of work, a measurable definition of done and evidence traced to the
 // edge windows it rests on. When a System One is configured it is asked the
 // typed questions of DECISIONS.md about each new proposal; its judgment can
-// only downgrade the proposal or raise its priority, and a failed or invalid
+// only hold or downgrade the proposal or lower its priority, never raise it,
+// and a failed or invalid
 // judgment proposes nothing.
 //
 // Counter data is untrusted: an endpoint name is quoted in what the layer

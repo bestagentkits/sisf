@@ -114,7 +114,7 @@ func TestPlainWriteRunsOnceAndIsAudited(t *testing.T) {
 	if len(executed) != 1 || res.AuditID == "" {
 		t.Fatalf("executed records = %d, audit id %q", len(executed), res.AuditID)
 	}
-	if executed[0].ActorID != "u-maint" || executed[0].Surface != core.SurfaceCLI || executed[0].FactoryID != testFactory {
+	if executed[0].ActorID != "u-maint" || executed[0].Surface != core.SurfaceDashboard || executed[0].FactoryID != testFactory {
 		t.Fatalf("audit record does not name the actor: %+v", executed[0])
 	}
 }

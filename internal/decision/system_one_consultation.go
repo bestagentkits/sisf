@@ -35,7 +35,9 @@ func checkSystemOne(cfg Config) error {
 }
 
 // consult asks System One about a proposal the rules made and applies only
-// what raises caution or priority. The rules already vetoed everything else:
+// what holds or downgrades it: a cautious verdict, a doubted kind or a lower
+// priority. Its priority is capped at the one the rules chose, so a
+// manipulated model can never make work more urgent. The rules already vetoed everything else:
 // System One is asked only about a proposal, so it can never create one.
 // Any failure fails closed: o is held for more evidence and an error is
 // returned, so the proposal is offered again on the next run.
@@ -63,7 +65,7 @@ func (l *Layer) consult(ctx context.Context, o *Outcome, p *pkgdecision.Proposal
 		o.Verdict, o.Reason, o.Proposal = pkgdecision.VerdictInvestigate, ReasonSystemOneKindDoubt, nil
 	default:
 		// implement is never more than propose here: the layer only proposes.
-		if j.Priority.Rank() > p.Priority.Rank() {
+		if j.Priority.Rank() < p.Priority.Rank() {
 			p.Priority = j.Priority
 		}
 		p.Policy.ModelRoute = j.Model

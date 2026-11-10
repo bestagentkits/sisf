@@ -106,7 +106,7 @@ func TestTheDecisionLayerWaitsForItsInterval(t *testing.T) {
 }
 
 // When the approved manifest declares System One, the layer consults it
-// about each proposal, and its judgment may raise the priority.
+// about each proposal, and its judgment may lower the priority.
 func TestTheApprovedSystemOneSectionIsConsulted(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -115,7 +115,7 @@ func TestTheApprovedSystemOneSectionIsConsulted(t *testing.T) {
 	route := core.ModelRoute{Provider: "jev", Model: "jev-1"}
 	fake.Answer(func(req pkgdecision.Request) pkgdecision.Judgment {
 		j := pkgdecision.Judgment{Verdict: pkgdecision.VerdictPropose, Kind: pkgdecision.KindBug,
-			Priority: pkgdecision.PriorityUrgent, Model: route, SchemaVersion: req.SchemaVersion}
+			Priority: pkgdecision.PriorityLow, Model: route, SchemaVersion: req.SchemaVersion}
 		for _, q := range req.Questions {
 			value := map[string]string{decision.SystemOneVerdict: string(j.Verdict), decision.SystemOneKind: string(j.Kind),
 				decision.SystemOnePriority: string(j.Priority)}[q.ID]
@@ -157,7 +157,7 @@ func TestTheApprovedSystemOneSectionIsConsulted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(issue.Title, "[urgent] ") || !strings.Contains(issue.Body, "sisf-decision-fingerprint") {
+	if !strings.HasPrefix(issue.Title, "[low] ") || !strings.Contains(issue.Body, "sisf-decision-fingerprint") {
 		t.Fatalf("the proposal issue is %q:\n%s", issue.Title, issue.Body)
 	}
 }

@@ -75,23 +75,32 @@ type token struct {
 
 // IssuePAT mints a personal access token for the person signed in to the
 // session named by actor.SessionID. Tokens cannot mint tokens, and the
-// session must have stepped up recently: a token outlives the session it was
-// minted from, so minting one is a sensitive act.
+// session must hold an unspent step-up made to mint a token: a token
+// outlives the session it was minted from, so minting one is a sensitive
+// act, and each confirmation mints one token at most.
 func (s *Service) IssuePAT(actor core.Actor, req PATRequest) (IssuedToken, error) {
 	s.mu.Lock()
 	ss, ok := s.byHandle[actor.SessionID]
 	if ok {
 		ss, ok = s.liveSessionLocked(ss.key)
 	}
-	var stepUpAt time.Time
-	if ok {
-		stepUpAt = ss.stepUpAt
-	}
-	s.mu.Unlock()
-	switch {
-	case !ok || ss.actorID != actor.ID || actor.Kind != core.ActorHuman:
+	if !ok || ss.actorID != actor.ID || actor.Kind != core.ActorHuman {
+		s.mu.Unlock()
 		return IssuedToken{}, unauthenticated("a personal access token is minted only from a live browser session")
-	case !s.freshStepUp(stepUpAt, s.cfg.Clock.Now()):
+	}
+	// A request that cannot be honoured is refused before the confirmation
+	// is spent.
+	if err := s.checkScopes(req.Scopes); err != nil {
+		s.mu.Unlock()
+		return IssuedToken{}, err
+	}
+	if req.TTL < 0 || req.TTL > MaxPATTTL {
+		s.mu.Unlock()
+		return IssuedToken{}, invalidArgument("a token may live at most " + MaxPATTTL.String())
+	}
+	_, err := s.consumeProofLocked(ss, StepUpTarget{Action: TokenStepUpAction}, s.cfg.Clock.Now())
+	s.mu.Unlock()
+	if err != nil {
 		return IssuedToken{}, core.NewError(core.CodeStepUpRequired, "confirm your identity again before minting a token")
 	}
 	return s.issue(TokenPAT, actor.ID, core.ActorHuman, req.Name, req.Scopes, req.TTL, DefaultPATTTL, MaxPATTTL)

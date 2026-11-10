@@ -46,5 +46,5 @@ Status meanings: **present** means the file exists in this branch and its packag
 
 - End-to-end lifecycle on Compose and Standalone: tests exist under `tests/e2e/` behind the `e2e` build tag; a passing run is not claimed here. The e2e scenario still reads the dashboard with the removed Owner token and needs updating to a signed-in session.
 - Real smoke run: `tests/smoke/` behind the `smoke` tag (`make smoke`, `SISF_SMOKE_REPO=bestagentkits/sisf-sandbox` only). It needs an operator to approve the CLI sign-in in a browser, and install flags that do not exist yet; it has not been run, so no passing run is claimed.
-- The Decision Layer runs in the control process when `SISF_EDGE_ADMIN_URL` is set (`cmd/factoryd/wiring/decision_layer_test.go` covers rules only, the System One section and the interval). SISF-17 and requirement 4 cover its negative rules. It has not been proven against a live edge.
+- The Decision Layer runs in the control process when `SISF_EDGE_COUNTERS_URL` is set, reading with the edge's read-only counters token (`cmd/factoryd/wiring/decision_layer_test.go` covers rules only, the System One section and the interval). SISF-17 and requirement 4 cover its negative rules. It has not been proven against a live edge.
 - Remote MCP and WebMCP are tested only in process, against the fake identity provider.

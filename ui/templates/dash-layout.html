@@ -35,6 +35,7 @@
 {{end}}
 
 {{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.CSRF}}">{{end}}
+{{define "stepupfor"}}{{if .StepUpAction}}<input type="hidden" name="action" value="{{.StepUpAction}}"><input type="hidden" name="target" value="{{.StepUpTarget}}">{{end}}{{end}}
 
 {{define "nextactions"}}{{if .}}<ul class="next-actions">{{range .}}<li data-next-action="{{.Action}}">{{if .Link}}<a href="{{.Link}}"><code>{{.Action}}</code></a>{{else}}<code>{{.Action}}</code>{{end}} {{.Description}}{{if .Params}} <span class="params">({{.Params}})</span>{{end}}</li>{{end}}</ul>{{end}}{{end}}
 

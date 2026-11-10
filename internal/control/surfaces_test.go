@@ -40,7 +40,9 @@ func TestEverySurfaceIsMountedAndAuthenticatesItsCaller(t *testing.T) {
 	})
 }
 
-func TestTheWebMCPToolListIsTheRegistry(t *testing.T) {
+// The WebMCP tool list is the registry less every action that needs
+// step-up: those run only from the dashboard's own forms.
+func TestTheWebMCPToolListIsTheRegistryLessStepUpActions(t *testing.T) {
 	t.Parallel()
 	withServer(t, func(t *testing.T, e *env) {
 		rec := e.do(httptest.NewRequest(http.MethodGet, "/webmcp/actions.json", nil))
@@ -56,7 +58,9 @@ func TestTheWebMCPToolListIsTheRegistry(t *testing.T) {
 		}
 		var want []string
 		for _, spec := range e.deps.Surfaces.Actions.Specs() {
-			want = append(want, spec.Name)
+			if !spec.StepUp {
+				want = append(want, spec.Name)
+			}
 		}
 		if !slices.Equal(names, want) {
 			t.Fatalf("tools %v, registry %v", names, want)
@@ -131,6 +135,24 @@ func TestTheServerRefusesToRunWithoutItsSurfaces(t *testing.T) {
 		deps.Surfaces = control.Surfaces{}
 		if _, err := control.New(e.cfg, deps); !core.HasCode(err, core.CodeInvalidArgument) {
 			t.Fatalf("a server without surfaces: %v", err)
+		}
+	})
+}
+
+// One list of provider origins reaches every page with a step-up form: the
+// dashboard and the device verification page.
+func TestFormOriginsReachEveryPageWithAStepUpForm(t *testing.T) {
+	t.Parallel()
+	const provider = "https://accounts.example.test"
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e := newEnv(t, db)
+		e.deps.Surfaces.FormOrigins = []string{provider}
+		e.restart(t)
+		for _, path := range []string{"/signin", "/api/v1/device/verify"} {
+			rec := e.do(httptest.NewRequest(http.MethodGet, path, nil))
+			if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "form-action 'self' "+provider+";") {
+				t.Errorf("%s policy = %q", path, csp)
+			}
 		}
 	})
 }

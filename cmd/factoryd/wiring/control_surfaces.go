@@ -82,7 +82,8 @@ func (c *Control) newSurfaces(ctx context.Context, sc SurfaceConfig, repo github
 	}
 	svc, err := actions.NewService(actions.Config{FactoryID: cfg.Manifest.FactoryID, Registry: reg, Authorizer: authz,
 		Approvals: c.Approvals, Policy: actions.PolicyRevisionFunc(c.policyRevision), Audit: c.Audit, Clock: cfg.Clock,
-		Roles: actions.RoleResolverFunc(roles), StepUpPage: web.PathApprovals})
+		Roles: actions.RoleResolverFunc(roles), StepUpPage: web.PathApprovals, StepUp: signIn.service,
+		Idempotency: actions.NewKVIdempotency(cfg.Store)})
 	if err != nil {
 		return control.Surfaces{}, err
 	}

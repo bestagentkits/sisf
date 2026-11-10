@@ -43,18 +43,29 @@ func (f *Factory) SignIn(provider, subject string) *Person {
 	return p
 }
 
-// SignInOwner signs the Owner in and confirms their identity, as the Owner
-// does before deciding an approval.
+// SignInOwner signs the Owner in and confirms their identity once, which
+// lets the session mint one personal access token.
 func (f *Factory) SignInOwner() *Person {
 	p := f.SignIn(wiring.ProviderOIDC, OwnerSubject)
 	p.StepUp()
 	return p
 }
 
-// StepUp confirms the person's identity again at the OIDC provider.
+// StepUp confirms the person's identity again at the OIDC provider, for
+// minting one personal access token.
 func (p *Person) StepUp() {
 	p.f.t.Helper()
 	resp := p.Do(http.MethodPost, "/auth/step-up/"+wiring.ProviderOIDC+"?return_to=/", nil, http.Header{auth.CSRFHeader: {p.CSRF()}})
+	p.followSignIn(resp, http.StatusSeeOther)
+}
+
+// StepUpFor confirms the person's identity again at the OIDC provider for
+// the one call of action on target: an approval request ID, or the input
+// digest a plan's refusal names. The confirmation is spent by that call.
+func (p *Person) StepUpFor(action, target string) {
+	p.f.t.Helper()
+	q := url.Values{"return_to": {"/"}, auth.StepUpActionField: {action}, auth.StepUpTargetField: {target}}
+	resp := p.Do(http.MethodPost, "/auth/step-up/"+wiring.ProviderOIDC+"?"+q.Encode(), nil, http.Header{auth.CSRFHeader: {p.CSRF()}})
 	p.followSignIn(resp, http.StatusSeeOther)
 }
 
@@ -99,8 +110,8 @@ func (p *Person) CSRF() string {
 	return view.CSRF
 }
 
-// PAT mints a personal access token with scopes; the person must have
-// stepped up recently.
+// PAT mints a personal access token with scopes; the person must hold an
+// unspent step-up made for minting a token, which StepUp makes.
 func (p *Person) PAT(scopes ...string) string {
 	p.f.t.Helper()
 	body, _ := json.Marshal(map[string]any{"name": "harness", "scopes": scopes})

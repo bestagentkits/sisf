@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/auth"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -90,7 +90,7 @@ func (h *handler) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	if core.HasCode(err, core.CodeUnauthenticated) {
 		target := PathSignIn
 		if r.Method == http.MethodGet {
-			target += "?return_to=" + url.QueryEscape(localPath(r.URL.RequestURI()))
+			target += "?return_to=" + url.QueryEscape(auth.LocalReturnPath(r.URL.RequestURI()))
 		}
 		http.Redirect(w, r, target, http.StatusSeeOther)
 		return
@@ -101,7 +101,7 @@ func (h *handler) refuse(w http.ResponseWriter, r *http.Request, err error) {
 // signIn offers the configured providers. A person who already has a session
 // goes on to the page they wanted.
 func (h *handler) signIn(w http.ResponseWriter, r *http.Request) {
-	returnTo := localPath(r.URL.Query().Get("return_to"))
+	returnTo := auth.LocalReturnPath(r.URL.Query().Get("return_to"))
 	if _, err := h.identify(r); err == nil {
 		http.Redirect(w, r, returnTo, http.StatusSeeOther)
 		return
@@ -129,16 +129,6 @@ func (h *handler) logout(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, c)
 	}
 	http.Redirect(w, r, PathSignIn, http.StatusSeeOther)
-}
-
-// localPath keeps a return target on this server: a path that starts with a
-// single slash, never a full URL or a protocol-relative one.
-func localPath(target string) string {
-	if !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") || strings.HasPrefix(target, "/\\") ||
-		strings.ContainsAny(target, "\r\n") {
-		return "/"
-	}
-	return target
 }
 
 func firstNonEmpty(values ...string) string {

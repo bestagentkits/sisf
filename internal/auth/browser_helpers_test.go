@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 )
@@ -88,10 +87,9 @@ func (b *browser) signIn(t *testing.T, provider, subject string) *http.Response 
 
 // session is the browser's view of its session; ok is false when signed out.
 func (b *browser) session(t *testing.T) (view struct {
-	ActorID   string    `json:"actor_id"`
-	SessionID string    `json:"session_id"`
-	CSRFToken string    `json:"csrf_token"`
-	StepUpAt  time.Time `json:"step_up_at"`
+	ActorID   string `json:"actor_id"`
+	SessionID string `json:"session_id"`
+	CSRFToken string `json:"csrf_token"`
 }, ok bool) {
 	t.Helper()
 	resp := b.do(t, http.MethodGet, "/auth/session", "", nil)

@@ -10,18 +10,22 @@ import (
 
 // session is one browser sign-in. The cookie value is held only as a digest;
 // handle is the public name used in actors, audit records and revocation.
+// proofs are the step-up confirmations not yet spent, each for one call.
 type session struct {
-	key      string
-	handle   string
-	actorID  string
-	ident    identity.Identity
-	csrf     string
-	expires  time.Time
-	stepUpAt time.Time
+	key     string
+	handle  string
+	actorID string
+	ident   identity.Identity
+	csrf    string
+	expires time.Time
+	proofs  map[StepUpTarget]stepUpProof
 }
 
+// actor is the session's person. It never carries a step-up time: a
+// confirmation is bound to one call and is spent through ConsumeStepUp, so
+// nothing that merely rides the session inherits it.
 func (ss *session) actor() core.Actor {
-	return core.Actor{ID: ss.actorID, Kind: core.ActorHuman, SessionID: ss.handle, StepUpAt: ss.stepUpAt}
+	return core.Actor{ID: ss.actorID, Kind: core.ActorHuman, SessionID: ss.handle}
 }
 
 // createSession opens a session for id and returns the cookie value.
@@ -138,9 +142,9 @@ func (s *Service) RevokeActor(actorID string) int {
 	return n
 }
 
-// markStepUp records a completed step-up on the session under key, which
-// must still be live and belong to the same issuer and subject.
-func (s *Service) markStepUp(key string, id identity.Identity) error {
+// markStepUp records a completed step-up for target on the session under
+// key, which must still be live and belong to the same issuer and subject.
+func (s *Service) markStepUp(key string, id identity.Identity, target StepUpTarget) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ss, ok := s.liveSessionLocked(key)
@@ -150,6 +154,6 @@ func (s *Service) markStepUp(key string, id identity.Identity) error {
 	case !ss.ident.Same(id):
 		return unauthenticated("step-up must be completed by the person who is signed in")
 	}
-	ss.stepUpAt = s.cfg.Clock.Now()
+	s.addProofLocked(ss, target, s.cfg.Clock.Now())
 	return nil
 }

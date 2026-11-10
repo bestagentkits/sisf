@@ -1,6 +1,7 @@
 package oauthas
 
 import (
+	"errors"
 	"mime"
 	"net/http"
 	"strings"
@@ -45,13 +46,15 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "the client is not registered")
 		return
 	}
-	g, err := s.redeemCode(f.Get("code"))
-	if err != nil {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", messageOf(err))
+	g, err := s.redeemCode(f.Get("code"), redemption{clientID: f.Get("client_id"), redirectURI: f.Get("redirect_uri"),
+		verifier: f.Get("code_verifier"), resource: f.Get("resource")})
+	var mismatch *bindingFailure
+	switch {
+	case errors.As(err, &mismatch):
+		writeOAuthError(w, http.StatusBadRequest, bindingError(mismatch.desc), mismatch.desc)
 		return
-	}
-	if desc := bindingMismatch(g, f.Get("client_id"), f.Get("redirect_uri"), f.Get("code_verifier"), f.Get("resource")); desc != "" {
-		writeOAuthError(w, http.StatusBadRequest, bindingError(desc), desc)
+	case err != nil:
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", messageOf(err))
 		return
 	}
 	raw, exp, err := s.mintAccessToken(g)
@@ -67,8 +70,9 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Binding failures. The code is spent either way, so a guessed verifier
-// gets one try per code.
+// Binding failures. None of them spends the code: a verifier carries at
+// least 256 bits, so it cannot be guessed in the code's short lifetime, and
+// spending the code would let anyone who saw it deny the sign-in.
 const (
 	errOtherClient   = "the code was issued to another client"
 	errRedirect      = "redirect_uri does not match the one in the authorization request"
@@ -76,17 +80,22 @@ const (
 	errOtherResource = "the resource does not match the one the code was issued for"
 )
 
+// bindingFailure is a redemption that does not match its grant.
+type bindingFailure struct{ desc string }
+
+func (e *bindingFailure) Error() string { return e.desc }
+
 // bindingMismatch checks that the redemption matches the grant exactly and
 // returns a description of the first mismatch, or "".
-func bindingMismatch(g codeGrant, clientID, redirectURI, verifier, resource string) string {
+func bindingMismatch(g codeGrant, r redemption) string {
 	switch {
-	case clientID != g.clientID:
+	case r.clientID != g.clientID:
 		return errOtherClient
-	case redirectURI != g.redirectURI:
+	case r.redirectURI != g.redirectURI:
 		return errRedirect
-	case !pkceMatches(g.challenge, verifier):
+	case !pkceMatches(g.challenge, r.verifier):
 		return errVerifier
-	case resource != "" && resource != g.resource:
+	case r.resource != "" && r.resource != g.resource:
 		return errOtherResource
 	}
 	return ""

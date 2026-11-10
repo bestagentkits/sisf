@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -91,9 +92,10 @@ func TestSignOutEndsTheSession(t *testing.T) {
 func TestReturnAddressStaysOnSite(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	for _, target := range []string{"https://evil.example/", "//evil.example/x", "/\\evil.example", "javascript:alert(1)"} {
+	for _, target := range []string{"https://evil.example/", "//evil.example/x", "/\\evil.example", "javascript:alert(1)",
+		"/\t/evil.example", "/%09/evil.example", "/%2F/evil.example"} {
 		b := e.browser(t)
-		_, providerURL := b.hop(t, http.MethodGet, "/auth/login/google?return_to="+target, nil)
+		_, providerURL := b.hop(t, http.MethodGet, "/auth/login/google?return_to="+url.QueryEscape(target), nil)
 		resp, _ := b.hop(t, http.MethodGet, b.atProvider(t, "owner-sub", providerURL), nil)
 		if loc := resp.Header.Get("Location"); loc != "/" {
 			t.Errorf("return_to %q redirected to %q", target, loc)

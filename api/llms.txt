@@ -12,6 +12,7 @@ An action's description documents it and never grants permission; roles and toke
 - Failure: {"error": {"code", "message", "next_actions": [{"action", "description", "params"}]}}.
   Branch on code, never on message, and pick the next step from next_actions.
 - Every write accepts dry_run, which reports exactly what would change and changes nothing.
+- idempotency_key: A retry with the same key and input within 24 hours gets the first answer without the write running again; the same key with another input is CONFLICT.
 
 ## Sensitive actions: plan, approval, execute, audit
 

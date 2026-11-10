@@ -50,11 +50,19 @@ func (s *Server) issueCode(req authRequest, actor core.Actor) (string, error) {
 	return code, nil
 }
 
-// redeemCode marks the grant behind code used, names the token it will
-// produce, and returns a copy. A code that is unknown, expired or used
-// before fails; a reuse also revokes the token the first use produced. The
-// caller then checks the binding.
-func (s *Server) redeemCode(code string) (codeGrant, error) {
+// redemption is what a token request presents alongside its code.
+type redemption struct {
+	clientID, redirectURI, verifier, resource string
+}
+
+// redeemCode checks req against the grant behind code and, only when it
+// matches, marks the grant used, names the token it will produce and
+// returns a copy. A code that is unknown, expired or used before fails; a
+// reuse of a redeemed code also revokes the token the first use produced. A
+// redemption whose client, redirect URI, PKCE verifier or resource does not
+// match fails without consuming the code, so a party that learns a code
+// cannot burn it for the client it was issued to.
+func (s *Server) redeemCode(code string, req redemption) (codeGrant, error) {
 	tokenID, err := randomToken(16)
 	if err != nil {
 		return codeGrant{}, err
@@ -72,6 +80,9 @@ func (s *Server) redeemCode(code string) (codeGrant, error) {
 	case !now.Before(g.expires):
 		delete(s.codes, digest(code))
 		return codeGrant{}, core.NewError(core.CodeExpired, "the authorization code has expired")
+	}
+	if desc := bindingMismatch(*g, req); desc != "" {
+		return codeGrant{}, &bindingFailure{desc: desc}
 	}
 	// The token is minted at now and lives AccessTokenTTL; the margin covers
 	// the moment between this line and the minting.

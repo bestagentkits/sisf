@@ -18,7 +18,9 @@ import (
 // EdgeCounters reads the edge's cumulative counters for the decision layer:
 // one endpoint per revision the edge served, with the requests that got a
 // response and those that failed with a server error since the edge started.
-type EdgeCounters struct{ Edge edge.Controller }
+// It holds a counts reader only, so the control zone cannot change the
+// division of traffic through it.
+type EdgeCounters struct{ Edge edge.CountsReader }
 
 var _ decision.CounterSource = EdgeCounters{}
 

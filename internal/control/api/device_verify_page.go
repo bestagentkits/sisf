@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -107,9 +108,17 @@ func (h *handler) writePage(w http.ResponseWriter, status int, data pageData) {
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	hdr.Set("X-Frame-Options", "DENY")
 	hdr.Set("Referrer-Policy", "no-referrer")
-	hdr.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	hdr.Set("Content-Security-Policy", h.pagePolicy())
 	w.WriteHeader(status)
 	_ = verifyPage.Execute(w, data)
+}
+
+// pagePolicy is the Content-Security-Policy of the verification page. Its
+// forms post to this server, and the step-up form is then redirected to the
+// sign-in provider, so form-action names the provider origins as well.
+func (h *handler) pagePolicy() string {
+	formAction := strings.Join(append([]string{"'self'"}, h.cfg.FormOrigins...), " ")
+	return "default-src 'none'; style-src 'unsafe-inline'; form-action " + formAction + "; frame-ancestors 'none'; base-uri 'none'"
 }
 
 // sessionCSRF reads the CSRF token of the viewer's session from the

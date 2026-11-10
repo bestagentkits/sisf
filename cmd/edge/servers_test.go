@@ -83,6 +83,35 @@ func TestTheAdminSurfaceLivesOnItsOwnListenerOnly(t *testing.T) {
 	}
 }
 
+// The control zone reads the counters with a token of its own that cannot
+// move traffic.
+func TestTheCountersTokenReadsTheCountersButCannotChangeTheSplit(t *testing.T) {
+	t.Parallel()
+	opts := baseOptions(t)
+	opts.countsToken = "counts-token-for-tests"
+	srv := start(t, opts)
+	base := "http://" + srv.adminLn.Addr().String()
+	for _, c := range []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodGet, "/counters", http.StatusOK},
+		{http.MethodGet, "/split", http.StatusForbidden},
+		{http.MethodPut, "/split", http.StatusForbidden},
+	} {
+		req, _ := http.NewRequest(c.method, base+c.path, strings.NewReader(`{"stable":{"revision":"x","url":"http://127.0.0.1:9"}}`))
+		req.Header.Set("Authorization", "Bearer "+opts.countsToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != c.want {
+			t.Errorf("%s %s with the counters token = %d, want %d", c.method, c.path, resp.StatusCode, c.want)
+		}
+	}
+}
+
 func TestTheEgressListenerBlocksAHostOffTheAllowlist(t *testing.T) {
 	t.Parallel()
 	srv := start(t, baseOptions(t))
@@ -115,6 +144,7 @@ func TestListenersOffLoopbackAndAnOpenAdminSurfaceAreRefused(t *testing.T) {
 		"public admin":      func(o *options) { o.adminListen = "0.0.0.0:7470" },
 		"public edge":       func(o *options) { o.listen = ":7460" },
 		"admin without key": func(o *options) { o.adminToken = "" },
+		"equal tokens":      func(o *options) { o.countsToken = o.adminToken },
 		"unknown provider":  func(o *options) { o.providers = listFlags{"no-such-provider"} },
 	} {
 		opts := baseOptions(t)

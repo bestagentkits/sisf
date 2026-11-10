@@ -1,7 +1,8 @@
 // WebMCP tools for the dashboard. Where the browser offers WebMCP
 // (navigator.modelContext or document.modelContext), this script registers
 // one tool per factory action, from the list the server generates from the
-// action registry. A tool calls the REST surface on this site with the
+// action registry. Actions that need step-up are not offered: they run only
+// from their form in the dashboard. A tool calls the REST surface on this site with the
 // person's session cookie and the session's CSRF token, so it has exactly
 // the person's authority and no more: the server checks roles and scopes on
 // every call, and a tool description grants nothing. Where WebMCP is

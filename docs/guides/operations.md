@@ -48,14 +48,14 @@ People sign in to the dashboard with the providers the control process is given 
 | `SISF_AUTH_GITHUB_CLIENT_ID`, `SISF_AUTH_GITHUB_CLIENT_SECRET`, `SISF_AUTH_GITHUB_URL`, `SISF_AUTH_GITHUB_API_URL` | GitHub sign-in, offered as `github`; the URLs default to github.com |
 | `SISF_SUPERVISOR_ADMIN_ADDR` | the supervisor's admin socket, which the emergency stop and rollback actions call |
 | `SISF_DOCS_DIR` | directory `docs.list` reads; unset means none |
-| `SISF_EDGE_ADMIN_URL`, `EDGE_ADMIN_TOKEN` | the edge's counters; setting the URL turns on the Decision Layer |
+| `SISF_EDGE_COUNTERS_URL`, `EDGE_COUNTERS_TOKEN` | the edge's admin listener and its read-only counters token; setting the URL turns on the Decision Layer. The control process never holds `EDGE_ADMIN_TOKEN` |
 | `SISF_TRUSTED_PROXIES` | networks the edge connects from; the public bug-report route limits clients by the address the edge forwards only from these (default loopback) |
 
 In the simulation profile, sign-in defaults to the fake identity provider of `sisf sim oidc` on `127.0.0.1:7468`, which also stands in for GitHub sign-in, with the subject `owner` as the Owner. A real install must name at least one provider and one Owner.
 
 Sessions, tokens, step-up confirmations and OAuth grants are held in memory in this release. Restarting the control process signs everyone out and voids every token.
 
-Deciding an approval needs a step-up confirmation made in the dashboard within the last five minutes. A token never carries one: an approval over MCP or with a personal access token answers `STEP_UP_REQUIRED` and points at `/approvals` in the dashboard. Every surface limits writes to 60 per minute per person.
+An action that needs step-up (deciding an approval, a rollback, a budget change) runs only from its form in the dashboard, after the person confirms their identity at the provider for that one call: the action and the approval request, approval or exact input it names. The confirmation lapses after five minutes and is spent by the one call; another call needs another confirmation. A token never carries one, and a session is not honoured for these actions over REST or by a WebMCP tool, which does not list them: those calls answer `STEP_UP_REQUIRED` and point at the dashboard. An untargeted step-up at `/auth/step-up/` lets the session mint one personal access token. Every surface limits writes to 60 per minute per person. A write called with an idempotency key (`idempotency_key` in the body, the `Idempotency-Key` header, or `sisf call --idempotency-key`) runs once per person, action and key: a retry with the same input within 24 hours gets the first answer, and the same key with another input answers `CONFLICT`. The control zone keeps these records in the `control.idempotency` namespace of its store and prunes them after the retention.
 
 ## State and budget
 
@@ -63,9 +63,9 @@ Deciding an approval needs a step-up confirmation made in the dashboard within t
 
 ## Decision Layer
 
-When `SISF_EDGE_ADMIN_URL` is set, the control process reads the edge's counters every five minutes and runs the Decision Layer (`internal/decision`) under the policy in force. A recurring regression of an endpoint's 5xx rate becomes one GitHub issue for the Owner; the layer recommends and never changes anything itself. Proposals are remembered in the operational store, so a restart does not open a second issue for the same condition.
+When `SISF_EDGE_COUNTERS_URL` is set, the control process reads the edge's counters every five minutes and runs the Decision Layer (`internal/decision`) under the policy in force. A recurring regression of an endpoint's 5xx rate becomes one GitHub issue for the Owner; the layer recommends and never changes anything itself. Proposals are remembered in the operational store, so a restart does not open a second issue for the same condition.
 
-Without a `decision.system_one` section in the approved `.sisf/factory.yaml`, the deterministic rules decide alone. With one, the layer also asks that System One backend the typed questions of `DECISIONS.md` about each proposal; its answer can only make the proposal more cautious or raise its priority:
+Without a `decision.system_one` section in the approved `.sisf/factory.yaml`, the deterministic rules decide alone. With one, the layer also asks that System One backend the typed questions of `DECISIONS.md` about each proposal; its answer can only hold the proposal, make it more cautious or lower its priority, never raise it:
 
 ```yaml
 decision:
@@ -80,7 +80,11 @@ decision:
       model: jev-1          # judgments reporting another route are refused
 ```
 
-The schema is `schemas/factory.schema.json`; the checks are in `pkg/manifest/decision_system_one.go`. The control process has no secret provider configured yet, so a backend that needs a credential cannot be used in this release.
+The schema is `schemas/factory.schema.json`; the checks are in `pkg/manifest/decision_system_one.go`. The adapter refuses redirects, so a request and its credential only ever reach the configured endpoint. The control process has no secret provider configured yet, so a backend that needs a credential cannot be used in this release.
+
+## Edge tokens
+
+The edge (`cmd/edge`) reads two tokens from its environment. `EDGE_ADMIN_TOKEN` guards its admin listener (`--admin-listen`) and can change the traffic split; only the release supervisor holds it. `EDGE_COUNTERS_TOKEN` is optional and authorizes `GET /counters` and nothing else; every other request with it is refused with 403. The two must differ, or the edge refuses to start. The control process reads the counters with `EDGE_COUNTERS_TOKEN` through a client that has no way to change the split (`internal/edge/admin_client.go`).
 
 ## Ports
 

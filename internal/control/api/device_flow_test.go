@@ -263,3 +263,21 @@ func TestLoginRequestsRefuseUnknownScopesAndHostileNames(t *testing.T) {
 		t.Fatalf("default scopes should be every action scope, got %v", s.Scopes)
 	}
 }
+
+// The step-up button on the verification page posts to /auth/step-up/, which
+// redirects to the sign-in provider; the policy must let that form lead
+// there, exactly as the dashboard's policy does.
+func TestTheVerificationPageLetsTheStepUpFormReachTheProvider(t *testing.T) {
+	t.Parallel()
+	const provider = "https://accounts.example.test"
+	e := newEnv(t, sampleRegistry, func(c *api.Config) { c.FormOrigins = []string{provider} })
+	cli := e.browser(t)
+	_, s := cli.start(t, `{"name":"laptop","scopes":["echo:read"]}`)
+	person, _ := e.owner(t)
+	page := person.do(t, http.MethodGet, api.DeviceVerifyPath+"?user_code="+url.QueryEscape(s.UserCode), "", nil)
+	csp := page.header.Get("Content-Security-Policy")
+	if page.status != http.StatusOK || !strings.Contains(csp, "form-action 'self' "+provider+";") ||
+		!strings.Contains(csp, "frame-ancestors 'none'") || !strings.Contains(csp, "default-src 'none'") {
+		t.Fatalf("verification page policy: %q", csp)
+	}
+}

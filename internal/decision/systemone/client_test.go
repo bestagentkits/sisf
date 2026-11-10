@@ -239,3 +239,49 @@ func TestACredentialNeedsASecretProvider(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// A redirect would carry the credential and the request to a place the
+// configuration never named, so the client refuses to follow one.
+func TestARedirectIsNeverFollowed(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect, http.StatusFound} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+			elsewhere := systemonetest.New(version, "")
+			t.Cleanup(elsewhere.Close)
+			elsewhere.Answer(func(pkgdecision.Request) pkgdecision.Judgment { return judgment() })
+			h := newHarness(t)
+			h.fake.Reply(func(systemonetest.Call) systemonetest.Reply {
+				return systemonetest.Reply{Status: status, Location: elsewhere.URL + "/judge"}
+			})
+			got, err := h.client.Judge(context.Background(), request())
+			if !core.HasCode(err, core.CodeUnavailable) || got.Verdict != "" {
+				t.Fatalf("want %s and no judgment, got %+v, %v", core.CodeUnavailable, got, err)
+			}
+			if n := len(elsewhere.Calls()); n != 0 {
+				t.Fatalf("the redirect target received %d requests", n)
+			}
+		})
+	}
+}
+
+// A caller-supplied HTTP client is not allowed to reintroduce redirects.
+func TestACallerSuppliedClientStillRefusesRedirects(t *testing.T) {
+	t.Parallel()
+	elsewhere := systemonetest.New(version, "")
+	t.Cleanup(elsewhere.Close)
+	elsewhere.Answer(func(pkgdecision.Request) pkgdecision.Judgment { return judgment() })
+	fake := systemonetest.New(version, "")
+	t.Cleanup(fake.Close)
+	fake.Reply(func(systemonetest.Call) systemonetest.Reply {
+		return systemonetest.Reply{Status: http.StatusTemporaryRedirect, Location: elsewhere.URL + "/judge"}
+	})
+	client, err := systemone.New(systemone.Config{Backend: systemone.BackendJev, Endpoint: fake.URL + "/judge", Version: version,
+		Timeout: time.Second, Model: jevModel}, systemone.Deps{Clock: triggerClock{}, HTTP: &http.Client{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Judge(context.Background(), request()); !core.HasCode(err, core.CodeUnavailable) || len(elsewhere.Calls()) != 0 {
+		t.Fatalf("got %v and %d forwarded requests", err, len(elsewhere.Calls()))
+	}
+}

@@ -45,7 +45,7 @@ func TestUnauthenticatedRequestsAreSentToSignIn(t *testing.T) {
 func TestSignInReturnTargetStaysOnThisServer(t *testing.T) {
 	t.Parallel()
 	b := newEnv(t, defaultFixtures()).browser(t)
-	for _, target := range []string{"https://evil.test/", "//evil.test/", "/\\evil.test"} {
+	for _, target := range []string{"https://evil.test/", "//evil.test/", "/\\evil.test", "/\t/evil.test", "/%09/evil.test"} {
 		page := b.get(t, "/signin?return_to="+url.QueryEscape(target))
 		if strings.Contains(page.body, "evil.test") {
 			t.Errorf("return_to %q is offered to the provider", target)

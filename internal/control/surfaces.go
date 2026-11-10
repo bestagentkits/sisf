@@ -39,7 +39,8 @@ type Surfaces struct {
 	OAuth *oauthas.Server
 	// LoginProviders are the provider names the sign-in and step-up pages offer.
 	LoginProviders []string
-	// FormOrigins are the provider origins a step-up form may lead to.
+	// FormOrigins are the provider origins a step-up form may lead to, on
+	// the dashboard and on the device verification page alike.
 	FormOrigins []string
 	// ExternalURL is the base URL people and clients reach the server at.
 	ExternalURL string
@@ -54,7 +55,7 @@ func (s Surfaces) mount(mux *http.ServeMux, clock core.Clock, log *slog.Logger) 
 			"the control server needs the authentication service, the action service, the authorization server and a login provider")
 	}
 	rest, err := api.New(api.Config{Actions: s.Actions, Identity: s.Identity, Clock: clock,
-		ExternalURL: s.ExternalURL, LoginProviders: s.LoginProviders, Logger: log})
+		ExternalURL: s.ExternalURL, LoginProviders: s.LoginProviders, FormOrigins: s.FormOrigins, Logger: log})
 	if err != nil {
 		return err
 	}

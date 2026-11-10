@@ -102,3 +102,15 @@ type recorder struct {
 func (r *recorder) Header() http.Header         { return r.header }
 func (r *recorder) Write(b []byte) (int, error) { return len(b), nil }
 func (r *recorder) WriteHeader(status int)      { r.status = status }
+
+// An action that needs step-up runs only from the dashboard's own forms, so
+// a browser agent in the page is never offered it as a tool.
+func TestTheWebMCPListLeavesOutEveryStepUpAction(t *testing.T) {
+	t.Parallel()
+	stepUp := core.ActionSpec{Name: "approvals.decide", Summary: "Decide", Sensitivity: core.SensitivitySensitive,
+		Roles: []core.Role{core.RoleOwner}, Scopes: []string{"approvals:write"}, StepUp: true}
+	tools := mcp.WebTools([]core.ActionSpec{listSpec, stepUp, renameSpec})
+	if len(tools) != 2 || tools[0].Name != listSpec.Name || tools[1].Name != renameSpec.Name {
+		t.Fatalf("tools = %+v", tools)
+	}
+}

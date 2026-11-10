@@ -16,7 +16,7 @@ func TestHostileTextFromIssuesAndCatalogRendersInert(t *testing.T) {
 	b := e.browser(t)
 	b.signIn(t, ownerSub)
 	// Make the approval request carry hostile text in its diff and risk summary.
-	plan := b.post(t, "/actions/factory.emergency_stop", stopForm("x"))
+	plan := planStop(t, b, "x")
 	m := approvalLink.FindStringSubmatch(plan.body)
 	if m == nil {
 		t.Fatalf("no approval request was filed: %.300s", plan.body)

@@ -24,6 +24,8 @@ type flow struct {
 	expires  time.Time
 	// stepUpKey is the session being stepped up; empty for a sign-in.
 	stepUpKey string
+	// stepUpFor is what the step-up confirms.
+	stepUpFor StepUpTarget
 }
 
 // flowResult is the outcome of a completed flow.
@@ -34,9 +36,9 @@ type flowResult struct {
 	session *session
 }
 
-// beginFlow starts a sign-in, or a step-up of the session under stepUpKey,
-// and returns the provider URL and the flow cookie value.
-func (s *Service) beginFlow(providerName, returnTo, stepUpKey string) (authURL, binding string, err error) {
+// beginFlow starts a sign-in, or a step-up of the session under stepUpKey
+// for target, and returns the provider URL and the flow cookie value.
+func (s *Service) beginFlow(providerName, returnTo, stepUpKey string, target StepUpTarget) (authURL, binding string, err error) {
 	p, ok := s.providers[providerName]
 	if !ok {
 		return "", "", core.NewError(core.CodeNotFound, "no login provider is named "+providerName)
@@ -60,7 +62,7 @@ func (s *Service) beginFlow(providerName, returnTo, stepUpKey string) (authURL, 
 	}
 	now := s.cfg.Clock.Now()
 	f := &flow{provider: providerName, nonce: nonce, verifier: verifier, binding: digest(binding),
-		returnTo: returnTo, started: now, expires: now.Add(flowTTL), stepUpKey: stepUpKey}
+		returnTo: returnTo, started: now, expires: now.Add(flowTTL), stepUpKey: stepUpKey, stepUpFor: target}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pruneFlowsLocked(now)
@@ -108,7 +110,7 @@ func (s *Service) completeFlow(ctx context.Context, providerName, state, code, b
 		return flowResult{}, unauthenticated("the provider returned an identity from another issuer")
 	}
 	if f.stepUpKey != "" {
-		return flowResult{returnTo: f.returnTo}, s.markStepUp(f.stepUpKey, id)
+		return flowResult{returnTo: f.returnTo}, s.markStepUp(f.stepUpKey, id, f.stepUpFor)
 	}
 	cookie, ss, err := s.createSession(id)
 	if err != nil {

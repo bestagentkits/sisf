@@ -18,8 +18,12 @@ const (
 	SessionPath  = "/auth/session"
 	TokensPath   = "/auth/tokens"
 	TokenPath    = "/auth/tokens/{id}"
-	flowPath     = "/auth/"
-	maxBodyBytes = 16 << 10
+	// StepUpActionField and StepUpTargetField name, in a step-up form or
+	// query, the one call the confirmation is for.
+	StepUpActionField = "action"
+	StepUpTargetField = "target"
+	flowPath          = "/auth/"
+	maxBodyBytes      = 16 << 10
 )
 
 // Handler serves sign-in, step-up, sign-out, the session view and personal
@@ -38,7 +42,7 @@ func (s *Service) Handler() http.Handler {
 }
 
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
-	authURL, binding, err := s.beginFlow(r.PathValue("provider"), localPath(r.URL.Query().Get("return_to")), "")
+	authURL, binding, err := s.beginFlow(r.PathValue("provider"), LocalReturnPath(r.URL.Query().Get("return_to")), "", StepUpTarget{})
 	if err != nil {
 		writeError(w, err)
 		return
@@ -47,13 +51,23 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
+// handleStepUp starts a confirmation of the signed-in person for one call:
+// the action and target fields name it, from the form or the query. A
+// step-up that names neither lets the session mint one personal access
+// token and nothing else.
 func (s *Service) handleStepUp(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	ss, err := s.sessionFromRequest(r, true)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	authURL, binding, err := s.beginFlow(r.PathValue("provider"), localPath(r.URL.Query().Get("return_to")), ss.key)
+	target, err := parseStepUpTarget(r.FormValue(StepUpActionField), r.FormValue(StepUpTargetField))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	authURL, binding, err := s.beginFlow(r.PathValue("provider"), LocalReturnPath(r.URL.Query().Get("return_to")), ss.key, target)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -120,7 +134,6 @@ type sessionView struct {
 	Name      string    `json:"name,omitempty"`
 	Email     string    `json:"email,omitempty"`
 	ExpiresAt time.Time `json:"expires_at"`
-	StepUpAt  time.Time `json:"step_up_at,omitzero"`
 	CSRFToken string    `json:"csrf_token"`
 }
 
@@ -133,7 +146,7 @@ func (s *Service) handleSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, sessionView{ActorID: ss.actorID, SessionID: ss.handle, Issuer: ss.ident.Issuer,
 		Subject: ss.ident.Subject, Login: ss.ident.Login, Name: ss.ident.Name, Email: ss.ident.Email,
-		ExpiresAt: ss.expires, StepUpAt: ss.stepUpAt, CSRFToken: ss.csrf})
+		ExpiresAt: ss.expires, CSRFToken: ss.csrf})
 }
 
 func (s *Service) handleListTokens(w http.ResponseWriter, r *http.Request) {

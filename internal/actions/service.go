@@ -69,6 +69,13 @@ type Config struct {
 	// identity and decides. A STEP_UP_REQUIRED answer names it, because a
 	// token, on any surface, never carries a step-up. Empty names none.
 	StepUpPage string
+	// StepUp spends the confirmations people make in the dashboard. Nil
+	// means no call that needs step-up can run.
+	StepUp StepUpProofs
+	// Idempotency keeps the answers of writes called with an idempotency
+	// key, so a retry gets the first answer instead of a second write. Nil
+	// keeps them in this process's memory.
+	Idempotency IdempotencyRecords
 }
 
 // Service is the one action service behind every surface. Dashboard, REST,
@@ -76,6 +83,7 @@ type Config struct {
 type Service struct {
 	cfg     Config
 	limiter *writeLimiter
+	keys    keyedLocks
 }
 
 // NewService builds the service, refusing a configuration that lacks a part.
@@ -100,6 +108,9 @@ func NewService(cfg Config) (*Service, error) {
 	}
 	if cfg.StepUpMaxAge == 0 {
 		cfg.StepUpMaxAge = approvals.DefaultStepUpMaxAge
+	}
+	if cfg.Idempotency == nil {
+		cfg.Idempotency = &memoryIdempotency{}
 	}
 	return &Service{cfg: cfg, limiter: newWriteLimiter(cfg.RateLimit)}, nil
 }
@@ -137,12 +148,29 @@ func (s *Service) invoke(ctx context.Context, action core.Action, req core.Actio
 		return core.ActionResult{}, err
 	}
 	req.Input = canonical
-	call := invocation{spec: spec, handle: action.Handle, req: req}
-	effect, err := s.authorize(ctx, call)
-	if err == nil {
-		err = s.limitWrites(call)
+	if err := validIdempotencyKey(req.IdempotencyKey); err != nil {
+		return core.ActionResult{}, err
 	}
+	// A step-up time comes only from a confirmation spent for this call,
+	// never from the surface or the session.
+	req.Actor.StepUpAt = time.Time{}
+	call := invocation{spec: spec, handle: action.Handle, req: req}
+	effect, err := s.authorize(ctx, &call)
 	if err != nil {
+		s.audit(ctx, call, core.OutcomeDenied, "authorize", binding{}, err)
+		return core.ActionResult{}, err
+	}
+	if s.idempotent(call) {
+		return s.once(ctx, call, func() (core.ActionResult, error) { return s.run(ctx, call, effect) })
+	}
+	return s.run(ctx, call, effect)
+}
+
+// run carries an authorized call through the write limit and the pipeline
+// its action and the authorizer's answer demand.
+func (s *Service) run(ctx context.Context, call invocation, effect core.AuthzEffect) (core.ActionResult, error) {
+	spec := call.spec
+	if err := s.limitWrites(call); err != nil {
 		s.audit(ctx, call, core.OutcomeDenied, "authorize", binding{}, err)
 		return core.ActionResult{}, err
 	}
@@ -156,11 +184,11 @@ func (s *Service) invoke(ctx context.Context, action core.Action, req core.Actio
 	case s.cfg.Registry.IsFallback(spec.Name), !spec.Mutates():
 		// A fallback only reports what is missing and a read changes nothing:
 		// neither needs a plan, an approval or a dry run.
-		req.DryRun, req.ApprovalID = false, ""
-		return action.Handle(ctx, req)
-	case req.DryRun:
+		call.req.DryRun, call.req.ApprovalID = false, ""
+		return call.handle(ctx, call.req)
+	case call.req.DryRun:
 		return s.dryRun(ctx, call, s.needsApproval(spec, effect))
-	case s.needsApproval(spec, effect) && req.ApprovalID == "":
+	case s.needsApproval(spec, effect) && call.req.ApprovalID == "":
 		return core.ActionResult{}, s.plan(ctx, call)
 	case s.needsApproval(spec, effect):
 		return s.executeApproved(ctx, call)
@@ -182,20 +210,4 @@ func (s *Service) needsApproval(spec core.ActionSpec, effect core.AuthzEffect) b
 		return false
 	}
 	return spec.Sensitivity.NeedsApproval() || effect == core.EffectRequireApproval
-}
-
-// dryRun asks the handler what would change. It files nothing, audits
-// nothing and changes nothing; a handler that cannot say is a bug.
-func (s *Service) dryRun(ctx context.Context, call invocation, requiresApproval bool) (core.ActionResult, error) {
-	call.req.ApprovalID = ""
-	res, err := call.handle(ctx, call.req)
-	if err != nil {
-		return core.ActionResult{}, err
-	}
-	if res.Plan == nil {
-		return core.ActionResult{}, core.NewError(core.CodeInternal, "the action did not report what a dry run would change")
-	}
-	res.Plan.RequiresApproval = requiresApproval
-	res.Output, res.AuditID = nil, ""
-	return res, nil
 }

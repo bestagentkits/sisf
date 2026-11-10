@@ -8,7 +8,10 @@ import (
 	"github.com/bestagentkits/sisf/internal/oauthas/oauthastest"
 )
 
-func TestWrongPKCEVerifierGetsNoTokenAndSpendsTheCode(t *testing.T) {
+// A failed redemption must not consume the code: whoever learns a code
+// without its verifier could otherwise burn the legitimate client's sign-in.
+// Guessing a verifier is not practical, since it carries at least 256 bits.
+func TestWrongPKCEVerifierGetsNoTokenAndLeavesTheCodeForItsClient(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	p := oauthastest.NewPKCE(t)
@@ -22,8 +25,18 @@ func TestWrongPKCEVerifierGetsNoTokenAndSpendsTheCode(t *testing.T) {
 	if tok := e.Exchange(t, missing); tok.AccessToken != "" {
 		t.Fatal("a missing verifier was accepted")
 	}
-	if tok := e.Exchange(t, e.ExchangeForm(code, p)); tok.AccessToken != "" {
-		t.Fatal("a code survived a failed redemption, so a verifier could be guessed")
+	tok := e.Exchange(t, e.ExchangeForm(code, p))
+	if tok.Status != http.StatusOK || tok.AccessToken == "" {
+		t.Fatalf("a failed redemption spent the code: %+v", tok)
+	}
+	if _, err := verify(e, tok.AccessToken); err != nil {
+		t.Fatalf("the token redeemed after failed attempts must work: %v", err)
+	}
+	if again := e.Exchange(t, e.ExchangeForm(code, p)); again.Error != "invalid_grant" {
+		t.Fatalf("a redeemed code was accepted again: %+v", again)
+	}
+	if _, err := verify(e, tok.AccessToken); err == nil {
+		t.Fatal("reusing a redeemed code left its token alive")
 	}
 }
 
@@ -107,5 +120,9 @@ func TestCodeIsBoundToTheClientItWasIssuedTo(t *testing.T) {
 	form.Set("client_id", "other-client")
 	if tok := e.Exchange(t, form); tok.Error != "invalid_grant" {
 		t.Fatalf("another client redeemed the code: %+v", tok)
+	}
+	form.Set("client_id", oauthastest.ClientID)
+	if tok := e.Exchange(t, form); tok.Status != http.StatusOK || tok.AccessToken == "" {
+		t.Fatalf("another client's failed attempt spent the code: %+v", tok)
 	}
 }

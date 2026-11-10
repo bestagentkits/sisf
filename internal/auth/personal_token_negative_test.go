@@ -10,18 +10,25 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// steppedUp signs subject in with Google, completes a step-up and returns
-// the CSRF header for the session.
+// steppedUp signs subject in with Google, completes a step-up that lets the
+// session mint one token and returns the CSRF header for the session.
 func steppedUp(t *testing.T, e *env, b *browser, subject string) map[string]string {
 	t.Helper()
 	b.signIn(t, "google", subject)
 	view, _ := b.session(t)
 	csrf := map[string]string{auth.CSRFHeader: view.CSRFToken}
-	_, providerURL := b.hop(t, http.MethodPost, "/auth/step-up/google", csrf)
+	stepUpFor(t, b, subject, csrf, "")
+	return csrf
+}
+
+// stepUpFor completes a step-up of b's session; query names the call it is
+// for, and an empty query asks for one token.
+func stepUpFor(t *testing.T, b *browser, subject string, csrf map[string]string, query string) {
+	t.Helper()
+	_, providerURL := b.hop(t, http.MethodPost, "/auth/step-up/google"+query, csrf)
 	if resp, _ := b.hop(t, http.MethodGet, b.atProvider(t, subject, providerURL), nil); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("step-up: %d", resp.StatusCode)
 	}
-	return csrf
 }
 
 // mint asks for a personal access token and returns the status and token.
@@ -97,6 +104,7 @@ func TestPersonalTokensExpireAndCanBeRevoked(t *testing.T) {
 	b := e.browser(t)
 	csrf := steppedUp(t, e, b, "owner-sub")
 	_, short, _ := mint(t, b, csrf, `{"scopes":["prs:write"],"ttl_seconds":60}`)
+	stepUpFor(t, b, "owner-sub", csrf, "")
 	_, revoked, info := mint(t, b, csrf, `{"scopes":["prs:write"]}`)
 	cli := e.browser(t)
 	if _, code := cli.actor(t, http.MethodGet, bearer(revoked)); code != http.StatusOK {

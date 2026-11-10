@@ -120,7 +120,7 @@ type callOptions struct {
 
 func (o *callOptions) register(fs *flag.FlagSet, withApproval bool) {
 	fs.BoolVar(&o.dryRun, "dry-run", false, "report what would change and change nothing")
-	fs.StringVar(&o.key, "idempotency-key", "", "makes a retried write apply once")
+	fs.StringVar(&o.key, "idempotency-key", "", "a retry with the same key and input gets the first answer without writing again")
 	if withApproval {
 		fs.StringVar(&o.approval, "approval", "", "reference of the approved request this call spends")
 	}

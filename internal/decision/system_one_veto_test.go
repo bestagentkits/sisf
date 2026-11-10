@@ -81,11 +81,15 @@ func TestSystemOneCautionDowngradesAProposal(t *testing.T) {
 	}
 }
 
-func TestSystemOneRaisesPriorityButNeverLowersIt(t *testing.T) {
+// The rules propose medium priority for a regression; System One may only
+// keep or lower it, never raise it.
+func TestSystemOneLowersPriorityButNeverRaisesIt(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ asked, want pkgdecision.Priority }{
-		{pkgdecision.PriorityLow, pkgdecision.PriorityMedium},
-		{pkgdecision.PriorityUrgent, pkgdecision.PriorityUrgent},
+		{pkgdecision.PriorityLow, pkgdecision.PriorityLow},
+		{pkgdecision.PriorityMedium, pkgdecision.PriorityMedium},
+		{pkgdecision.PriorityHigh, pkgdecision.PriorityMedium},
+		{pkgdecision.PriorityUrgent, pkgdecision.PriorityMedium},
 	} {
 		f, fake := newSystemOneFixture(t)
 		fake.Answer(func(req pkgdecision.Request) pkgdecision.Judgment {

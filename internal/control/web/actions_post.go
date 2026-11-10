@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/actions"
 	"github.com/bestagentkits/sisf/internal/actions/approvalactions"
+	"github.com/bestagentkits/sisf/internal/auth"
 	"github.com/bestagentkits/sisf/pkg/approvals"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
@@ -31,6 +33,7 @@ var formActions = map[string]formAction{
 	actionRollback:               reasonInput,
 	approvalactions.ActionDecide: decideInput,
 	actionSampleIssue:            func(url.Values) (any, error) { return nil, nil },
+	actionBudgetSet:              budgetInput,
 }
 
 type resultView struct {
@@ -45,13 +48,26 @@ type resultView struct {
 	Output     string
 	ApprovalID string
 	StepUp     bool
+	// StepUpAction and StepUpTarget name the one call a step-up from this
+	// page confirms.
+	StepUpAction string
+	StepUpTarget string
 }
 
 type detail struct{ Key, Value string }
 
 // postAction runs one action for a form POST. The session and the CSRF token
-// were checked by the guard before this runs.
+// were checked by the guard before this runs. It is the only path on which
+// the action service accepts a step-up, so it answers only a navigation: a
+// browser marks a script's fetch with another Sec-Fetch-Mode, and a script
+// in the page, such as a WebMCP agent, cannot pass for the person's own
+// form post even with the session cookie and the CSRF token.
 func (h *handler) postAction(w http.ResponseWriter, r *http.Request, s *session) {
+	if mode := r.Header.Get("Sec-Fetch-Mode"); mode != "" && mode != "navigate" {
+		h.fail(w, r, s, core.NewError(core.CodePermissionDenied,
+			"dashboard actions run only from a form you submit; a script cannot post them"))
+		return
+	}
 	name := r.PathValue("name")
 	build, ok := formActions[name]
 	if !ok {
@@ -64,7 +80,7 @@ func (h *handler) postAction(w http.ResponseWriter, r *http.Request, s *session)
 		return
 	}
 	form := r.PostForm
-	returnTo := localPath(form.Get("return_to"))
+	returnTo := auth.LocalReturnPath(form.Get("return_to"))
 	view := resultView{Frame: h.frame(s, "", returnTo), Title: name, Action: name}
 	approvalID := strings.TrimSpace(form.Get("approval_id"))
 	input, err := build(form)
@@ -91,6 +107,7 @@ func (h *handler) renderFailure(w http.ResponseWriter, r *http.Request, view res
 	view.Failed, view.Code, view.Message, view.Next = true, typed.Code, typed.Message, nextViews(typed.NextActions)
 	view.ApprovalID = typed.Details["approval_id"]
 	view.StepUp = typed.Code == core.CodeStepUpRequired
+	view.StepUpAction, view.StepUpTarget = typed.Details[actions.DetailStepUpAction], typed.Details[actions.DetailStepUpTarget]
 	for _, key := range []string{"approval_id", "subject_digest", "policy_revision", "expires_at"} {
 		if v := typed.Details[key]; v != "" {
 			view.Details = append(view.Details, detail{Key: key, Value: v})

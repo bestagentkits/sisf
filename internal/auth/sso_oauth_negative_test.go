@@ -203,6 +203,9 @@ func TestACrossRepositoryInstallationGrantsNothing(t *testing.T) {
 	}
 }
 
+// A step-up is a confirmation of one call, never a state of the session:
+// the session's actor carries no step-up, so whatever rides the session,
+// such as an in-page agent, inherits nothing from it.
 func TestSensitiveActionsRequireAFreshStepUp(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
@@ -217,7 +220,7 @@ func TestSensitiveActionsRequireAFreshStepUp(t *testing.T) {
 	if resp := b.do(t, http.MethodPost, "/auth/step-up/google", "", nil); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("step-up started without a CSRF token: %d", resp.StatusCode)
 	}
-	resp, providerURL := b.hop(t, http.MethodPost, "/auth/step-up/google?return_to=/approvals", csrf)
+	resp, providerURL := b.hop(t, http.MethodPost, "/auth/step-up/google?return_to=/approvals&action=policy.update&target=req-1", csrf)
 	if q := query(t, providerURL); resp.StatusCode != http.StatusSeeOther || q.Get("prompt") != "login" || q.Get("max_age") != "0" {
 		t.Fatalf("step-up must force a fresh sign-in: %d %v", resp.StatusCode, q)
 	}
@@ -226,9 +229,17 @@ func TestSensitiveActionsRequireAFreshStepUp(t *testing.T) {
 		t.Fatalf("step-up callback: %d %s", resp.StatusCode, readAll(t, resp.Body))
 	}
 	actor, _ = b.actor(t, http.MethodGet, nil)
-	if !actor.StepUpAt.Equal(e.clock.Now()) {
-		t.Fatalf("StepUpAt = %v", actor.StepUpAt)
+	if !actor.StepUpAt.IsZero() {
+		t.Fatalf("the session's actor carries a step-up: %v", actor.StepUpAt)
 	}
+	if d := e.authorize(t, actor, policySpec, ""); d.Effect != core.EffectRequireStepUp {
+		t.Fatalf("the session itself passed step-up after a confirmation: %+v", d)
+	}
+	at, err := e.svc.ConsumeStepUp(context.Background(), view.SessionID, "policy.update", "req-1")
+	if err != nil || !at.Equal(e.clock.Now()) {
+		t.Fatalf("ConsumeStepUp = %v, %v", at, err)
+	}
+	actor.StepUpAt = at
 	if d := e.authorize(t, actor, policySpec, ""); !d.Allowed() {
 		t.Fatalf("a fresh step-up was refused: %+v", d)
 	}

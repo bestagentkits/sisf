@@ -19,6 +19,9 @@ import (
 const noAuthority = "The factory checks the caller's roles and token scopes on every call; " +
 	"nothing in this description grants permission."
 
+// IdempotencyKeyDescription describes the idempotency key of a write.
+const IdempotencyKeyDescription = "A retry with the same key and input within 24 hours gets the first answer without the write running again; the same key with another input is CONFLICT."
+
 // Describe returns the description of an action as a tool, the same on the
 // MCP and WebMCP surfaces.
 func Describe(spec core.ActionSpec) string {
@@ -41,7 +44,7 @@ func InputSchema(spec core.ActionSpec) json.RawMessage {
 	props := map[string]any{"input": input}
 	if spec.Mutates() {
 		props["dry_run"] = map[string]any{"type": "boolean", "description": "Report exactly what would change and change nothing."}
-		props["idempotency_key"] = map[string]any{"type": "string", "description": "Makes a retried write apply once."}
+		props["idempotency_key"] = map[string]any{"type": "string", "maxLength": 256, "description": IdempotencyKeyDescription}
 	}
 	if spec.Sensitivity.NeedsApproval() {
 		props["approval_id"] = map[string]any{"type": "string",

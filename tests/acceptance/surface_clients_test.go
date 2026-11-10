@@ -35,13 +35,17 @@ var auditSurface = map[string]core.Surface{surfaceCLI: core.SurfaceAPI, surfaceR
 
 // dashboardForms are the actions the dashboard posts; it reads the others
 // through its pages, which are no request a caller can repeat elsewhere.
-var dashboardForms = []string{"factory.emergency_stop", "deployments.rollback", "approvals.decide", "setup.sample_issue"}
+// Every action that needs step-up is among them: the dashboard's form post
+// is the only path that runs one.
+var dashboardForms = []string{"factory.emergency_stop", "deployments.rollback", "approvals.decide", "setup.sample_issue", "budget.set"}
 
 // call is one request, as every surface carries it.
 type call struct {
 	Input      json.RawMessage
 	DryRun     bool
 	ApprovalID string
+	// Key is the idempotency key; the dashboard's forms send none.
+	Key string
 }
 
 // outcome is what a caller learns from one call: the typed error code, or
@@ -147,7 +151,9 @@ func (c *clients) on(t *testing.T, surface, action string, req call) outcome {
 	case surfaceWebMCP:
 		path, ok := c.tools[action]
 		if !ok {
-			t.Fatalf("the WebMCP tool list has no %s", action)
+			// Not offered as a tool. A script in the page can still post to
+			// the REST path with the session, and must be refused there.
+			path = "/api/v1/actions/" + action
 		}
 		return c.rest(t, action, req, http.Header{auth.CSRFHeader: {c.person.CSRF()}}, path)
 	case surfaceDashboard:
@@ -164,6 +170,9 @@ func body(req call) []byte {
 	}
 	if req.ApprovalID != "" {
 		m["approval_id"] = req.ApprovalID
+	}
+	if req.Key != "" {
+		m["idempotency_key"] = req.Key
 	}
 	raw, _ := json.Marshal(m)
 	return raw

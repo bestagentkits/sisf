@@ -40,7 +40,7 @@ func parityRequests(t *testing.T, f *harness.Factory) map[string]call {
 		"telemetry.search":         {Input: raw(`{"query":"parity"}`)},
 		"setup.sample_issue":       {Input: raw(`{}`)},
 		"budget.get":               {Input: raw(`{}`)},
-		"budget.set":               {Input: raw(`{"mode":"unlimited"}`), DryRun: true},
+		"budget.set":               {Input: raw(`{"mode":"unlimited"}`)},
 		"secrets.list_refs":        {Input: raw(`{}`)},
 		"features.list":            {Input: raw(`{}`)},
 		"changelog.list":           {Input: raw(`{}`)},
@@ -70,8 +70,11 @@ func TestEveryActionAnswersTheSameOnEverySurface(t *testing.T) {
 	f.Supervisor.SetLKG("web", core.Digest("sha256:"+string(bytes.Repeat([]byte("ab"), 32))))
 	owner := f.SignInOwner()
 	c := newClients(t, f, owner)
-	// Let the step-up go stale: no token carries one, so the session must
-	// not either for the same request to mean the same thing everywhere.
+	// The session holds no confirmation of any of these calls: no token
+	// carries one, and a step-up action answers STEP_UP_REQUIRED on every
+	// surface, the dashboard included, for the same request to mean the
+	// same thing everywhere. A WebMCP tool that is not offered is called on
+	// the REST path a script in the page can reach.
 	f.Clock.Advance(6 * time.Minute)
 
 	requests := parityRequests(t, f)
@@ -173,15 +176,22 @@ func auditSince(t *testing.T, f *harness.Factory, seq int64) ([]auditShape, []co
 var openAPIOperation = regexp.MustCompile(`(?m)^  /api/v1/actions/([a-z0-9_.]+):`)
 
 // assertSurfaceListsAreTheRegistry compares what each surface offers with
-// the registry: MCP's tool list, the WebMCP tool list, the published OpenAPI
-// document REST and the CLI serve, and the dashboard's forms.
+// the registry: MCP's tool list, the WebMCP tool list, which leaves out the
+// actions that need step-up, the published OpenAPI document REST and the
+// CLI serve, and the dashboard's forms, which hold every step-up action.
 func assertSurfaceListsAreTheRegistry(t *testing.T, f *harness.Factory, c *clients, specs []core.ActionSpec) {
 	t.Helper()
-	var want []string
+	var want, wantWeb []string
 	for _, s := range specs {
 		want = append(want, s.Name)
+		if !s.StepUp {
+			wantWeb = append(wantWeb, s.Name)
+		} else if !slices.Contains(dashboardForms, s.Name) {
+			t.Errorf("%s needs step-up but the dashboard has no form for it, so nothing can run it", s.Name)
+		}
 	}
 	slices.Sort(want)
+	slices.Sort(wantWeb)
 	tools, err := c.mcp.ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -201,11 +211,14 @@ func assertSurfaceListsAreTheRegistry(t *testing.T, f *harness.Factory, c *clien
 	for _, m := range openAPIOperation.FindAllSubmatch(doc, -1) {
 		restNames = append(restNames, string(m[1]))
 	}
-	for surface, names := range map[string][]string{"MCP": mcpNames, "WebMCP": webNames, "REST and CLI (OpenAPI)": restNames} {
+	for surface, names := range map[string][]string{"MCP": mcpNames, "REST and CLI (OpenAPI)": restNames} {
 		slices.Sort(names)
 		if !slices.Equal(names, want) {
 			t.Errorf("%s lists %v, the registry %v", surface, names, want)
 		}
+	}
+	if slices.Sort(webNames); !slices.Equal(webNames, wantWeb) {
+		t.Errorf("WebMCP lists %v, want the registry less its step-up actions %v", webNames, wantWeb)
 	}
 	for _, name := range dashboardForms {
 		if !slices.Contains(want, name) {

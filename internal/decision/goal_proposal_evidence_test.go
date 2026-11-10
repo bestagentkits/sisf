@@ -117,7 +117,7 @@ func TestSystemOneSeesTelemetryOnlyAsQuotedData(t *testing.T) {
 	t.Parallel()
 	f, fake := newSystemOneFixture(t)
 	fake.Answer(func(req pkgdecision.Request) pkgdecision.Judgment {
-		return judgmentFor(req, pkgdecision.VerdictPropose, pkgdecision.KindBug, pkgdecision.PriorityLow)
+		return judgmentFor(req, pkgdecision.VerdictPropose, pkgdecision.KindBug, pkgdecision.PriorityUrgent)
 	})
 	f.regress(t, injection)
 	o := f.window(t, injection, 1000, 100)

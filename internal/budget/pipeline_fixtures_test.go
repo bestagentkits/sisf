@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,20 @@ func (roleAuthorizer) Authorize(_ context.Context, req core.AuthzRequest) (core.
 		return core.AuthzDecision{Effect: core.EffectAllow}, nil
 	}
 	return core.AuthzDecision{Effect: core.EffectDeny, Reason: "role"}, nil
+}
+
+// confirmedSessions stands for the step-ups people make in the dashboard:
+// every call made in a session ending in confirmedSuffix is confirmed as
+// it is made, and no other call is.
+type confirmedSessions struct{ clock interface{ Now() time.Time } }
+
+const confirmedSuffix = "-confirmed"
+
+func (c confirmedSessions) ConsumeStepUp(_ context.Context, session, _, _ string) (time.Time, error) {
+	if !strings.HasSuffix(session, confirmedSuffix) {
+		return time.Time{}, core.NewError(core.CodeStepUpRequired, "no confirmation of this call")
+	}
+	return c.clock.Now(), nil
 }
 
 type pipeline struct {
@@ -51,16 +66,21 @@ func newPipeline(t *testing.T) pipeline {
 	}
 	svc, err := actions.NewService(actions.Config{FactoryID: factory, Registry: reg, Authorizer: roleAuthorizer{}, Approvals: store,
 		Policy: actions.PolicyRevisionFunc(func(context.Context) (core.CommitSHA, error) { return policySHA, nil }),
-		Audit:  audit, Clock: e.clock, StepUpMaxAge: 5 * time.Minute})
+		Audit:  audit, Clock: e.clock, StepUpMaxAge: 5 * time.Minute, StepUp: confirmedSessions{e.clock}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return pipeline{svc: svc, approvals: store, env: e}
 }
 
+// actor is a person in a dashboard session. With stepUp set the session
+// confirms each call, and StepUpAt is set for the approval store, which the
+// tests also call directly.
 func (p pipeline) actor(role core.Role, stepUp bool) core.Actor {
-	a := core.Actor{ID: "u-" + string(role), Kind: core.ActorHuman, Roles: []core.Role{role}, Surface: core.SurfaceAPI}
+	a := core.Actor{ID: "u-" + string(role), Kind: core.ActorHuman, Roles: []core.Role{role}, Surface: core.SurfaceDashboard,
+		SessionID: "ses-" + string(role)}
 	if stepUp {
+		a.SessionID += confirmedSuffix
 		a.StepUpAt = p.env.clock.Now()
 	}
 	return a

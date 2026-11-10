@@ -3,6 +3,8 @@ package approvalactions_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,11 +28,40 @@ func (allowByRole) Authorize(_ context.Context, req core.AuthzRequest) (core.Aut
 	return core.AuthzDecision{Effect: core.EffectDeny}, nil
 }
 
+// confirmations stands for the step-ups a person makes in the dashboard,
+// each for one call. With auto set every call is confirmed as it is made.
+type confirmations struct {
+	mu    sync.Mutex
+	clock *intaketest.Clock
+	auto  bool
+	made  map[[3]string]int
+}
+
+func (c *confirmations) ConsumeStepUp(_ context.Context, session, action, target string) (time.Time, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := [3]string{session, action, target}
+	if !c.auto {
+		if c.made[key] == 0 {
+			return time.Time{}, core.NewError(core.CodeStepUpRequired, "no confirmation of this call")
+		}
+		c.made[key]--
+	}
+	return c.clock.Now(), nil
+}
+
+func (c *confirmations) confirm(actor core.Actor, action, target string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.made[[3]string{actor.SessionID, action, target}]++
+}
+
 type flow struct {
 	svc     *actions.Service
 	clock   *intaketest.Clock
 	store   *approvals.KVStore
 	applied *int
+	stepUps *confirmations
 }
 
 func newFlow(t *testing.T) flow {
@@ -60,17 +91,19 @@ func newFlow(t *testing.T) flow {
 	if err := reg.Register(append(inbox, reset)...); err != nil {
 		t.Fatal(err)
 	}
+	stepUps := &confirmations{clock: clock, made: map[[3]string]int{}}
 	svc, err := actions.NewService(actions.Config{FactoryID: "acme-app", Registry: reg, Authorizer: allowByRole{},
-		Approvals: store, Audit: &intaketest.AuditLog{}, Clock: clock,
+		Approvals: store, Audit: &intaketest.AuditLog{}, Clock: clock, StepUp: stepUps,
 		Policy: actions.PolicyRevisionFunc(func(context.Context) (core.CommitSHA, error) { return policy, nil })})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return flow{svc: svc, clock: clock, store: store, applied: &applied}
+	return flow{svc: svc, clock: clock, store: store, applied: &applied, stepUps: stepUps}
 }
 
 func (f flow) owner() core.Actor {
-	return core.Actor{ID: "u-owner", Kind: core.ActorHuman, Roles: []core.Role{core.RoleOwner}, Surface: core.SurfaceDashboard, StepUpAt: f.clock.Now()}
+	return core.Actor{ID: "u-owner", Kind: core.ActorHuman, Roles: []core.Role{core.RoleOwner}, Surface: core.SurfaceDashboard,
+		SessionID: "ses_owner"}
 }
 
 func (f flow) call(t *testing.T, actor core.Actor, name string, in any, dry bool, approvalID string) (core.ActionResult, error) {
@@ -86,6 +119,12 @@ func TestInboxListsGetsAndDecidesThroughTheActionService(t *testing.T) {
 	t.Parallel()
 	f := newFlow(t)
 	_, err := f.call(t, f.owner(), "keys.reset", map[string]any{}, false, "")
+	var refusal *core.Error
+	if !errors.As(err, &refusal) || refusal.Code != core.CodeStepUpRequired || refusal.Details["step_up_action"] != "keys.reset" {
+		t.Fatalf("an unconfirmed plan = %v", err)
+	}
+	f.stepUps.confirm(f.owner(), "keys.reset", refusal.Details["step_up_target"])
+	_, err = f.call(t, f.owner(), "keys.reset", map[string]any{}, false, "")
 	if !core.HasCode(err, core.CodeApprovalRequired) {
 		t.Fatalf("plan = %v", err)
 	}
@@ -117,18 +156,27 @@ func TestInboxListsGetsAndDecidesThroughTheActionService(t *testing.T) {
 	if _, err := f.call(t, agent, approvalactions.ActionDecide, decision, false, ""); !core.HasCode(err, core.CodePermissionDenied) {
 		t.Fatalf("an agent deciding = %v, want PERMISSION_DENIED", err)
 	}
-	stale := f.owner()
-	stale.StepUpAt = time.Time{}
-	if _, err := f.call(t, stale, approvalactions.ActionDecide, decision, false, ""); !core.HasCode(err, core.CodeStepUpRequired) {
-		t.Fatalf("deciding without step-up = %v, want STEP_UP_REQUIRED", err)
+	presented := f.owner()
+	presented.StepUpAt = f.clock.Now()
+	if _, err := f.call(t, presented, approvalactions.ActionDecide, decision, false, ""); !core.HasCode(err, core.CodeStepUpRequired) {
+		t.Fatalf("deciding without a confirmation = %v, want STEP_UP_REQUIRED", err)
 	}
+	f.stepUps.confirm(f.owner(), approvalactions.ActionDecide, request.ID)
 	if _, err := f.call(t, f.owner(), approvalactions.ActionDecide, decision, false, ""); err != nil {
 		t.Fatalf("decide = %v", err)
 	}
+	if _, err := f.call(t, f.owner(), approvalactions.ActionDecide, decision, false, ""); !core.HasCode(err, core.CodeStepUpRequired) {
+		t.Fatalf("deciding twice on one confirmation = %v, want STEP_UP_REQUIRED", err)
+	}
+	f.stepUps.confirm(f.owner(), approvalactions.ActionDecide, request.ID)
 	if _, err := f.call(t, f.owner(), approvalactions.ActionDecide, decision, false, ""); !core.HasCode(err, core.CodeReplayed) {
 		t.Fatalf("deciding twice = %v, want REPLAYED", err)
 	}
 
+	if _, err := f.call(t, f.owner(), "keys.reset", map[string]any{}, false, request.ID); !core.HasCode(err, core.CodeStepUpRequired) {
+		t.Fatalf("an unconfirmed execution = %v", err)
+	}
+	f.stepUps.confirm(f.owner(), "keys.reset", request.ID)
 	if _, err := f.call(t, f.owner(), "keys.reset", map[string]any{}, false, request.ID); err != nil || *f.applied != 1 {
 		t.Fatalf("approved execution = %v, applied %d", err, *f.applied)
 	}
@@ -137,6 +185,7 @@ func TestInboxListsGetsAndDecidesThroughTheActionService(t *testing.T) {
 func TestInboxRefusesBadInput(t *testing.T) {
 	t.Parallel()
 	f := newFlow(t)
+	f.stepUps.auto = true
 	cases := []struct {
 		action string
 		in     any
