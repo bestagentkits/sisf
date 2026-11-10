@@ -13,97 +13,100 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	_ "modernc.org/sqlite" // the journal is read from the install's SQLite file
 
 	"github.com/bestagentkits/sisf/internal/install"
-	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
-	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
 )
 
-// The Standalone test makes a fresh install in a temporary directory with
-// the sisf binary, prepares its SQLite store, and runs the fake GitHub, the
-// control plane and the dispatcher as processes of their own. It uses ports
-// a Docker install leaves free, so it runs while one is up.
-const (
-	standaloneControl    = "127.0.0.1:7466"
-	standaloneDispatcher = "127.0.0.1:7462"
-	standaloneGitHub     = "127.0.0.1:7468"
+// The Standalone test drives the sisf command line the way an Owner does:
+// `sisf init` and `sisf up --mode standalone --profile sim` in a fresh
+// SISF_HOME, `sisf doctor`, the lifecycle scenario, and `sisf down`. Every
+// unit of the three zones runs as a local process supervised by `sisf up`,
+// on SQLite, on the fixed loopback ports of an install; the test fails at
+// once when another factory holds them.
+var (
+	standaloneEdge       = loopbackAddr(install.PortEdge)
+	standaloneControl    = loopbackAddr(install.PortControl)
+	standaloneSupervisor = loopbackAddr(install.PortSupervisor)
+	standaloneDispatcher = loopbackAddr(install.PortDispatcher)
+	standaloneGitHub     = loopbackAddr(install.PortFakeGitHub)
 )
+
+func loopbackAddr(port int) string { return "127.0.0.1:" + strconv.Itoa(port) }
 
 type standaloneDeployment struct {
-	dir, bin string
-	m        *manifest.Manifest
-	env      map[string][]string // per role: the environment it runs with
-	dispatch *exec.Cmd
-	logs     string
+	t       *testing.T
+	root    string // the test's temporary directory, holding everything below
+	home    string // SISF_HOME: the install directory
+	sisfBin string // the sisf command line under test
+	upLog   string
+	m       *manifest.Manifest
+	env     map[string][]string // per zone area: the environment its factoryd commands run with
+
+	up       *exec.Cmd
+	upExited chan struct{}
+	killed   int // pid of the dispatcher killed last
 }
 
 func newStandaloneDeployment(t *testing.T) *standaloneDeployment {
 	t.Helper()
-	root := t.TempDir()
-	d := &standaloneDeployment{dir: filepath.Join(root, "factory"), bin: filepath.Join(root, "bin"), logs: filepath.Join(root, "logs")}
-	for _, dir := range []string{d.bin, d.logs} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
+	requireFreeFactoryPorts(t)
+	// The real path, so the command lines of the units match it on macOS,
+	// where the temporary directory sits behind a symbolic link.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
 	}
-	for name, pkg := range map[string]string{"sisf": "./cmd/sisf", "factoryd": "./cmd/factoryd"} {
-		cmd := exec.Command("go", "build", "-o", filepath.Join(d.bin, name), pkg)
-		cmd.Dir = moduleRoot(t)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("build %s: %v\n%s", name, err, out)
-		}
+	d := &standaloneDeployment{
+		t: t, root: root, home: filepath.Join(root, "factory"), sisfBin: filepath.Join(root, "sisf"), upLog: filepath.Join(root, "up.log"),
 	}
-	init := exec.Command(filepath.Join(d.bin, "sisf"), "init", "--dir", d.dir, "--mode", "standalone", "--profile", "sim",
-		"--confirm-unlimited", "--no-alert")
-	init.Env = []string{"HOME=" + root, "PATH=" + os.Getenv("PATH")}
-	if out, err := init.CombinedOutput(); err != nil {
+	build := exec.Command("go", "build", "-o", d.sisfBin, "./cmd/sisf")
+	build.Dir = moduleRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build sisf: %v\n%s", err, out)
+	}
+	if out, err := d.sisf(time.Minute, "init", "--mode", "standalone", "--profile", "sim", "--confirm-unlimited", "--no-alert"); err != nil {
 		t.Fatalf("sisf init: %v\n%s", err, out)
 	}
-	m, err := manifest.Load(filepath.Join(d.dir, "factory.yaml"))
+
+	d.startUp(t)
+	d.waitUntilUp(t)
+	out, err := d.sisf(2*time.Minute, "doctor")
+	if err != nil || !strings.Contains(out, " 0 failures") {
+		t.Fatalf("sisf doctor on the running factory: %v\n%s", err, out)
+	}
+
+	// `sisf up` pinned the built programs in the manifest; read it as it is now.
+	m, err := manifest.Load(filepath.Join(d.home, "factory.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	d.m = m
-	if err := os.MkdirAll(filepath.Join(d.dir, "data", "state"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	if err := install.Bootstrap(ctx, install.BootstrapConfig{FactoryID: m.FactoryID, Dialect: sqlstore.DialectSQLite, DSN: d.stateDB(),
-		Budget: &install.BudgetConfirmation{Mode: core.BudgetUnlimited, AlertOff: true, ConfirmedAt: time.Now()}}); err != nil {
-		t.Fatalf("prepare the store: %v", err)
-	}
-
-	common := []string{"SISF_CONFIG=" + filepath.Join(d.dir, "factory.yaml"), "SISF_FACTORY_ID=" + string(m.FactoryID)}
+	ext, _ := m.Extensions["github_api_url"].(string)
+	common := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"),
+		"SISF_CONFIG=" + filepath.Join(d.home, "factory.yaml"), "SISF_FACTORY_ID=" + string(m.FactoryID)}
 	d.env = map[string][]string{
-		"sim": d.areaEnv(t, "sim"),
-		"control": append(append(common, d.areaEnv(t, "control")...), "SISF_LISTEN="+standaloneControl,
-			"SISF_GITHUB_API_URL=http://"+standaloneGitHub, "SISF_DISPATCHER_HEALTH_URL=http://"+standaloneDispatcher+"/healthz",
-			"SISF_APP_HEALTH_URL=http://"+standaloneDispatcher+"/healthz"),
-		"agent": append(append(common, d.areaEnv(t, "agent")...), "SISF_LISTEN="+standaloneDispatcher),
+		"control": append(append(common, d.areaEnv(t, "control")...), "SISF_GITHUB_API_URL="+ext),
+		"agent":   append(common, d.areaEnv(t, "agent")...),
 	}
-	d.start(t, "sim-github", "sim", filepath.Join(d.bin, "sisf"), "sim", "github", "--addr="+standaloneGitHub,
-		"--repo="+d.github().repo, "--webhook-url=http://"+standaloneControl+"/webhooks/github")
-	d.start(t, "control", "control", filepath.Join(d.bin, "factoryd"), "control")
-	d.startDispatcher(t)
-	base, _ := d.control(t)
-	eventually(t, "the control plane", func() (bool, string) { return get(base+"/healthz") == nil, "" })
 	return d
 }
 
 func (d *standaloneDeployment) stateDB() string {
-	return filepath.Join(d.dir, "data", "state", "factory.db")
+	return filepath.Join(d.home, "data", "state", "factory.db")
 }
 
 // areaEnv reads the env file the installer wrote for one area.
 func (d *standaloneDeployment) areaEnv(t *testing.T, area string) []string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(d.dir, "secrets", area, "runtime.env"))
+	raw, err := os.ReadFile(filepath.Join(d.home, "secrets", area, "runtime.env"))
 	if err != nil {
 		t.Fatalf("the %s env file cannot be read", area)
 	}
@@ -114,31 +117,6 @@ func (d *standaloneDeployment) areaEnv(t *testing.T, area string) []string {
 		}
 	}
 	return out
-}
-
-// start runs one unit as a process of its own, with only its zone's
-// environment, until the test ends.
-func (d *standaloneDeployment) start(t *testing.T, name, role, path string, args ...string) *exec.Cmd {
-	t.Helper()
-	log, err := os.OpenFile(filepath.Join(d.logs, name+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(path, args...)
-	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = d.dir, d.env[role], log, log
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start %s: %v", name, err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		_ = log.Close()
-		if t.Failed() {
-			tail, _ := os.ReadFile(log.Name())
-			t.Logf("%s log:\n%s", name, lastLines(string(tail), 30))
-		}
-	})
-	return cmd
 }
 
 func lastLines(s string, n int) string {
@@ -164,7 +142,7 @@ func (d *standaloneDeployment) github() simGitHub {
 
 func (d *standaloneDeployment) control(t *testing.T) (string, string) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(d.dir, "secrets", "control", "owner-token"))
+	raw, err := os.ReadFile(filepath.Join(d.home, "secrets", "control", "owner-token"))
 	if err != nil {
 		t.Fatal("the Owner token cannot be read from the install")
 	}
@@ -173,20 +151,21 @@ func (d *standaloneDeployment) control(t *testing.T) (string, string) {
 
 func (d *standaloneDeployment) factoryYAML(t *testing.T) []byte {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(d.dir, "factory.yaml"))
+	raw, err := os.ReadFile(filepath.Join(d.home, "factory.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return raw
 }
 
-// factoryd runs one factoryd command with a role's environment.
-func (d *standaloneDeployment) factoryd(role string, args ...string) (string, error) {
+// factoryd runs one command of the install's own factoryd with a zone's
+// environment, as the Owner would on the factory's host.
+func (d *standaloneDeployment) factoryd(area string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	var out bytes.Buffer
-	cmd := exec.CommandContext(ctx, filepath.Join(d.bin, "factoryd"), args...)
-	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = d.dir, d.env[role], &out, &out
+	cmd := exec.CommandContext(ctx, filepath.Join(d.home, "bin", "factoryd"), args...)
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = d.home, d.env[area], &out, &out
 	err := cmd.Run()
 	return out.String(), err
 }
@@ -212,17 +191,31 @@ func (d *standaloneDeployment) dispatcherHealth(*testing.T) (health, error) {
 	return h, json.Unmarshal(raw, &h)
 }
 
+// killDispatcher kills the dispatcher unit outright, the way a crash would,
+// and waits until it is gone.
 func (d *standaloneDeployment) killDispatcher(t *testing.T) {
 	t.Helper()
-	if err := d.dispatch.Process.Kill(); err != nil {
+	pid := d.dispatcherPID(t)
+	if pid == 0 {
+		t.Fatal("sisf up runs no dispatcher")
+	}
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
 		t.Fatalf("kill the dispatcher: %v", err)
 	}
-	_ = d.dispatch.Wait() // killed: the exit status says so and nothing more
+	d.killed = pid
+	eventually(t, "the killed dispatcher to be gone", func() (bool, string) {
+		return !alive(pid), "process " + strconv.Itoa(pid) + " is still there"
+	})
 }
 
+// startDispatcher waits for `sisf up` to start the dispatcher again: in
+// Standalone mode it is the supervising process that restarts a dead unit.
 func (d *standaloneDeployment) startDispatcher(t *testing.T) {
 	t.Helper()
-	d.dispatch = d.start(t, "dispatcher", "agent", filepath.Join(d.bin, "factoryd"), "dispatcher")
+	eventually(t, "sisf up to restart the dispatcher", func() (bool, string) {
+		pid := d.dispatcherPID(t)
+		return pid != 0 && pid != d.killed, "dispatcher process " + describePID(pid)
+	})
 }
 
 func (d *standaloneDeployment) report(_ *testing.T, issue, run, owner string, token int64) (string, error) {
@@ -257,5 +250,12 @@ func (d *standaloneDeployment) journey(t *testing.T, issue string) []string {
 }
 
 func TestStandaloneFactoryTakesAnIssueToARunAndSurvivesADispatcherKill(t *testing.T) {
-	runLifecycle(t, newStandaloneDeployment(t))
+	d := newStandaloneDeployment(t)
+	runLifecycle(t, d)
+	// `sisf down` stops every unit `sisf up` started and `sisf up` itself;
+	// the cleanup then checks that the ports are free.
+	d.down(t)
+	if left := d.installProcesses(t); len(left) > 0 {
+		t.Fatalf("processes of this install outlived sisf down: %v", left)
+	}
 }

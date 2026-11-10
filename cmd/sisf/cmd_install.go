@@ -234,6 +234,24 @@ func lifecycle(name string, act func(context.Context, *install.Installer, bool) 
 		if err != nil {
 			return err
 		}
-		return act(ctx, newInstaller(env, abs, "", false), volumes)
+		if err := act(ctx, newInstaller(env, abs, "", false), volumes); err != nil {
+			return err
+		}
+		return env.Printf("%s\n", lifecycleDone(name, abs, volumes))
+	}
+}
+
+// lifecycleDone is the line a lifecycle command prints once it succeeded, so
+// a command that changed the running factory never ends in silence.
+func lifecycleDone(name, dir string, volumes bool) string {
+	switch {
+	case name == "restart":
+		return "the factory in " + dir + " is restarting every unit"
+	case name == "down" && volumes:
+		return "the factory in " + dir + " is down and its data is removed"
+	case name == "down":
+		return "the factory in " + dir + " is down"
+	default:
+		return "the factory in " + dir + " is stopped"
 	}
 }

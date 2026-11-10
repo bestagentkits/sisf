@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -187,6 +189,41 @@ func TestEveryInstallCommandIsListedInTheHelp(t *testing.T) {
 	for _, name := range []string{"init", "up", "down", "stop", "restart", "doctor", "state bootstrap"} {
 		if !strings.Contains(stdout, name) {
 			t.Errorf("help does not list %q", name)
+		}
+	}
+}
+
+func TestLifecycleCommandsSayWhatTheyDid(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"stop"}, "is stopped"},
+		{[]string{"restart"}, "is restarting every unit"},
+		{[]string{"down"}, "is down\n"},
+		{[]string{"down", "-v"}, "is down and its data is removed"},
+	} {
+		dir := initSim(t, "standalone")
+		// A child process stands in for the foreground `sisf up`: it is
+		// alive, it is ours, and it ends on SIGTERM.
+		stand := exec.Command("sleep", "60")
+		if err := stand.Start(); err != nil {
+			t.Fatal(err)
+		}
+		exited := make(chan struct{})
+		go func() { _ = stand.Wait(); close(exited) }()
+		t.Cleanup(func() { _ = stand.Process.Kill(); <-exited })
+		if err := os.MkdirAll(filepath.Join(dir, "run"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		pid := []byte(strconv.Itoa(stand.Process.Pid) + "\n")
+		if err := os.WriteFile(filepath.Join(dir, "run", "sisf.pid"), pid, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		status, stdout, stderr := runWithOutput(t, append(tc.args, "--dir", dir)...)
+		if status != exitOK || !strings.Contains(stdout, "the factory in "+dir+" "+tc.want) {
+			t.Errorf("%v = %d %q %q, want a line saying it %s", tc.args, status, stdout, stderr, tc.want)
 		}
 	}
 }
