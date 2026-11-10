@@ -7,12 +7,17 @@
 // be scripted the same way as the coder; which roles a backend serves is part
 // of its configuration, and a task for any other role is refused with
 // NOT_SUPPORTED.
+//
+// A backend that serves the evaluator role is also a qa.Judge: each
+// judgment follows the next step scripted for the evaluator on the issue.
 package fake
 
 import (
+	"maps"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/qa"
 )
 
 // Outcome is how one scripted run ends.
@@ -28,11 +33,14 @@ const (
 	// OutcomeCrash loses the run: once it is due, every question about it
 	// answers UNAVAILABLE, as for an agent process that died without a report.
 	OutcomeCrash Outcome = "crash"
+	// OutcomeScore is an evaluator's judgment: the run succeeds and leaves a
+	// test report, and a judgment asked of the backend returns the points.
+	OutcomeScore Outcome = "score"
 )
 
 // Valid reports whether o is a known outcome.
 func (o Outcome) Valid() bool {
-	return o == OutcomePatch || o == OutcomeFail || o == OutcomeHang || o == OutcomeCrash
+	return o == OutcomePatch || o == OutcomeFail || o == OutcomeHang || o == OutcomeCrash || o == OutcomeScore
 }
 
 // Step is the script of one run.
@@ -45,6 +53,8 @@ type Step struct {
 	Diff string
 	// Detail explains a failure.
 	Detail string
+	// Points are the rubric points an OutcomeScore judgment gives.
+	Points map[qa.Category]int
 }
 
 // defaultDiff is the patch of a run scripted without one.
@@ -73,6 +83,11 @@ func Hang() Step { return Step{Outcome: OutcomeHang} }
 // Crash scripts a run that is lost after the given time.
 func Crash(after time.Duration) Step { return Step{Outcome: OutcomeCrash, After: after} }
 
+// Score scripts an evaluator's judgment giving points per rubric category.
+func Score(points map[qa.Category]int) Step {
+	return Step{Outcome: OutcomeScore, Points: maps.Clone(points)}
+}
+
 // validate rejects a step the backend could not follow.
 func (s Step) validate() error {
 	switch {
@@ -82,6 +97,8 @@ func (s Step) validate() error {
 		return core.NewError(core.CodeInvalidArgument, "a scripted step cannot finish before it starts")
 	case s.Outcome == OutcomePatch && s.Diff == "":
 		return core.NewError(core.CodeInvalidArgument, "a scripted patch needs content")
+	case s.Outcome == OutcomeScore:
+		return qa.Scorecard{Points: s.Points}.Validate(qa.DefaultRubric())
 	}
 	return nil
 }
