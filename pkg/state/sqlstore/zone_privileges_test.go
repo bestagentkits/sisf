@@ -107,12 +107,13 @@ func TestApplicationZoneReachesNothingInTheFactoryStore(t *testing.T) {
 func TestAgentZoneWorksOnRunsAndReachesNothingElse(t *testing.T) {
 	t.Parallel()
 	// What the dispatcher does: it reads records, holds leases, reserves
-	// budget and meters usage. The rest of everyOperation is the control
-	// zone's: an intake step, the inbox, the outbox, the budget totals and
-	// the policy documents.
+	// budget against the totals of the ledger and meters usage. The rest of
+	// everyOperation is the control zone's: an intake step, the inbox, the
+	// outbox and the policy documents.
 	agentMay := map[string]bool{
 		"get record": true, "list records": true, "acquire lease": true, "renew lease": true,
 		"check fencing": true, "release lease": true, "reserve": true, "get reserved": true, "append usage": true,
+		"budget totals": true,
 	}
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		control := db.Open(t, core.ZoneControl)

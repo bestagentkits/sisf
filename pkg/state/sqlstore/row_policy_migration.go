@@ -55,3 +55,64 @@ $sisf_migration$;
 	}
 	return script.String(), nil
 }
+
+// usageLedgerPolicyScript is the PostgreSQL script of the migration that puts
+// the usage ledger under row-level security and lets the agent zone read it
+// (zonePrivileges): it enables row-level security on the ledger and, for each
+// zone that holds a privilege on it, grants that privilege and writes the
+// zone's policies (rowRule).
+//
+// As in keyedStepPolicyScript, the migration does not know the zone roles. It
+// finds the role of a zone as the one its read policy on the records names,
+// which every granted store has, and leaves a zone whose role was never
+// granted as it is; granting writes the privileges and policies afresh. A
+// store whose roles were granted by an earlier release so keeps metering
+// usage, and its agent zone may total it, from the moment it is migrated.
+func usageLedgerPolicyScript() (string, error) {
+	var script strings.Builder
+	script.WriteString(`ALTER TABLE ` + quote(tableUsage) + ` ENABLE ROW LEVEL SECURITY;
+`)
+	for _, zone := range core.Zones() {
+		granted := zonePrivileges[zone][tableUsage]
+		if granted == 0 {
+			continue
+		}
+		if zonePrivileges[zone][tableRecords]&canSelect == 0 {
+			return "", core.NewError(core.CodeInternal,
+				"the role of the "+string(zone)+" zone cannot be found from a policy on the records")
+		}
+		script.WriteString(`DO $sisf_migration$
+DECLARE
+	holders text;
+BEGIN
+	SELECT string_agg(quote_ident(holder::text), ', ') INTO holders
+	FROM pg_policies, unnest(roles) AS holder
+	WHERE schemaname = current_schema() AND tablename = '` + tableRecords + `'
+		AND policyname = '` + policyName(zone, "SELECT") + `' AND holder <> 'public';
+	IF holders IS NULL THEN
+		RETURN;
+	END IF;
+	EXECUTE 'GRANT ` + strings.Join(granted.names(), ", ") + ` ON ` + quote(tableUsage) + ` TO ' || holders;
+`)
+		for _, command := range policyCommands {
+			if granted&command.bit == 0 {
+				continue
+			}
+			clauses, err := policyClauses(tableUsage, command.bit, zone, quote(tableRecords))
+			if err != nil {
+				return "", err
+			}
+			if strings.Contains(clauses, "$") || strings.Contains(clauses, "'") {
+				return "", core.NewError(core.CodeInternal, "the condition of a row policy cannot be quoted in a migration")
+			}
+			name := quote(policyName(zone, command.name))
+			script.WriteString(`	EXECUTE 'DROP POLICY IF EXISTS ` + name + ` ON ` + quote(tableUsage) + `';
+	EXECUTE 'CREATE POLICY ` + name + ` ON ` + quote(tableUsage) + ` FOR ` + command.name + ` TO ' || holders || '` + clauses + `';
+`)
+		}
+		script.WriteString(`END
+$sisf_migration$;
+`)
+	}
+	return script.String(), nil
+}

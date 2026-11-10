@@ -63,9 +63,11 @@ func (g *Gate) alertOnCrossing(ctx context.Context, ledger core.BudgetLedger, s 
 	}
 	totals, err := ledger.BudgetTotals(ctx, s.Period.Start(actual.At))
 	if core.HasCode(err, core.CodePermissionDenied) {
-		// A zone that may only append usage cannot total it, and the usage it
-		// reports is already recorded, so it does not fail the settlement.
-		// Whoever can read the ledger sees the crossing in budget.get.
+		// A ledger that may append usage but not total it, as the agent
+		// zone's PostgreSQL role is once an earlier release granted it again,
+		// must not lose the usage just recorded, so it does not fail the
+		// settlement. Whoever can read the ledger sees the crossing in
+		// budget.get.
 		return nil
 	}
 	if err != nil {

@@ -64,6 +64,15 @@ var releaseMigrations = []migration{
 		file:      "0005_agent_step_row_policy.sql",
 		postgres:  keyedStepPolicyScript,
 	},
+	{
+		// The ledger gains row policies that let every zone keep what it held
+		// and a read for the agent zone; no data moves and no column changes.
+		// The previous release reads and appends usage as before, and granting
+		// its roles again only takes the agent zone's read away.
+		Migration: state.Migration{Version: 6, Name: "agent zone reads the usage ledger", BackwardCompatible: true},
+		file:      "0006_agent_reads_usage_ledger.sql",
+		postgres:  usageLedgerPolicyScript,
+	},
 }
 
 // Migrations lists the migrations this release ships, for callers that must

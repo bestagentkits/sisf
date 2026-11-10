@@ -12,10 +12,11 @@ import (
 )
 
 // On PostgreSQL the database enforces the rules of zone_ownership.go itself,
-// with row-level security on the three tables those rules divide by row:
-// the lifecycle records, their journal and the documents. Migration 3
-// enables it; the policies name the zone roles, so they are written with the
-// grants, from the same rules the store checks.
+// with row-level security on the tables those rules divide by row: the
+// lifecycle records, their journal and the documents (migration 3), and the
+// usage ledger, which the agent zone reads but never changes (migration 6).
+// The policies name the zone roles, so they are written with the grants,
+// from the same rules the store checks.
 //
 // Row-level security is used rather than a table per zone or triggers. It
 // splits no data, so the previous release keeps working on the same tables;
@@ -25,7 +26,7 @@ import (
 // its role, a row it may not change is left alone, and a row it may not
 // write is refused with insufficient_privilege. The owner of the tables,
 // who installs and migrates the schema, is not subject to the policies.
-var rowPolicyTables = []string{tableRecords, tableTransitions, tableKV}
+var rowPolicyTables = []string{tableRecords, tableTransitions, tableKV, tableUsage}
 
 // policyCommands are the commands a policy is written for, one per
 // privilege, in a fixed order.
@@ -56,30 +57,41 @@ func policyStatements(schema string, roles ZoneRoles) ([]string, error) {
 				if zonePrivileges[zone][table]&command.bit == 0 {
 					continue
 				}
-				using, check, err := rowRule(table, command.bit, zone, quote(schema)+"."+quote(tableRecords))
+				clauses, err := policyClauses(table, command.bit, zone, quote(schema)+"."+quote(tableRecords))
 				if err != nil {
 					return nil, err
 				}
-				// A read or a removal only selects rows, and an insert only
-				// leaves one behind.
-				switch command.bit {
-				case canSelect, canDelete:
-					check = ""
-				case canInsert:
-					using = ""
-				}
-				statement := fmt.Sprintf(`CREATE POLICY %s ON %s FOR %s TO %s`, name, qualified, command.name, quote(roles[zone]))
-				if using != "" {
-					statement += " USING (" + using + ")"
-				}
-				if check != "" {
-					statement += " WITH CHECK (" + check + ")"
-				}
-				statements = append(statements, statement)
+				statements = append(statements, fmt.Sprintf(`CREATE POLICY %s ON %s FOR %s TO %s%s`,
+					name, qualified, command.name, quote(roles[zone]), clauses))
 			}
 		}
 	}
 	return statements, nil
+}
+
+// policyClauses renders the USING and WITH CHECK clauses of the policy of
+// zone for one command on table, each with a leading space, from rowRule.
+func policyClauses(table string, command privilege, zone core.Zone, records string) (string, error) {
+	using, check, err := rowRule(table, command, zone, records)
+	if err != nil {
+		return "", err
+	}
+	// A read or a removal only selects rows, and an insert only leaves one
+	// behind.
+	switch command {
+	case canSelect, canDelete:
+		check = ""
+	case canInsert:
+		using = ""
+	}
+	var clauses string
+	if using != "" {
+		clauses += " USING (" + using + ")"
+	}
+	if check != "" {
+		clauses += " WITH CHECK (" + check + ")"
+	}
+	return clauses, nil
 }
 
 // policyName names the policy of one zone and command; it is the same on
@@ -123,6 +135,19 @@ func rowRule(table string, command privilege, zone core.Zone, records string) (u
 			}
 			check, err = inList("event", eventNames(zone), false)
 			return "", check, err
+		}
+	case tableUsage:
+		// The ledger is not divided between the zones by row: a zone that
+		// holds a privilege on it holds it on every row, as on the records.
+		// The database scopes no table by factory, since a zone role is
+		// granted per schema and not per factory; the store reads and writes
+		// only the rows of its own factory. Changing or removing a row is
+		// granted to no zone, and a trigger refuses it to the owner as well.
+		switch command {
+		case canSelect:
+			return "true", "", nil
+		case canInsert:
+			return "", "true", nil
 		}
 	case tableKV:
 		read, readNegated := namespaces(zone, kvNamespace.mayRead)
