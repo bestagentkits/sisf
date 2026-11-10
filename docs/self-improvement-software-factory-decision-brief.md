@@ -124,6 +124,19 @@ Khai báo capabilities trước khi dùng:
 - `TelemetryAdapter`: OpenTelemetry spans + logs/metrics/events normalized, privacy redaction, attribute `factory_id`, `deployment_id`, `zone`, `release_digest`, `run_id`, `issue_ref`.
 - `GitHubAdapter`: signed webhooks, event dedup, polling/reconciliation, issues/comments/labels, PR/checks/releases, token rotation/revocation.
 
+### 3.5 Chọn model và effort
+
+Model route của mỗi run do **code** chọn theo loại bước, không để một model tự chọn. Cấu hình nằm trong `.sisf/factory.yaml`, được ghim theo policy SHA và ghi vào run record.
+
+- **Định tuyến theo loại việc (mặc định khởi điểm):** phân loại, intake, gắn nhãn và trích xuất dùng model nhỏ nhất của provider; viết code theo SoW đã rõ dùng model tầm trung; migration, refactor lớn, quy hoạch kiến trúc và điều phối nhiều worker dùng model mạnh nhất. Subagent chỉ đọc (tìm file, đọc log, tóm tắt) dùng model nhỏ; sửa code và phán đoán ở lại model chính.
+- **Thang leo khi chưa đạt, theo đúng thứ tự:** (1) bảo đảm agent tự kiểm chứng được bằng test, build hoặc script; (2) tăng effort một bậc; (3) chuyển lên model lớn hơn, bắt đầu ở effort thấp hơn mức vừa dùng.
+- **Chạy rẻ trước, chạy lại phần rớt:** vì QA gate chấm tự động, run bắt đầu ở effort thấp; chỉ run rớt QA mới chạy lại ở mức cao hơn. Số lần leo có giới hạn và tính vào ngân sách của issue.
+- **Chỉ đổi model ở ranh giới trạng thái:** đổi model giữa chừng làm mất prompt cache và có thể mất phần suy luận trước đó. Khi đổi, run mới nhận một bản tóm tắt có cấu trúc (SoW, DoD, quyết định, bằng chứng), không nhận nguyên lịch sử.
+- **Viết request cho model khắt khe nhất:** `AgentBackend` giữ lịch sử chỉ nối thêm, dùng `tool_choice: auto` với tool có schema chặt, đọc content block theo kiểu và viết mô tả tool đủ chính xác cho model diễn giải sát chữ nhất. Nhờ đó một bước đổi tier mà không đổi code.
+- **Không mặc định dùng advisor hoặc nhiều model:** chỉ giữ cấu hình nhiều model khi số đo trên việc thật cho thấy nó thắng mọi cấu hình một model về điểm so với chi phí (xem Chỉ số giá trị, mục 13).
+
+Bảng định tuyến là tham số hiệu chỉnh, không phải quyết định cố định; tên model cụ thể thuộc cấu hình của từng deployment.
+
 ## 4. Quy tắc quyết định có căn cứ
 
 ### 4.1 Các file nền
@@ -266,6 +279,31 @@ Mọi protocol có cùng `list approvals`, `get proposal + evidence + diff + aff
 - Write nhạy cảm qua `plan -> approval -> execute -> audit`, có human reauthentication/step-up theo loại quyền; **không cấp permission qua câu mô tả tool**.
 - WebMCP là client-side tool surface tùy chọn, không thay thế remote MCP; kế hoạch hỗ trợ browser feature detection và fallback.
 
+### Yêu cầu trải nghiệm: agent, người dùng, nhà phát triển
+
+Các yêu cầu dưới đây áp dụng khi surface tương ứng được xây (P1 đến P3) và không mở rộng quyền của bất kỳ surface nào.
+
+**Agent dùng factory (AX)**
+
+- Mọi action trả về mã lỗi có kiểu và `next_actions`, để agent biết bước hợp lệ kế tiếp mà không phải đoán.
+- Mọi lệnh ghi hỗ trợ `dry_run`, trả về đúng những gì sẽ thay đổi; lệnh nhạy cảm vẫn đi qua `plan -> approval -> execute -> audit`.
+- Action `runs.explain` trả lời vì sao một run đang dừng hoặc bị chặn, kèm bằng chứng và trạng thái hiện tại.
+- `llms.txt` và schema của các action được sinh từ cùng một nguồn với OpenAPI.
+
+**Owner và Reporter (UX)**
+
+- Approval inbox hiển thị một câu tóm tắt rủi ro, diff dự kiến, feature bị ảnh hưởng, và cho phép duyệt có điều kiện (giới hạn ngân sách, hạn dùng).
+- Mỗi issue chỉ có một comment tiến độ được cập nhật tại chỗ; hệ thống không đăng comment mới cho mỗi lần đổi trạng thái.
+- Cài đặt lần đầu là một wizard kiểm tra từng bước (GitHub App, SSO, budget) và kết thúc bằng một issue mẫu chạy hết vòng đời.
+- Trạng thái `Blocked` có trang giải thích viết cho người đọc, kèm hành động kế tiếp.
+
+**Người cài và người viết plugin (DX)**
+
+- `sisf doctor` kiểm tra đủ ba zone, quyền GitHub, state store và khả năng rollback trước khi chạy thật.
+- Bộ conformance test đóng gói riêng cho từng interface ở mục 3, để người viết backend tự chấm.
+- Chế độ mô phỏng cục bộ với GitHub giả và agent giả chạy hết vòng đời issue mà không tốn token.
+- `.sisf/factory.yaml` có JSON Schema công bố để editor gợi ý và báo lỗi sớm.
+
 ## 10. Deployment portability: compliance classes
 
 **Bất biến:** không platform adapter nào được tự ý chia một SISF deployment thành ba application deployment độc lập; phải chung factory release manifest và lifecycle. Các dịch vụ hạ tầng thuê ngoài (GitHub, IdP, DB/object store, remote coding backend) là dependencies, không phải một zone mới.
@@ -393,6 +431,7 @@ sisf/                                      # OSS repo: github.com/bestagentkits/
 | Thời gian từ issue đến verified | Trung vị từ `Ready` đến `Verified` | Không chậm hơn baseline quá mức Owner chấp nhận |
 | Chi phí mỗi issue verified | Chi phí model và hạ tầng từ usage ledger, chia số issue `Verified` | Được báo cáo; Owner quyết định mức chấp nhận |
 | Tỷ lệ proposal hữu ích | Proposal từ Decision Layer được Owner chấp thuận, chia tổng proposal | Được báo cáo; quá thấp là tín hiệu STOP cho Decision Layer |
+| Chi phí theo model route | Chi phí mỗi issue `Verified` tách theo model và effort của từng bước, lấy từ usage ledger | Được báo cáo; cấu hình nhiều model chỉ được giữ khi thắng mọi cấu hình một model |
 
 Ngưỡng cụ thể do Owner đặt sau khi có số liệu baseline đầu tiên; quyết định GO/MODIFY/STOP ở P4 phải trích các chỉ số này.
 
@@ -431,5 +470,6 @@ Ngưỡng cụ thể do Owner đặt sau khi có số liệu baseline đầu ti�
 - Vercel Sandbox: https://vercel.com/docs/sandbox
 - Progressive rollout/metric analysis (reference design): https://argoproj.github.io/argo-rollouts/features/analysis/
 - Google OIDC: https://developers.google.com/identity/openid-connect/openid-connect
+- Anthropic, "Which Claude model should you build with?" (2026-11-09), nguồn cho mục 3.5: https://claude.dev/blog/which-claude-model-should-you-build-with/
 
 **Source status:** TOSE repository is source-derived as inspected; external platform capabilities are based on their published docs; thresholds, proposed interfaces, schema, licensing and staged SoW/DoD are **design recommendations**, not implemented facts.

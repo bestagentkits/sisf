@@ -124,6 +124,19 @@ Capabilities are declared before use:
 - `TelemetryAdapter`: OpenTelemetry spans + normalized logs/metrics/events, privacy redaction, and the attributes `factory_id`, `deployment_id`, `zone`, `release_digest`, `run_id`, `issue_ref`.
 - `GitHubAdapter`: signed webhooks, event dedup, polling/reconciliation, issues/comments/labels, PR/checks/releases, token rotation/revocation.
 
+### 3.5 Model and effort selection
+
+The model route of each run is chosen by **code** according to the step type, never by asking a model to choose. The configuration lives in `.sisf/factory.yaml`, is pinned to the policy SHA and is written to the run record.
+
+- **Routing by kind of work (starting default):** classification, intake, labelling and extraction use the provider's smallest model; coding against a clear SoW uses a mid-tier model; migrations, large refactors, architecture planning and leading many workers use the strongest model. Read-only subagents (finding files, reading logs, summarizing) use a small model; code edits and judgment calls stay on the main model.
+- **Escalation ladder when a run falls short, in this order:** (1) make sure the agent can verify its own work with a test, a build or a script; (2) raise effort one level; (3) move to a larger model, starting at a lower effort than the one just used.
+- **Run cheap first, re-run the failures:** because the QA gate scores automatically, a run starts at low effort; only runs that fail QA are re-run at a higher level. Escalations are capped and count against the issue's budget.
+- **Switch models only at a state boundary:** switching mid-run loses the prompt cache and may lose earlier reasoning. On a switch, the new run receives a structured summary (SoW, DoD, decisions, evidence), not the full history.
+- **Build requests for the strictest model:** `AgentBackend` keeps history append-only, sends `tool_choice: auto` with strict tool schemas, reads content blocks by type and writes tool descriptions precisely enough for the most literal model. A step can then change tier without a code change.
+- **No advisor or multi-model setup by default:** a multi-model configuration is kept only when measurements on real work show it beats every single-model configuration on score against cost (see Value metrics, section 13).
+
+The routing table is a calibration parameter, not a fixed decision; concrete model names belong to each deployment's configuration.
+
 ## 4. Evidence-based decision rules
 
 ### 4.1 Foundation files
@@ -266,6 +279,31 @@ Every protocol has the same `list approvals`, `get proposal + evidence + diff + 
 - Sensitive writes go through `plan -> approval -> execute -> audit`, with human reauthentication/step-up according to the type of permission; **permission is not granted through a tool description**.
 - WebMCP is an optional client-side tool surface and does not replace remote MCP; the plan supports browser feature detection and a fallback.
 
+### Experience requirements: agents, users, developers
+
+The requirements below apply when the corresponding surface is built (P1 to P3) and do not widen the permissions of any surface.
+
+**Agents using the factory (AX)**
+
+- Every action returns typed error codes and `next_actions`, so an agent knows the next valid step without guessing.
+- Every write supports `dry_run`, returning exactly what would change; sensitive writes still go through `plan -> approval -> execute -> audit`.
+- A `runs.explain` action answers why a run is stopped or blocked, with evidence and the current state.
+- `llms.txt` and the action schemas are generated from the same source as the OpenAPI document.
+
+**Owner and Reporter (UX)**
+
+- The approval inbox shows a one-sentence risk summary, the expected diff and the affected features, and allows conditional approval (budget cap, expiry).
+- Each issue has a single progress comment that is updated in place; the system does not post a new comment for every state change.
+- First-time setup is a wizard that checks each step (GitHub App, SSO, budget) and ends with a sample issue running the full lifecycle.
+- The `Blocked` state has an explanation page written for people, with the next action.
+
+**Installers and plugin authors (DX)**
+
+- `sisf doctor` checks all three zones, GitHub permissions, the state store and rollback readiness before a real run.
+- A conformance test suite is packaged per interface in section 3, so backend authors can grade themselves.
+- A local simulation mode with a fake GitHub and a fake agent runs the full issue lifecycle without spending tokens.
+- `.sisf/factory.yaml` has a published JSON Schema so editors can suggest and flag errors early.
+
 ## 10. Deployment portability: compliance classes
 
 **Invariant:** no platform adapter may arbitrarily split one SISF deployment into three independent application deployments; they must share the factory release manifest and lifecycle. Outsourced infrastructure services (GitHub, IdP, DB/object store, remote coding backend) are dependencies, not a new zone.
@@ -393,6 +431,7 @@ The condition "creates more value than a simple GitHub+agents workflow" is measu
 | Time from issue to verified | Median from `Ready` to `Verified` | Not slower than baseline by more than the Owner accepts |
 | Cost per verified issue | Model and infrastructure cost from the usage ledger, divided by the number of `Verified` issues | Reported; the Owner decides the acceptable level |
 | Useful proposal rate | Decision Layer proposals approved by the Owner, divided by total proposals | Reported; too low is a STOP signal for the Decision Layer |
+| Cost by model route | Cost per `Verified` issue broken down by the model and effort of each step, taken from the usage ledger | Reported; a multi-model configuration is kept only if it beats every single-model configuration |
 
 The specific thresholds are set by the Owner once the first baseline data is available; the GO/MODIFY/STOP decision in P4 must cite these metrics.
 
@@ -431,5 +470,6 @@ The specific thresholds are set by the Owner once the first baseline data is ava
 - Vercel Sandbox: https://vercel.com/docs/sandbox
 - Progressive rollout/metric analysis (reference design): https://argoproj.github.io/argo-rollouts/features/analysis/
 - Google OIDC: https://developers.google.com/identity/openid-connect/openid-connect
+- Anthropic, "Which Claude model should you build with?" (2026-11-09), source for section 3.5: https://claude.dev/blog/which-claude-model-should-you-build-with/
 
 **Source status:** TOSE repository is source-derived as inspected; external platform capabilities are based on their published docs; thresholds, proposed interfaces, schema, licensing and staged SoW/DoD are **design recommendations**, not implemented facts.
