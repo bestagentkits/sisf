@@ -62,8 +62,7 @@ func (in *Installer) standaloneUnits(m *manifest.Manifest) ([]unit, []io.Closer,
 		return nil, nil, err
 	}
 	o := Options{Sim: sim}
-	o.QAAgent, _ = m.Extensions["qa_agent"].(string)
-	o.QAAgentBinary, _ = m.Extensions["qa_agent_binary"].(string)
+	o.lifecycleExtensions(m)
 	choice := lifecycleChoice(o, manifest.ModeStandalone)
 	if err := choice.check(); err != nil {
 		return nil, nil, err

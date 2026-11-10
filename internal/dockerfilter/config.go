@@ -87,6 +87,10 @@ type Config struct {
 	Runtimes []string
 	// NamePrefix starts every runner container name; DefaultNamePrefix when empty.
 	NamePrefix string
+	// DeployLimits are the largest resource limits a deployed revision may
+	// ask for, in the deploy role only; DefaultDeployLimits fills a zero
+	// field. A revision must set every limit.
+	DeployLimits DeployLimits
 	// MaxBodyBytes bounds a create body; DefaultMaxBodyBytes when zero.
 	MaxBodyBytes int64
 	// Logger receives one line per refusal; slog.Default when nil.
@@ -114,8 +118,8 @@ func (c Config) settled() (Config, error) {
 	if c.Role != RoleRunner {
 		return c, invalid("the filter role must be runner or deploy")
 	}
-	if c.DeployNetwork != "" || len(c.SimulatedImages) > 0 {
-		return c, invalid("a runner filter takes no deploy network and no simulated images")
+	if c.DeployNetwork != "" || len(c.SimulatedImages) > 0 || c.DeployLimits != (DeployLimits{}) {
+		return c, invalid("a runner filter takes no deploy network, simulated images or deploy limits")
 	}
 	if c.RunnerLabel == "" {
 		c.RunnerLabel = DefaultRunnerLabel

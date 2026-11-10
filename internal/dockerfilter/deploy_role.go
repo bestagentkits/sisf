@@ -11,9 +11,10 @@ package dockerfilter
 //     <factory>-<unit>-<first 12 hex of its digest>, labelled exactly
 //     sisf.factory, sisf.unit and sisf.digest for that name, from an
 //     allowed unit image, on the deploy network alone, read-only, with every
-//     capability dropped, no-new-privileges, and as its only environment the
-//     revision it is started as. No mount, volume, device, port, privilege,
-//     host namespace or other setting can be sent.
+//     capability dropped, no-new-privileges, memory (with swap equal to it),
+//     CPU and process limits within the configured maxima, and as its only
+//     environment the revision it is started as. No mount, volume, device,
+//     port, privilege, host namespace or other setting can be sent.
 //   - inspect, start, stop, logs and remove of a container that carries the
 //     factory's unit labels and is not a runner.
 //
@@ -52,6 +53,33 @@ var (
 	restartPolicies     = []string{"", "no", "unless-stopped"}
 )
 
+// DeployLimits bound the resources of one deployed revision.
+type DeployLimits struct {
+	// MaxMemory is in bytes, MaxNanoCPUs in billionths of a CPU.
+	MaxMemory, MaxNanoCPUs, MaxPids int64
+}
+
+// DefaultDeployLimits allow a revision up to 4 GiB of memory, 4 CPUs and
+// 4096 processes.
+var DefaultDeployLimits = DeployLimits{MaxMemory: 4 << 30, MaxNanoCPUs: 4_000_000_000, MaxPids: 4096}
+
+// settled fills the zero fields from DefaultDeployLimits.
+func (l DeployLimits) settled() (DeployLimits, error) {
+	if l.MaxMemory == 0 {
+		l.MaxMemory = DefaultDeployLimits.MaxMemory
+	}
+	if l.MaxNanoCPUs == 0 {
+		l.MaxNanoCPUs = DefaultDeployLimits.MaxNanoCPUs
+	}
+	if l.MaxPids == 0 {
+		l.MaxPids = DefaultDeployLimits.MaxPids
+	}
+	if l.MaxMemory < 0 || l.MaxNanoCPUs < 0 || l.MaxPids < 0 {
+		return l, invalid("the deploy limits must be positive")
+	}
+	return l, nil
+}
+
 // settledDeploy applies the defaults of the deploy role and checks it.
 func (c Config) settledDeploy() (Config, error) {
 	if c.UpstreamURL == "" {
@@ -66,6 +94,11 @@ func (c Config) settledDeploy() (Config, error) {
 	if c.Logger == nil {
 		c.Logger = slogDefault()
 	}
+	limits, err := c.DeployLimits.settled()
+	if err != nil {
+		return c, err
+	}
+	c.DeployLimits = limits
 	switch {
 	case c.Upstream == nil:
 		return c, invalid("the filter needs a transport to the Docker daemon")
@@ -108,6 +141,10 @@ type deployHostConfig struct {
 	CapDrop        []string          `json:"CapDrop"`
 	SecurityOpt    []string          `json:"SecurityOpt"`
 	Tmpfs          map[string]string `json:"Tmpfs,omitempty"`
+	Memory         int64             `json:"Memory"`
+	MemorySwap     int64             `json:"MemorySwap"`
+	NanoCpus       int64             `json:"NanoCpus"`
+	PidsLimit      int64             `json:"PidsLimit"`
 }
 
 type restartPolicy struct {
@@ -116,7 +153,8 @@ type restartPolicy struct {
 
 var (
 	deployCreateKeys = []string{"Image", "Env", "Labels", "User", "HostConfig"}
-	deployHostKeys   = []string{"NetworkMode", "RestartPolicy", "ReadonlyRootfs", "CapDrop", "SecurityOpt", "Tmpfs"}
+	deployHostKeys   = []string{"NetworkMode", "RestartPolicy", "ReadonlyRootfs", "CapDrop", "SecurityOpt", "Tmpfs",
+		"Memory", "MemorySwap", "NanoCpus", "PidsLimit"}
 )
 
 // createDeploy checks a create request of the deploy role and forwards the
@@ -201,6 +239,9 @@ func (f *Filter) checkDeployRequest(name string, req *deployCreateRequest) error
 	case !slices.ContainsFunc(h.CapDrop, func(c string) bool { return strings.EqualFold(c, "ALL") }):
 		return errors.New("a deployed revision must drop every capability")
 	}
+	if err := f.checkDeployLimits(h); err != nil {
+		return err
+	}
 	if err := checkSecurityOpt(h.SecurityOpt); err != nil {
 		return err
 	}
@@ -208,6 +249,26 @@ func (f *Filter) checkDeployRequest(name string, req *deployCreateRequest) error
 		return err
 	}
 	return checkTmpfs(h.Tmpfs)
+}
+
+// checkDeployLimits requires memory, CPU and process limits within the
+// configured maxima, and no swap beyond the memory limit, so one revision
+// cannot starve the host or the factory's other units.
+func (f *Filter) checkDeployLimits(h deployHostConfig) error {
+	max := f.cfg.DeployLimits
+	switch {
+	case h.Memory <= 0 || h.NanoCpus <= 0 || h.PidsLimit <= 0:
+		return errors.New("a deployed revision needs memory, CPU and process limits")
+	case h.MemorySwap != h.Memory:
+		return errors.New("a deployed revision may not swap beyond its memory limit")
+	case h.Memory > max.MaxMemory:
+		return fmt.Errorf("a deployed revision may use at most %d bytes of memory", max.MaxMemory)
+	case h.NanoCpus > max.MaxNanoCPUs:
+		return fmt.Errorf("a deployed revision may use at most %d billionths of a CPU", max.MaxNanoCPUs)
+	case h.PidsLimit > max.MaxPids:
+		return fmt.Errorf("a deployed revision may run at most %d processes", max.MaxPids)
+	}
+	return nil
 }
 
 // deployed reports whether labels mark a revision of this factory's units.

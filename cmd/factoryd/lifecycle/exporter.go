@@ -221,7 +221,7 @@ func ReadRunRecord(ctx context.Context, kv state.KV, run core.RunID) (dispatcher
 }
 
 // CoderIdentity is the agent identity of the coding agent of a backend.
-func CoderIdentity(backend string) string { return "agent:" + backend + "/coder" }
+func CoderIdentity(backend string) string { return handoff.CoderIdentity(backend) }
 
 // summaryOf is the changelog line of a run: the first line of its scope.
 func summaryOf(run dispatcher.RunRecord) string {

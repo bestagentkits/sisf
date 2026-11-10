@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"path/filepath"
-	"regexp"
 	"time"
 
 	"github.com/bestagentkits/sisf/adapters/agent/claude"
@@ -14,6 +13,7 @@ import (
 	"github.com/bestagentkits/sisf/adapters/agent/pi"
 	"github.com/bestagentkits/sisf/internal/qa/agentjudge"
 	"github.com/bestagentkits/sisf/pkg/agent"
+	"github.com/bestagentkits/sisf/pkg/agent/agentenv"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/execution"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -26,19 +26,6 @@ const (
 	qaJudgeAgent = "agent"
 	qaJudgeFake  = "fake"
 )
-
-// defaultQAPath is the QA agent's PATH when the supervisor has none.
-const defaultQAPath = "/usr/local/bin:/usr/bin:/bin"
-
-// qaCredentialVars are the variables each QA agent reads its provider
-// credentials from, passed on when the supervisor's environment sets them.
-var qaCredentialVars = map[string][]string{
-	"claude": {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
-	"codex":  {"OPENAI_API_KEY", "CODEX_API_KEY"},
-	"pi":     nil,
-}
-
-var envVarName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 
 // qaFlags configure the judge that scores candidates.
 type qaFlags struct {
@@ -55,7 +42,7 @@ func (q *qaFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&q.binary, "qa-agent-binary", "", "absolute path of a launcher that runs the QA agent in a sandbox and keeps its standard input and output; required with --exec docker. With --exec local under trusted_code_only, the agent program itself")
 	fs.StringVar(&q.env, "qa-agent-env", "", "comma-separated names of variables passed to the QA agent besides its default credential variables")
 	fs.StringVar(&q.workspaceRoot, "qa-workspace-root", "", "absolute directory of the QA agent's workspaces, evidence and home (default <temp>/sisf-qa-<factory id>)")
-	fs.StringVar(&q.home, "qa-home", "", "absolute HOME of the QA agent, holding only its own credentials (default <qa-workspace-root>/home)")
+	fs.StringVar(&q.home, "qa-home", "", "absolute HOME, such as the operator's own, the QA agent runs with to find the login kept there (default the private <qa-workspace-root>/home); only with --exec local under trusted_code_only, and apart from the factory's secrets, state and trust; TMPDIR stays private")
 	fs.DurationVar(&q.timeout, "qa-timeout", agentjudge.DefaultTimeout, "time limit of one judgment")
 }
 
@@ -65,7 +52,9 @@ type judgeDeps struct {
 	// sim is the trusted simulation profile, as wiring.SimulationProfile decides.
 	sim           bool
 	docker, local execution.Backend
-	trustDir      string
+	// protected are the factory's secrets, state and trust directories the
+	// QA agent's directories must lie apart from.
+	protected []string
 	// dsnEnv and rootKeyEnv name variables the QA agent must never see.
 	dsnEnv     string
 	lookupEnv  func(string) (string, bool)
@@ -89,7 +78,7 @@ func (l *lifecycleFlags) judge(ctx context.Context, d judgeDeps) (qa.Judge, erro
 		if err := qaSandboxAllowed(ctx, l.qa.agent, l.exec, d.docker, d.manifest.TrustedCodeOnly, l.qa.binary); err != nil {
 			return nil, err
 		}
-		return l.qa.agentJudge(ctx, d)
+		return l.qa.agentJudge(ctx, d, l.exec)
 	}
 	return nil, core.NewError(core.CodeInvalidArgument, "--qa-judge must be agent or fake")
 }
@@ -108,7 +97,7 @@ func (l *lifecycleFlags) judge(ctx context.Context, d judgeDeps) (qa.Judge, erro
 // that declared trust model; Pi, which has no permission system of its
 // own, is never run there.
 func qaSandboxAllowed(ctx context.Context, agentName, exec string, docker execution.Backend, trustedCodeOnly bool, launcher string) error {
-	if _, known := qaCredentialVars[agentName]; !known {
+	if _, known := agentenv.Credentials(agentName); !known {
 		return core.NewError(core.CodeInvalidArgument, "--qa-agent must be claude, codex or pi")
 	}
 	if launcher != "" && !filepath.IsAbs(launcher) {
@@ -142,12 +131,12 @@ func qaSandboxAllowed(ctx context.Context, agentName, exec string, docker execut
 }
 
 // agentJudge builds the QA agent's adapter and the judge around it.
-func (q *qaFlags) agentJudge(ctx context.Context, d judgeDeps) (*agentjudge.Judge, error) {
-	root, home, err := q.paths(d)
+func (q *qaFlags) agentJudge(ctx context.Context, d judgeDeps, exec string) (*agentjudge.Judge, error) {
+	root, home, tmp, err := q.paths(d, exec)
 	if err != nil {
 		return nil, err
 	}
-	env, err := q.environment(d, home)
+	env, err := q.environment(d, home, tmp)
 	if err != nil {
 		return nil, err
 	}

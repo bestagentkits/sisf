@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,11 +89,26 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 		Argv: s.Argv, Timeout: s.Timeout,
 		Env: map[string]string{"SISF_COMMIT": string(req.Commit), "SISF_UNIT": req.Unit, "SISF_BRANCH": req.Branch},
 	})
+	// The backend's own signal tells the two apart: an error means the
+	// command could not be run or observed, an outage that spends no
+	// attempt; a result means the command ran on the candidate, and a
+	// non-zero exit or a timeout is then the candidate's own fault. A build
+	// cut short because the supervisor is stopping is neither.
 	if err != nil {
 		return ImageResult{}, err
 	}
-	if result.TimedOut || result.ExitCode != 0 {
-		return ImageResult{}, core.NewError(core.CodeUnavailable, "the sandboxed build did not finish successfully")
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ImageResult{}, core.NewError(core.CodeUnavailable, "the sandboxed build was interrupted").WithCause(ctxErr)
+	}
+	switch {
+	case result.TimedOut:
+		return ImageResult{}, refuse(core.CodeTimeout, RefusalBuildTimeout, "",
+			"the build command did not finish on the candidate within "+s.Timeout.String())
+	case result.ExitCode != 0:
+		r := refuse(core.CodeGuardFailed, RefusalBuildFailed, "",
+			"the build command exited with status "+strconv.Itoa(result.ExitCode)+" on the candidate")
+		r.err.Details["exit_code"] = strconv.Itoa(result.ExitCode)
+		return ImageResult{}, r
 	}
 	out := ImageResult{}
 	scanner := bufio.NewScanner(bytes.NewReader(result.Stdout))

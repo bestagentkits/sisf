@@ -73,4 +73,12 @@ func TestAProductionStandaloneInstallRunsTheAgentJudge(t *testing.T) {
 	if err := (LifecycleChoice{QAAgentBinary: "relative/launcher"}).check(); err == nil {
 		t.Error("a relative launcher was accepted")
 	}
+	for _, bad := range []string{"make; curl x", "make  build", " make", `make "x"`, "make $HOME", "make\nx", "a: b", "make #x"} {
+		if err := (LifecycleChoice{BuildCommand: bad}).check(); err == nil {
+			t.Errorf("the build command %q was accepted", bad)
+		}
+	}
+	if err := (LifecycleChoice{BuildCommand: "/opt/sisf/build-candidate --unit=app"}).check(); err != nil {
+		t.Errorf("a plain build command was refused: %v", err)
+	}
 }

@@ -193,16 +193,24 @@ func TestTheReleaseTopologyIsWhatTheSupervisorNeeds(t *testing.T) {
 }
 
 // A production Docker install runs the stages only with a sandboxing
-// launcher for its QA agent.
-func TestAProductionDockerInstallRunsTheStagesOnlyWithAQALauncher(t *testing.T) {
+// launcher for its QA agent and a command to build candidates with.
+func TestAProductionDockerInstallRunsTheStagesOnlyWithAQALauncherAndABuildCommand(t *testing.T) {
 	t.Parallel()
 	real := func(o *Options) { o.Sim = false; o.Repo.Owner, o.Repo.Repo = "acme", "shop" }
 	_, plain := renderCompose(t, real)
 	if strings.Contains(string(plain), "--factory-manifest") || strings.Contains(string(plain), "--qa-judge") {
 		t.Error("the stages run without a QA launcher")
 	}
-	_, launched := renderCompose(t, func(o *Options) { real(o); o.QAAgent, o.QAAgentBinary = "claude", "/opt/sisf/qa-launcher" })
-	for _, want := range []string{"--qa-judge=agent", "--qa-agent=claude", "--qa-agent-binary=/opt/sisf/qa-launcher", "--factory-manifest"} {
+	_, unbuildable := renderCompose(t, func(o *Options) { real(o); o.QAAgent, o.QAAgentBinary = "claude", "/opt/sisf/qa-launcher" })
+	if strings.Contains(string(unbuildable), "--factory-manifest") {
+		t.Error("the stages run without a build command")
+	}
+	_, launched := renderCompose(t, func(o *Options) {
+		real(o)
+		o.QAAgent, o.QAAgentBinary, o.BuildCommand = "claude", "/opt/sisf/qa-launcher", "/opt/sisf/build-candidate --push"
+	})
+	for _, want := range []string{"--qa-judge=agent", "--qa-agent=claude", "--qa-agent-binary=/opt/sisf/qa-launcher", "--factory-manifest",
+		`"--build-command=/opt/sisf/build-candidate --push"`} {
 		if !strings.Contains(string(launched), want) {
 			t.Errorf("the production project lacks %s", want)
 		}

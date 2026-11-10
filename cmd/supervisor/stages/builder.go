@@ -81,17 +81,33 @@ func Branch(factory core.FactoryID, run core.RunID, attempt int) string {
 	return fmt.Sprintf("sisf/%s/%s-%d", factory, run, attempt)
 }
 
-// Build builds the patch of req.
+// Build builds the patch of req. A patch that cannot be read, does not
+// apply, spans units or touches a protected path is refused with a
+// PatchRefusal before anything is committed or pushed. A patch whose build
+// command ran in the sandbox and failed or timed out is refused after its
+// commit, and Built then names that commit. Any other error is an outage of
+// GitHub, the image builder or the configuration.
 func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, error) {
 	patches, err := parseUnifiedDiff(req.Diff)
 	if err != nil {
-		return Built{}, core.NewError(core.CodeInvalidArgument, "the run's patch cannot be read: "+err.Error())
+		return Built{}, refuse(core.CodeInvalidArgument, RefusalUnreadable, "", "the run's patch cannot be read: "+err.Error())
+	}
+	for _, fp := range patches {
+		for _, p := range []string{fp.oldPath, fp.newPath} {
+			if kind, protected := ProtectedPath(p); protected {
+				return Built{}, refuse(core.CodePermissionDenied, RefusalProtectedPath, p,
+					"the run's patch changes "+p+" ("+string(kind)+"), which an agent's patch may not touch")
+			}
+		}
 	}
 	files := map[string][]byte{}
 	for _, fp := range patches {
 		old := ""
 		if fp.oldPath != "" {
 			content, err := b.Git.ReadFile(ctx, b.Repo, req.Base, fp.oldPath)
+			if core.HasCode(err, core.CodeNotFound) {
+				return Built{}, refuse(core.CodeConflict, RefusalDoesNotApply, fp.oldPath, "the run's patch changes "+fp.oldPath+", which the base does not have")
+			}
 			if err != nil {
 				return Built{}, err
 			}
@@ -99,7 +115,7 @@ func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, 
 		}
 		updated, err := fp.apply(old)
 		if err != nil {
-			return Built{}, core.NewError(core.CodeConflict, "the run's patch does not apply to the base: "+err.Error())
+			return Built{}, refuse(core.CodeConflict, RefusalDoesNotApply, fp.newPath, "the run's patch does not apply to the base: "+err.Error())
 		}
 		if fp.newPath == "" {
 			files[fp.oldPath] = nil
@@ -113,7 +129,7 @@ func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, 
 	changed := slices.Sorted(maps.Keys(files))
 	unit, err := b.Units.UnitOf(changed)
 	if err != nil {
-		return Built{}, err
+		return Built{}, refuse(core.CodeInvalidArgument, RefusalUnitSpan, "", err.Error())
 	}
 	branch := Branch(b.FactoryID, req.RunID, req.Attempt)
 	commit, err := b.Git.CommitToBranch(ctx, b.Repo, github.BranchCommit{
@@ -126,6 +142,13 @@ func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, 
 	image, err := b.Images.BuildImage(ctx, ImageRequest{
 		FactoryID: b.FactoryID, RunID: req.RunID, Unit: unit, Commit: commit, Branch: branch, Untrusted: true,
 	})
+	if _, refused := RefusalOf(err); refused {
+		// The commit exists and the build command failed on it: the refusal
+		// names the commit and branch it was run on.
+		return Built{Branch: branch, ChangedPaths: changed, Record: handoff.BuildRecord{
+			Commit: commit, Unit: unit, Builder: b.Images.Name(), BuiltAt: b.Clock.Now().UTC(),
+		}}, err
+	}
 	if err != nil {
 		return Built{}, err
 	}

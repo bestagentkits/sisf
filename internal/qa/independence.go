@@ -26,6 +26,17 @@ func (a SameRouteAction) Valid() bool {
 	return a == SameRouteOwnerApproval || a == SameRouteSelfPublish
 }
 
+// UnverifiedCodingAgent is the coding agent identity of a candidate whose
+// coder no trusted record names. A receipt carries it as it is, and the
+// independent-evaluator gate fails it: an evaluator cannot be shown to be
+// independent of a coder nobody can name.
+const UnverifiedCodingAgent = "unverified:coder"
+
+// CodingAgentVerified reports whether a trusted record named the coder.
+func CodingAgentVerified(identity string) bool {
+	return strings.TrimSpace(identity) != "" && identity != UnverifiedCodingAgent
+}
+
 // routeChoice is the model route QA runs on and whether it is the coder's.
 type routeChoice struct {
 	route core.ModelRoute

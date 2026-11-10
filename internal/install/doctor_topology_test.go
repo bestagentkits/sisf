@@ -75,8 +75,14 @@ func TestTheDoctorWarnsWhenAProductionDockerInstallHasNoQALauncher(t *testing.T)
 	m.Extensions["qa_agent_binary"] = "/opt/sisf/qa-launcher"
 	c = collector{}
 	in.checkStages(&c, m)
+	if v := verdictOf(c.report, "build command"); len(v) != 1 || v[0] != VerdictWarn || !strings.Contains(detailOf(c.report, "build command"), "build_command") {
+		t.Fatalf("with a launcher and no build command, build command = %v %q", v, detailOf(c.report, "build command"))
+	}
+	m.Extensions["build_command"] = "make candidate-image"
+	c = collector{}
+	in.checkStages(&c, m)
 	if v := verdictOf(c.report, "lifecycle"); len(v) != 1 || v[0] != VerdictOK {
-		t.Fatalf("with a launcher, lifecycle = %v", v)
+		t.Fatalf("with a launcher and a build command, lifecycle = %v", v)
 	}
 }
 

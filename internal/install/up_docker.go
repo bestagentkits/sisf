@@ -56,8 +56,7 @@ func (in *Installer) upDocker(ctx context.Context, m *manifest.Manifest) error {
 		Sim: m.Extensions["profile"] == profileSim, Debug: in.Debug,
 	}
 	opts.GitHubAPIURL, _ = m.Extensions["github_api_url"].(string)
-	opts.QAAgent, _ = m.Extensions["qa_agent"].(string)
-	opts.QAAgentBinary, _ = m.Extensions["qa_agent_binary"].(string)
+	opts.lifecycleExtensions(m)
 	if vs, err := CheckSecrets(in.Layout, m.Mode); err != nil {
 		return err
 	} else if len(vs) > 0 {

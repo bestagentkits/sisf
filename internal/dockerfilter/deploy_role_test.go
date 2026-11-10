@@ -61,7 +61,8 @@ func deployCreate() map[string]any {
 		"HostConfig": map[string]any{
 			"NetworkMode": deployNetwork, "RestartPolicy": map[string]any{"Name": "unless-stopped"}, "ReadonlyRootfs": true,
 			"CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges"},
-			"Tmpfs": map[string]any{"/tmp": "rw,noexec,nosuid,size=64m"},
+			"Tmpfs":  map[string]any{"/tmp": "rw,noexec,nosuid,size=64m"},
+			"Memory": 512 << 20, "MemorySwap": 512 << 20, "NanoCpus": 1_000_000_000, "PidsLimit": 512,
 		},
 	}
 }
@@ -164,7 +165,26 @@ func TestTheDeployRoleRefusesWhatADeploymentDoesNotNeed(t *testing.T) {
 		},
 		"a foreign name": func(map[string]any) string { return "acme-app-control" },
 		"a root user":    func(b map[string]any) string { b["User"] = "0"; return revisionName },
-		"a command":      func(b map[string]any) string { b["Cmd"] = []string{"sh"}; return revisionName },
+		"no memory limit": func(b map[string]any) string {
+			delete(host(b), "Memory")
+			delete(host(b), "MemorySwap")
+			return revisionName
+		},
+		"no CPU limit":     func(b map[string]any) string { delete(host(b), "NanoCpus"); return revisionName },
+		"no process limit": func(b map[string]any) string { delete(host(b), "PidsLimit"); return revisionName },
+		"unlimited swap":   func(b map[string]any) string { host(b)["MemorySwap"] = -1; return revisionName },
+		"swap beyond memory": func(b map[string]any) string {
+			host(b)["MemorySwap"] = 1 << 30
+			return revisionName
+		},
+		"memory over the maximum": func(b map[string]any) string {
+			host(b)["Memory"], host(b)["MemorySwap"] = int64(64)<<30, int64(64)<<30
+			return revisionName
+		},
+		"CPUs over the maximum":      func(b map[string]any) string { host(b)["NanoCpus"] = 64_000_000_000; return revisionName },
+		"processes over the maximum": func(b map[string]any) string { host(b)["PidsLimit"] = 1 << 20; return revisionName },
+		"a negative process limit":   func(b map[string]any) string { host(b)["PidsLimit"] = -1; return revisionName },
+		"a command":                  func(b map[string]any) string { b["Cmd"] = []string{"sh"}; return revisionName },
 	}
 	for name, mutate := range creates {
 		t.Run("create with "+name, func(t *testing.T) {
@@ -216,6 +236,10 @@ func TestADeployFilterNeedsItsOwnSettings(t *testing.T) {
 		"a simulated foreign image":      {Role: dockerfilter.RoleDeploy, Upstream: transport, RunnerValue: factory, Images: []string{unitImage}, DeployNetwork: deployNetwork, SimulatedImages: map[string]string{"app": image}},
 		"a runner with a deploy network": {Upstream: transport, RunnerValue: factory, Images: []string{image}, SandboxNetwork: network, DeployNetwork: deployNetwork},
 		"an unknown role":                {Role: "admin", Upstream: transport, RunnerValue: factory, Images: []string{image}, SandboxNetwork: network},
+		"negative deploy limits": {Role: dockerfilter.RoleDeploy, Upstream: transport, RunnerValue: factory, Images: []string{unitImage},
+			DeployNetwork: deployNetwork, DeployLimits: dockerfilter.DeployLimits{MaxPids: -1}},
+		"a runner with deploy limits": {Upstream: transport, RunnerValue: factory, Images: []string{image}, SandboxNetwork: network,
+			DeployLimits: dockerfilter.DefaultDeployLimits},
 	} {
 		if _, err := dockerfilter.New(cfg); err == nil {
 			t.Errorf("%s: accepted", name)

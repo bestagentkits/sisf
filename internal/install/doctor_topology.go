@@ -167,11 +167,10 @@ func (in *Installer) checkDelegations(c *collector, m *manifest.Manifest, read t
 // checkStages says whether the supervisor builds, evaluates and releases.
 func (in *Installer) checkStages(c *collector, m *manifest.Manifest) {
 	o := Options{Sim: m.Extensions["profile"] == profileSim}
-	o.QAAgent, _ = m.Extensions["qa_agent"].(string)
-	o.QAAgentBinary, _ = m.Extensions["qa_agent_binary"].(string)
+	o.lifecycleExtensions(m)
 	choice := lifecycleChoice(o, m.Mode)
 	if !choice.Enabled {
-		c.warn("qa launcher", "%s", choice.Off)
+		c.warn(choice.OffCheck, "%s", choice.Off)
 		return
 	}
 	c.ok("lifecycle", "the supervisor builds, evaluates with the %s judge and releases candidates", choice.QAJudge)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/agent"
+	"github.com/bestagentkits/sisf/pkg/agent/cliagent"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/qa"
 )
@@ -64,8 +65,38 @@ func (j *Judge) stop(ref agent.RunRef) {
 	_ = j.cfg.Agent.Cancel(ctx, ref)
 }
 
-// finalMessage returns the text of the run's last message event.
+// ReasonTranscriptIncomplete is the "reason" detail of the error a
+// judgment is refused with when the run's record is not the whole of what
+// the agent said.
+const ReasonTranscriptIncomplete = "transcript_incomplete"
+
+// finalReporter is an adapter that says whether its record of a run is
+// complete and, where the tool has one, what its explicit final result was.
+type finalReporter interface {
+	FinalReport(ctx context.Context, ref agent.RunRef) (cliagent.FinalReport, error)
+}
+
+// finalMessage returns the text the judgment is read from: the adapter's
+// explicit final result when it has one, otherwise the run's last message
+// event. When the adapter dropped events past its cap or skipped an
+// oversized output line, the last message kept may be an earlier one than
+// the agent's last word, so no judgment is read at all.
 func (j *Judge) finalMessage(ctx context.Context, ref agent.RunRef) (string, error) {
+	if reporter, ok := j.cfg.Agent.(finalReporter); ok {
+		report, err := reporter.FinalReport(ctx, ref)
+		if err != nil {
+			return "", err
+		}
+		if !report.Complete {
+			e := core.NewError(core.CodeLimitExceeded,
+				"the QA agent's output went past what its adapter keeps, so its judgment cannot be told from an earlier message")
+			e.Details = map[string]string{"reason": ReasonTranscriptIncomplete}
+			return "", e
+		}
+		if report.HasResult {
+			return report.Result, nil
+		}
+	}
 	page, err := j.cfg.Agent.Events(ctx, ref, "")
 	if err != nil {
 		return "", err

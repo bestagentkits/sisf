@@ -185,3 +185,19 @@ func containsRun(args, run []string) bool {
 	}
 	return false
 }
+
+func TestTheResultEventIsTheExplicitFinalReport(t *testing.T) {
+	t.Parallel()
+	b := newBackend(t, clitest.Script{Steps: []clitest.Step{{AwaitStdin: "*EOF*"}, {EmitFile: fixture(t, "success.jsonl")}}}, claude.Config{})
+	ref, err := b.Start(context.Background(), task(agent.RoleQA, core.StepQA), agent.WorkspaceRef{Path: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Wait(context.Background(), ref); err != nil {
+		t.Fatal(err)
+	}
+	report, err := b.FinalReport(context.Background(), ref)
+	if err != nil || !report.HasResult || !report.Complete || report.Result != "Added GET /version and the tests pass." {
+		t.Fatalf("final report %+v, %v", report, err)
+	}
+}

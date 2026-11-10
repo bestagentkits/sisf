@@ -3,8 +3,7 @@ package stages
 import (
 	"context"
 	"fmt"
-	"path"
-	"strings"
+	"slices"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/redact"
@@ -52,9 +51,9 @@ type GateSources struct {
 func HardGates(src GateSources) []qa.HardGate {
 	return []qa.HardGate{
 		gate{qa.GateTestsContract, src.testsContract},
-		gate{qa.GatePermissions, pathGate("changes CI workflows or code ownership, which needs the Owner",
-			".github/workflows/", ".github/codeowners", "codeowners")},
-		gate{qa.GateMigrations, pathGate("changes a schema migration, which needs the Owner's approval and a backup", "migrations/")},
+		gate{qa.GatePermissions, protectedGate("changes CI, code ownership or the factory's policy, which needs the Owner",
+			ProtectedCI, ProtectedOwnership, ProtectedPolicy)},
+		gate{qa.GateMigrations, protectedGate("changes a schema migration, which needs the Owner's approval and a backup", ProtectedMigration)},
 		gate{qa.GateSecrets, src.secrets},
 		gate{qa.GateObservedBuild, src.observedBuild},
 		gate{qa.GateResourceBudget, src.resourceBudget},
@@ -159,15 +158,14 @@ func (src GateSources) unitOf(ctx context.Context, c qa.Candidate) (string, erro
 	return doc.Unit, err
 }
 
-// pathGate fails a change to any path under one of prefixes.
-func pathGate(why string, prefixes ...string) func(context.Context, qa.Candidate) (bool, string, error) {
+// protectedGate fails a change to any path ProtectedPath puts in one of
+// kinds. The builder refuses such a patch before it is committed; the gate
+// holds the same line for every candidate the evaluator sees.
+func protectedGate(why string, kinds ...ProtectedKind) func(context.Context, qa.Candidate) (bool, string, error) {
 	return func(_ context.Context, c qa.Candidate) (bool, string, error) {
 		for _, p := range c.ChangedPaths {
-			lower := strings.ToLower(path.Clean(p))
-			for _, prefix := range prefixes {
-				if strings.HasPrefix(lower, prefix) || strings.Contains(lower, "/"+prefix) {
-					return false, p + " " + why, nil
-				}
+			if kind, ok := ProtectedPath(p); ok && slices.Contains(kinds, kind) {
+				return false, p + " " + why, nil
 			}
 		}
 		return true, "no change of this kind", nil

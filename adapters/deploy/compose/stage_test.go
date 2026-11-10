@@ -58,6 +58,10 @@ func TestStagedContainersGetNoSocketNoPrivilegeAndNoHostPath(t *testing.T) {
 			CapDrop        []string
 			SecurityOpt    []string
 			Mounts         []struct{ Type, Source, Target string }
+			Memory         int64
+			MemorySwap     int64
+			NanoCpus       int64
+			PidsLimit      int64
 		}
 	}
 	if err := json.Unmarshal(created[0].Body, &body); err != nil {
@@ -69,6 +73,26 @@ func TestStagedContainersGetNoSocketNoPrivilegeAndNoHostPath(t *testing.T) {
 	}
 	if len(h.Mounts) != 1 || h.Mounts[0].Type != "volume" || h.Mounts[0].Source != "acme-app_data" {
 		t.Errorf("mounts = %+v, want only the named data volume", h.Mounts)
+	}
+	want := compose.DefaultResourceLimits
+	if h.Memory != want.MemoryBytes || h.MemorySwap != want.MemoryBytes || h.NanoCpus != want.NanoCPUs || h.PidsLimit != want.Pids {
+		t.Errorf("resource limits = %d/%d bytes, %d nano CPUs, %d processes; want %+v", h.Memory, h.MemorySwap, h.NanoCpus, h.PidsLimit, want)
+	}
+}
+
+func TestARevisionRunsWithinTheConfiguredResourceLimits(t *testing.T) {
+	t.Parallel()
+	limits := compose.ResourceLimits{MemoryBytes: 256 << 20, NanoCPUs: 500_000_000, Pids: 128}
+	w := newWorld(t, worldOptions{cfg: func(c *compose.Config) { c.Limits = limits }})
+	w.stage(digestA)
+	var body struct {
+		HostConfig struct{ Memory, MemorySwap, NanoCpus, PidsLimit int64 }
+	}
+	if err := json.Unmarshal(w.daemon.Created()[0].Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if h := body.HostConfig; h.Memory != limits.MemoryBytes || h.MemorySwap != limits.MemoryBytes || h.NanoCpus != limits.NanoCPUs || h.PidsLimit != limits.Pids {
+		t.Fatalf("resource limits = %+v, want %+v", h, limits)
 	}
 }
 

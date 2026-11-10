@@ -39,6 +39,10 @@ func runGate(ctx context.Context, gate qa.HardGate, c qa.Candidate) qa.GateResul
 
 // independenceResult records who judged on which route against whom.
 func (e *Evaluator) independenceResult(c qa.Candidate, route routeChoice) qa.GateResult {
+	if !CodingAgentVerified(c.CodingAgentIdentity) {
+		return qa.GateResult{Gate: qa.GateIndependentEvaluator,
+			Detail: "no trusted record names the coding agent, so the evaluator cannot be shown to be independent of it"}
+	}
 	detail := sprintf("evaluator %s on %s judged the work of %s on %s",
 		e.cfg.Identity, route.route, c.CodingAgentIdentity, c.CodingModelRoute)
 	if route.same {

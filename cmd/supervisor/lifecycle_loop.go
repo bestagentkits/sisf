@@ -23,7 +23,10 @@ func runStages(ctx context.Context, st *stages.Stages, l *lifecycleFlags, clock 
 			log.Info("candidate built and submitted", "issue", issue.String())
 		}
 		for _, issue := range res.Build.Unbuildable {
-			log.Info("patch could not be built", "issue", issue.String())
+			log.Info("patch refused by the builder; the run's next attempt follows", "issue", issue.String())
+		}
+		for _, issue := range res.Build.Held {
+			log.Warn("candidate build held: it failed repeatedly on GitHub, the image builder or the configuration, and is retried without spending an attempt", "issue", issue.String())
 		}
 		select {
 		case <-ctx.Done():

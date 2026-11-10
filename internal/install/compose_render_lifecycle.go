@@ -50,12 +50,15 @@ const defaultQAAgent = "codex"
 // agent. Without one the stages are off and the doctor says why.
 type LifecycleChoice struct {
 	Enabled bool
-	// Off says why the stages are off; empty when they run.
-	Off        string
-	CoderAgent string
+	// Off says why the stages are off, and OffCheck names the doctor check
+	// that reports it; both empty when they run.
+	Off, OffCheck string
+	CoderAgent    string
 	// QAJudge is fake in the simulation and agent otherwise. QAAgent and
 	// QAAgentBinary configure the agent judge.
 	QAJudge, QAAgent, QAAgentBinary string
+	// BuildCommand is the sandboxed build command of a Docker install.
+	BuildCommand string
 	// AgentWork, ReleaseWindow and ReleaseMinSamples are the simulation's
 	// short settings; empty or zero elsewhere.
 	AgentWork, ReleaseWindow string
@@ -70,19 +73,39 @@ func lifecycleChoice(o Options, mode manifest.Mode) LifecycleChoice {
 		c.QAJudge, c.AgentWork, c.ReleaseWindow, c.ReleaseMinSamples = "fake", simAgentWork, simReleaseWindow, simReleaseMinSamples
 		return c
 	}
-	c.QAJudge, c.QAAgent, c.QAAgentBinary = "agent", o.QAAgent, o.QAAgentBinary
+	c.QAJudge, c.QAAgent, c.QAAgentBinary, c.BuildCommand = "agent", o.QAAgent, o.QAAgentBinary, o.BuildCommand
 	if c.QAAgent == "" {
 		c.QAAgent = defaultQAAgent
 	}
-	if mode == manifest.ModeDocker && c.QAAgentBinary == "" {
-		c.Enabled = false
+	switch {
+	case mode != manifest.ModeDocker:
+	case c.QAAgentBinary == "":
+		c.Enabled, c.OffCheck = false, "qa launcher"
 		c.Off = "no sandboxing launcher for the QA agent is configured (qa_agent_binary), so the supervisor builds, evaluates and releases nothing"
+	case c.BuildCommand == "":
+		// Every build would fail, and a failed build must never be charged
+		// to an agent's patch.
+		c.Enabled, c.OffCheck = false, "build command"
+		c.Off = "no command to build candidates in the runner sandbox is configured (build_command), so the supervisor builds, evaluates and releases nothing"
 	}
 	return c
 }
 
+// lifecycleExtensions reads the lifecycle settings from the manifest's
+// extensions qa_agent, qa_agent_binary and build_command.
+func (o *Options) lifecycleExtensions(m *manifest.Manifest) {
+	o.QAAgent, _ = m.Extensions["qa_agent"].(string)
+	o.QAAgentBinary, _ = m.Extensions["qa_agent_binary"].(string)
+	o.BuildCommand, _ = m.Extensions["build_command"].(string)
+}
+
 // lifecycleValue is what a setting written into a command line may hold.
 var lifecycleValue = regexp.MustCompile(`^[A-Za-z0-9._-]*$`)
+
+// buildCommandPattern is a build command: words of plain characters
+// separated by single spaces, as the supervisor splits it. No quote, shell
+// syntax or YAML indicator can be carried into the Compose file.
+var buildCommandPattern = regexp.MustCompile(`^[A-Za-z0-9_./+=,@%-]+( [A-Za-z0-9_./+=,@%-]+){0,31}$`)
 
 func (c LifecycleChoice) check() error {
 	for _, v := range []string{c.CoderAgent, c.QAJudge, c.QAAgent, c.AgentWork, c.ReleaseWindow, c.Interval} {
@@ -95,6 +118,9 @@ func (c LifecycleChoice) check() error {
 	}
 	if c.QAAgentBinary != "" && (!filepath.IsAbs(c.QAAgentBinary) || !pathPattern.MatchString(c.QAAgentBinary)) {
 		return invalidf("the QA agent launcher must be an absolute path of letters, digits and . _ + - /")
+	}
+	if c.BuildCommand != "" && (len(c.BuildCommand) > 512 || !buildCommandPattern.MatchString(c.BuildCommand)) {
+		return invalidf("the build command must be words of letters, digits and . _ / + = , @ %% - separated by single spaces")
 	}
 	return nil
 }

@@ -33,6 +33,14 @@ var coverage = map[string][]proof{
 		{"internal/secretbroker/control_tokens_never_reach_runner_test.go", []string{"TestControlPlaneCredentialsAreNeverGrantedToARun"}},
 		{"internal/policy/precedence_test.go", []string{"TestIssueTextAndLogsNeverSetPolicy"}},
 		{"internal/egress/allowlist_policy_test.go", []string{"TestAnAgentCannotWidenThePolicyNorTurnBlockingOff"}},
+		{"cmd/factoryd/wiring/agent_zone_environment_test.go", []string{
+			"TestARealAgentSeesNoneOfTheDispatchersVariables", "TestARealAgentNeedsASandboxALauncherOrTheTrustedCodeOnlyModel",
+		}},
+		{"pkg/agent/cliagent/empty_environment_test.go", []string{"TestAnEmptyEnvironmentIsEmptyAndNeverTheParents"}},
+		{"cmd/factoryd/wiring/agent_zone_operator_home_test.go", []string{
+			"TestTheOperatorsHomeIsAcceptedOnlyUnderTrustedCodeAndApartFromTheFactorysDirectories",
+		}},
+		{"cmd/supervisor/qa_operator_home_test.go", []string{"TestTheQAAgentsHomeLiesApartFromTheFactorysSecretsStateAndTrust"}},
 	},
 	// A candidate release modifies the supervisor, keys, policy enforcement, QA baseline or rollback rules.
 	"TM-02": {
@@ -56,6 +64,9 @@ var coverage = map[string][]proof{
 		{"internal/qa/hard_gate_overrides_score_test.go", []string{"TestAFailedHardGateOverridesAPerfectScore"}},
 		{"internal/qa/signed_receipt_test.go", []string{"TestAReceiptIsNotBorrowedByAnotherCandidate"}},
 		{"internal/supervisor/release/unverified_candidate_refused_test.go", []string{"TestAReleaseWithAnUnacceptableReceiptIsNeverDeployed"}},
+		{"tests/acceptance/candidate_build_trust_test.go", []string{
+			"TestTheCoderAndTheAttemptComeFromTrustedRecords", "TestAnUnverifiedCoderFailsTheIndependenceGate",
+		}},
 	},
 	// A delegated signing key or the Zone 3 store is compromised.
 	"TM-05": {
@@ -85,6 +96,8 @@ var coverage = map[string][]proof{
 		{"internal/supplychain/unsigned_artifact_rejected_test.go", []string{"TestUnsignedArtifactIsRejected"}},
 		{"internal/qa/hard_gate_overrides_score_test.go", []string{"TestTheSupplyChainGateOverridesAPerfectScore"}},
 		{"internal/supervisor/release/unverified_candidate_refused_test.go", []string{"TestAnArtifactWhoseSignatureCannotBeVerifiedNeverBecomesTheLKG"}},
+		{"tests/acceptance/candidate_build_trust_test.go", []string{"TestAPatchTouchingCIIsRefusedBeforeAnythingIsPushed"}},
+		{"cmd/supervisor/stages/protected_paths_test.go", []string{"TestTheBuilderRefusesAProtectedPathBeforeReadingOrPushingAnything"}},
 	},
 	// An approval is replayed, forged, or granted through an ambient Owner session.
 	"TM-09": {

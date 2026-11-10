@@ -127,6 +127,9 @@ services:
 {{- if .Lifecycle.QAAgentBinary }}
       - --qa-agent-binary={{ .Lifecycle.QAAgentBinary }}
 {{- end }}
+{{- if .Lifecycle.BuildCommand }}
+      - "--build-command={{ .Lifecycle.BuildCommand }}"
+{{- end }}
 {{- if .Lifecycle.ReleaseWindow }}
       - --release-window={{ .Lifecycle.ReleaseWindow }}
       - --release-min-samples={{ .Lifecycle.ReleaseMinSamples }}

@@ -18,9 +18,15 @@ const probeTimeout = 5 * time.Second
 // sent as given; the error carries no header, so a bearer token is never
 // part of it.
 func (in *Installer) httpGet(ctx context.Context, url string, header http.Header) (int, []byte, error) {
+	code, _, body, err := in.httpProbe(ctx, url, header)
+	return code, body, err
+}
+
+// httpProbe is httpGet that also returns the headers of the answer.
+func (in *Installer) httpProbe(ctx context.Context, url string, header http.Header) (int, http.Header, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return 0, nil, invalidf("the probe address is not valid")
+		return 0, nil, nil, invalidf("the probe address is not valid")
 	}
 	for k, v := range header {
 		req.Header[k] = v
@@ -32,12 +38,12 @@ func (in *Installer) httpGet(ctx context.Context, url string, header http.Header
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, nil, unavailablef(err, "no answer from %s", req.URL.Host)
+		return 0, nil, nil, unavailablef(err, "no answer from %s", req.URL.Host)
 	}
 	defer func() { _ = resp.Body.Close() }() // the answer was read or abandoned already
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProbeBytes))
 	if err != nil {
-		return resp.StatusCode, nil, unavailablef(err, "the answer from %s was cut off", req.URL.Host)
+		return resp.StatusCode, resp.Header, nil, unavailablef(err, "the answer from %s was cut off", req.URL.Host)
 	}
-	return resp.StatusCode, body, nil
+	return resp.StatusCode, resp.Header, body, nil
 }

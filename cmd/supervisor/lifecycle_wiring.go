@@ -109,7 +109,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	}
 	repo := github.RepoRef{Owner: m.Repository.Owner, Name: m.Repository.Repo}
 	judge, err := l.judge(ctx, judgeDeps{
-		manifest: m, sim: sim, docker: docker, local: local, trustDir: d.cfg.TrustDir, dsnEnv: d.dsnEnv, rootKeyEnv: l.rootPrivateKeyEnv,
+		manifest: m, sim: sim, docker: docker, local: local, protected: l.protectedDirs(d.cfg.TrustDir, d.dsnEnv, d.lookupEnv), dsnEnv: d.dsnEnv, rootKeyEnv: l.rootPrivateKeyEnv,
 		lookupEnv: d.lookupEnv, clock: d.clock, store: d.stop.store,
 		materials: stages.CandidateMaterials{State: d.stop.store, Tree: stages.Tree{GitHub: client, Repo: repo}},
 	})

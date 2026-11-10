@@ -26,7 +26,8 @@ type Config struct {
 	// Binary is the program to run; "claude" on the PATH of Env when empty.
 	Binary string
 	// Env is the full environment of the CLI, KEY=VALUE, and the only way
-	// credentials reach it. This process's environment when nil.
+	// credentials reach it. Nil is an empty environment:
+	// this process's own is never inherited.
 	Env []string
 	// Clock drives the time limit; the wall clock when nil.
 	Clock core.Clock

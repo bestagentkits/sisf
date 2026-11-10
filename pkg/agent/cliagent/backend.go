@@ -31,7 +31,9 @@ type Config struct {
 	// looked up on the PATH of Env, not on the PATH of this process.
 	Binary string
 	// Env is the complete environment of the tool, KEY=VALUE. It is the only
-	// way credentials reach the tool. This process's environment when nil.
+	// way credentials reach the tool. Nil or empty is an empty environment:
+	// the tool never inherits this process's environment, which holds the
+	// secrets of whatever starts it. Build one with package agentenv.
 	Env []string
 	// Clock drives the time limit; the wall clock when nil.
 	Clock core.Clock
@@ -96,11 +98,7 @@ func New(cfg Config) (*Backend, error) {
 	if b.clock == nil {
 		b.clock = core.SystemClock{}
 	}
-	env := cfg.Env
-	if env == nil {
-		env = os.Environ()
-	}
-	b.env = cleanEnv(env)
+	b.env = cleanEnv(cfg.Env)
 	b.redactor = redact.New(b.env, cfg.Secrets...)
 	return b, nil
 }

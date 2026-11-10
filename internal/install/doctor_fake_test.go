@@ -16,9 +16,10 @@ import (
 
 // reply is what the fake network answers for one URL.
 type reply struct {
-	code int
-	body string
-	err  error
+	code   int
+	body   string
+	header http.Header
+	err    error
 }
 
 // fakeNet answers HTTP requests from a table keyed by "host/path" and
@@ -41,9 +42,13 @@ func (n *fakeNet) RoundTrip(r *http.Request) (*http.Response, error) {
 	if got.err != nil {
 		return nil, got.err
 	}
+	header := http.Header{}
+	for k, v := range got.header {
+		header[http.CanonicalHeaderKey(k)] = v
+	}
 	return &http.Response{
 		StatusCode: got.code, Body: io.NopCloser(strings.NewReader(got.body)),
-		Header: http.Header{}, Request: r,
+		Header: header, Request: r,
 	}, nil
 }
 
