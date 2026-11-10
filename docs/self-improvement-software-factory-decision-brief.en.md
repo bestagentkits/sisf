@@ -22,6 +22,8 @@
 11. **Default budget:** `unlimited`, as requested by the Owner; the factory still meters, displays cost, raises alerts and allows a hard cap to be configured; this does not mean the provider API allows unlimited spending, and this value is never used to remove limits on security, concurrency, duration or number of attempts.
 12. **New features and upstream contribution:** the Owner decides on new features, expansion of scope/permissions, significant policy changes and sending contributions to the upstream package. Within the delegated scope, an agent may improve existing functionality on its own. Improvements still belong to **one factory deployment** unless the Owner actively chooses to share them.
 
+Each invariant above has an ADR in [docs/adr/](adr/) that records the context, the decision and its acceptance test: [0001](adr/0001-three-zones-one-deployment.md) (items 2 to 5), [0002](adr/0002-trust-roots-and-supervisor-boundary.md) (item 9, section 6.3), [0003](adr/0003-policy-precedence-and-foundation-files.md) (item 7), [0004](adr/0004-github-ssot-and-operational-state.md) (item 6), [0005](adr/0005-self-deploy-zone1-qa-and-rollback.md) (item 8), [0006](adr/0006-login-vs-repo-permission.md) (item 10), [0007](adr/0007-budget-default-unlimited.md) (item 11), [0008](adr/0008-owner-authority-features-upstream.md) (items 1 and 12). Section 11 inheritance is listed in [0009](adr/0009-tose-reuse-candidates-for-later-audit.md). The open points of section 15 are ADRs [0010](adr/0010-new-requirements-placement.md) to [0018](adr/0018-people-during-an-incident.md), all proposed.
+
 ## 0.1 Terminology
 
 | Term | Meaning in this document |

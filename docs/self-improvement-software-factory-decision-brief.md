@@ -22,6 +22,8 @@
 11. **Ngân sách mặc định:** `unlimited` theo yêu cầu Owner; vẫn metering, hiển thị chi phí, cảnh báo và có thể cấu hình hard cap; không đồng nghĩa provider API cho phép chi vô hạn, không bao giờ dùng giá trị này để bỏ giới hạn security, concurrency, thời lượng hoặc số lần thử.
 12. **Feature mới và upstream contribution:** Owner quyết định tính năng mới, mở rộng phạm vi/permissions, thay đổi policy quan trọng, gửi contribution về package gốc. Trong phạm vi đã ủy quyền, agent có thể tự cải tiến chức năng đã có. Cải tiến vẫn thuộc **một factory deployment** trừ khi Owner chủ động chia sẻ.
 
+Mỗi bất biến ở trên có một ADR trong [docs/adr/](adr/) ghi bối cảnh, quyết định và kiểm thử chấp nhận: [0001](adr/0001-three-zones-one-deployment.md) (mục 2 đến 5), [0002](adr/0002-trust-roots-and-supervisor-boundary.md) (mục 9, phần 6.3), [0003](adr/0003-policy-precedence-and-foundation-files.md) (mục 7), [0004](adr/0004-github-ssot-and-operational-state.md) (mục 6), [0005](adr/0005-self-deploy-zone1-qa-and-rollback.md) (mục 8), [0006](adr/0006-login-vs-repo-permission.md) (mục 10), [0007](adr/0007-budget-default-unlimited.md) (mục 11), [0008](adr/0008-owner-authority-features-upstream.md) (mục 1 và 12). Phần kế thừa ở mục 11 được liệt kê trong [0009](adr/0009-tose-reuse-candidates-for-later-audit.md). Các điểm còn mở ở mục 15 là các ADR [0010](adr/0010-new-requirements-placement.md) đến [0018](adr/0018-people-during-an-incident.md), đều ở trạng thái proposed.
+
 ## 0.1 Thuật ngữ
 
 | Thuật ngữ | Nghĩa trong tài liệu này |
