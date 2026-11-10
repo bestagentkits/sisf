@@ -82,7 +82,10 @@ func TestABreachOfAnySupervisorBoundaryConditionIsRejected(t *testing.T) {
 		{"the supervisor is the control unit's executable under a full path", 1, standalone,
 			func(m *manifest.Manifest) {
 				editUnit(m, manifest.UnitControl, func(u *manifest.Unit) { u.Command = []string{"factoryd", "control"} })
-				editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) { u.Command = []string{"/usr/bin/factoryd", "supervisor"} })
+				m.Supervisor.Image = "/usr/bin/factoryd"
+				editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) {
+					u.Image, u.Command = "/usr/bin/factoryd", []string{"/usr/bin/factoryd", "supervisor"}
+				})
 			}, RuleSupervisorSharesArtifact, "units.control.command"},
 
 		{"the trust volume is not named", 2, docker,

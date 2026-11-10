@@ -3,6 +3,7 @@ package conformance
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -51,7 +52,10 @@ func (c *checker) placedMounts() []placedMount {
 //     because whoever writes that volume would reach the last known good
 //     release and the signing keys;
 //   - no two volumes with different owners share a directory, because one
-//     zone would then write the other's files.
+//     zone would then write the other's files;
+//   - no mount climbs out of the factory root, because a directory above it
+//     holds every directory below it, the trust volume and the other zones'
+//     data included (see refuseClimbingMount).
 //
 // Directories are compared as written, after cleaning; in Docker mode a
 // mount path is a place inside one container and says nothing of another.
@@ -63,7 +67,15 @@ func (c *checker) checkStandalonePaths() {
 	if c.m.Supervisor != nil {
 		trust = c.m.Supervisor.TrustVolume
 	}
-	mounts := c.placedMounts()
+	placed := c.placedMounts()
+	var mounts []placedMount
+	for _, mount := range placed {
+		if climbs(mount.dir) {
+			c.refuseClimbingMount(mount, trust, placed)
+			continue
+		}
+		mounts = append(mounts, mount)
+	}
 	for i, later := range mounts {
 		for _, earlier := range mounts[:i] {
 			if later.volume == earlier.volume || !overlap(later.dir, earlier.dir) {
@@ -87,15 +99,47 @@ func (c *checker) checkStandalonePaths() {
 	}
 }
 
+// refuseClimbingMount reports a mount whose directory climbs out of the
+// factory root. Such a directory holds every relative directory of the
+// deployment, so it is reported once, as an exposure of the trust volume
+// when it is or holds that volume's directory and as an overlap of owners
+// otherwise, and is not compared pair by pair.
+func (c *checker) refuseClimbingMount(mount placedMount, trust string, placed []placedMount) {
+	const fix = "mount the volume at a directory inside the factory root, without .. climbing above it, or at an absolute directory of its own"
+	holdsTrust := trust != "" && (mount.volume == trust || slices.ContainsFunc(placed, func(other placedMount) bool {
+		return other.volume == trust && within(other.dir, mount.dir)
+	}))
+	if holdsTrust {
+		c.addOnce(RuleTrustVolumeExposed, mount.at+".path", fix,
+			"unit %q mounts volume %q at a directory that climbs out of the factory root; on one machine that directory holds the trust volume %q and every other directory of the deployment, so whoever writes one of them reaches the last known good release and the signing keys", mount.unit, mount.volume, trust)
+		return
+	}
+	c.addOnce(RuleVolumePathOverlap, mount.at+".path", fix,
+		"unit %q mounts volume %q at a directory that climbs out of the factory root; on one machine that directory holds every other directory of the deployment, so its owner writes the data of the other owners", mount.unit, mount.volume)
+}
+
 // overlap reports whether two cleaned directories are equal or nested.
 func overlap(a, b string) bool { return within(a, b) || within(b, a) }
+
+// climbs reports whether a relative path leads out of the directory it is
+// relative to once cleaned, such as ".." or "../elsewhere".
+func climbs(file string) bool {
+	file = path.Clean(file)
+	return file == ".." || strings.HasPrefix(file, "../")
+}
 
 // within reports whether location is root or a path below it.
 func within(location, root string) bool {
 	location, root = path.Clean(location), path.Clean(root)
-	if root == "." {
+	switch {
+	case climbs(root):
+		// A directory above the working directory holds the working
+		// directory, so it is taken to hold every relative path; how far a
+		// relative location climbs cannot shrink what such a root may hold.
+		return !path.IsAbs(location)
+	case root == ".":
 		// The working directory holds every relative path that does not climb out of it.
-		return !path.IsAbs(location) && location != ".." && !strings.HasPrefix(location, "../")
+		return !path.IsAbs(location) && !climbs(location)
 	}
 	return location == root || strings.HasPrefix(location, strings.TrimSuffix(root, "/")+"/")
 }

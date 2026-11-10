@@ -139,6 +139,12 @@ func TestADirectoryIsWithinAnotherWhenItIsThatDirectoryOrBelowIt(t *testing.T) {
 		{"data/trust", ".", true}, // the working directory holds every relative path
 		{"../elsewhere", ".", false},
 		{"/var/lib/sisf", ".", false},
+		// A directory above the working directory holds every relative path.
+		{"data/trust", "..", true},
+		{"data/trust", "../..", true},
+		{"..", "../..", true},
+		{"data/trust", "data/../..", true},
+		{"/var/lib/sisf", "..", false},
 	}
 	for _, tc := range cases {
 		if got := within(tc.location, tc.root); got != tc.want {
