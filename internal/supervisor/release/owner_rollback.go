@@ -48,7 +48,9 @@ type PolicyInForce func(ctx context.Context) (core.CommitSHA, error)
 // it is spent before anything changes, so it cannot be replayed. The LKG is
 // then observed running healthy, read from the running system, or the
 // rollback is reported as not done. Data volumes are never touched. A
-// rollback is the safe direction, so an emergency stop does not prevent it.
+// rollback is the safe direction, so an emergency stop does not prevent it,
+// and neither does the budget: its spend is recorded like the automatic
+// restore's, and an exhausted or unavailable budget is audited, not obeyed.
 func (p *Pipeline) OwnerRollback(ctx context.Context, req supervisor.RollbackRequest) (supervisor.RollbackReport, error) {
 	if err := req.Validate(); err != nil {
 		return supervisor.RollbackReport{}, err
@@ -83,7 +85,13 @@ func (p *Pipeline) OwnerRollback(ctx context.Context, req supervisor.RollbackReq
 		report.From = before.Digest
 	}
 	target := deploy.Revision{Unit: req.Unit, Digest: lkg.Digest}
-	if err := p.cfg.Backend.Rollback(ctx, target); err != nil {
+	charge := rollbackCharge{issue: approval.IssueID, audit: func(ctx context.Context, outcome core.AuditOutcome, detail string) {
+		p.auditRollback(ctx, req, outcome, detail)
+	}}
+	spend := p.reserveRollback(ctx, charge)
+	err = p.cfg.Backend.Rollback(ctx, target)
+	p.recordRollbackSpend(ctx, charge, spend)
+	if err != nil {
 		p.auditRollback(ctx, req, core.OutcomeFailed, "rollback")
 		return report, holdf("the last known good release could not be restored").WithCause(err)
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bestagentkits/sisf/internal/actions"
 	"github.com/bestagentkits/sisf/internal/actions/approvalactions"
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
 	"github.com/bestagentkits/sisf/pkg/approvals"
@@ -84,7 +85,7 @@ func TestAnApprovalCrossesEverySurfaceAndOnlyAFreshSessionDecidesIt(t *testing.T
 	// other surface decides it: a token carries no step-up, and the
 	// session is honoured for a step-up action only through the
 	// dashboard's form. Each refusal points at the dashboard.
-	owner.StepUpFor("approvals.decide", req.ID)
+	owner.StepUpFor("approvals.decide", actions.DecisionStepUpTarget(req.ID, approvals.DecisionApprove))
 	for _, surface := range []string{surfaceWebMCP, surfaceMCP, surfaceREST, surfaceCLI} {
 		got := c.on(t, surface, "approvals.decide", call{Input: decideInput(req)})
 		if got.Code != core.CodeStepUpRequired {

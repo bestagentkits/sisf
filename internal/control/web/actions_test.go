@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/bestagentkits/sisf/internal/actions"
+	"github.com/bestagentkits/sisf/pkg/approvals"
 )
 
 var approvalLink = regexp.MustCompile(`href="/approvals/([^"]+)"`)
@@ -48,11 +51,14 @@ func TestStopGoesThroughPlanApprovalAndExecute(t *testing.T) {
 	}
 	id, _ := url.PathUnescape(m[1])
 
-	// The Owner reads the request: risk summary, diff, conditions, and the
-	// step-up bound to this request.
+	// The Owner reads the request: risk summary, diff, conditions, and a
+	// step-up bound to this request and each verdict.
 	page := b.get(t, "/approvals/"+m[1])
+	approve := actions.DecisionStepUpTarget(id, approvals.DecisionApprove)
+	reject := actions.DecisionStepUpTarget(id, approvals.DecisionReject)
 	for _, want := range []string{`data-field="risk-summary"`, `data-field="diff"`, "factory/stop:", `name="budget_cap"`, `name="expires_at"`, "approvals.decide",
-		`name="target" value="` + id + `"`} {
+		`name="target" value="` + approve + `"`, `name="target" value="` + reject + `"`,
+		`name="target" value="` + actions.DecisionStepUpTarget(id, approvals.DecisionRequestChanges) + `"`} {
 		if !strings.Contains(page.body, want) {
 			t.Errorf("approval page lacks %q", want)
 		}
@@ -68,7 +74,12 @@ func TestStopGoesThroughPlanApprovalAndExecute(t *testing.T) {
 		!strings.Contains(r.body, "/auth/step-up/google") {
 		t.Fatalf("decision without step-up = %d: %.400s", r.status, r.body)
 	}
-	if action, target := b.stepUpFromPage(t, ownerSub, page.body); action != "approvals.decide" || target != id {
+	// A confirmation made to reject cannot approve.
+	b.stepUpFor(t, ownerSub, "approvals.decide", reject)
+	if r := b.post(t, "/actions/approvals.decide", decision); r.status != http.StatusForbidden || !strings.Contains(r.body, `data-error-code="STEP_UP_REQUIRED"`) {
+		t.Fatalf("approving on a confirmation to reject = %d: %.400s", r.status, r.body)
+	}
+	if action, target := b.stepUpFromPage(t, ownerSub, page.body); action != "approvals.decide" || target != approve {
 		t.Fatalf("the approval page's step-up names %s on %s", action, target)
 	}
 	decision.Set("budget_cap", "5000000")
@@ -120,7 +131,7 @@ func TestAStepUpActionRunsOnlyFromTheDashboardsFormPost(t *testing.T) {
 	}
 	id, _ := url.PathUnescape(m[1])
 
-	b.stepUpFor(t, ownerSub, "approvals.decide", id)
+	b.stepUpFor(t, ownerSub, "approvals.decide", actions.DecisionStepUpTarget(id, approvals.DecisionApprove))
 	page := b.get(t, "/approvals/"+m[1])
 	decision := url.Values{"request_id": {id}, "decision": {"approve"}}
 	fillBinding(t, page.body, decision)

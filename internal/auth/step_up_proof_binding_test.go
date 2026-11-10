@@ -25,13 +25,13 @@ func TestAStepUpIsSpentByTheOneCallItNames(t *testing.T) {
 	for name, c := range map[string]struct{ action, target string }{
 		"another request": {"approvals.decide", "req-B"},
 		"another action":  {"deployments.rollback", "req-A"},
-		"token minting":   {auth.TokenStepUpAction, ""},
+		"token minting":   {auth.TokenStepUpAction, "req-A"},
 	} {
 		if _, err := e.svc.ConsumeStepUp(ctx, view.SessionID, c.action, c.target); !core.HasCode(err, core.CodeStepUpRequired) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	if status, _, _ := mint(t, b, csrf, `{"scopes":["prs:write"]}`); status != http.StatusForbidden {
+	if status, _, _ := mint(t, b, view.CSRFToken, patForm("", 0, "prs:write"), nil); status != http.StatusForbidden {
 		t.Fatalf("a confirmation of a decision minted a token: %d", status)
 	}
 	if _, err := e.svc.ConsumeStepUp(ctx, view.SessionID, "approvals.decide", "req-A"); err != nil {
@@ -64,7 +64,7 @@ func TestAStepUpIsHeldByItsSessionAndNamesAWellFormedCall(t *testing.T) {
 	owner.signIn(t, "google", "owner-sub")
 	view, _ := owner.session(t)
 	csrf := map[string]string{auth.CSRFHeader: view.CSRFToken}
-	for _, q := range []string{"?action=approvals.decide", "?target=req-A", "?action=DROP&target=req-A",
+	for _, q := range []string{"", "?action=approvals.decide", "?target=req-A", "?action=" + auth.TokenStepUpAction, "?action=DROP&target=req-A",
 		"?action=approvals.decide&target=%09req", "?action=approvals.decide&target=-req"} {
 		if resp := owner.do(t, http.MethodPost, "/auth/step-up/google"+q, "", csrf); resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("step-up %s: %d", q, resp.StatusCode)

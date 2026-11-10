@@ -3,6 +3,8 @@ package auth_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
@@ -10,19 +12,15 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// steppedUp signs subject in with Google, completes a step-up that lets the
-// session mint one token and returns the CSRF header for the session.
-func steppedUp(t *testing.T, e *env, b *browser, subject string) map[string]string {
+// signedIn signs subject in with Google and returns the session's CSRF token.
+func signedIn(t *testing.T, b *browser, subject string) string {
 	t.Helper()
 	b.signIn(t, "google", subject)
 	view, _ := b.session(t)
-	csrf := map[string]string{auth.CSRFHeader: view.CSRFToken}
-	stepUpFor(t, b, subject, csrf, "")
-	return csrf
+	return view.CSRFToken
 }
 
-// stepUpFor completes a step-up of b's session; query names the call it is
-// for, and an empty query asks for one token.
+// stepUpFor completes a step-up of b's session; query names the call it is for.
 func stepUpFor(t *testing.T, b *browser, subject string, csrf map[string]string, query string) {
 	t.Helper()
 	_, providerURL := b.hop(t, http.MethodPost, "/auth/step-up/google"+query, csrf)
@@ -31,10 +29,49 @@ func stepUpFor(t *testing.T, b *browser, subject string, csrf map[string]string,
 	}
 }
 
-// mint asks for a personal access token and returns the status and token.
-func mint(t *testing.T, b *browser, header map[string]string, body string) (int, string, auth.TokenInfo) {
+// patForm is the token form for a token named name, living ttlSeconds (zero
+// for the default), with scopes.
+func patForm(name string, ttlSeconds int64, scopes ...string) url.Values {
+	f := url.Values{"scopes": scopes}
+	if name != "" {
+		f.Set("name", name)
+	}
+	if ttlSeconds != 0 {
+		f.Set("ttl_seconds", strconv.FormatInt(ttlSeconds, 10))
+	}
+	return f
+}
+
+// stepUpQuery names the confirmation target asks for.
+func stepUpQuery(target auth.StepUpTarget) string {
+	return "?" + url.Values{auth.StepUpActionField: {target.Action}, auth.StepUpTargetField: {target.Target}}.Encode()
+}
+
+// confirmToken completes a step-up for exactly the token form describes.
+func confirmToken(t *testing.T, b *browser, subject, csrf string, form url.Values) {
 	t.Helper()
-	resp := b.do(t, http.MethodPost, "/auth/tokens", body, header)
+	ttl, _ := strconv.ParseInt(form.Get("ttl_seconds"), 10, 64)
+	req := auth.PATRequest{Name: form.Get("name"), Scopes: form["scopes"], TTL: time.Duration(ttl) * time.Second}
+	stepUpFor(t, b, subject, map[string]string{auth.CSRFHeader: csrf}, stepUpQuery(req.StepUpTarget()))
+}
+
+// mint posts the token form as the person's own navigation, with csrf in
+// the form when it is set, and returns the status and the token. header
+// adds to or overrides the request headers.
+func mint(t *testing.T, b *browser, csrf string, form url.Values, header map[string]string) (int, string, auth.TokenInfo) {
+	t.Helper()
+	body := url.Values{}
+	for k, v := range form {
+		body[k] = v
+	}
+	if csrf != "" {
+		body.Set(auth.CSRFFormField, csrf)
+	}
+	h := map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Mode": "navigate"}
+	for k, v := range header {
+		h[k] = v
+	}
+	resp := b.do(t, http.MethodPost, "/auth/tokens", body.Encode(), h)
 	var out struct {
 		Token string         `json:"token"`
 		Info  auth.TokenInfo `json:"info"`
@@ -47,6 +84,13 @@ func mint(t *testing.T, b *browser, header map[string]string, body string) (int,
 	return resp.StatusCode, out.Token, out.Info
 }
 
+// mintConfirmed confirms exactly the token form describes, then mints it.
+func mintConfirmed(t *testing.T, b *browser, subject, csrf string, form url.Values) (int, string, auth.TokenInfo) {
+	t.Helper()
+	confirmToken(t, b, subject, csrf, form)
+	return mint(t, b, csrf, form, nil)
+}
+
 func bearer(token string) map[string]string {
 	return map[string]string{"Authorization": "Bearer " + token}
 }
@@ -55,12 +99,12 @@ func TestMintingAPersonalTokenNeedsAFreshStepUp(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	b := e.browser(t)
-	b.signIn(t, "google", "owner-sub")
-	view, _ := b.session(t)
-	if status, _, _ := mint(t, b, map[string]string{auth.CSRFHeader: view.CSRFToken}, `{"scopes":["prs:write"]}`); status != http.StatusForbidden {
+	csrf := signedIn(t, b, "owner-sub")
+	if status, _, _ := mint(t, b, csrf, patForm("", 0, "prs:write"), nil); status != http.StatusForbidden {
 		t.Fatalf("a token was minted without step-up: %d", status)
 	}
-	if status, _, _ := mint(t, b, nil, `{"scopes":["prs:write"]}`); status != http.StatusForbidden {
+	confirmToken(t, b, "owner-sub", csrf, patForm("", 0, "prs:write"))
+	if status, _, _ := mint(t, b, "", patForm("", 0, "prs:write"), nil); status != http.StatusForbidden {
 		t.Fatalf("a token was minted without a CSRF token: %d", status)
 	}
 }
@@ -69,8 +113,8 @@ func TestPersonalTokensAreLimitedToTheirScopes(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	b := e.browser(t)
-	csrf := steppedUp(t, e, b, "owner-sub")
-	status, token, info := mint(t, b, csrf, `{"name":"cli","scopes":["prs:write"],"ttl_seconds":3600}`)
+	csrf := signedIn(t, b, "owner-sub")
+	status, token, info := mintConfirmed(t, b, "owner-sub", csrf, patForm("cli", 3600, "prs:write"))
 	if status != http.StatusCreated || info.Kind != auth.TokenPAT || !info.ExpiresAt.Equal(e.clock.Now().Add(time.Hour)) {
 		t.Fatalf("mint: %d %+v", status, info)
 	}
@@ -87,12 +131,12 @@ func TestPersonalTokensAreLimitedToTheirScopes(t *testing.T) {
 	if d := e.authorize(t, actor, outOfScope, ""); d.Effect != core.EffectDeny {
 		t.Fatalf("a token ran an action outside its scopes: %+v", d)
 	}
-	for name, body := range map[string]string{
-		"no scopes": `{"scopes":[]}`, "wildcard": `{"scopes":["*"]}`, "repeated": `{"scopes":["a:b","a:b"]}`,
-		"too long-lived": `{"scopes":["prs:write"],"ttl_seconds":691200}`, "negative ttl": `{"scopes":["prs:write"],"ttl_seconds":-1}`,
-		"unknown field": `{"scopes":["prs:write"],"admin":true}`,
+	for name, form := range map[string]url.Values{
+		"no scopes": patForm("", 0), "wildcard": patForm("", 0, "*"), "repeated": patForm("", 0, "a:b", "a:b"),
+		"too long-lived": patForm("", 691200, "prs:write"), "negative ttl": patForm("", -1, "prs:write"),
+		"unknown field": {"scopes": {"prs:write"}, "admin": {"true"}}, "two names": {"scopes": {"prs:write"}, "name": {"a", "b"}},
 	} {
-		if status, _, _ := mint(t, b, csrf, body); status != http.StatusBadRequest {
+		if status, _, _ := mint(t, b, csrf, form, nil); status != http.StatusBadRequest {
 			t.Errorf("%s: status %d", name, status)
 		}
 	}
@@ -102,10 +146,9 @@ func TestPersonalTokensExpireAndCanBeRevoked(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	b := e.browser(t)
-	csrf := steppedUp(t, e, b, "owner-sub")
-	_, short, _ := mint(t, b, csrf, `{"scopes":["prs:write"],"ttl_seconds":60}`)
-	stepUpFor(t, b, "owner-sub", csrf, "")
-	_, revoked, info := mint(t, b, csrf, `{"scopes":["prs:write"]}`)
+	csrf := signedIn(t, b, "owner-sub")
+	_, short, _ := mintConfirmed(t, b, "owner-sub", csrf, patForm("", 60, "prs:write"))
+	_, revoked, info := mintConfirmed(t, b, "owner-sub", csrf, patForm("", 0, "prs:write"))
 	cli := e.browser(t)
 	if _, code := cli.actor(t, http.MethodGet, bearer(revoked)); code != http.StatusOK {
 		t.Fatalf("setup: %d", code)
@@ -116,7 +159,7 @@ func TestPersonalTokensExpireAndCanBeRevoked(t *testing.T) {
 	if resp := other.do(t, http.MethodDelete, "/auth/tokens/"+info.ID, "", map[string]string{auth.CSRFHeader: otherView.CSRFToken}); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("someone else revoked the token: %d", resp.StatusCode)
 	}
-	if resp := b.do(t, http.MethodDelete, "/auth/tokens/"+info.ID, "", csrf); resp.StatusCode != http.StatusNoContent {
+	if resp := b.do(t, http.MethodDelete, "/auth/tokens/"+info.ID, "", map[string]string{auth.CSRFHeader: csrf}); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("revoke: %d", resp.StatusCode)
 	}
 	if _, code := cli.actor(t, http.MethodGet, bearer(revoked)); code != http.StatusUnauthorized {
@@ -135,10 +178,10 @@ func TestATokenCanNeitherMintTokensNorSatisfyStepUp(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	b := e.browser(t)
-	csrf := steppedUp(t, e, b, "owner-sub")
-	_, token, _ := mint(t, b, csrf, `{"scopes":["policy:write"]}`)
+	csrf := signedIn(t, b, "owner-sub")
+	_, token, _ := mintConfirmed(t, b, "owner-sub", csrf, patForm("", 0, "policy:write"))
 	cli := e.browser(t)
-	if status, _, _ := mint(t, cli, bearer(token), `{"scopes":["policy:write"]}`); status != http.StatusForbidden {
+	if status, _, _ := mint(t, cli, "", patForm("", 0, "policy:write"), bearer(token)); status != http.StatusForbidden {
 		t.Fatalf("a token minted a token: %d", status)
 	}
 	actor, _ := cli.actor(t, http.MethodGet, bearer(token))

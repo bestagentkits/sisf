@@ -29,7 +29,10 @@ func TestTheSimulationProfileDefaultsToTheFakeIdentityProvider(t *testing.T) {
 		cfg.OIDC.ClientID != wiring.SimOIDCClientID {
 		t.Fatalf("sim sign-in: %+v %+v", cfg, cfg.OIDC)
 	}
-	if cfg.GitHub == nil || cfg.GitHub.WebURL != wiring.SimOIDCIssuer || cfg.GitHub.APIURL != wiring.SimOIDCIssuer+"/api" {
+	// The fake stands for both providers, but each keeps its own issuer, so
+	// a GitHub identity can never pass for an OIDC one.
+	if cfg.GitHub == nil || cfg.GitHub.WebURL != wiring.SimOIDCIssuer || cfg.GitHub.APIURL != wiring.SimOIDCIssuer+"/api" ||
+		cfg.GitHub.Issuer == "" || cfg.GitHub.Issuer == cfg.OIDC.Issuer {
 		t.Fatalf("sim GitHub sign-in: %+v", cfg.GitHub)
 	}
 	if want := (identity.Identity{Issuer: wiring.SimOIDCIssuer, Subject: wiring.SimOwnerSubject}); len(cfg.Owners) != 1 || cfg.Owners[0] != want {

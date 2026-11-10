@@ -31,8 +31,8 @@
 {{if .Open}}
 <h2>Decide</h2>
 {{if .CanDecide}}
-<div class="notice warn"><p>A decision needs a fresh confirmation of your identity for this request. It is spent by one decision and lapses after a few minutes.</p>
-{{range .Providers}}<form method="post" action="/auth/step-up/{{.}}?return_to={{$.ReturnTo}}">{{template "csrf" $}}<input type="hidden" name="action" value="approvals.decide"><input type="hidden" name="target" value="{{$.Request.ID}}"><button type="submit">Confirm with {{.}}</button></form>{{end}}</div>
+<div class="notice warn"><p>A decision needs a fresh confirmation of your identity for this request and the decision you will record. It is spent by that one decision and lapses after a few minutes.</p>
+{{range .Providers}}{{$provider := .}}<form method="post" action="/auth/step-up/{{.}}?return_to={{$.ReturnTo}}">{{template "csrf" $}}<input type="hidden" name="action" value="approvals.decide">{{range $.Verdicts}}<button type="submit" name="target" value="{{.Target}}">Confirm with {{$provider}} to {{.Label}}</button>{{end}}</form>{{end}}</div>
 <form method="post" action="/actions/approvals.decide" class="decide">
   {{template "csrf" .}}
   <input type="hidden" name="return_to" value="{{.ReturnTo}}">

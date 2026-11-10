@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -134,7 +135,8 @@ func newFactory(t *testing.T) *factory {
 	return f
 }
 
-// approve signs the Owner in a browser, confirms identity and approves code.
+// approve signs the Owner in a browser, confirms identity for approving
+// exactly code and approves it from the verification page's form.
 func (f *factory) approve(t *testing.T, code string) int {
 	t.Helper()
 	jar, err := cookiejar.New(nil)
@@ -172,9 +174,11 @@ func (f *factory) approve(t *testing.T, code string) int {
 		t.Fatalf("sign-in failed: %s", raw)
 	}
 	csrf := map[string]string{auth.CSRFHeader: view.CSRFToken}
-	send(http.MethodGet, follow(http.MethodGet, follow(http.MethodPost, f.url+"/auth/step-up/google", csrf), nil), "", nil)
-	resp, _ := send(http.MethodPost, f.url+api.DeviceApprovePath, `{"user_code":"`+code+`"}`,
-		map[string]string{auth.CSRFHeader: view.CSRFToken, "Content-Type": "application/json"})
+	stepUp := url.Values{auth.StepUpActionField: {auth.DeviceApprovalStepUpAction}, auth.StepUpTargetField: {code}}
+	send(http.MethodGet, follow(http.MethodGet, follow(http.MethodPost, f.url+"/auth/step-up/google?"+stepUp.Encode(), csrf), nil), "", nil)
+	form := url.Values{"user_code": {code}, auth.CSRFFormField: {view.CSRFToken}}
+	resp, _ := send(http.MethodPost, f.url+api.DeviceApprovePath, form.Encode(),
+		map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Mode": "navigate"})
 	return resp.StatusCode
 }
 

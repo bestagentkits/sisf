@@ -82,6 +82,9 @@ func newSignIn(ctx context.Context, cfg IdentityConfig, scopes []string, clock c
 		if web := strings.TrimRight(cfg.GitHub.WebURL, "/"); web != "" {
 			gh.Issuer, gh.AuthURL, gh.TokenURL = web, web+"/login/oauth/authorize", web+"/login/oauth/access_token"
 		}
+		if cfg.GitHub.Issuer != "" {
+			gh.Issuer = strings.TrimRight(cfg.GitHub.Issuer, "/")
+		}
 		p, err := auth.NewGitHubProvider(gh)
 		if err != nil {
 			return out, err

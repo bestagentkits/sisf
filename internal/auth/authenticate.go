@@ -89,6 +89,17 @@ func safeMethod(m string) bool {
 	return m == http.MethodGet || m == http.MethodHead || m == http.MethodOptions
 }
 
+// NavigatedFormPost reports whether r is an HTML form post a person
+// submitted: a form-encoded body, and no Sec-Fetch-Mode other than
+// "navigate". A browser marks a script's fetch with another mode, and a
+// script cannot send a form-encoded body as a navigation, so a script in the
+// page, such as a WebMCP agent, cannot pass for the person even with the
+// session cookie and the CSRF token. Only such a post may spend a step-up.
+func NavigatedFormPost(r *http.Request) bool {
+	mode := r.Header.Get("Sec-Fetch-Mode")
+	return r.Method == http.MethodPost && isForm(r) && (mode == "" || mode == "navigate")
+}
+
 func isForm(r *http.Request) bool {
 	ct, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	return err == nil && ct == "application/x-www-form-urlencoded"

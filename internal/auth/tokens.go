@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"regexp"
 	"slices"
 	"strings"
@@ -54,6 +57,30 @@ type PATRequest struct {
 	Name   string        `json:"name"`
 	Scopes []string      `json:"scopes"`
 	TTL    time.Duration `json:"-"`
+	// DeviceUserCode, when set, is the user code, as the verification page
+	// shows it, of the device login request the token answers. The token is
+	// then confirmed by a step-up for approving that request, not for this
+	// exact name, scope set and lifetime.
+	DeviceUserCode string `json:"-"`
+}
+
+// StepUpTarget is the one confirmation minting the token of r spends: the
+// approval of its device login request, or the digest of its exact name,
+// scope set and lifetime. The scope order does not change the digest.
+func (r PATRequest) StepUpTarget() StepUpTarget {
+	if r.DeviceUserCode != "" {
+		return StepUpTarget{Action: DeviceApprovalStepUpAction, Target: r.DeviceUserCode}
+	}
+	scopes := slices.Clone(r.Scopes)
+	slices.Sort(scopes)
+	// Marshalling strings, a string slice and an integer cannot fail.
+	canonical, _ := json.Marshal(struct {
+		Name   string   `json:"name"`
+		Scopes []string `json:"scopes"`
+		TTL    int64    `json:"ttl_ns"`
+	}{r.Name, scopes, int64(r.TTL)})
+	sum := sha256.Sum256(canonical)
+	return StepUpTarget{Action: TokenStepUpAction, Target: "sha256:" + hex.EncodeToString(sum[:])}
 }
 
 // ServiceTokenRequest asks for a service token for an agent or service.
@@ -75,9 +102,10 @@ type token struct {
 
 // IssuePAT mints a personal access token for the person signed in to the
 // session named by actor.SessionID. Tokens cannot mint tokens, and the
-// session must hold an unspent step-up made to mint a token: a token
-// outlives the session it was minted from, so minting one is a sensitive
-// act, and each confirmation mints one token at most.
+// session must hold an unspent step-up for exactly this token, named by
+// req.StepUpTarget: a token outlives the session it was minted from, so
+// minting one is a sensitive act, and each confirmation mints the one token
+// it names. Callers serve this only to a NavigatedFormPost.
 func (s *Service) IssuePAT(actor core.Actor, req PATRequest) (IssuedToken, error) {
 	s.mu.Lock()
 	ss, ok := s.byHandle[actor.SessionID]
@@ -98,10 +126,15 @@ func (s *Service) IssuePAT(actor core.Actor, req PATRequest) (IssuedToken, error
 		s.mu.Unlock()
 		return IssuedToken{}, invalidArgument("a token may live at most " + MaxPATTTL.String())
 	}
-	_, err := s.consumeProofLocked(ss, StepUpTarget{Action: TokenStepUpAction}, s.cfg.Clock.Now())
+	if req.DeviceUserCode != "" && !stepUpTargetPattern.MatchString(req.DeviceUserCode) {
+		s.mu.Unlock()
+		return IssuedToken{}, invalidArgument("the login code is malformed")
+	}
+	want := req.StepUpTarget()
+	_, err := s.consumeProofLocked(ss, want, s.cfg.Clock.Now())
 	s.mu.Unlock()
 	if err != nil {
-		return IssuedToken{}, core.NewError(core.CodeStepUpRequired, "confirm your identity again before minting a token")
+		return IssuedToken{}, core.NewError(core.CodeStepUpRequired, "confirm your identity again for exactly this token before minting it")
 	}
 	return s.issue(TokenPAT, actor.ID, core.ActorHuman, req.Name, req.Scopes, req.TTL, DefaultPATTTL, MaxPATTTL)
 }

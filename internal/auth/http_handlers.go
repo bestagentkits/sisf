@@ -1,8 +1,8 @@
 package auth
 
 import (
-	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -53,8 +53,7 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // handleStepUp starts a confirmation of the signed-in person for one call:
 // the action and target fields name it, from the form or the query. A
-// step-up that names neither lets the session mint one personal access
-// token and nothing else.
+// step-up that does not name one call is refused.
 func (s *Service) handleStepUp(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	ss, err := s.sessionFromRequest(r, true)
@@ -158,30 +157,70 @@ func (s *Service) handleListTokens(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tokens": s.Tokens(ss.actorID)})
 }
 
+// Fields of the token form POST /auth/tokens reads. scopes repeats, once
+// per scope.
+const (
+	TokenNameField   = "name"
+	TokenScopesField = "scopes"
+	TokenTTLField    = "ttl_seconds"
+)
+
+// handleCreateToken mints a personal access token from the person's own
+// form post. Minting spends a step-up, so a script's fetch, a JSON body or
+// a token is refused before anything is spent; the step-up must name this
+// exact request (PATRequest.StepUpTarget).
 func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	ss, err := s.sessionFromRequest(r, true)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	var in struct {
-		Name       string   `json:"name"`
-		Scopes     []string `json:"scopes"`
-		TTLSeconds int64    `json:"ttl_seconds"`
-	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&in); err != nil {
-		writeError(w, invalidArgument("the body must be {name, scopes, ttl_seconds}"))
+	if !NavigatedFormPost(r) {
+		writeError(w, core.NewError(core.CodePermissionDenied,
+			"a token is minted only from a form you submit in the browser; a script cannot mint one"))
 		return
 	}
-	issued, err := s.IssuePAT(ss.actor(), PATRequest{Name: in.Name, Scopes: in.Scopes, TTL: time.Duration(in.TTLSeconds) * time.Second})
+	req, err := patRequestFromForm(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	issued, err := s.IssuePAT(ss.actor(), req)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, map[string]any{"token": string(issued.Token.Reveal()), "info": issued.TokenInfo})
+}
+
+// patRequestFromForm reads the token form. A field it does not know is
+// refused, so a form cannot carry more than it shows.
+func patRequestFromForm(r *http.Request) (PATRequest, error) {
+	if err := r.ParseForm(); err != nil {
+		return PATRequest{}, invalidArgument("the token form could not be read")
+	}
+	form := r.PostForm
+	for key := range form {
+		switch key {
+		case TokenNameField, TokenScopesField, TokenTTLField, CSRFFormField:
+		default:
+			return PATRequest{}, invalidArgument("the token form has no field " + key)
+		}
+	}
+	if len(form[TokenNameField]) > 1 || len(form[TokenTTLField]) > 1 {
+		return PATRequest{}, invalidArgument("the token form names one name and one lifetime")
+	}
+	var ttl int64
+	if raw := form.Get(TokenTTLField); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 0 || n > int64(MaxPATTTL/time.Second) {
+			return PATRequest{}, invalidArgument("a token may live at most " + MaxPATTTL.String())
+		}
+		ttl = n
+	}
+	return PATRequest{Name: form.Get(TokenNameField), Scopes: form[TokenScopesField], TTL: time.Duration(ttl) * time.Second}, nil
 }
 
 func (s *Service) handleRevokeToken(w http.ResponseWriter, r *http.Request) {

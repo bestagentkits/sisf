@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -86,11 +87,14 @@ func (b *browser) signIn(t *testing.T, subject string) map[string]string {
 	return map[string]string{auth.CSRFHeader: b.csrf(t)}
 }
 
-// stepUp confirms the signed-in person's identity again at the provider.
-func (b *browser) stepUp(t *testing.T, subject string, csrf map[string]string) {
+// confirmApproval confirms the signed-in person's identity again at the
+// provider, for approving the login request with userCode, as the
+// verification page's step-up form asks.
+func (b *browser) confirmApproval(t *testing.T, subject string, csrf map[string]string, userCode string) {
 	t.Helper()
 	b.e.fake.SignInAs(subject)
-	loc := b.hop(t, http.MethodPost, "/auth/step-up/google", csrf)
+	q := url.Values{auth.StepUpActionField: {auth.DeviceApprovalStepUpAction}, auth.StepUpTargetField: {userCode}}
+	loc := b.hop(t, http.MethodPost, "/auth/step-up/google?"+q.Encode(), csrf)
 	b.hop(t, http.MethodGet, b.hop(t, http.MethodGet, loc, nil), nil)
 }
 

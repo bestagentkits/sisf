@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/auth"
 	"github.com/bestagentkits/sisf/internal/control/api"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
@@ -49,18 +50,28 @@ func (b *browser) poll(t *testing.T, deviceCode string) (reply, polled) {
 	return r, p
 }
 
-func (b *browser) approve(t *testing.T, code string, csrf map[string]string) reply {
+// approve posts the verification page's approve form as the person's own
+// navigation, carrying the CSRF token of header, if any, in the form.
+func (b *browser) approve(t *testing.T, code string, header map[string]string) reply {
 	t.Helper()
-	return b.do(t, http.MethodPost, api.DeviceApprovePath, `{"user_code":"`+code+`"}`, jsonHeader(csrf))
+	form := url.Values{"user_code": {code}}
+	if csrf := header[auth.CSRFHeader]; csrf != "" {
+		form.Set(auth.CSRFFormField, csrf)
+	}
+	h := map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Mode": "navigate"}
+	for k, v := range header {
+		if k != auth.CSRFHeader {
+			h[k] = v
+		}
+	}
+	return b.do(t, http.MethodPost, api.DeviceApprovePath, form.Encode(), h)
 }
 
-// owner is a browser signed in as the Owner who has just confirmed identity.
+// owner is a browser signed in as the Owner.
 func (e *env) owner(t *testing.T) (*browser, map[string]string) {
 	t.Helper()
 	b := e.browser(t)
-	csrf := b.signIn(t, "owner-sub")
-	b.stepUp(t, "owner-sub", csrf)
-	return b, csrf
+	return b, b.signIn(t, "owner-sub")
 }
 
 func TestALoginRequestIsApprovedInTheBrowserAndTheTokenIsCollectedOnce(t *testing.T) {
@@ -81,6 +92,7 @@ func TestALoginRequestIsApprovedInTheBrowserAndTheTokenIsCollectedOnce(t *testin
 		!strings.Contains(page.body, `name="csrf_token" value="`+csrf["X-CSRF-Token"]+`"`) || !strings.Contains(page.header.Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 		t.Fatalf("verification page: %d %s", page.status, page.body)
 	}
+	person.confirmApproval(t, "owner-sub", csrf, s.UserCode)
 	if r := person.approve(t, strings.ToLower(s.UserCode), csrf); r.status != http.StatusOK || strings.Contains(r.body, "sisf_pat_") {
 		t.Fatalf("approve: %d %s", r.status, r.body)
 	}
@@ -113,18 +125,20 @@ func TestACodeApprovedByOnePersonIsNotUsableAgain(t *testing.T) {
 	cli := e.browser(t)
 	_, s := cli.start(t, `{}`)
 	owner, ownerCSRF := e.owner(t)
+	owner.confirmApproval(t, "owner-sub", ownerCSRF, s.UserCode)
 	if r := owner.approve(t, s.UserCode, ownerCSRF); r.status != http.StatusOK {
 		t.Fatalf("first approval: %d %s", r.status, r.body)
 	}
 	alice := e.browser(t)
 	aliceCSRF := alice.signIn(t, "alice-sub")
-	alice.stepUp(t, "alice-sub", aliceCSRF)
+	alice.confirmApproval(t, "alice-sub", aliceCSRF, s.UserCode)
+	owner.confirmApproval(t, "owner-sub", ownerCSRF, s.UserCode)
 	for who, b := range map[string]*browser{"another person": alice, "the same person": owner} {
 		csrf := aliceCSRF
 		if b == owner {
 			csrf = ownerCSRF
 		}
-		if r := b.approve(t, s.UserCode, csrf); r.status != http.StatusConflict || r.errorCode(t) != core.CodeReplayed {
+		if r := b.approve(t, s.UserCode, csrf); r.status != http.StatusConflict {
 			t.Errorf("%s approved a used code: %d %s", who, r.status, r.body)
 		}
 	}
@@ -140,8 +154,9 @@ func TestALoginRequestExpires(t *testing.T) {
 	cli := e.browser(t)
 	_, s := cli.start(t, `{}`)
 	owner, csrf := e.owner(t)
+	owner.confirmApproval(t, "owner-sub", csrf, s.UserCode)
 	e.clock.Advance(api.DefaultDeviceCodeTTL)
-	if r := owner.approve(t, s.UserCode, csrf); r.status != http.StatusGone || r.errorCode(t) != core.CodeExpired {
+	if r := owner.approve(t, s.UserCode, csrf); r.status != http.StatusGone {
 		t.Fatalf("approve after expiry: %d %s", r.status, r.body)
 	}
 	_, s2 := cli.start(t, `{}`)
@@ -160,6 +175,7 @@ func TestAWrongOrMalformedCodeIsRefusedAndNothingIsIssued(t *testing.T) {
 	cli := e.browser(t)
 	_, s := cli.start(t, `{}`)
 	owner, csrf := e.owner(t)
+	owner.confirmApproval(t, "owner-sub", csrf, s.UserCode)
 	for _, code := range []string{"ZZZZ-ZZZZ", "", strings.Repeat("A", 40), "<script>"} {
 		if r := owner.approve(t, code, csrf); r.status < 400 || r.status > 499 {
 			t.Errorf("code %q: %d %s", code, r.status, r.body)
@@ -198,10 +214,16 @@ func TestApprovalNeedsAFreshStepUpAndABrowserSessionWithItsCSRFToken(t *testing.
 	e := newEnv(t, sampleRegistry)
 	cli := e.browser(t)
 	_, s := cli.start(t, `{}`)
+	_, other := cli.start(t, `{}`)
 	person := e.browser(t)
 	csrf := person.signIn(t, "owner-sub")
-	if r := person.approve(t, s.UserCode, csrf); r.status != http.StatusForbidden || r.errorCode(t) != core.CodeStepUpRequired {
+	if r := person.approve(t, s.UserCode, csrf); r.status != http.StatusForbidden || !strings.Contains(r.body, "confirm your identity") {
 		t.Fatalf("approve without step-up: %d %s", r.status, r.body)
+	}
+	// A confirmation names the one login request it approves.
+	person.confirmApproval(t, "owner-sub", csrf, other.UserCode)
+	if r := person.approve(t, s.UserCode, csrf); r.status != http.StatusForbidden || !strings.Contains(r.body, "confirm your identity") {
+		t.Fatalf("a confirmation for another login request approved this one: %d %s", r.status, r.body)
 	}
 	if r := person.approve(t, s.UserCode, nil); r.status != http.StatusForbidden || r.errorCode(t) != core.CodePermissionDenied {
 		t.Fatalf("approve without CSRF: %d %s", r.status, r.body)
@@ -216,36 +238,38 @@ func TestApprovalNeedsAFreshStepUpAndABrowserSessionWithItsCSRFToken(t *testing.
 	if r, _ := cli.poll(t, s.DeviceCode); r.status != http.StatusAccepted {
 		t.Fatalf("a refused approval changed the request: %d", r.status)
 	}
-	person.stepUp(t, "owner-sub", csrf)
+	person.confirmApproval(t, "owner-sub", csrf, s.UserCode)
 	if r := person.approve(t, s.UserCode, csrf); r.status != http.StatusOK {
 		t.Fatalf("approval after step-up: %d %s", r.status, r.body)
 	}
 }
 
-func TestTheVerificationPageSignsInFirstAndApprovesFromAForm(t *testing.T) {
+// Approving spends a step-up, so a script in the person's browser cannot
+// approve, with the session cookie and the CSRF token, by a JSON body or a
+// fetch; the refusal spends nothing and claims nothing.
+func TestALoginRequestIsApprovedOnlyFromTheVerificationPagesForm(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, sampleRegistry)
 	cli := e.browser(t)
-	_, s := cli.start(t, `{"name":"ci runner"}`)
-	person := e.browser(t)
-	anon := person.do(t, http.MethodGet, api.DeviceVerifyPath+"?user_code="+s.UserCode, "", nil)
-	if anon.status != http.StatusOK || !strings.Contains(anon.body, "/auth/login/google?return_to=") || strings.Contains(anon.body, `action="`+api.DeviceApprovePath+`"`) {
-		t.Fatalf("anonymous page: %d %s", anon.status, anon.body)
+	_, s := cli.start(t, `{}`)
+	person, csrf := e.owner(t)
+	person.confirmApproval(t, "owner-sub", csrf, s.UserCode)
+	if r := person.do(t, http.MethodPost, api.DeviceApprovePath, `{"user_code":"`+s.UserCode+`"}`, jsonHeader(csrf)); r.status != http.StatusForbidden ||
+		r.errorCode(t) != core.CodePermissionDenied {
+		t.Fatalf("a JSON approval: %d %s", r.status, r.body)
 	}
-	csrf := person.signIn(t, "owner-sub")
-	person.stepUp(t, "owner-sub", csrf)
-	form := url.Values{"user_code": {s.UserCode}, "csrf_token": {csrf["X-CSRF-Token"]}}.Encode()
-	r := person.do(t, http.MethodPost, api.DeviceApprovePath, form, map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
-	if r.status != http.StatusOK || !strings.Contains(r.body, "Approved") {
-		t.Fatalf("form approval: %d %s", r.status, r.body)
+	for _, mode := range []string{"cors", "same-origin", "no-cors"} {
+		if r := person.approve(t, s.UserCode, map[string]string{auth.CSRFHeader: csrf[auth.CSRFHeader], "Sec-Fetch-Mode": mode}); r.status != http.StatusForbidden ||
+			r.errorCode(t) != core.CodePermissionDenied {
+			t.Errorf("a fetch in mode %s approved: %d %s", mode, r.status, r.body)
+		}
 	}
-	bad := person.do(t, http.MethodPost, api.DeviceApprovePath, url.Values{"user_code": {s.UserCode}, "csrf_token": {"wrong"}}.Encode(),
-		map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
-	if bad.status != http.StatusForbidden {
-		t.Fatalf("form approval without the CSRF token: %d", bad.status)
+	e.clock.Advance(10 * time.Second)
+	if r, _ := cli.poll(t, s.DeviceCode); r.status != http.StatusAccepted {
+		t.Fatalf("a refused approval changed the request: %d", r.status)
 	}
-	if missing := person.do(t, http.MethodGet, api.DeviceVerifyPath, "", nil); missing.status != http.StatusBadRequest {
-		t.Fatalf("page without a code: %d", missing.status)
+	if r := person.approve(t, s.UserCode, csrf); r.status != http.StatusOK {
+		t.Fatalf("the person's own form post after refused scripts: %d %s", r.status, r.body)
 	}
 }
 

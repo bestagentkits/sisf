@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/bestagentkits/sisf/pkg/approvals"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -30,19 +31,27 @@ func (s *Service) requiresStepUpProof(call invocation) bool {
 	return call.spec.StepUp && !call.req.DryRun && !s.cfg.Registry.IsFallback(call.spec.Name)
 }
 
+// DecisionStepUpTarget is what a step-up for deciding the approval request
+// requestID with decision names: the request and the verdict, so a
+// confirmation made to reject can never approve.
+func DecisionStepUpTarget(requestID string, decision approvals.Decision) string {
+	return requestID + "/" + string(decision)
+}
+
 // stepUpTarget is what the confirmation of call must name: the approval
-// request a decision answers, the approval an execution spends, or, for a
-// plan, the digest of the exact canonical input.
+// request a decision answers with its verdict, the approval an execution
+// spends, or, for a plan, the digest of the exact canonical input.
 func (s *Service) stepUpTarget(call invocation) (string, error) {
 	switch {
 	case call.spec.Name == ApprovalDecisionAction:
 		var in struct {
-			RequestID string `json:"request_id"`
+			RequestID string             `json:"request_id"`
+			Decision  approvals.Decision `json:"decision"`
 		}
-		if err := json.Unmarshal(call.req.Input, &in); err != nil || in.RequestID == "" {
-			return "", core.NewError(core.CodeInvalidArgument, "a decision names the request_id it answers")
+		if err := json.Unmarshal(call.req.Input, &in); err != nil || in.RequestID == "" || !in.Decision.Valid() {
+			return "", core.NewError(core.CodeInvalidArgument, "a decision names the request_id it answers and its decision")
 		}
-		return in.RequestID, nil
+		return DecisionStepUpTarget(in.RequestID, in.Decision), nil
 	case call.req.ApprovalID != "":
 		return call.req.ApprovalID, nil
 	}

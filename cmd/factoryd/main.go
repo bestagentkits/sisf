@@ -73,13 +73,7 @@ func main() {
 
 // run executes one command line and returns the exit status.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
-	var extra []string
-	for _, name := range append([]string{wiring.EnvEdgeCountersToken}, wiring.IdentitySecretEnv...) {
-		if v := strings.TrimSpace(getenv(name)); v != "" {
-			extra = append(extra, v)
-		}
-	}
-	proc, err := observe.Start(stderr, getenv, core.SystemClock{}, extra...)
+	proc, err := observe.Start(stderr, getenv, core.SystemClock{}, logSecrets(getenv, os.Environ)...)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "factoryd: %s\n", describe(err))
 		return exitFailure
@@ -98,6 +92,25 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	_, _ = fmt.Fprintf(stderr, "factoryd: %s\n", describe(err))
 	return exitFailure
+}
+
+// logSecrets are the values, beyond observe.SecretEnv, the process's log
+// redacts: the edge counters token, the sign-in client secrets, and every
+// value the control zone's env secret provider serves.
+func logSecrets(getenv func(string) string, environ func() []string) []string {
+	var out []string
+	for _, name := range append([]string{wiring.EnvEdgeCountersToken}, wiring.IdentitySecretEnv...) {
+		if v := strings.TrimSpace(getenv(name)); v != "" {
+			out = append(out, v)
+		}
+	}
+	for _, kv := range environ() {
+		name, v, ok := strings.Cut(kv, "=")
+		if ok && strings.HasPrefix(name, wiring.EnvControlSecretPrefix) && strings.TrimSpace(v) != "" {
+			out = append(out, strings.TrimSpace(v))
+		}
+	}
+	return out
 }
 
 // dispatch runs the subcommand named by args.

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/auth"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -25,6 +26,9 @@ type pageData struct {
 	SignedIn bool
 	CSRF     string
 	Links    []providerLink
+	// StepUpAction is what the step-up forms confirm: approving the request
+	// with UserCode, which is their target.
+	StepUpAction string
 }
 
 // providerLink is where the page sends a person to sign in or to confirm
@@ -47,6 +51,7 @@ Check that this code is the one the terminal shows: <strong>{{.UserCode}}</stron
 <button type="submit">Approve this command line</button></form>
 <p>Approving needs a recent identity confirmation. If it is refused for that reason, confirm and approve again:</p>
 {{range .Links}}<form method="post" action="{{.StepUp}}"><input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+<input type="hidden" name="action" value="{{$.StepUpAction}}"><input type="hidden" name="target" value="{{$.UserCode}}">
 <button type="submit">Confirm identity with {{.Name}}</button></form>{{end}}
 {{else}}{{range .Links}}<p><a href="{{.SignIn}}">Sign in with {{.Name}}</a></p>{{end}}{{end}}
 {{end}}
@@ -76,6 +81,7 @@ func (h *handler) deviceVerify(w http.ResponseWriter, r *http.Request) {
 func (h *handler) fillGrant(r *http.Request, data pageData, g grant) pageData {
 	data.UserCode, data.Name, data.Scopes, data.Expires = formatUserCode(g.userCode), g.name, g.scopes, g.expires
 	data.CSRF, data.SignedIn = h.sessionCSRF(r)
+	data.StepUpAction = auth.DeviceApprovalStepUpAction
 	back := url.QueryEscape(DeviceVerifyPath + "?user_code=" + url.QueryEscape(data.UserCode))
 	for _, name := range h.cfg.LoginProviders {
 		p := url.PathEscape(name)

@@ -8,10 +8,15 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// TokenStepUpAction is the purpose of a step-up started without naming an
-// action: it lets the session mint one personal access token. A step-up for
-// any other action must name the one target it confirms.
-const TokenStepUpAction = "auth.tokens.create"
+// The actions a step-up names to mint a personal access token. Each is
+// bound to one target like every other step-up: TokenStepUpAction to the
+// digest of the exact token request (see PATRequest.StepUpTarget), and
+// DeviceApprovalStepUpAction to the user code of the one device login
+// request it approves. Neither is ever spent by the action service.
+const (
+	TokenStepUpAction          = "auth.tokens.create"
+	DeviceApprovalStepUpAction = "auth.device.approve"
+)
 
 // maxProofsPerSession bounds the confirmations one session may hold at once;
 // the oldest goes first.
@@ -38,14 +43,11 @@ type stepUpProof struct {
 	expires     time.Time
 }
 
-// parseStepUpTarget validates the target a step-up is started for. No
-// action and no target mean a step-up to mint a personal access token.
+// parseStepUpTarget validates the target a step-up is started for. Every
+// step-up names an action and the one target it confirms; there is no
+// generic confirmation.
 func parseStepUpTarget(action, target string) (StepUpTarget, error) {
 	switch {
-	case action == "" && target == "":
-		return StepUpTarget{Action: TokenStepUpAction}, nil
-	case action == TokenStepUpAction && target == "":
-		return StepUpTarget{Action: action}, nil
 	case !stepUpActionPattern.MatchString(action) || len(action) > 128:
 		return StepUpTarget{}, invalidArgument("a step-up names the action it confirms")
 	case !stepUpTargetPattern.MatchString(target):
@@ -94,10 +96,11 @@ func (s *Service) consumeProofLocked(ss *session, target StepUpTarget, now time.
 // ConsumeStepUp spends the confirmation the session with the public handle
 // holds for action on target, and returns when the person made it. Each
 // confirmation authorizes one call: a second call, another target or
-// another action needs a new one. A token's handle never holds one.
+// another action needs a new one. A token's handle never holds one, and a
+// confirmation to mint a token is spent only by minting it.
 func (s *Service) ConsumeStepUp(_ context.Context, handle, action, target string) (time.Time, error) {
 	want, err := parseStepUpTarget(action, target)
-	if err != nil || want.Target == "" {
+	if err != nil || mintsToken(want.Action) {
 		return time.Time{}, core.NewError(core.CodeStepUpRequired, "a step-up confirms one named call")
 	}
 	s.mu.Lock()
@@ -110,4 +113,10 @@ func (s *Service) ConsumeStepUp(_ context.Context, handle, action, target string
 		return time.Time{}, core.NewError(core.CodeStepUpRequired, "a step-up is made in a live browser session")
 	}
 	return s.consumeProofLocked(ss, want, s.cfg.Clock.Now())
+}
+
+// mintsToken reports whether action is one of the confirmations only token
+// minting spends.
+func mintsToken(action string) bool {
+	return action == TokenStepUpAction || action == DeviceApprovalStepUpAction
 }

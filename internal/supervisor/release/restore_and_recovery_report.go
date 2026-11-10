@@ -50,9 +50,10 @@ func (p *Pipeline) restore(ctx context.Context, r *rollout, reason string) (Outc
 		_ = p.audit(ctx, r.h, "release.restore", core.OutcomeFailed, map[string]string{"reason": reason})
 		return out, err
 	}
-	spend := p.reserveRollback(ctx, r)
+	charge := p.runRollbackCharge(r)
+	spend := p.reserveRollback(ctx, charge)
 	err := p.cfg.Backend.Rollback(ctx, r.lkgRev)
-	p.recordRollbackSpend(ctx, r, spend)
+	p.recordRollbackSpend(ctx, charge, spend)
 	if err != nil {
 		return failed(ResultRestoreFailed, holdf("the last known good release could not be restored").WithCause(err))
 	}

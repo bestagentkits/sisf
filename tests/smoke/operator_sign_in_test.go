@@ -4,11 +4,9 @@ package smoke
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +15,6 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
-	"github.com/bestagentkits/sisf/internal/auth"
 	"github.com/bestagentkits/sisf/internal/install"
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
 )
@@ -71,24 +68,15 @@ func signInOperator(ctx context.Context, r *commandRunner, sisf, home string, en
 }
 
 // approveDeviceLogin signs the Owner in at the fake identity provider of
-// the development install, confirms their identity, which minting the CLI's
-// token needs, and approves the login code.
+// the development install, confirms their identity for approving exactly
+// this login code, and approves it from the verification page's form.
 func approveDeviceLogin(r *commandRunner, base, code string) {
 	r.t.Helper()
 	b := harness.NewBrowser(r.t, base, loopbackURL(install.PortFakeOIDC, ""))
 	b.SignIn(wiring.ProviderOIDC, wiring.SimOwnerSubject)
-	b.StepUp()
-	body, _ := json.Marshal(map[string]string{"user_code": code})
-	resp := b.Do(http.MethodPost, deviceApprovePath, bytes.NewReader(body),
-		http.Header{"Content-Type": {"application/json"}, auth.CSRFHeader: {b.CSRF()}})
-	if resp.StatusCode != http.StatusOK {
-		r.fatalf("the login code was not approved: %d", resp.StatusCode)
-	}
+	b.ApproveDevice(code)
 	r.logf("approved the CLI's sign-in as %s at the fake identity provider", wiring.SimOwnerSubject)
 }
-
-// deviceApprovePath is where a signed-in person approves a CLI login code.
-const deviceApprovePath = "/api/v1/device/approve"
 
 // streamLines hands each line of rd to fn until rd ends.
 func streamLines(rd io.Reader, fn func(string)) {

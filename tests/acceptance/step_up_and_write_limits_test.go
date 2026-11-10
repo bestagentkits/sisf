@@ -6,6 +6,7 @@ import (
 
 	"github.com/bestagentkits/sisf/internal/actions"
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
+	"github.com/bestagentkits/sisf/pkg/approvals"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -21,16 +22,16 @@ func TestAStaleStepUpIsRefusedAndAFreshOneDecides(t *testing.T) {
 	}
 	req := openRequest(t, c, "budget.set")
 
-	owner.StepUpFor("approvals.decide", req.ID)
+	owner.StepUpFor("approvals.decide", actions.DecisionStepUpTarget(req.ID, approvals.DecisionApprove))
 	f.Clock.Advance(6 * time.Minute)
 	got := c.on(t, surfaceDashboard, "approvals.decide", call{Input: decideInput(req)})
 	if got.Code != core.CodeStepUpRequired {
 		t.Fatalf("a stale step-up decided: %q %s", got.Code, got.Message)
 	}
-	if got.Details["step_up_action"] != "approvals.decide" || got.Details["step_up_target"] != req.ID {
+	if got.Details["step_up_action"] != "approvals.decide" || got.Details["step_up_target"] != actions.DecisionStepUpTarget(req.ID, approvals.DecisionApprove) {
 		t.Fatalf("the refusal offers a step-up for %+v, want this request", got.Details)
 	}
-	owner.StepUpFor("approvals.decide", req.ID)
+	owner.StepUpFor("approvals.decide", actions.DecisionStepUpTarget(req.ID, approvals.DecisionApprove))
 	if got := c.on(t, surfaceDashboard, "approvals.decide", call{Input: decideInput(req)}); got.Code != "" {
 		t.Fatalf("a fresh step-up could not decide: %q %s", got.Code, got.Message)
 	}

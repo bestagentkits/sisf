@@ -40,7 +40,7 @@ func (f *Factory) surfaceConfig(base string) *wiring.SurfaceConfig {
 	return &wiring.SurfaceConfig{
 		Identity: wiring.IdentityConfig{ExternalURL: base,
 			OIDC: &wiring.OIDCLogin{Issuer: issuer, ClientID: wiring.SimOIDCClientID, ClientSecret: secretOf(oidcClientSecret)},
-			GitHub: &wiring.GitHubLogin{WebURL: issuer, APIURL: issuer + "/api", ClientID: wiring.SimOIDCClientID,
+			GitHub: &wiring.GitHubLogin{WebURL: issuer, APIURL: issuer + "/api", Issuer: issuer + wiring.SimGitHubIssuerPath, ClientID: wiring.SimOIDCClientID,
 				ClientSecret: secretOf(oidcClientSecret)},
 			Owners: []identity.Identity{{Issuer: issuer, Subject: OwnerSubject}}},
 		GitHubToken: secretOf(githubToken), Supervisor: f.Supervisor, Telemetry: f.Telemetry, Version: "harness",

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"mime"
 	"net/http"
 	"regexp"
 	"slices"
@@ -104,58 +103,45 @@ func (h *handler) deviceToken(w http.ResponseWriter, r *http.Request) {
 }
 
 // deviceApprove lets the person behind a browser session approve a login
-// request. The token is minted from that session, so it carries the session's
-// step-up requirement and never more authority than the person holds; a
-// bearer token cannot approve because it has no session to mint from.
+// request from the verification page's form. The token is minted from that
+// session, which must hold a step-up for approving exactly this request, and
+// never carries more authority than the person holds. Approving spends that
+// step-up, so only the person's own form post is served: a script's fetch
+// or a JSON body is refused before anything is claimed, and a bearer token
+// cannot approve because it has no session to mint from.
 func (h *handler) deviceApprove(w http.ResponseWriter, r *http.Request) {
 	actor, ok := auth.ActorFrom(r.Context())
 	if !ok {
 		h.fail(w, core.NewError(core.CodeUnauthenticated, "the caller could not be identified"))
 		return
 	}
-	asForm := isFormRequest(r)
-	var userCode string
-	if asForm {
-		userCode = r.PostFormValue("user_code")
-	} else {
-		var in struct {
-			UserCode string `json:"user_code"`
-		}
-		if err := decodeBody(w, r, maxSmallBody, &in); err != nil {
-			h.fail(w, err)
-			return
-		}
-		userCode = in.UserCode
+	if !auth.NavigatedFormPost(r) {
+		h.fail(w, core.NewError(core.CodePermissionDenied,
+			"a login request is approved only from the verification page's form; a script cannot approve it"))
+		return
 	}
-	view, err := h.approve(actor, userCode)
-	switch {
-	case asForm:
-		h.renderApproval(w, r, userCode, err)
-	case err != nil:
-		h.fail(w, err)
-	default:
-		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusOK, map[string]any{"approved": true, "scopes": view.scopes, "expires_at": view.expires})
-	}
+	userCode := r.PostFormValue("user_code")
+	h.renderApproval(w, r, userCode, h.approve(actor, userCode))
 }
 
-// approve claims the request, mints the token and parks it for the CLI.
-func (h *handler) approve(actor core.Actor, userCode string) (grant, error) {
+// approve claims the request, mints the token and parks it for the CLI. The
+// token spends the step-up made for approving this request's user code.
+func (h *handler) approve(actor core.Actor, userCode string) error {
 	if len(userCode) > 32 {
-		return grant{}, invalid("the login code is malformed")
+		return invalid("the login code is malformed")
 	}
 	key, g, err := h.devices.claim(userCode)
 	if err != nil {
-		return grant{}, err
+		return err
 	}
-	issued, err := h.cfg.Identity.IssuePAT(actor, auth.PATRequest{Name: tokenName(g.name), Scopes: g.scopes, TTL: h.cfg.DeviceTokenTTL})
+	issued, err := h.cfg.Identity.IssuePAT(actor, auth.PATRequest{Name: tokenName(g.name), Scopes: g.scopes,
+		TTL: h.cfg.DeviceTokenTTL, DeviceUserCode: formatUserCode(g.userCode)})
 	if err != nil {
 		h.devices.release(key)
-		return grant{}, err
+		return err
 	}
 	h.devices.approve(key, issued)
-	g.expires = issued.ExpiresAt
-	return g, nil
+	return nil
 }
 
 func tokenName(client string) string {
@@ -163,9 +149,4 @@ func tokenName(client string) string {
 		return "cli login"
 	}
 	return "cli login: " + client
-}
-
-func isFormRequest(r *http.Request) bool {
-	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	return err == nil && mt == "application/x-www-form-urlencoded"
 }

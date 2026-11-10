@@ -31,6 +31,7 @@ What the factory enforces today and where to read the owner of each control. Why
 - `--agent-home` and `--qa-home` give an agent your own login under `trusted_code_only`; they are refused near the factory's secrets, state and trust, and the install directory must lie outside that home. Agent-written code is not built on the host: candidate builds are held in Standalone mode.
 - Remote MCP and WebMCP are wired and tested in process against the fake identity provider; they have not been exercised against a real provider or MCP client deployment.
 - Sessions, tokens, step-up confirmations and OAuth grants are held in memory: a restart of the control process signs everyone out. A personal access token or MCP access token can never decide an approval; only the dashboard's own form can, after a step-up confirming that one request, which the decision spends.
+- A step-up must be a real new sign-in, so it is confirmed only through an OpenID Connect provider, which can force one and prove when it happened. GitHub OAuth cannot, so a step-up through GitHub is refused with `NOT_SUPPORTED`, which names the OIDC providers to confirm through. Signing in with GitHub still works, but a step-up must be made by the identity that is signed in. An Owner who decides approvals, rolls back, changes the budget or mints tokens must therefore sign in through an OIDC provider.
 - The incident notifier in [ADR 0018](../adr/0018-people-during-an-incident.md) is a proposal, not shipped.
 
 ## Operator habits

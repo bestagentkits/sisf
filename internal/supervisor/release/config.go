@@ -95,7 +95,10 @@ type Config struct {
 	// RollbackCost is what a rollback is reserved and recorded at;
 	// DefaultRollbackCost when zero.
 	RollbackCost core.Micros
-	Clock        core.Clock
+	// RollbackBudgetWait bounds each budget call around a rollback;
+	// DefaultRollbackBudgetWait when zero.
+	RollbackBudgetWait time.Duration
+	Clock              core.Clock
 
 	LeaseOwner string
 	LeaseTTL   time.Duration
@@ -126,6 +129,9 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.RollbackCost == 0 {
 		c.RollbackCost = DefaultRollbackCost
+	}
+	if c.RollbackBudgetWait == 0 {
+		c.RollbackBudgetWait = DefaultRollbackBudgetWait
 	}
 	if c.LeaseOwner == "" {
 		c.LeaseOwner = DefaultLeaseOwner
@@ -194,6 +200,8 @@ func (c Config) validate() error {
 		return invalid("each traffic step and the observation need at least one window")
 	case c.RollbackCost < 0:
 		return invalid("the cost of a rollback cannot be negative")
+	case c.RollbackBudgetWait < 0:
+		return invalid("the wait for the budget around a rollback cannot be negative")
 	case c.LowTraffic.MinHold <= 0 || c.LowTraffic.MaxExtensions < 0:
 		return invalid("the low-traffic hold must be positive")
 	case len(c.Protected) == 0:

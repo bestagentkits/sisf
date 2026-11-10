@@ -14,6 +14,7 @@ import (
 
 	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/internal/auth"
+	"github.com/bestagentkits/sisf/internal/control/api"
 )
 
 // Browser is one person's browser on a running factory's control plane,
@@ -50,15 +51,6 @@ func (b *Browser) SignIn(kind, subject string) {
 	b.signInAs()
 	resp := b.Do(http.MethodGet, "/auth/login/"+kind+"?return_to=/", nil, nil)
 	b.follow(resp, http.StatusFound)
-}
-
-// StepUp confirms the person's identity again for minting one personal
-// access token.
-func (b *Browser) StepUp() {
-	b.t.Helper()
-	b.signInAs()
-	resp := b.Do(http.MethodPost, "/auth/step-up/"+wiring.ProviderOIDC+"?return_to=/", nil, http.Header{auth.CSRFHeader: {b.CSRF()}})
-	b.follow(resp, http.StatusSeeOther)
 }
 
 // StepUpFor confirms the person's identity again for the one call of action
@@ -123,13 +115,27 @@ func (b *Browser) CSRF() string {
 	return view.CSRF
 }
 
-// PAT mints a personal access token with scopes after a fresh step-up.
+// ApproveDevice approves the CLI login request with userCode as the Owner
+// does on the verification page: a step-up for approving exactly that
+// request, then the approve form posted as a navigation.
+func (b *Browser) ApproveDevice(userCode string) {
+	b.t.Helper()
+	b.StepUpFor(auth.DeviceApprovalStepUpAction, userCode)
+	form := url.Values{"user_code": {userCode}, auth.CSRFFormField: {b.CSRF()}}
+	resp := b.Do(http.MethodPost, api.DeviceApprovePath, strings.NewReader(form.Encode()), navigatedForm())
+	if resp.StatusCode != http.StatusOK {
+		b.t.Fatalf("harness: the login code was not approved: %d", resp.StatusCode)
+	}
+}
+
+// PAT mints a personal access token with scopes after a step-up for
+// exactly that token.
 func (b *Browser) PAT(scopes ...string) string {
 	b.t.Helper()
-	b.StepUp()
-	body, _ := json.Marshal(map[string]any{"name": "e2e", "scopes": scopes})
-	resp := b.Do(http.MethodPost, auth.TokensPath, bytes.NewReader(body),
-		http.Header{auth.CSRFHeader: {b.CSRF()}, "Content-Type": {"application/json"}})
+	req := auth.PATRequest{Name: "e2e", Scopes: scopes}
+	target := req.StepUpTarget()
+	b.StepUpFor(target.Action, target.Target)
+	resp := b.Do(http.MethodPost, auth.TokensPath, strings.NewReader(tokenForm(req, b.CSRF())), navigatedForm())
 	var out struct {
 		Token string `json:"token"`
 	}

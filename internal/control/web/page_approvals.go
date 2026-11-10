@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/actions"
 	"github.com/bestagentkits/sisf/internal/actions/approvalactions"
 	"github.com/bestagentkits/sisf/pkg/approvals"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -83,7 +84,13 @@ type approvalView struct {
 	Decision  *decisionView
 	Open      bool
 	CanDecide bool
+	// Verdicts are the decisions the step-up forms offer to confirm, each
+	// with the target its confirmation names: the request and the verdict.
+	Verdicts []verdictView
 }
+
+// verdictView is one decision a step-up may confirm.
+type verdictView struct{ Label, Target string }
 
 // approval shows one request with what the Owner needs to decide: the
 // one-line risk summary, the expected diff and the affected features. The
@@ -110,6 +117,12 @@ func (h *handler) approval(w http.ResponseWriter, r *http.Request, s *session) {
 		}
 		view.Open = req.Status.Open()
 		view.CanDecide = h.registered(approvalactions.ActionDecide)
+		for _, v := range []struct {
+			label    string
+			decision approvals.Decision
+		}{{"approve", approvals.DecisionApprove}, {"request changes", approvals.DecisionRequestChanges}, {"reject", approvals.DecisionReject}} {
+			view.Verdicts = append(view.Verdicts, verdictView{Label: v.label, Target: actions.DecisionStepUpTarget(req.ID, v.decision)})
+		}
 	}
 	h.render(w, r, statusOfPanels(panel), pageApproval, view)
 }

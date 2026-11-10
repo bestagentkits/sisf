@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -52,9 +54,12 @@ func (s *Service) beginFlow(providerName, returnTo, stepUpKey string, target Ste
 	sum := sha256.Sum256([]byte(verifier))
 	req := identity.AuthRequest{State: state, Nonce: nonce, CodeChallenge: base64.RawURLEncoding.EncodeToString(sum[:])}
 	fresh, canForce := p.(FreshSignInProvider)
-	if stepUpKey != "" && canForce {
+	switch {
+	case stepUpKey != "" && !canForce:
+		return "", "", s.stepUpUnsupported(providerName)
+	case stepUpKey != "":
 		authURL, err = fresh.StepUpURL(req)
-	} else {
+	default:
 		authURL, err = p.AuthorizeURL(req)
 	}
 	if err != nil {
@@ -95,9 +100,13 @@ func (s *Service) completeFlow(ctx context.Context, providerName, state, code, b
 	ex := identity.Exchange{Code: code, Nonce: f.nonce, CodeVerifier: f.verifier}
 	var id identity.Identity
 	var err error
-	if fresh, canForce := p.(FreshSignInProvider); f.stepUpKey != "" && canForce {
+	fresh, canForce := p.(FreshSignInProvider)
+	switch {
+	case f.stepUpKey != "" && !canForce:
+		return flowResult{}, s.stepUpUnsupported(providerName)
+	case f.stepUpKey != "":
 		id, err = fresh.ExchangeFresh(ctx, ex, f.started)
-	} else {
+	default:
 		id, err = p.Exchange(ctx, ex)
 	}
 	if err != nil {
@@ -136,4 +145,23 @@ func (s *Service) pruneFlowsLocked(now time.Time) {
 		}
 		delete(s.flows, oldestKey)
 	}
+}
+
+// stepUpUnsupported refuses a step-up through a provider that cannot force
+// a fresh sign-in, such as GitHub OAuth: it would replay the provider's own
+// session rather than confirm the person, so it names the providers that
+// can. Signing in through it is unaffected.
+func (s *Service) stepUpUnsupported(providerName string) error {
+	var able []string
+	for name, p := range s.providers {
+		if _, ok := p.(FreshSignInProvider); ok {
+			able = append(able, name)
+		}
+	}
+	slices.Sort(able)
+	msg := providerName + " cannot force a fresh sign-in, so it cannot confirm your identity"
+	if len(able) == 0 {
+		return core.NewError(core.CodeNotSupported, msg+"; configure an OpenID Connect provider to confirm through")
+	}
+	return core.NewError(core.CodeNotSupported, msg+"; confirm through an OpenID Connect provider instead: "+strings.Join(able, ", "))
 }

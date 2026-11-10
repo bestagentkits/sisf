@@ -161,14 +161,22 @@ func TestInboxListsGetsAndDecidesThroughTheActionService(t *testing.T) {
 	if _, err := f.call(t, presented, approvalactions.ActionDecide, decision, false, ""); !core.HasCode(err, core.CodeStepUpRequired) {
 		t.Fatalf("deciding without a confirmation = %v, want STEP_UP_REQUIRED", err)
 	}
-	f.stepUps.confirm(f.owner(), approvalactions.ActionDecide, request.ID)
+	// A confirmation names the verdict as well as the request: one made to
+	// reject cannot approve.
+	f.stepUps.confirm(f.owner(), approvalactions.ActionDecide, actions.DecisionStepUpTarget(request.ID, approvals.DecisionReject))
+	_, err = f.call(t, f.owner(), approvalactions.ActionDecide, decision, false, "")
+	if !errors.As(err, &refusal) || refusal.Code != core.CodeStepUpRequired ||
+		refusal.Details[actions.DetailStepUpTarget] != actions.DecisionStepUpTarget(request.ID, approvals.DecisionApprove) {
+		t.Fatalf("approving on a confirmation to reject = %v", err)
+	}
+	f.stepUps.confirm(f.owner(), approvalactions.ActionDecide, actions.DecisionStepUpTarget(request.ID, approvals.DecisionApprove))
 	if _, err := f.call(t, f.owner(), approvalactions.ActionDecide, decision, false, ""); err != nil {
 		t.Fatalf("decide = %v", err)
 	}
 	if _, err := f.call(t, f.owner(), approvalactions.ActionDecide, decision, false, ""); !core.HasCode(err, core.CodeStepUpRequired) {
 		t.Fatalf("deciding twice on one confirmation = %v, want STEP_UP_REQUIRED", err)
 	}
-	f.stepUps.confirm(f.owner(), approvalactions.ActionDecide, request.ID)
+	f.stepUps.confirm(f.owner(), approvalactions.ActionDecide, actions.DecisionStepUpTarget(request.ID, approvals.DecisionApprove))
 	if _, err := f.call(t, f.owner(), approvalactions.ActionDecide, decision, false, ""); !core.HasCode(err, core.CodeReplayed) {
 		t.Fatalf("deciding twice = %v, want REPLAYED", err)
 	}

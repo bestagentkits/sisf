@@ -28,6 +28,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case core.CodeUnavailable:
 		status = http.StatusBadGateway
+	case core.CodeNotSupported:
+		status = http.StatusNotImplemented
 	}
 	writeJSON(w, status, map[string]any{"error": core.Error{Code: typed.Code, Message: typed.Message, NextActions: typed.NextActions}})
 }

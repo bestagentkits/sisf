@@ -43,20 +43,9 @@ func (f *Factory) SignIn(provider, subject string) *Person {
 	return p
 }
 
-// SignInOwner signs the Owner in and confirms their identity once, which
-// lets the session mint one personal access token.
+// SignInOwner signs the Owner in.
 func (f *Factory) SignInOwner() *Person {
-	p := f.SignIn(wiring.ProviderOIDC, OwnerSubject)
-	p.StepUp()
-	return p
-}
-
-// StepUp confirms the person's identity again at the OIDC provider, for
-// minting one personal access token.
-func (p *Person) StepUp() {
-	p.f.t.Helper()
-	resp := p.Do(http.MethodPost, "/auth/step-up/"+wiring.ProviderOIDC+"?return_to=/", nil, http.Header{auth.CSRFHeader: {p.CSRF()}})
-	p.followSignIn(resp, http.StatusSeeOther)
+	return f.SignIn(wiring.ProviderOIDC, OwnerSubject)
 }
 
 // StepUpFor confirms the person's identity again at the OIDC provider for
@@ -110,13 +99,15 @@ func (p *Person) CSRF() string {
 	return view.CSRF
 }
 
-// PAT mints a personal access token with scopes; the person must hold an
-// unspent step-up made for minting a token, which StepUp makes.
+// PAT mints a personal access token with scopes, as the person does: a
+// step-up for exactly this token, then the token form posted as a
+// navigation.
 func (p *Person) PAT(scopes ...string) string {
 	p.f.t.Helper()
-	body, _ := json.Marshal(map[string]any{"name": "harness", "scopes": scopes})
-	resp := p.Do(http.MethodPost, auth.TokensPath, bytes.NewReader(body),
-		http.Header{auth.CSRFHeader: {p.CSRF()}, "Content-Type": {"application/json"}})
+	req := auth.PATRequest{Name: "harness", Scopes: scopes}
+	target := req.StepUpTarget()
+	p.StepUpFor(target.Action, target.Target)
+	resp := p.Do(http.MethodPost, auth.TokensPath, strings.NewReader(tokenForm(req, p.CSRF())), navigatedForm())
 	var out struct {
 		Token string `json:"token"`
 	}
@@ -124,6 +115,16 @@ func (p *Person) PAT(scopes ...string) string {
 		p.f.t.Fatalf("harness: mint a token: %d %v", resp.StatusCode, err)
 	}
 	return out.Token
+}
+
+// tokenForm is the token form of req, carrying csrf.
+func tokenForm(req auth.PATRequest, csrf string) string {
+	return url.Values{auth.TokenNameField: {req.Name}, auth.TokenScopesField: req.Scopes, auth.CSRFFormField: {csrf}}.Encode()
+}
+
+// navigatedForm are the headers of a form a person submits in a browser.
+func navigatedForm() http.Header {
+	return http.Header{"Content-Type": {"application/x-www-form-urlencoded"}, "Sec-Fetch-Mode": {"navigate"}}
 }
 
 // consentField finds the consent form's hidden field.

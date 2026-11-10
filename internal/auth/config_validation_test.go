@@ -15,13 +15,20 @@ func TestServiceConfigurationIsValidated(t *testing.T) {
 	if err != nil || gh.Issuer() != auth.GitHubIssuer || gh.Name() != "github" {
 		t.Fatalf("github defaults: %v", err)
 	}
+	// Identities are keyed by issuer and subject, so two providers sharing an
+	// issuer would let one stand for the other's people.
+	sameIssuer, err := auth.NewGitHubProvider(auth.GitHubConfig{Name: "ghe", ClientID: "c", RedirectURL: "http://127.0.0.1:1/auth/callback/ghe"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	clock := core.SystemClock{}
 	for name, cfg := range map[string]auth.Config{
-		"no clock":         {Providers: []identity.Provider{gh}},
-		"no providers":     {Clock: clock},
-		"duplicate names":  {Clock: clock, Providers: []identity.Provider{gh, gh}},
-		"negative ttl":     {Clock: clock, Providers: []identity.Provider{gh}, SessionTTL: -1},
-		"malformed scopes": {Clock: clock, Providers: []identity.Provider{gh}, AllowedScopes: []string{"*"}},
+		"duplicate issuers": {Clock: clock, Providers: []identity.Provider{gh, sameIssuer}},
+		"no clock":          {Providers: []identity.Provider{gh}},
+		"no providers":      {Clock: clock},
+		"duplicate names":   {Clock: clock, Providers: []identity.Provider{gh, gh}},
+		"negative ttl":      {Clock: clock, Providers: []identity.Provider{gh}, SessionTTL: -1},
+		"malformed scopes":  {Clock: clock, Providers: []identity.Provider{gh}, AllowedScopes: []string{"*"}},
 	} {
 		if _, err := auth.New(cfg); !core.HasCode(err, core.CodeInvalidArgument) {
 			t.Errorf("%s: %v", name, err)

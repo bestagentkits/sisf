@@ -82,6 +82,9 @@ func New(cfg Config) (*Service, error) {
 	s := &Service{cfg: cfg, providers: map[string]identity.Provider{},
 		sessions: map[string]*session{}, byHandle: map[string]*session{}, tokens: map[string]*token{},
 		tokenByID: map[string]*token{}, flows: map[string]*flow{}, accounts: map[string]identity.Identity{}}
+	// An identity is keyed by issuer and subject, so two providers sharing an
+	// issuer could each sign in as the other's people.
+	issuers := map[string]string{}
 	for _, p := range cfg.Providers {
 		if p == nil || p.Name() == "" {
 			return nil, invalidArgument("a login provider needs a name")
@@ -89,7 +92,10 @@ func New(cfg Config) (*Service, error) {
 		if _, dup := s.providers[p.Name()]; dup {
 			return nil, invalidArgument("two login providers are named " + p.Name())
 		}
-		s.providers[p.Name()] = p
+		if other, dup := issuers[p.Issuer()]; dup {
+			return nil, invalidArgument("login providers " + other + " and " + p.Name() + " share the issuer " + p.Issuer() + "; give each its own")
+		}
+		s.providers[p.Name()], issuers[p.Issuer()] = p, p.Name()
 	}
 	for _, scope := range cfg.AllowedScopes {
 		if !scopePattern.MatchString(scope) {

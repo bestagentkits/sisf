@@ -45,6 +45,10 @@ const (
 	SimOwnerSubject = "owner"
 	// simGitHubAPIPath is where the fake serves its GitHub REST dialect.
 	simGitHubAPIPath = "/api"
+	// SimGitHubIssuerPath, appended to the fake's issuer, is the issuer of
+	// the GitHub identities it signs in, so they never share the issuer of
+	// its OIDC identities.
+	SimGitHubIssuerPath = "/github"
 )
 
 // IdentitySecretEnv names the sign-in variables whose values are secrets,
@@ -64,7 +68,10 @@ type GitHubLogin struct {
 	WebURL string
 	// APIURL is the REST API; the person's login and their permission on
 	// the factory's repository are read there.
-	APIURL       string
+	APIURL string
+	// Issuer is the issuer GitHub identities carry. Empty means WebURL, or
+	// github.com's; it must differ from every other provider's issuer.
+	Issuer       string
 	ClientID     string
 	ClientSecret core.SecretValue
 }
@@ -112,7 +119,7 @@ func IdentityFromEnv(getenv func(string) string, m *manifest.Manifest, listen st
 		cfg.GitHub = &GitHubLogin{WebURL: strings.TrimSpace(getenv(EnvGitHubLoginURL)), APIURL: strings.TrimSpace(getenv(EnvGitHubLoginAPIURL)),
 			ClientID: orDefault(id, SimOIDCClientID), ClientSecret: secret(getenv(EnvGitHubLoginClientSecret))}
 		if sim && cfg.GitHub.WebURL == "" {
-			cfg.GitHub.WebURL = issuer
+			cfg.GitHub.WebURL, cfg.GitHub.Issuer = issuer, issuer+SimGitHubIssuerPath
 		}
 		if sim && cfg.GitHub.APIURL == "" {
 			cfg.GitHub.APIURL = issuer + simGitHubAPIPath
