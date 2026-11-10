@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // A guard supplies the facts about one guarded step; the machine, not the

@@ -13,7 +13,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // APIVersion is the manifest version these types describe.

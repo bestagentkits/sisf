@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Rule names one conformance rule. Names are stable so that people, tools

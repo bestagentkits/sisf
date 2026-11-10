@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // checkRetryWith runs the step from Blocked back to Ready with the given

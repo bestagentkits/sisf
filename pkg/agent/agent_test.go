@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
 	"github.com/bestagentkits/sisf/pkg/agent"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 const sha = core.CommitSHA("0123456789abcdef0123456789abcdef01234567")

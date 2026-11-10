@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // checkPostDeployWith runs the step into Verified after mutate has changed

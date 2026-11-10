@@ -4,8 +4,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
 	"github.com/bestagentkits/sisf/pkg/agent"
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/deploy"
 	"github.com/bestagentkits/sisf/pkg/execution"
 )

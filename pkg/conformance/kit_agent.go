@@ -3,8 +3,8 @@ package conformance
 import (
 	"context"
 
-	"github.com/bestagentkits/sisf/internal/core"
 	"github.com/bestagentkits/sisf/pkg/agent"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // AgentProbe is what the kit needs to exercise an agent backend.

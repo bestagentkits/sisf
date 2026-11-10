@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 func TestLifecycleTableHoldsExactlyTheDiagramEdges(t *testing.T) {

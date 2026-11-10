@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // The matrices below try every combination, legal or not, against the list of

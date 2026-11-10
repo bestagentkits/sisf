@@ -3,7 +3,7 @@ package manifest
 import (
 	"reflect"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Patterns of the text forms the manifest uses. They mirror the validators of

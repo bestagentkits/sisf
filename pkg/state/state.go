@@ -13,7 +13,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Store is the operational store of one factory; every record it creates

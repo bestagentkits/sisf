@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
 	"github.com/bestagentkits/sisf/pkg/agent"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Agent is an in-memory agent backend. A started run stays running until it

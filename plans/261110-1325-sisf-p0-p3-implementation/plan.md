@@ -28,7 +28,7 @@ Each phase depends on the previous phase being fully merged into its branch. Ins
 
 - **Ownership:** a package edits only the paths it owns. Paths are disjoint within a wave. A later phase may edit paths from an earlier phase only through the package that owns them in that phase.
 - **Contract freeze:** after P0-A merges, these are frozen:
-  - every file P0-A created (`internal/core/*.go` and one interface file per `pkg/*/`);
+  - every file P0-A created (`pkg/core/*.go` and one interface file per `pkg/*/`);
   - `cmd/sisf/main.go` from P0-C;
   - `Makefile` and `.github/workflows/ci.yml` from P0-E.
 

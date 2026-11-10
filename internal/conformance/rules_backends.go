@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/bestagentkits/sisf/internal/core"
 	kit "github.com/bestagentkits/sisf/pkg/conformance"
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 

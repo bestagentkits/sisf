@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Identity is a verified login identity. Issuer and Subject together are the

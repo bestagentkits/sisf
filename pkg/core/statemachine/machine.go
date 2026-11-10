@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Machine decides whether a requested transition may be written. It holds no

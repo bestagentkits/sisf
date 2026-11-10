@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bestagentkits/sisf/internal/core"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // The rules below judge a proof against the requested transition. They are
