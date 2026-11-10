@@ -21,6 +21,7 @@ type GitHub interface {
 	GitHubRepository
 	BranchHead(ctx context.Context, repo github.RepoRef, branch string) (core.CommitSHA, error)
 	CommitToBranch(ctx context.Context, repo github.RepoRef, bc github.BranchCommit) (core.CommitSHA, error)
+	CommitExists(ctx context.Context, repo github.RepoRef, commit core.CommitSHA) error
 	CreatePullRequest(ctx context.Context, repo github.RepoRef, pr github.NewPullRequest) (github.PullRequest, error)
 }
 
@@ -52,6 +53,9 @@ type Config struct {
 	MaxAttempts      int
 	// Images builds candidate images; see SelectImageBuilder.
 	Images ImageBuilder
+	// BuildRetry bounds the retries of a build that met outages;
+	// DefaultBuildRetry where zero.
+	BuildRetry BuildRetry
 	// Release carries the release parameters and dependencies the pipeline
 	// is built from (Backend, LKG, Freeze, Synthetic, Approvals, Audit and
 	// the tuning); the rest is filled in here.
@@ -122,6 +126,7 @@ func New(cfg Config) (*Stages, error) {
 		Pipeline: pipeline,
 		Build: &BuildStage{
 			Owner: "supervisor-builder", State: cfg.State, QAPolicy: refs, CodingPolicy: stepPolicy(loader, core.StepCoding), Clock: cfg.Clock,
+			Retry:   cfg.BuildRetry,
 			Builder: &CandidateBuilder{FactoryID: cfg.FactoryID, Repo: cfg.Repo, Git: cfg.GitHub, Images: cfg.Images, Units: DefaultUnitRouter(), Clock: cfg.Clock},
 		},
 		QA: &QAStage{

@@ -25,7 +25,29 @@ type Status struct {
 	StartedAt time.Time       `json:"started_at"`
 	SelfCheck SelfCheckStatus `json:"self_check"`
 	LKG       LKGStatus       `json:"lkg"`
+	// HeldBuilds are the candidate builds the supervisor stopped retrying
+	// after repeated outages; each waits for the Owner's retry of its
+	// issue. HeldBuildsUnknown is set when they could not be read.
+	HeldBuilds        []HeldBuild `json:"held_builds,omitempty"`
+	HeldBuildsUnknown bool        `json:"held_builds_unknown,omitempty"`
 }
+
+// HeldBuild is one held candidate build. It names the error code of the
+// last outage only, never its message.
+type HeldBuild struct {
+	IssueID  core.IssueRef  `json:"issue_id"`
+	RunID    core.RunID     `json:"run_id"`
+	Attempt  int            `json:"attempt"`
+	Failures int            `json:"failures"`
+	LastCode core.ErrorCode `json:"last_code"`
+	Since    time.Time      `json:"since"`
+}
+
+// HeldBuildsReader lists the held candidate builds.
+type HeldBuildsReader func(ctx context.Context) ([]HeldBuild, error)
+
+// heldBuildsTimeout bounds how long a status answer waits for the list.
+const heldBuildsTimeout = 3 * time.Second
 
 // SelfCheckStatus is the evidence of the startup self-check. A supervisor
 // that serves status at all has passed it; one that failed is not running.
@@ -59,8 +81,15 @@ func newAdminHandler(status func() Status) http.Handler {
 // refused.
 func newAdminMux(status func() Status, opts Options) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET "+statusPath, func(w http.ResponseWriter, _ *http.Request) {
-		writeAdminJSON(w, http.StatusOK, status())
+	mux.HandleFunc("GET "+statusPath, func(w http.ResponseWriter, r *http.Request) {
+		st := status()
+		if opts.HeldBuilds != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), heldBuildsTimeout)
+			held, err := opts.HeldBuilds(ctx)
+			cancel()
+			st.HeldBuilds, st.HeldBuildsUnknown = held, err != nil
+		}
+		writeAdminJSON(w, http.StatusOK, st)
 	})
 	if opts.EmergencyStop != nil {
 		mux.Handle("POST "+EmergencyStopPath, emergencyStopHandler(opts.EmergencyStop))

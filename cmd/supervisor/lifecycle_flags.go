@@ -36,7 +36,7 @@ type lifecycleFlags struct {
 	buildTimeout, interval                             time.Duration
 	deploy, edgeAdminURL, localProgram                 string
 	deployEndpoint, deployNetwork                      string
-	appPort                                            int
+	appPort, buildOutageLimit                          int
 	dispatcherAdminURL                                 string
 	qa                                                 qaFlags
 	tuning                                             releaseTuning
@@ -58,6 +58,7 @@ func (l *lifecycleFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&l.runnerImage, "runner-image", "", "pinned image candidate builds run in")
 	fs.StringVar(&l.buildCommand, "build-command", "", "command, split on spaces, that builds a candidate in its sandbox")
 	fs.DurationVar(&l.buildTimeout, "build-timeout", 20*time.Minute, "time limit of one candidate build")
+	fs.IntVar(&l.buildOutageLimit, "build-outage-limit", stages.DefaultBuildRetry.HoldAfter, "outages in a row (GitHub, Docker, configuration) after which a candidate build is held until the Owner retries the issue")
 	fs.DurationVar(&l.interval, "lifecycle-interval", 5*time.Second, "pause between rounds of the stages")
 	fs.StringVar(&l.deploy, "deploy", "local", "deploy backend of releases: local or compose")
 	fs.StringVar(&l.edgeAdminURL, "edge-admin-url", "", "admin URL of the edge; its token is read from "+envEdgeAdminToken)

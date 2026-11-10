@@ -224,9 +224,11 @@ func (r *failingCommits) CommitToBranch(ctx context.Context, repo github.RepoRef
 }
 
 // A GitHub error from the commit is an outage, not the patch's fault: it
-// spends no attempt, is retried after a bounded backoff, is reported held
-// after repeated failures, and the patch is built once GitHub recovers.
-func TestAGitHubOutageSpendsNoAttemptAndIsRetried(t *testing.T) {
+// spends no attempt and is retried after a growing backoff. After as many
+// outages in a row as the limit allows, the build is held: the supervisor
+// stops trying it, the Owner is told on the issue, and only the Owner's
+// retry of the issue resumes it.
+func TestAGitHubOutageSpendsNoAttemptAndIsHeldForTheOwner(t *testing.T) {
 	t.Parallel()
 	f := harness.New(t, harness.Options{})
 	number := f.OpenIssue("maintainer", "MEMBER", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
@@ -235,7 +237,7 @@ func TestAGitHubOutageSpendsNoAttemptAndIsRetried(t *testing.T) {
 
 	ctx := context.Background()
 	build := f.Stages.Build
-	git := &failingCommits{Repository: build.Builder.Git, fail: 2}
+	git := &failingCommits{Repository: build.Builder.Git, fail: 3}
 	build.Builder.Git = git
 	build.Retry = stages.BuildRetry{First: time.Minute, Max: 4 * time.Minute, HoldAfter: 2}
 
@@ -262,7 +264,36 @@ func TestAGitHubOutageSpendsNoAttemptAndIsRetried(t *testing.T) {
 		t.Fatalf("the outage moved the issue to %s, attempt %d", r.State, r.Attempt)
 	}
 
-	f.Clock.Advance(2 * time.Minute)
+	// Held: no further try, however long the wait.
+	f.Clock.Advance(24 * time.Hour)
+	for range 3 {
+		if res := build.Pass(ctx); !slices.Equal(res.StillHeld, []core.IssueRef{f.Issue(number)}) || len(res.Errors) != 0 {
+			t.Fatalf("a held build: %+v", res)
+		}
+	}
+	if git.commits != 2 {
+		t.Fatalf("a held build was tried again: %d commits", git.commits)
+	}
+	// The control zone tells the Owner on the issue.
+	f.Pass()
+	if c := commentContaining(t, f, number, "Candidate build held"); c == "" || !strings.Contains(c, "factoryd issue retry") {
+		t.Fatalf("no held build notice on the issue: %q", c)
+	}
+
+	// Only the Owner resumes it.
+	maintainer := core.Actor{ID: "user:maintainer", Kind: core.ActorHuman, Roles: []core.Role{core.RoleMaintainer}, Surface: core.SurfaceCLI}
+	if _, err := f.Control.Retry(ctx, f.Issue(number), maintainer); !core.HasCode(err, core.CodePermissionDenied) {
+		t.Fatalf("a maintainer resumed the held build: %v", err)
+	}
+	owner := core.Actor{ID: "owner:local", Kind: core.ActorHuman, Roles: []core.Role{core.RoleOwner}, Surface: core.SurfaceCLI, StepUpAt: f.Clock.Now()}
+	if result, err := f.Control.Retry(ctx, f.Issue(number), owner); err != nil || result.State != core.StateDeveloping {
+		t.Fatalf("the Owner's retry: %+v, %v", result, err)
+	}
+	// The resumed build meets one more outage and is retried, not held.
+	if res := build.Pass(ctx); len(res.Errors) == 0 || len(res.Held) != 0 || git.commits != 3 {
+		t.Fatalf("the resumed build's outage: %+v after %d commits", res, git.commits)
+	}
+	f.Clock.Advance(time.Minute)
 	if res := build.Pass(ctx); len(res.Submitted) != 1 || len(res.Errors) != 0 {
 		t.Fatalf("after GitHub recovered: %+v", res)
 	}

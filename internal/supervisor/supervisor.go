@@ -32,6 +32,9 @@ type Options struct {
 	// Rollback, when set, is served on RollbackPath: an Owner-approved
 	// rollback to the last known good release.
 	Rollback Rollbacker
+	// HeldBuilds, when set, adds the held candidate builds to every status
+	// answer.
+	HeldBuilds HeldBuildsReader
 }
 
 // Supervisor is a supervisor that passed its startup checks. There is no

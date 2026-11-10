@@ -73,7 +73,8 @@ func (g *GitData) createTree(w http.ResponseWriter, r *http.Request) {
 		files = maps.Clone(base)
 	}
 	for _, entry := range in.Tree {
-		if !validPath(entry.Path) || entry.Type != "blob" {
+		// GitHub refuses a tree that would hold a .git directory.
+		if !validPath(entry.Path) || entry.Type != "blob" || hasGitSegment(entry.Path) {
 			writeError(w, http.StatusUnprocessableEntity, "tree entries must be blobs at plain paths")
 			return
 		}

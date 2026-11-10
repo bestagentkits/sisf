@@ -16,6 +16,8 @@ import (
 type Repository interface {
 	// ReadFile returns a file at a commit, NOT_FOUND when it has none.
 	ReadFile(ctx context.Context, repo github.RepoRef, revision core.CommitSHA, path string) ([]byte, error)
+	// CommitExists returns nil when the repository holds the commit.
+	CommitExists(ctx context.Context, repo github.RepoRef, commit core.CommitSHA) error
 	CommitToBranch(ctx context.Context, repo github.RepoRef, bc github.BranchCommit) (core.CommitSHA, error)
 }
 
@@ -82,11 +84,13 @@ func Branch(factory core.FactoryID, run core.RunID, attempt int) string {
 }
 
 // Build builds the patch of req. A patch that cannot be read, does not
-// apply, spans units or touches a protected path is refused with a
-// PatchRefusal before anything is committed or pushed. A patch whose build
-// command ran in the sandbox and failed or timed out is refused after its
-// commit, and Built then names that commit. Any other error is an outage of
-// GitHub, the image builder or the configuration.
+// apply, spans units, touches a protected path or names a path no commit
+// can hold is refused with a PatchRefusal before anything is committed or
+// pushed, as is one whose content GitHub refuses (see statusOutcomes). A
+// patch whose build command ran in the sandbox and failed, timed out or
+// reported no image is refused after its commit, and Built then names that
+// commit. Any other error is an outage of GitHub, the image builder or the
+// configuration.
 func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, error) {
 	patches, err := parseUnifiedDiff(req.Diff)
 	if err != nil {
@@ -98,6 +102,10 @@ func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, 
 				return Built{}, refuse(core.CodePermissionDenied, RefusalProtectedPath, p,
 					"the run's patch changes "+p+" ("+string(kind)+"), which an agent's patch may not touch")
 			}
+			if p != "" && !github.ValidTreePath(p) {
+				return Built{}, refuse(core.CodeInvalidArgument, RefusalPathRejected, p,
+					"the run's patch names "+p+", which no commit can hold")
+			}
 		}
 	}
 	files := map[string][]byte{}
@@ -105,11 +113,8 @@ func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, 
 		old := ""
 		if fp.oldPath != "" {
 			content, err := b.Git.ReadFile(ctx, b.Repo, req.Base, fp.oldPath)
-			if core.HasCode(err, core.CodeNotFound) {
-				return Built{}, refuse(core.CodeConflict, RefusalDoesNotApply, fp.oldPath, "the run's patch changes "+fp.oldPath+", which the base does not have")
-			}
 			if err != nil {
-				return Built{}, err
+				return Built{}, b.readFault(ctx, req.Base, fp.oldPath, err)
 			}
 			old = string(content)
 		}
@@ -137,14 +142,18 @@ func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, 
 		Message: fmt.Sprintf("Candidate of %s for %s, attempt %d", req.RunID, req.Issue, req.Attempt), Files: files,
 	})
 	if err != nil {
-		return Built{}, err
+		_, classified := classifyRepositoryError(err, "")
+		return Built{}, classified
 	}
 	image, err := b.Images.BuildImage(ctx, ImageRequest{
 		FactoryID: b.FactoryID, RunID: req.RunID, Unit: unit, Commit: commit, Branch: branch, Untrusted: true,
 	})
+	if err == nil && (image.Digest.Validate() != nil || image.Image == "") {
+		err = refuse(core.CodeGuardFailed, RefusalNoImageReported, "", "the build of the candidate reported no image and digest")
+	}
 	if _, refused := RefusalOf(err); refused {
-		// The commit exists and the build command failed on it: the refusal
-		// names the commit and branch it was run on.
+		// The commit exists and the build failed on it: the refusal names
+		// the commit and branch it was run on.
 		return Built{Branch: branch, ChangedPaths: changed, Record: handoff.BuildRecord{
 			Commit: commit, Unit: unit, Builder: b.Images.Name(), BuiltAt: b.Clock.Now().UTC(),
 		}}, err
@@ -152,14 +161,29 @@ func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, 
 	if err != nil {
 		return Built{}, err
 	}
-	if err := image.Digest.Validate(); err != nil {
-		return Built{}, core.NewError(core.CodeInternal, "the image builder returned no image digest").WithCause(err)
-	}
 	return Built{Branch: branch, ChangedPaths: changed, Record: handoff.BuildRecord{
 		Commit: commit, Digest: image.Digest, Unit: unit, Image: image.Image, Builder: b.Images.Name(),
 		TestsPassed: image.TestsPassed, TestEvidence: image.TestEvidence,
 		SBOMRef: image.SBOMRef, ProvenanceRef: image.ProvenanceRef, BuiltAt: b.Clock.Now().UTC(),
 	}}, nil
+}
+
+// readFault decides an error reading a base file the patch edits. A file
+// the base lacks is the patch's fault only once the base commit itself has
+// been read, as GitHub answers a repository the token cannot see alike.
+func (b *CandidateBuilder) readFault(ctx context.Context, base core.CommitSHA, path string, err error) error {
+	reason, classified := classifyRepositoryError(err, path)
+	if github.ErrorStatus(err) == 0 && core.HasCode(err, core.CodeNotFound) {
+		reason = checkBase
+	}
+	if reason != checkBase {
+		return classified
+	}
+	if baseErr := b.Git.CommitExists(ctx, b.Repo, base); baseErr != nil {
+		_, classified = classifyRepositoryError(baseErr, "")
+		return classified
+	}
+	return refuse(core.CodeConflict, RefusalDoesNotApply, path, "the run's patch changes "+path+", which the base does not have")
 }
 
 // UnitRouter decides which runtime unit a change is a build of, by the

@@ -84,6 +84,11 @@ func TestTheDoctorWarnsWhenAProductionDockerInstallHasNoQALauncher(t *testing.T)
 	if v := verdictOf(c.report, "lifecycle"); len(v) != 1 || v[0] != VerdictOK {
 		t.Fatalf("with a launcher and a build command, lifecycle = %v", v)
 	}
+	// The launcher is trusted on the operator's word, and the doctor says so.
+	if v := verdictOf(c.report, "qa launcher"); len(v) != 1 || v[0] != VerdictWarn ||
+		!strings.Contains(detailOf(c.report, "qa launcher"), "/opt/sisf/qa-launcher") || !strings.Contains(detailOf(c.report, "qa launcher"), "on your word") {
+		t.Fatalf("with a launcher, qa launcher = %v %q", v, detailOf(c.report, "qa launcher"))
+	}
 }
 
 func TestTheStandaloneEdgeAdminMustRefuseACallerWithoutItsToken(t *testing.T) {

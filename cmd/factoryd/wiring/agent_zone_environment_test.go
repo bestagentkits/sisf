@@ -125,8 +125,10 @@ func TestARealAgentNeedsASandboxALauncherOrTheTrustedCodeOnlyModel(t *testing.T)
 func TestARealAgentSeesNoneOfTheDispatchersVariables(t *testing.T) {
 	// Not parallel: the dispatcher's secrets are also put in this process's
 	// own environment, which an agent must not inherit either.
+	// PATH and HOME stay this process's own: the Go toolchain that builds the
+	// stand-in agent needs both.
 	for name, value := range dispatcherEnv("") {
-		if name != "PATH" {
+		if name != "PATH" && name != "HOME" {
 			t.Setenv(name, value)
 		}
 	}

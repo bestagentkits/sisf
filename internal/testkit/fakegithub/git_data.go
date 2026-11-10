@@ -28,6 +28,8 @@ type GitData struct {
 	commitTree map[string]string
 	// writes counts the requests that ask to write git data.
 	writes int
+	// routeFaults are canned refusals of chosen routes; see FailOn.
+	routeFaults []routeFault
 }
 
 // NewGitData wraps s.
@@ -58,6 +60,10 @@ func (g *GitData) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
 			return
 		}
+	}
+	if f, ok := g.takeRouteFault(r); ok {
+		writeError(w, f.status, f.message)
+		return
 	}
 	g.mux.ServeHTTP(w, r)
 }

@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"net/http"
@@ -19,7 +20,8 @@ const maxFileContent = 1 << 20
 // is made, because what a commit holds never changes and what a branch holds
 // does. A path that leaves the repository root is refused too. A missing
 // commit or file is NOT_FOUND; anything other than a plain file is
-// INVALID_ARGUMENT.
+// INVALID_ARGUMENT. Every error names the step StepReadFile, and a refusal
+// because of the path or the file names its ContentFault.
 func (c *RESTClient) ReadFile(ctx context.Context, repo RepoRef, revision core.CommitSHA, path string) ([]byte, error) {
 	if err := validateRepo(repo); err != nil {
 		return nil, err
@@ -28,7 +30,7 @@ func (c *RESTClient) ReadFile(ctx context.Context, repo RepoRef, revision core.C
 		return nil, err
 	}
 	if !plainPath(path) {
-		return nil, core.NewError(core.CodeInvalidArgument, "file path "+path+" is not a plain path inside the repository")
+		return nil, contentFault(core.CodeInvalidArgument, StepReadFile, ContentBadPath, "file path "+path+" is not a plain path inside the repository")
 	}
 	segments := []string{"repos", repo.Owner, repo.Name, "contents"}
 	segments = append(segments, strings.Split(path, "/")...)
@@ -37,7 +39,7 @@ func (c *RESTClient) ReadFile(ctx context.Context, repo RepoRef, revision core.C
 	}
 	resp, err := c.call(ctx, http.MethodGet, "/"+strings.Join(segments, "/"), url.Values{"ref": {string(revision)}}, nil, nil)
 	if err != nil {
-		return nil, err
+		return nil, atStep(err, StepReadFile)
 	}
 	var file struct {
 		Type     string `json:"type"`
@@ -45,14 +47,18 @@ func (c *RESTClient) ReadFile(ctx context.Context, repo RepoRef, revision core.C
 		Size     int    `json:"size"`
 		Content  string `json:"content"`
 	}
+	// A directory is answered with the list of its entries.
+	if body := bytes.TrimSpace(resp.body); len(body) > 0 && body[0] == '[' {
+		return nil, contentFault(core.CodeInvalidArgument, StepReadFile, ContentNotAFile, path+" is a directory, not a file")
+	}
 	if err := decode(resp, &file); err != nil {
-		return nil, err
+		return nil, atStep(err, StepReadFile)
 	}
 	switch {
 	case file.Type != "file":
-		return nil, core.NewError(core.CodeInvalidArgument, path+" is not a file")
+		return nil, contentFault(core.CodeInvalidArgument, StepReadFile, ContentNotAFile, path+" is not a file")
 	case file.Encoding != "base64" || file.Size > maxFileContent:
-		return nil, core.NewError(core.CodeInvalidArgument, path+" is too large to read through the contents API")
+		return nil, contentFault(core.CodeInvalidArgument, StepReadFile, ContentTooLarge, path+" is too large to read through the contents API")
 	}
 	content, err := base64.StdEncoding.DecodeString(strings.NewReplacer("\n", "", "\r", "").Replace(file.Content))
 	if err != nil || len(content) != file.Size {

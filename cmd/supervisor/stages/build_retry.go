@@ -3,7 +3,6 @@ package stages
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
@@ -16,13 +15,14 @@ type BuildRetry struct {
 	// First is the wait after the first failure; it doubles with each
 	// further failure up to Max.
 	First, Max time.Duration
-	// HoldAfter is the number of failures in a row after which the patch
-	// is reported held.
+	// HoldAfter is the number of outages in a row after which the build is
+	// held: the supervisor stops trying it and tells the Owner, and only
+	// the Owner's retry lets it try again.
 	HoldAfter int
 }
 
 // DefaultBuildRetry waits 30 seconds after the first outage, at most ten
-// minutes between tries, and reports the patch held after five in a row.
+// minutes between tries, and holds the build after five in a row.
 var DefaultBuildRetry = BuildRetry{First: 30 * time.Second, Max: 10 * time.Minute, HoldAfter: 5}
 
 func (r BuildRetry) settled() BuildRetry {
@@ -51,19 +51,8 @@ func (r BuildRetry) backoff(n int) time.Duration {
 
 func (r BuildRetry) held(e retryEntry) bool { return e.Failures >= r.HoldAfter }
 
-// BuildOutage is the supervisor's record of the outages a patch's build
-// met, kept in the build namespace until the patch is built or refused.
-type BuildOutage struct {
-	RunID    core.RunID `json:"run_id"`
-	Attempt  int        `json:"attempt"`
-	Failures int        `json:"failures"`
-	// LastCode is the code of the last failure; the message is not kept.
-	LastCode  core.ErrorCode `json:"last_code"`
-	NextTryAt time.Time      `json:"next_try_at"`
-	// Held is set once the failures reach the hold threshold.
-	Held      bool      `json:"held"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
+// BuildOutage is the record of the outages one attempt's build met.
+type BuildOutage = handoff.BuildOutage
 
 // retryEntry is a stored outage record and its version; zero when none.
 type retryEntry struct {
@@ -74,34 +63,19 @@ type retryEntry struct {
 // waiting reports whether the backoff of the last outage has not run out.
 func (e retryEntry) waiting(now time.Time) bool { return e.version != 0 && now.Before(e.NextTryAt) }
 
-// RetryKey is the key of the outage record of one evaluator attempt.
-func RetryKey(run core.RunID, attempt int) string {
-	return fmt.Sprintf("build-outage/%s/%d", run, attempt)
-}
-
 // ReadBuildOutage reads the outage record of one evaluator attempt,
 // NOT_FOUND while its build met none.
 func ReadBuildOutage(ctx context.Context, kv state.KV, run core.RunID, attempt int) (BuildOutage, error) {
-	e, err := readRetry(ctx, kv, run, attempt)
-	if err == nil && e.version == 0 {
-		err = core.NewError(core.CodeNotFound, "the build met no outage")
-	}
-	return e.BuildOutage, err
+	o, _, err := handoff.ReadBuildOutage(ctx, kv, run, attempt)
+	return o, err
 }
 
 func readRetry(ctx context.Context, kv state.KV, run core.RunID, attempt int) (retryEntry, error) {
-	entry, err := kv.GetKV(ctx, handoff.BuildNamespace, RetryKey(run, attempt))
+	o, version, err := handoff.ReadBuildOutage(ctx, kv, run, attempt)
 	if core.HasCode(err, core.CodeNotFound) {
 		return retryEntry{}, nil
 	}
-	if err != nil {
-		return retryEntry{}, err
-	}
-	var out BuildOutage
-	if json.Unmarshal(entry.Value, &out) != nil || out.RunID != run || out.Attempt != attempt {
-		return retryEntry{}, core.NewError(core.CodeTampered, "the stored build outage record cannot be read")
-	}
-	return retryEntry{BuildOutage: out, version: entry.Version}, nil
+	return retryEntry{BuildOutage: o, version: version}, err
 }
 
 func clearRetry(ctx context.Context, tx state.KV, run core.RunID, attempt int) error {
@@ -109,11 +83,13 @@ func clearRetry(ctx context.Context, tx state.KV, run core.RunID, attempt int) e
 	if err != nil || e.version == 0 {
 		return err
 	}
-	return tx.DeleteKV(ctx, handoff.BuildNamespace, RetryKey(run, attempt), e.version)
+	return tx.DeleteKV(ctx, handoff.BuildNamespace, handoff.BuildOutageKey(run, attempt), e.version)
 }
 
 // recordOutage counts one more outage of a patch's build and sets when it
-// is tried next. It returns the record written.
+// is tried next. The outage that reaches the limit holds the build and, in
+// the same transaction, queues the notice the control zone posts on the
+// issue. It returns the record written.
 func (s *BuildStage) recordOutage(ctx context.Context, j buildJob, cause error, r BuildRetry) (retryEntry, error) {
 	var next retryEntry
 	err := s.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
@@ -123,18 +99,30 @@ func (s *BuildStage) recordOutage(ctx context.Context, j buildJob, cause error, 
 		}
 		now := s.Clock.Now().UTC()
 		next = cur
-		next.RunID, next.Attempt = j.record.RunID, j.record.Attempt
+		next.RunID, next.IssueID, next.Attempt = j.record.RunID, j.record.IssueID, j.record.Attempt
 		next.Failures++
 		next.LastCode, next.UpdatedAt = core.CodeOf(cause), now
 		next.NextTryAt = now.Add(r.backoff(next.Failures))
-		next.Held = r.held(next)
-		raw, err := json.Marshal(next.BuildOutage)
-		if err != nil {
-			return core.NewError(core.CodeInternal, "a build outage record cannot be encoded").WithCause(err)
+		if r.held(next) && !cur.Held {
+			next.Held = true
+			next.Holds++
+			if err := enqueueHeldNotice(ctx, tx, next.BuildOutage); err != nil {
+				return err
+			}
 		}
-		written, err := tx.PutKV(ctx, state.KVEntry{Namespace: handoff.BuildNamespace, Key: RetryKey(next.RunID, next.Attempt), Value: raw, Version: cur.version})
-		next.version = written.Version
+		next.version, err = handoff.PutBuildOutage(ctx, tx, next.BuildOutage, cur.version)
 		return err
 	})
 	return next, err
+}
+
+// enqueueHeldNotice queues the Owner's notice of a held build, once per hold.
+func enqueueHeldNotice(ctx context.Context, tx state.Tx, o BuildOutage) error {
+	raw, err := json.Marshal(handoff.BuildHeldNotice{IssueID: o.IssueID, RunID: o.RunID, Attempt: o.Attempt,
+		Failures: o.Failures, LastCode: o.LastCode, Holds: o.Holds})
+	if err != nil {
+		return core.NewError(core.CodeInternal, "a held build notice cannot be encoded").WithCause(err)
+	}
+	return tx.Enqueue(ctx, state.OutboxMessage{Topic: handoff.TopicBuildHeld, Payload: raw,
+		Key: handoff.BuildOutageKey(o.RunID, o.Attempt) + "/held/" + itoa(o.Holds)})
 }

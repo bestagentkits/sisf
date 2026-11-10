@@ -22,8 +22,9 @@ import (
 // submitted as a failed build, which the evaluator fails without judging,
 // so the run's next coding attempt can start within its limit. Any other
 // failure, of GitHub, the image builder or the configuration, spends no
-// attempt: the patch is tried again on a later pass, after a bounded
-// backoff, and is reported held after repeated failures.
+// attempt: the patch is tried again on a later pass, after a growing
+// backoff, until BuildRetry.HoldAfter outages in a row hold it for the
+// Owner.
 type BuildStage struct {
 	Owner   string
 	State   state.Store
@@ -41,10 +42,12 @@ type BuildStage struct {
 type BuildPassResult struct {
 	Submitted, Unbuildable []core.IssueRef
 	// Deferred are patches whose last build failed on an outage and whose
-	// backoff has not run out; Held are those that failed so often that an
-	// operator should look. A held patch is still retried.
-	Deferred, Held []core.IssueRef
-	Errors         []error
+	// backoff has not run out. Held are those this pass held, after as
+	// many outages in a row as BuildRetry allows, and StillHeld those held
+	// earlier. A held build is not tried again until the Owner retries the
+	// issue.
+	Deferred, Held, StillHeld []core.IssueRef
+	Errors                    []error
 }
 
 // buildJob is one exported patch waiting for its build.
@@ -86,9 +89,11 @@ func (s *BuildStage) Pass(ctx context.Context) BuildPassResult {
 	retry := s.Retry.settled()
 	now := s.Clock.Now()
 	for _, j := range jobs {
-		held := retry.held(j.retry)
-		if held {
-			res.Held = append(res.Held, j.record.IssueID)
+		// A held build is not tried again until the Owner's retry resumes
+		// it: outages never spend compute without bound.
+		if j.retry.Held {
+			res.StillHeld = append(res.StillHeld, j.record.IssueID)
+			continue
 		}
 		if j.retry.waiting(now) {
 			res.Deferred = append(res.Deferred, j.record.IssueID)
@@ -103,7 +108,7 @@ func (s *BuildStage) Pass(ctx context.Context) BuildPassResult {
 			if rerr != nil {
 				res.Errors = append(res.Errors, fmt.Errorf("%s: %w", j.record.IssueID, rerr))
 			}
-			if !held && retry.held(next) {
+			if next.Held {
 				res.Held = append(res.Held, j.record.IssueID)
 			}
 		case failed:

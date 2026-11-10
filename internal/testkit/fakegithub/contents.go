@@ -68,6 +68,45 @@ func validPath(path string) bool {
 	return true
 }
 
+// Kinds of a contents entry that is not a plain file of at most 1 MB.
+const (
+	EntryDirectory = "dir"
+	EntrySubmodule = "submodule"
+	EntryLargeFile = "large"
+)
+
+// largeFileSize is the size the contents API reports of an EntryLargeFile.
+const largeFileSize = 2 << 20
+
+// SetEntryKind makes path of a commit answer as a directory, a submodule
+// or a file too large for the contents API, as GitHub answers them.
+func (s *Server) SetEntryKind(repoName, commit, path, kind string) error {
+	if kind != EntryDirectory && kind != EntrySubmodule && kind != EntryLargeFile {
+		return fmt.Errorf("unknown entry kind %q", kind)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, err := s.repoFor(repoName)
+	if err != nil {
+		return err
+	}
+	if r.entryKinds == nil {
+		r.entryKinds = map[string]string{}
+	}
+	r.entryKinds[commit+":"+path] = kind
+	return nil
+}
+
+// hasGitSegment reports whether path has a .git segment in any case.
+func hasGitSegment(path string) bool {
+	for segment := range strings.SplitSeq(path, "/") {
+		if strings.EqualFold(segment, ".git") {
+			return true
+		}
+	}
+	return false
+}
+
 // jContent is the answer of the contents API for one file.
 type jContent struct {
 	Type     string `json:"type"`
@@ -85,11 +124,23 @@ func (s *Server) getContents(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	repository, err := s.repoFor(repoName(r))
 	var content []byte
-	found := false
+	found, kind := false, ""
 	if err == nil {
 		content, found = repository.commits[ref][path]
+		kind = repository.entryKinds[ref+":"+path]
 	}
 	s.mu.Unlock()
+	switch kind {
+	case EntryDirectory:
+		writeJSON(w, http.StatusOK, []jContent{{Type: "file", Path: path + "/x", Size: 1}})
+		return
+	case EntrySubmodule:
+		writeJSON(w, http.StatusOK, jContent{Type: "submodule", Path: path})
+		return
+	case EntryLargeFile:
+		writeJSON(w, http.StatusOK, jContent{Type: "file", Encoding: "none", Path: path, Size: largeFileSize})
+		return
+	}
 	if err != nil || !found {
 		writeError(w, http.StatusNotFound, "Not Found")
 		return

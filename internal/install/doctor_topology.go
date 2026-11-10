@@ -174,4 +174,7 @@ func (in *Installer) checkStages(c *collector, m *manifest.Manifest) {
 		return
 	}
 	c.ok("lifecycle", "the supervisor builds, evaluates with the %s judge and releases candidates", choice.QAJudge)
+	if choice.QAAgentBinary != "" {
+		c.warn("qa launcher", "the QA agent runs through %s (qa_agent_binary, the supervisor's --qa-agent-binary), which is trusted on your word to run it in a sandbox; nothing checks that it does", choice.QAAgentBinary)
+	}
 }
