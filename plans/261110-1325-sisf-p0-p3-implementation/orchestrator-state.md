@@ -1,0 +1,47 @@
+# Orchestrator state
+
+Durable record for the orchestrating session. Re-read after any context compaction.
+
+## Confirmed brief (user chose Confirm on 2026-11-10)
+
+Objective: implement SISF P0–P3 per the decision brief in repo `bestagentkits/sisf`, using parallel sessions.
+
+Done means:
+1. `go build ./...` and `go test ./...` green on the P3 branch.
+2. The 20 tests SISF-01…20 automated and passing with fake GitHub, fake agents, fake OIDC.
+3. One command brings up three zones on Docker Compose; a sample issue completes its lifecycle to closed.
+4. One real smoke run: gh + claude + codex against `bestagentkits/sisf-sandbox`; result in a report.
+5. Conformance checker rejects a config missing a zone or violating the supervisor boundary.
+6. The 8 security requirements of brief §7 assigned to a phase and tested.
+7. Two operating modes work: Standalone, Docker.
+8. The 9 open points of §15: one ADR each, status proposed.
+9. Four stacked PRs (P0→P3), CI green, isolated review clean, issue labels match real state.
+10. README and docs updated: no longer "design stage".
+
+Out of scope: P4; Kubernetes, Vercel, Cloudflare, TOSE, Railway; any code from `saasvn/tose-app`; merging to main; real GitHub App and real Google SSO; production.
+
+Constraints: Go per brief §11 layout; tests first; no secrets committed; never push to main; orchestrator may create issues, labels, PRs, CI. Owner merges.
+
+Stop and ask only if: destructive or irreversible action; a Done-means item must change; spending beyond the one smoke run; failure unexplained after advisor counsel; a login expires.
+
+## Defaults announced to the user
+
+Module `github.com/bestagentkits/sisf`; Go 1.24; modernc SQLite (no CGO); dashboard = Go templates + vanilla JS embedded; ports 7460–7469; max 3 concurrent code-writing sessions, each in its own worktree; strong model for core design, cheaper for adapters/docs; stacked branches `feat/p0-foundation` → `feat/p1-local-factory` → `feat/p2-agents-qa-release` → `feat/p3-surfaces-identity`; one GitHub Actions workflow (build, test, lint).
+
+## GitHub state
+
+- Sandbox repo: `bestagentkits/sisf-sandbox` (private, created by this run).
+- Labels created: `in progress`, `in review`, `done`, `shipped`, `ai-handle`.
+- Tracking issues: #4 (P0, label `in progress`), #5 (P1), #6 (P2), #7 (P3). Exactly one state label per issue; comment with evidence at each transition.
+- Ruleset `protect-main` requires a PR for main.
+
+## Rules for commits and PRs
+
+Conventional commits, no AI references, no attribution lines, no plan or phase identifiers in code, tests or commit messages. Reply to the user in Vietnamese.
+
+## Progress log
+
+- 2026-11-10 13:30 — gate 3 started; planner sub-agent writing `plan.md` and four phase files in this directory. Account usage 3% weekly.
+- 2026-11-10 13:40 — plan written (`plan.md` + four phase files, 28 packages). Orchestrator decisions on the planner's questions: keep Go 1.24, bump the `go` directive only if an approved dependency forces it; PostgreSQL for Docker mode and SQLite for Standalone (brief §10); smoke run uses the local `gh` login as a dev-only credential in Standalone `--dev`, sandbox repo only; Jev/Clef ship as a generic typed adapter plus fake; the Pi agent adapter is added to P2 as an extra light package (`adapters/agent/pi/`) because brief §12 P2 lists it.
+- Model tiers for sessions: strong = inherit (Fable); standard = `claude-sonnet-5-5`; light = `claude-sonnet-5-5` with low effort.
+- Integration: each package session commits on its own worktree branch and does not push; the orchestrator squash-merges into the phase branch in the plan's merge order, then runs build and tests.
