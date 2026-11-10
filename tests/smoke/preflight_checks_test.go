@@ -78,7 +78,7 @@ func preflight(ctx context.Context, r *commandRunner) preflightFacts {
 	}
 	facts.login = strings.TrimSpace(login)
 
-	for _, tool := range [][]string{{"gh", "--version"}, {"claude", "--version"}, {"codex", "--version"}, {"go", "version"}, {"git", "rev-parse", "HEAD"}} {
+	for _, tool := range [][]string{{"gh", "--version"}, {"claude", "--version"}, {"codex", "--version"}, {"docker", "version", "--format", "{{.Server.Version}}"}, {"go", "version"}, {"git", "rev-parse", "HEAD"}} {
 		out, err := r.run(ctx, limit, nil, tool[0], tool[1:]...)
 		if err != nil {
 			r.fatalf("preflight: `%s` failed: %v", strings.Join(tool, " "), err)

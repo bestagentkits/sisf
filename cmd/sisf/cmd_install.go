@@ -37,7 +37,9 @@ Outside the simulation, init refuses without a provider and an Owner.
 --profile sim runs against a fake GitHub on 127.0.0.1:7467 and signs in at
 the fake identity provider on 127.0.0.1:7468, as the Owner "owner".
 --dev (Standalone only, loopback only) signs in at that fake provider too,
-so no person has to click; with --github-credential gh-cli the GitHub token
+locked: a browser unlocks sign-in at 127.0.0.1:7468/_sim/unlock with the
+secret each ` + "`sisf up`" + ` writes to secrets/control/dev-sign-in, which no agent is
+given; with --github-credential gh-cli the GitHub token
 is taken from ` + "`gh auth token`" + ` at init and at every start. sisf doctor warns
 loudly about a development install.
 
@@ -49,7 +51,14 @@ confirmed, the factory takes in issues and starts no work.
 A Standalone install can run real agents as local processes under
 trusted_code_only: --coder-agent claude|codex [--coder-model M] [--agent-home DIR]
 [--workspace-source URL|PATH], --qa-judge agent --qa-agent codex|claude
-[--qa-model M] [--qa-home DIR], --build-command CMD, --exec local.`,
+[--qa-model M] [--qa-home DIR], --build-command CMD, --exec local.
+The local backend builds nothing an agent wrote. To build candidates, give
+the install a Docker build sandbox the operator runs: --exec docker
+--exec-docker-endpoint http://127.0.0.1:PORT (the runner filter, sisf
+docker-filter --role runner) --exec-docker-network NET (internal)
+--egress-proxy http://HOST:PORT (on NET) --runner-image NAME@sha256:DIGEST
+--build-command CMD, and --qa-agent-binary LAUNCHER, an absolute launcher
+that runs the QA agent in a sandbox (--qa-home is then refused).`,
 		Run: runInit,
 	})
 	register(Command{

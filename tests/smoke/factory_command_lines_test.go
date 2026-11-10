@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -25,9 +26,10 @@ const (
 var issueLabels = []string{"sisf:ready", "kind:improvement"}
 
 // The models the two agents run, in place of the tier names of the
-// sandbox's model routes, and the command that builds a candidate of the
-// sandbox (examples/hello-app, a Go module). Each can be replaced from the
-// environment without editing the harness.
+// sandbox's model routes, and the command that builds a candidate in the
+// run's build sandbox (the runner image's script, sandbox/build-candidate.sh,
+// which tests and builds every Go package of the sandbox). Each can be
+// replaced from the environment without editing the harness.
 const (
 	coderModelEnv   = "SISF_SMOKE_CODER_MODEL"
 	qaModelEnv      = "SISF_SMOKE_QA_MODEL"
@@ -35,18 +37,30 @@ const (
 
 	defaultCoderModel   = "claude-sonnet-4-5"
 	defaultQAModel      = "gpt-5-codex"
-	defaultBuildCommand = "go build ./..."
+	defaultBuildCommand = sandboxBuildCommand
 )
 
 // runChoices are the run's settings that depend on the machine: the
-// operator's home, where the claude and codex logins are kept, and the
-// local clone the coding agent's workspaces are checked out from.
+// operator's home, where the claude login is kept, the local clone the
+// coding agent's workspaces are checked out from, and the build sandbox.
 type runChoices struct {
 	operatorHome    string
 	workspaceSource string
 	coderModel      string
 	qaModel         string
 	buildCommand    string
+	sandbox         sandboxChoice
+}
+
+// sandboxChoice is the run's build sandbox as `sisf init` is told of it.
+type sandboxChoice struct {
+	endpoint, network, egressProxy, runnerImage, qaLauncher string
+}
+
+// choice is what `sisf init` is told of a provisioned sandbox.
+func (s *buildSandbox) choice() sandboxChoice {
+	return sandboxChoice{endpoint: s.endpoint, network: s.network, egressProxy: egressProxyURL,
+		runnerImage: s.runnerImage, qaLauncher: s.launcher}
 }
 
 // choicesFrom reads the run's settings from the environment.
@@ -63,9 +77,11 @@ func choicesFrom(getenv func(string) string, workspaceSource string) runChoices 
 // initArgs creates the development install: Standalone on loopback,
 // signing in at the fake identity provider; the GitHub token taken from
 // the local gh login by the installer itself, so none is on a command line;
-// a capped budget with an alert; claude coding and codex judging under
-// trusted_code_only, both with the operator's own home, where their logins
-// are; and the real release defaults, since short canary windows are the
+// a capped budget with an alert; claude coding under trusted_code_only with
+// the operator's own home, where its login is; candidates built in the
+// run's Docker build sandbox, and codex judging through the launcher that
+// runs it in a container, as the supervisor requires under --exec docker;
+// and the real release defaults, since short canary windows are the
 // simulation's only. The install directory lies outside the operator's
 // home, which the installer requires before it lets an agent use that home.
 func initArgs(dir string, c runChoices) []string {
@@ -75,11 +91,17 @@ func initArgs(dir string, c runChoices) []string {
 		"--budget-cap", budgetCapUnits, "--alert-threshold", alertThresholdUnits,
 		"--coder-agent", "claude", "--coder-model", c.coderModel,
 		"--qa-judge", "agent", "--qa-agent", "codex", "--qa-model", c.qaModel,
-		"--exec", "local", "--agent-home", c.operatorHome, "--qa-home", c.operatorHome,
-		"--workspace-source", c.workspaceSource,
-		"--build-command", c.buildCommand,
+		"--agent-home", c.operatorHome, "--workspace-source", c.workspaceSource,
+		"--exec", "docker", "--exec-docker-endpoint", c.sandbox.endpoint, "--exec-docker-network", c.sandbox.network,
+		"--egress-proxy", c.sandbox.egressProxy, "--runner-image", c.sandbox.runnerImage,
+		"--qa-agent-binary", c.sandbox.qaLauncher, "--build-command", c.buildCommand,
 	}
 }
+
+// probeSandbox stands in for the sandbox in the flag probe, which runs
+// before anything is provisioned; --help parses the values and uses none.
+var probeSandbox = sandboxChoice{endpoint: "http://127.0.0.1:1", network: "sisf-smoke-probe", egressProxy: egressProxyURL,
+	runnerImage: "127.0.0.1:1/sisf-smoke-runner@sha256:" + strings.Repeat("0", 64), qaLauncher: "/nonexistent/qa-codex-launcher"}
 
 // upArgs starts the install in the foreground, building from source.
 func upArgs(dir, source string) []string {
@@ -101,6 +123,9 @@ type flagProbe struct {
 
 // flagProbes lists every command line the run depends on.
 func flagProbes(bins binaries, dir, source string, c runChoices) []flagProbe {
+	if c.sandbox == (sandboxChoice{}) {
+		c.sandbox = probeSandbox
+	}
 	return []flagProbe{
 		{"sisf init", bins.sisf, initArgs(dir, c)},
 		{"sisf up", bins.sisf, upArgs(dir, source)},
@@ -130,7 +155,7 @@ func probeFlags(ctx context.Context, r *commandRunner, probes []flagProbe) {
 }
 
 // requireOutsideHome refuses an install directory inside the operator's
-// home, or a home inside it: the agents run with that home and must not
+// home, or a home inside it: the coding agent runs with that home and must not
 // reach the factory's secrets. The installer refuses the same; checking
 // first keeps the run from failing after its preflight.
 func requireOutsideHome(r *commandRunner, dir, home string) {

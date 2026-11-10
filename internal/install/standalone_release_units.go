@@ -13,8 +13,9 @@ import (
 const appLauncher = "sisf-app-launcher"
 
 // standaloneSupervisorArgs is the supervisor's command line in Standalone
-// mode: native processes, the local execution and deployment backends, and
-// the SQLite store its env file names.
+// mode: native processes, the local deployment backend, the local
+// execution backend or, when the install has one, its Docker build sandbox,
+// and the SQLite store its env file names.
 func (in *Installer) standaloneSupervisorArgs(m *manifest.Manifest, c LifecycleChoice) []string {
 	l := in.Layout
 	args := []string{
@@ -25,9 +26,10 @@ func (in *Installer) standaloneSupervisorArgs(m *manifest.Manifest, c LifecycleC
 	if !c.Enabled {
 		return args
 	}
+	args = append(args, c.BuildSandbox.supervisorArgs()...)
 	args = append(args,
 		"--factory-manifest="+l.Config(), "--coder-agent="+c.CoderAgent, "--lifecycle-interval="+c.Interval,
-		"--exec=local", "--deploy=local", "--edge-admin-url=http://"+addr(PortEdgeAdmin),
+		"--deploy=local", "--edge-admin-url=http://"+addr(PortEdgeAdmin),
 		"--deploy-local-program="+l.Bin(appLauncher), "--qa-judge="+c.QAJudge,
 	)
 	if c.QAJudge == "agent" {
@@ -38,7 +40,7 @@ func (in *Installer) standaloneSupervisorArgs(m *manifest.Manifest, c LifecycleC
 		if c.Agents.QAModel != "" {
 			args = append(args, "--qa-model="+c.Agents.QAModel)
 		}
-		if c.Agents.QAHome != "" {
+		if c.Agents.QAHome != "" && !c.BuildSandbox.set() {
 			args = append(args, "--qa-home="+c.Agents.QAHome)
 		}
 	}

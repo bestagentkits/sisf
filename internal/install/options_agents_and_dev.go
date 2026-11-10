@@ -163,6 +163,7 @@ func (o Options) agentExtensions(ext map[string]any) {
 	set("qa_agent_binary", o.QAAgentBinary)
 	set("build_command", o.BuildCommand)
 	set(extGitHubCredential, o.GitHubCredential)
+	o.BuildSandbox.extensions(ext)
 	if o.Dev {
 		ext[extDev] = true
 	}

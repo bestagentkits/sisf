@@ -64,6 +64,11 @@ func (l Layout) SecretsDir(area string) string { return filepath.Join(l.Dir, "se
 // Secret is one file of a secrets area.
 func (l Layout) Secret(area, name string) string { return filepath.Join(l.SecretsDir(area), name) }
 
+// DevSignInSecret is the file of the secret that unlocks sign-in at the
+// fake identity provider of a development install. It is a control
+// secret: the operator reads it, no unit's environment holds it.
+func (l Layout) DevSignInSecret() string { return l.Secret(areaControl, "dev-sign-in") }
+
 // RuntimeEnv is the environment file of the units of one area.
 func (l Layout) RuntimeEnv(area string) string { return l.Secret(area, "runtime.env") }
 

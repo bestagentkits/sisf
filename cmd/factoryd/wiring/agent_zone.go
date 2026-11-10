@@ -134,13 +134,14 @@ func newCodingAgent(cfg AgentZoneConfig) (agent.Backend, lifecycle.ArtifactSourc
 	if err != nil {
 		return nil, nil, err
 	}
+	adapter := inner
 	if cfg.Model != "" {
 		if inner, err = withModel(inner, cfg.Model); err != nil {
 			return nil, nil, err
 		}
 	}
 	fresh := &lifecycle.FreshWorkspaces{Backend: inner, Root: cfg.WorkspaceRoot, Provision: gitCheckout(cfg.WorkspaceSource)}
-	return fresh, lifecycle.FileArtifacts{Root: cfg.ArtifactDir}, nil
+	return withUsageOf(fresh, adapter), lifecycle.FileArtifacts{Root: cfg.ArtifactDir}, nil
 }
 
 // gitCheckout fills a new workspace with source at the base commit. No

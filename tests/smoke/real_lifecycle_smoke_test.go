@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/install"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // TestRealLifecycleSmoke is the one real run of the factory: a Standalone
 // install on SQLite against the private sandbox repository, claude as the
-// coder and codex as the independent QA judge, a capped budget, and one
-// issue taken from intake to closed. It costs real model quota and writes
+// coder, candidates built in a Docker build sandbox the run provides,
+// codex as the independent QA judge in a container, a capped budget, and
+// one issue taken from intake to closed. It costs real model quota and writes
 // to GitHub, so it runs only under the smoke tag (`make smoke`), only with
 // SISF_SMOKE_REPO=bestagentkits/sisf-sandbox, and only after a preflight
 // that changes nothing. The report is written whatever the outcome.
@@ -69,6 +71,15 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	}
 	rep.phase("preflight and build", started)
 
+	// The build sandbox spends nothing; a sandbox that cannot build the
+	// sandbox's head stops the run before the factory starts.
+	stage, started = "build sandbox", time.Now()
+	sb := newBuildSandbox(r, root)
+	sb.provision(ctx, r, "https://github.com/"+sandboxRepo+".git", codexVersion(ctx, r))
+	sb.checkIsolation(ctx, r)
+	choices.sandbox = sb.choice()
+	rep.phase("build sandbox", started)
+
 	stage, started = "install", time.Now()
 	env := sisfEnv("SISF_HOME=" + home)
 	out, err := r.run(ctx, 2*time.Minute, env, bins.sisf, initArgs(home, choices)...)
@@ -77,6 +88,15 @@ func TestRealLifecycleSmoke(t *testing.T) {
 		r.fatalf("sisf init: %v", err)
 	}
 	r.logf("sisf init:\n%s", out)
+	factoryID := installedFactoryID(r, home)
+	sb.startFilter(ctx, r, bins.sisf, factoryID, filepath.Join(root, "docker-filter.log"))
+	head, err := defaultBranchRevision(ctx, r)
+	if err != nil {
+		r.fatalf("the sandbox's head commit cannot be read: %v", err)
+	}
+	sb.selfBuild(ctx, r, factoryID, core.CommitSHA(head))
+	rep.check("released artifact is the sandboxed build", statusNotChecked,
+		"Standalone's local deployment backend starts the installed application for every release; the sandboxed build is tested and digested, not deployed")
 	proc, err := startFactory(r, bins.sisf, upArgs(home, repoRoot()), env, upLog)
 	if err != nil {
 		r.fatalf("start sisf up: %v", err)
@@ -183,4 +203,15 @@ func seedInstallSecrets(r *commandRunner, home string) {
 		}
 		return nil
 	})
+}
+
+// installedFactoryID reads the factory ID `sisf init` chose; the runner
+// filter admits only that factory's runners.
+func installedFactoryID(r *commandRunner, home string) core.FactoryID {
+	r.t.Helper()
+	m, err := install.Layout{Dir: home}.LoadManifest()
+	if err != nil {
+		r.fatalf("the install's factory.yaml cannot be read: %v", err)
+	}
+	return m.FactoryID
 }

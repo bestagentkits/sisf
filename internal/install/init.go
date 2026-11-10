@@ -27,8 +27,9 @@ const rootKeyWarning = "The root signing key is stored in %s. This is the lower-
 	"Keep the key outside the factory (KMS, HSM or a hardware key) before you rely on self-update."
 
 // devWarning is shown at the init of a development install and by the doctor.
-const devWarning = "DEVELOPMENT INSTALL: anyone who can reach 127.0.0.1 on this machine signs in as the Owner through the fake identity " +
-	"provider on 127.0.0.1:7468, without a password. Use it on a machine only you use, never for a factory others rely on."
+const devWarning = "DEVELOPMENT INSTALL: the Owner signs in through the fake identity provider on 127.0.0.1:7468, without a password; " +
+	"sign-in is unlocked only with the secret `sisf up` writes to secrets/control/dev-sign-in, so anyone who can read that file, " +
+	"including an agent running as your user under trusted_code_only, signs in as the Owner. Use it on a machine only you use, never for a factory others rely on."
 
 // Init creates a new install: identity, the sign-in settings, one
 // credential set per zone, the root key, the manifest, and the service

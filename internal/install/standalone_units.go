@@ -62,12 +62,8 @@ func (in *Installer) standaloneUnits(m *manifest.Manifest) ([]unit, []io.Closer,
 	if err != nil {
 		return nil, nil, err
 	}
-	o, err := in.installedOptions(m)
+	o, choice, err := in.standaloneChoice(m)
 	if err != nil {
-		return nil, nil, err
-	}
-	choice := lifecycleChoice(o, manifest.ModeStandalone)
-	if err := choice.check(); err != nil {
 		return nil, nil, err
 	}
 
@@ -100,9 +96,19 @@ func (in *Installer) standaloneUnits(m *manifest.Manifest) ([]unit, []io.Closer,
 		}, Env: simEnv}})
 	}
 	if o.Identity.usesFake() {
-		// The fake identity provider holds no secret: its client is public.
-		// It starts first: control discovers the provider when it starts.
-		units = append([]unit{{"sim-oidc", Cmd{Name: in.Sisf, Args: []string{"sim", "oidc", "--addr=" + addr(PortFakeOIDC)}}}}, units...)
+		// The fake identity provider's client is public. It starts first:
+		// control discovers the provider when it starts.
+		args := []string{"sim", "oidc", "--addr=" + addr(PortFakeOIDC)}
+		if !sim {
+			// Outside the simulation real agents may run on this machine
+			// and reach every loopback port, so sign-in is locked.
+			path, err := in.writeDevSignInSecret()
+			if err != nil {
+				return nil, nil, err
+			}
+			args = append(args, "--sign-in-secret-file="+path)
+		}
+		units = append([]unit{{"sim-oidc", Cmd{Name: in.Sisf, Args: args}}}, units...)
 	}
 
 	if err := os.MkdirAll(l.Logs(), 0o700); err != nil {
@@ -174,4 +180,46 @@ func join(lists ...any) []string {
 		}
 	}
 	return out
+}
+
+// writeDevSignInSecret writes a new secret that unlocks sign-in at the fake
+// identity provider of a development install, for this start of `sisf up`,
+// and tells the operator where it is. It is never put in an environment, a
+// command line or a log; the file is the operator's only, in the control
+// secrets of the install directory, which lies apart from every agent's
+// home and workspace.
+func (in *Installer) writeDevSignInSecret() (string, error) {
+	secret, err := newToken(in.Rand)
+	if err != nil {
+		return "", err
+	}
+	path := in.Layout.DevSignInSecret()
+	if err := writeSecret(path, []byte(secret+"\n")); err != nil {
+		return "", err
+	}
+	in.say("sign-in at the development identity provider is locked: open http://%s/_sim/unlock and enter the secret in %s\n",
+		addr(PortFakeOIDC), path)
+	return path, nil
+}
+
+// standaloneChoice is the options and the lifecycle of a Standalone install,
+// as its units are started with them.
+func (in *Installer) standaloneChoice(m *manifest.Manifest) (Options, LifecycleChoice, error) {
+	o, err := in.installedOptions(m)
+	if err != nil {
+		return o, LifecycleChoice{}, err
+	}
+	choice := lifecycleChoice(o, manifest.ModeStandalone)
+	return o, choice, choice.check()
+}
+
+// StandaloneSupervisorArgs is the supervisor's command line, after the
+// program name, of the Standalone install m describes, as `sisf up` starts
+// it. It writes nothing.
+func (in *Installer) StandaloneSupervisorArgs(m *manifest.Manifest) ([]string, error) {
+	_, choice, err := in.standaloneChoice(m)
+	if err != nil {
+		return nil, err
+	}
+	return in.standaloneSupervisorArgs(m, choice), nil
 }

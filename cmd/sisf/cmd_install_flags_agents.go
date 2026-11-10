@@ -15,6 +15,8 @@ type agentFlags struct {
 	agentHome, qaHome             string
 	workspaceSource, buildCommand string
 	exec                          string
+	qaAgentBinary                 string
+	sandbox                       install.BuildSandbox
 }
 
 func (f *agentFlags) bind(fs *flag.FlagSet) {
@@ -27,7 +29,12 @@ func (f *agentFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.qaHome, "qa-home", "", "absolute HOME, such as your own, the QA agent runs with to find its login; Standalone only, outside the install directory")
 	fs.StringVar(&f.workspaceSource, "workspace-source", "", "repository URL or absolute path, without credentials, the coding agent's workspaces are checked out from (default https://github.com/<repo>.git)")
 	fs.StringVar(&f.buildCommand, "build-command", "", "command, split on spaces, that builds a candidate")
-	fs.StringVar(&f.exec, "exec", "", "execution backend of candidate builds, fixed by the mode: local (Standalone, under trusted_code_only) or docker")
+	fs.StringVar(&f.exec, "exec", "", "execution backend of candidate builds: local (Standalone default, which builds nothing an agent wrote) or docker (Docker mode; Standalone with the build sandbox flags)")
+	fs.StringVar(&f.qaAgentBinary, "qa-agent-binary", "", "absolute path of a launcher that runs the QA agent in a sandbox and keeps its standard input and output; needed by Docker mode and by a Standalone build sandbox")
+	fs.StringVar(&f.sandbox.Endpoint, "exec-docker-endpoint", "", "Standalone --exec docker: http URL, on loopback, of the runner Docker request filter (sisf docker-filter --role runner)")
+	fs.StringVar(&f.sandbox.Network, "exec-docker-network", "", "Standalone --exec docker: the internal sandbox network candidate builds run on")
+	fs.StringVar(&f.sandbox.EgressProxy, "egress-proxy", "", "Standalone --exec docker: http URL of the egress proxy on the sandbox network, its only way out")
+	fs.StringVar(&f.sandbox.RunnerImage, "runner-image", "", "Standalone --exec docker: image candidate builds run in, name@sha256:... (pinned by its registry digest), which the filter allows")
 }
 
 // apply sets the agent options, checking the choices only the command line
@@ -39,19 +46,19 @@ func (f agentFlags) apply(o *install.Options) error {
 		return usagef("--qa-judge must be agent; the scripted judge is the simulation's own")
 	case f.qaJudge == "agent" && o.Sim:
 		return usagef("the simulation judges with its scripted judge; do not pass --qa-judge agent")
-	case f.exec != "" && f.exec != execFor(o.Mode):
-		return usagef("--exec %s does not fit %s mode, which builds with %s", f.exec, o.Mode, execFor(o.Mode))
+	case f.exec != "" && f.exec != "local" && f.exec != "docker":
+		return usagef("--exec must be local or docker")
+	case o.Mode == manifest.ModeDocker && f.exec == "local":
+		return usagef("--exec local does not fit docker mode, which builds with docker")
+	case o.Mode == manifest.ModeDocker && f.sandbox != (install.BuildSandbox{}):
+		return usagef("docker mode runs its own build sandbox; --exec-docker-endpoint, --exec-docker-network, --egress-proxy and --runner-image are for Standalone")
+	case o.Mode == manifest.ModeStandalone && f.exec == "docker" && f.sandbox == (install.BuildSandbox{}):
+		return usagef("--exec docker in Standalone mode needs the build sandbox: --exec-docker-endpoint, --exec-docker-network, --egress-proxy and --runner-image")
+	case o.Mode == manifest.ModeStandalone && f.exec != "docker" && f.sandbox != (install.BuildSandbox{}):
+		return usagef("the build sandbox flags need --exec docker")
 	}
-	o.QAAgent, o.BuildCommand = f.qaAgent, f.buildCommand
+	o.QAAgent, o.QAAgentBinary, o.BuildCommand, o.BuildSandbox = f.qaAgent, f.qaAgentBinary, f.buildCommand, f.sandbox
 	o.Agents = install.AgentOptions{Coder: f.coderAgent, CoderModel: f.coderModel, QAModel: f.qaModel,
 		AgentHome: f.agentHome, QAHome: f.qaHome, WorkspaceSource: f.workspaceSource}
 	return nil
-}
-
-// execFor is the execution backend a mode builds candidates with.
-func execFor(mode manifest.Mode) string {
-	if mode == manifest.ModeDocker {
-		return "docker"
-	}
-	return "local"
 }

@@ -71,6 +71,10 @@ type Options struct {
 	BuildCommand string
 	// Agents are the real coding and QA agents of a Standalone install.
 	Agents AgentOptions
+	// BuildSandbox is the Docker sandbox a Standalone install builds
+	// candidates in; the zero value builds with the local backend, which
+	// builds nothing an agent wrote.
+	BuildSandbox BuildSandbox
 	// Identity is how people sign in to the control zone.
 	Identity Identity
 	// Dev is a development install: Standalone on loopback only, signing in
@@ -133,6 +137,9 @@ func (o Options) normalize() (Options, error) {
 	}
 	o.Identity = id
 	if o.Agents, err = o.Agents.normalize(o); err != nil {
+		return o, err
+	}
+	if err := o.BuildSandbox.normalize(o); err != nil {
 		return o, err
 	}
 	if err := o.Budget.Validate(); err != nil {

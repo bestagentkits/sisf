@@ -66,6 +66,8 @@ type LifecycleChoice struct {
 	Interval                 string
 	// Agents are the real agents of a Standalone install.
 	Agents AgentOptions
+	// BuildSandbox is where a Standalone install builds candidates.
+	BuildSandbox BuildSandbox
 	// RunEstimateMicros is what each run sets aside from a capped budget;
 	// zero when the budget is not capped.
 	RunEstimateMicros int64
@@ -73,7 +75,7 @@ type LifecycleChoice struct {
 
 // lifecycleChoice decides the stages of an install.
 func lifecycleChoice(o Options, mode manifest.Mode) LifecycleChoice {
-	c := LifecycleChoice{Enabled: true, CoderAgent: "fake", Interval: lifecycleInterval, Agents: o.Agents}
+	c := LifecycleChoice{Enabled: true, CoderAgent: "fake", Interval: lifecycleInterval, Agents: o.Agents, BuildSandbox: o.BuildSandbox}
 	if o.Budget.Confirmed && o.Budget.Capped() {
 		c.RunEstimateMicros = int64(o.Budget.withDefaults().RunEstimateMicros)
 	}
@@ -109,6 +111,7 @@ func (o *Options) lifecycleExtensions(m *manifest.Manifest) {
 	o.QAAgentBinary, _ = m.Extensions["qa_agent_binary"].(string)
 	o.BuildCommand, _ = m.Extensions["build_command"].(string)
 	o.Agents = agentsOf(m)
+	o.BuildSandbox = buildSandboxOf(m)
 }
 
 // lifecycleValue is what a setting written into a command line may hold.
@@ -149,7 +152,12 @@ func (c LifecycleChoice) check() error {
 		}
 	}
 	if a.WorkspaceSource != "" {
-		return checkWorkspaceSource(a.WorkspaceSource)
+		if err := checkWorkspaceSource(a.WorkspaceSource); err != nil {
+			return err
+		}
+	}
+	if c.BuildSandbox.set() {
+		return c.BuildSandbox.check()
 	}
 	return nil
 }

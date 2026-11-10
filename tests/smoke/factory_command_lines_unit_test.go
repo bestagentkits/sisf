@@ -12,11 +12,15 @@ import (
 	"time"
 )
 
-// standInChoices are the run's machine settings with stand-in paths.
+// standInChoices are the run's machine settings with stand-in paths and a
+// stand-in build sandbox.
 func standInChoices() runChoices {
-	return choicesFrom(func(k string) string {
+	c := choicesFrom(func(k string) string {
 		return map[string]string{"HOME": "/Users/operator"}[k]
 	}, "/srv/smoke/sandbox")
+	c.sandbox = sandboxChoice{endpoint: "http://127.0.0.1:17480", network: "sisf-smoke-x-sandbox", egressProxy: egressProxyURL,
+		runnerImage: "127.0.0.1:17481/sisf-smoke-runner@sha256:" + strings.Repeat("a", 64), qaLauncher: "/srv/smoke/bin/qa-codex-launcher"}
+	return c
 }
 
 // flagValue returns the value that follows flag in args.
@@ -37,8 +41,10 @@ func TestTheRunsInitLineUsesTheTypedFlagsOfADevelopmentInstall(t *testing.T) {
 		"--budget-cap": budgetCapUnits, "--alert-threshold": alertThresholdUnits,
 		"--coder-agent": "claude", "--coder-model": defaultCoderModel,
 		"--qa-judge": "agent", "--qa-agent": "codex", "--qa-model": defaultQAModel,
-		"--exec": "local", "--agent-home": "/Users/operator", "--qa-home": "/Users/operator",
-		"--workspace-source": "/srv/smoke/sandbox", "--build-command": defaultBuildCommand,
+		"--agent-home": "/Users/operator", "--workspace-source": "/srv/smoke/sandbox",
+		"--exec": "docker", "--exec-docker-endpoint": c.sandbox.endpoint, "--exec-docker-network": c.sandbox.network,
+		"--egress-proxy": egressProxyURL, "--runner-image": c.sandbox.runnerImage,
+		"--qa-agent-binary": c.sandbox.qaLauncher, "--build-command": sandboxBuildCommand,
 	} {
 		if got, ok := flagValue(args, flag); !ok || got != want {
 			t.Errorf("%s = %q (%v), want %q", flag, got, ok, want)
@@ -50,8 +56,10 @@ func TestTheRunsInitLineUsesTheTypedFlagsOfADevelopmentInstall(t *testing.T) {
 	line := strings.Join(args, " ")
 	// No untyped per-unit flags, no simulation-only release tuning and no
 	// token on the command line.
+	// --qa-home is refused under --exec docker: the launcher owns the QA
+	// agent's home.
 	for _, banned := range []string{"--dispatcher-arg", "--supervisor-arg", "--min-hold", "--release-window", "--github-token-env",
-		"--profile", "--oidc", "--owner"} {
+		"--profile", "--oidc", "--owner", "--qa-home", "--exec local"} {
 		if strings.Contains(line, banned) {
 			t.Errorf("the init line carries %s: %s", banned, line)
 		}

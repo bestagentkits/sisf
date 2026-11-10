@@ -106,3 +106,38 @@ func TestTheDevAndBudgetFlagsReachTheOptions(t *testing.T) {
 		t.Fatalf("budget = %+v (%v, %v)", b, given, err)
 	}
 }
+
+func TestTheBuildSandboxFlagsReachTheOptions(t *testing.T) {
+	t.Parallel()
+	image := "127.0.0.1:17481/sisf-runner@sha256:" + strings.Repeat("cd", 32)
+	f := parsedInstallFlags(t, "--mode", "standalone", "--repo", "bestagentkits/sisf-sandbox", "--dev", "--github-credential", "gh-cli",
+		"--coder-agent", "claude", "--qa-judge", "agent", "--qa-agent", "codex", "--agent-home", "/Users/op",
+		"--exec", "docker", "--exec-docker-endpoint", "http://127.0.0.1:17480", "--exec-docker-network", "sisf-smoke-sandbox",
+		"--egress-proxy", "http://egress:3128", "--runner-image", image, "--qa-agent-binary", "/srv/smoke/qa-launcher",
+		"--build-command", "/usr/local/bin/sisf-build-candidate")
+	o, err := f.options("/srv/sisf/factory", func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("options: %v", err)
+	}
+	want := install.BuildSandbox{Endpoint: "http://127.0.0.1:17480", Network: "sisf-smoke-sandbox", EgressProxy: "http://egress:3128", RunnerImage: image}
+	if o.BuildSandbox != want || o.QAAgentBinary != "/srv/smoke/qa-launcher" || o.BuildCommand != "/usr/local/bin/sisf-build-candidate" {
+		t.Fatalf("options = %+v", o)
+	}
+}
+
+func TestTheBuildSandboxFlagsComeTogetherWithExecDocker(t *testing.T) {
+	t.Parallel()
+	for name, args := range map[string][]string{
+		"docker without a sandbox":      {"--mode", "standalone", "--exec", "docker"},
+		"a sandbox without docker":      {"--mode", "standalone", "--exec-docker-network", "n"},
+		"a sandbox with local":          {"--mode", "standalone", "--exec", "local", "--runner-image", "sha256:ab"},
+		"a sandbox flag in docker mode": {"--mode", "docker", "--exec-docker-endpoint", "http://127.0.0.1:1"},
+		"local in docker mode":          {"--mode", "docker", "--exec", "local"},
+		"an unknown execution backend":  {"--mode", "standalone", "--exec", "podman"},
+	} {
+		f := parsedInstallFlags(t, append([]string{"--repo", "acme/app"}, args...)...)
+		if _, err := f.options("/srv/sisf/factory", func(string) string { return "" }); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

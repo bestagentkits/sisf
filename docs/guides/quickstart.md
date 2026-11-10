@@ -90,7 +90,30 @@ sisf init --dir /srv/sisf/factory --repo owner/app --github-token-env GITHUB_TOK
 
 - `--agent-home` and `--qa-home` let an agent use an existing login, such as the one in your own home. They are refused when the directory is, holds or lies inside the factory's secrets, state or trust directories, and the installer refuses an install directory inside that home (or that home inside it). The default install directory `~/.sisf/factory` lies inside your home, so pass `--dir` elsewhere.
 - `--coder-model` and `--qa-model` replace the tier names of the policy's model routes, which the real tools do not accept.
-- Candidate builds are held in this release: the supervisor builds code an agent wrote only in a sandbox of an isolating backend, and the local backend is not one (`cmd/supervisor/stages/execution_policy.go`). Outside the simulation, a Standalone supervisor therefore refuses to start its lifecycle stages with `PERMISSION_DENIED` rather than run an agent's code on the host, and `sisf up` reports it. Nothing is built, judged or released until an isolating backend exists for Standalone.
+- With `--exec local` candidate builds are held: the supervisor builds code an agent wrote only in a sandbox of an isolating backend, and the local backend is not one (`cmd/supervisor/stages/execution_policy.go`). Outside the simulation, a Standalone supervisor then refuses to start its lifecycle stages with `PERMISSION_DENIED` rather than run an agent's code on the host, and `sisf up` reports it. To build, judge and release, give the install a Docker build sandbox (below).
+
+### Building in a Docker sandbox
+
+The agents keep running as local processes under `trusted_code_only`; only the builds move into Docker, and the QA agent, which reads those untrusted candidates, then runs through a sandboxing launcher, as the supervisor requires under `--exec docker` (`cmd/supervisor/qa_judge_wiring.go`). You provide the sandbox:
+
+- an internal Docker network for the runners (`docker network create --internal NET`);
+- an egress proxy on that network as its only way out, for example the edge's (`edge --egress-listen=egress:3128 --allow-non-loopback ...` in a container attached to `NET` with the alias `egress` and to an outbound network);
+- a runner image that holds the build command and reports `sisf-image-digest:` and `sisf-image:` lines (`cmd/supervisor/stages/image_builders.go`), pinned as `name@sha256:...` by a registry digest: the docker backend runs no image by tag or local image ID, so push a locally built image to a registry first, such as one on loopback;
+- the runner Docker request filter: `sisf docker-filter --role runner --listen 127.0.0.1:PORT --factory-id ID --network NET --image IMAGE --socket SOCKET`, started before `sisf up`;
+- a launcher that runs the QA agent in a sandbox and keeps its standard input and output.
+
+```sh
+sisf init --dir /srv/sisf/factory --repo owner/app ... \
+  --coder-agent claude --coder-model <model> --agent-home "$HOME" \
+  --qa-judge agent --qa-agent codex --qa-model <model> --qa-agent-binary /srv/sisf/qa-launcher \
+  --exec docker --exec-docker-endpoint http://127.0.0.1:PORT --exec-docker-network NET \
+  --egress-proxy http://egress:3128 --runner-image registry/runner@sha256:... --build-command /usr/local/bin/build
+```
+
+- `init` refuses a partial sandbox, a filter off loopback, an image not pinned by digest, a sandbox without `--build-command` or `--qa-agent-binary`, and `--qa-home` with it: the launcher owns the QA agent's home (`internal/install/standalone_build_sandbox.go`).
+- A build holds no secret, so the build command fetches the candidate's commit (`SISF_COMMIT`) without one: through the egress proxy from a public repository, or from a mirror you serve on the sandbox network.
+- Standalone's local deployment backend starts the installed application for every release; the sandboxed build is tested and digested, not deployed.
+- The smoke run (`tests/smoke`) provisions all of this for itself, with a git mirror of the private sandbox repository and a launcher that runs codex in a container (`tests/smoke/sandbox/`).
 
 ## Development install
 
@@ -101,7 +124,8 @@ sisf init --dev --mode standalone --dir /srv/sisf/dev --repo owner/app --github-
 ```
 
 - `--github-credential gh-cli` takes the GitHub token from `gh auth token` at `init` and at every `up`; it is accepted only with `--dev`.
-- `--dev` is refused in Docker mode, with `--profile sim`, with a sign-in provider and with an external URL off loopback. `init` and `doctor` print a loud warning: anyone who can reach 127.0.0.1 on that machine signs in as the Owner.
+- Sign-in is locked, because real agents run as local processes beside the fake identity provider and can reach every loopback port. Each `sisf up` writes a new secret to `<dir>/secrets/control/dev-sign-in` (owner-only, never in a unit's environment, command line or log) and prints where it is; open `http://127.0.0.1:7468/_sim/unlock` and enter it once per browser, then sign in at `http://127.0.0.1:7463`. Without it the fake refuses every sign-in and every `/_sim` endpoint (`cmd/sisf/cmd_sim_oidc_sign_in_gate.go`). The simulation profile stays unlocked.
+- `--dev` is refused in Docker mode, with `--profile sim`, with a sign-in provider and with an external URL off loopback. `init` and `doctor` print a loud warning: anyone who can read the sign-in secret, which includes an agent running as your user under `trusted_code_only`, signs in as the Owner.
 
 ## What the commands do
 

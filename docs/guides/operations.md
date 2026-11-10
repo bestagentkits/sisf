@@ -53,7 +53,7 @@ People sign in to the dashboard with the providers the control process is given 
 | `SISF_CONTROL_SECRET_<NAME>` | a secret the `env` provider serves as `env:<NAME>`; only in `secrets/control/runtime.env` |
 | `SISF_TRUSTED_PROXIES` | networks the edge connects from; the public bug-report route limits clients by the address the edge forwards only from these (default loopback) |
 
-`sisf init` writes these: the non-secret settings into `factory.yaml` and from there into the Compose file or the Standalone unit, the client secrets and `EDGE_COUNTERS_TOKEN` into `secrets/control/runtime.env` only. In the simulation profile and a `--dev` install, sign-in is the fake identity provider of `sisf sim oidc` on `127.0.0.1:7468`, which the install starts itself and which also stands in for GitHub sign-in, with the subject `owner` as the Owner. A real install must name at least one provider and one Owner; `sisf init` refuses otherwise, and refuses the fake. `sisf doctor` checks the same: a provider and an Owner are configured, the external URL is sane, the fake is used only by the simulation (and, with a loud warning, a development install), and control reads the edge's counters with its own token and holds no edge admin token.
+`sisf init` writes these: the non-secret settings into `factory.yaml` and from there into the Compose file or the Standalone unit, the client secrets and `EDGE_COUNTERS_TOKEN` into `secrets/control/runtime.env` only. In the simulation profile and a `--dev` install, sign-in is the fake identity provider of `sisf sim oidc` on `127.0.0.1:7468`, which the install starts itself and which also stands in for GitHub sign-in, with the subject `owner` as the Owner; in a `--dev` install a browser must first unlock sign-in with the secret each `sisf up` writes to `secrets/control/dev-sign-in` (see the [quickstart](quickstart.md#development-install)). A real install must name at least one provider and one Owner; `sisf init` refuses otherwise, and refuses the fake. `sisf doctor` checks the same: a provider and an Owner are configured, the external URL is sane, the fake is used only by the simulation (and, with a loud warning, a development install), and control reads the edge's counters with its own token and holds no edge admin token.
 
 In Docker mode control reaches the supervisor's admin socket as `unix:/run/sisf/admin/supervisor.sock` on the `supervisor-admin` volume the two share; in Standalone it is `127.0.0.1:7464`.
 
@@ -95,7 +95,7 @@ The control process opens two secret providers, and no other zone opens any (`cm
 
 ## Agents and builds
 
-Real coding and QA agents run only in Standalone mode under `trusted_code_only`; the flags and the refusal of `--agent-home` and `--qa-home` near the factory's protected paths are in the [quickstart](quickstart.md#real-agents-in-standalone). Candidate builds are held there in this release: the supervisor refuses to build an agent's code with the local backend.
+Real coding and QA agents run only in Standalone mode under `trusted_code_only`; the flags and the refusal of `--agent-home` and `--qa-home` near the factory's protected paths are in the [quickstart](quickstart.md#real-agents-in-standalone). With `--exec local` candidate builds are held: the supervisor refuses to build an agent's code with the local backend. A Standalone install builds in a Docker sandbox the operator provides (`--exec docker` with the runner filter, sandbox network, egress proxy, runner image and a QA launcher); see the [quickstart](quickstart.md#building-in-a-docker-sandbox).
 
 ## Edge tokens
 

@@ -29,7 +29,11 @@ e2e:
 
 # smoke is the one real run against bestagentkits/sisf-sandbox: it needs
 # SISF_SMOKE_REPO=bestagentkits/sisf-sandbox, gh, claude and codex logged in,
-# and TMPDIR outside $$HOME. It runs the real release defaults, so it is slow.
+# a running Docker daemon on a local socket (candidate builds and the codex
+# QA agent run in containers the run provides), and TMPDIR outside $$HOME.
+# It runs the real release defaults, so it is slow. The build sandbox alone,
+# which spends nothing, is checked by SISF_SMOKE_SANDBOX_CHECK=1 with
+# -run TestBuildSandboxSelfCheck.
 smoke:
 	go test -tags smoke ./tests/smoke/... -count=1 -v -timeout 150m
 

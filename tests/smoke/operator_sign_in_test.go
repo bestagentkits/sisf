@@ -16,7 +16,6 @@ import (
 
 	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/internal/install"
-	"github.com/bestagentkits/sisf/internal/testkit/harness"
 )
 
 // signInLimit bounds the CLI's sign-in.
@@ -53,7 +52,7 @@ func signInOperator(ctx context.Context, r *commandRunner, sisf, home string, en
 	streamLines(out, func(line string) {
 		r.logf("sisf login: %s", r.scrub.clean(line))
 		if m := loginCode.FindStringSubmatch(line); m != nil && !approved {
-			approveDeviceLogin(r, base, m[1])
+			approveDeviceLogin(r, base, home, m[1])
 			approved = true
 		}
 	})
@@ -70,9 +69,9 @@ func signInOperator(ctx context.Context, r *commandRunner, sisf, home string, en
 // approveDeviceLogin signs the Owner in at the fake identity provider of
 // the development install, confirms their identity for approving exactly
 // this login code, and approves it from the verification page's form.
-func approveDeviceLogin(r *commandRunner, base, code string) {
+func approveDeviceLogin(r *commandRunner, base, home, code string) {
 	r.t.Helper()
-	b := harness.NewBrowser(r.t, base, loopbackURL(install.PortFakeOIDC, ""))
+	b := operatorBrowser(r, base, home)
 	b.SignIn(wiring.ProviderOIDC, wiring.SimOwnerSubject)
 	b.ApproveDevice(code)
 	r.logf("approved the CLI's sign-in as %s at the fake identity provider", wiring.SimOwnerSubject)
