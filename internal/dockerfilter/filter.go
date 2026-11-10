@@ -64,7 +64,15 @@ func (f *Filter) serve(w http.ResponseWriter, r *http.Request) *denial {
 	}
 	switch rt.endpoint {
 	case endpointCreate:
+		if f.cfg.Role == RoleDeploy {
+			return f.createDeploy(w, r, rt)
+		}
 		return f.create(w, r, rt)
+	case endpointList:
+		if d := noBody(r); d != nil {
+			return d
+		}
+		return f.list(w, r, rt)
 	case endpointPing:
 		if d := noBody(r); d != nil {
 			return d

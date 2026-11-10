@@ -5,18 +5,25 @@
 # rendered file: the next `sisf up` replaces it, and `sisf doctor` rejects a
 # file that breaks the isolation rules checked in internal/install.
 #
-# One project, one service per runtime unit that exists today. The runner
-# units do not exist yet, and nothing here can create a container: no service
-# has Docker API access. Every container, network and volume is named
-# "{{ .Project }}-..." so it can be told apart from anything else on the host.
+# One project, one service per long-running unit. Every container, network
+# and volume is named "{{ .Project }}-..." so it can be told apart from
+# anything else on the host; the containers the supervisor deploys are named
+# "{{ .FactoryID }}-<unit>-<digest>", which starts with the same prefix.
 #
 # Isolation, in short:
-#   - four networks: app, factory, control, sandbox. The sandbox is internal
-#     and only the edge is attached to it (its way out).
+#   - five networks: app, factory, control, sandbox and docker. The sandbox
+#     and docker networks are internal. Only the edge is on the sandbox (the
+#     egress proxy, the runners' only way out); only the supervisor and the
+#     two Docker request filters are on the docker network.
 #   - each zone reads only its own secrets (an env file of its own area);
 #     nothing mounts the secrets directory.
-#   - no service mounts the host's Docker socket or is pointed at a Docker
-#     API, and there is no socket proxy.
+#   - only the two Docker request filters mount the host's Docker socket.
+#     Each serves one client, the supervisor, and refuses every request its
+#     role does not need: the runner filter creates the sandboxes candidate
+#     builds run in, the deploy filter the revisions of the units. No other
+#     service reaches a Docker API, and the agent zone reaches none.
+#   - the supervisor alone holds deploy and signing power: the trust volume
+#     with its delegated keys, the edge's admin token and the filters.
 #   - the state database is on the factory network only, which the edge is
 #     not on.
 #   - every published port is bound to 127.0.0.1, in the 7460-7469 range.
@@ -72,6 +79,20 @@ services:
       state: {condition: service_healthy}
 
   # ---- Zone 3: control plane -----------------------------------------------
+  # One-shot install step: places the delegated keys `sisf up` issued with
+  # the root key, and the record of the release it signed, on the trust
+  # volume. No network; its env file is emptied as soon as it has run.
+  trust-bootstrap:
+    <<: *hardened
+    restart: "no"
+    profiles: ["bootstrap"]
+    container_name: "{{ .Project }}-trust-bootstrap"
+    image: "{{ .Images.Sisf }}"
+    command: ["sisf", "trust", "install", "--trust-dir=/var/lib/sisf/trust"]
+    env_file: ["{{ .SecretsDir }}/control/trust.env"]
+    network_mode: "none"
+    volumes: ["trust:/var/lib/sisf/trust"]
+
   supervisor:
     <<: *hardened
     container_name: "{{ .Project }}-supervisor"
@@ -84,16 +105,93 @@ services:
       - --root-key-ref=env:SISF_ROOT_PUBLIC_KEY
       - --trust-dir=/var/lib/sisf/trust
       - --admin=127.0.0.1:{{ .PortSupervisor }}
+      - --dispatcher-admin-url=http://dispatcher:{{ .PortDispatcherAdmin }}
+{{- if .Lifecycle.Enabled }}
+      - --factory-manifest=/etc/sisf/factory.yaml
+      - --coder-agent={{ .Lifecycle.CoderAgent }}
+      - --lifecycle-interval={{ .Lifecycle.Interval }}
+      - --exec=docker
+      - --exec-docker-endpoint=http://docker-filter-runner:{{ .PortDockerFilter }}
+      - --exec-docker-network={{ .Project }}-sandbox
+      - --egress-proxy=http://egress:{{ .PortEgress }}
+      - --runner-image={{ .Images.Runner }}
+      - --deploy=compose
+      - --edge-admin-url=http://edge-admin:{{ .PortEdgeAdmin }}
+      - --deploy-docker-endpoint=http://docker-filter-deploy:{{ .PortDockerFilter }}
+      - --deploy-network={{ .Project }}-app
+      - --deploy-app-port={{ .PortApp }}
+      - --qa-judge={{ .Lifecycle.QAJudge }}
+{{- if .Lifecycle.QAAgent }}
+      - --qa-agent={{ .Lifecycle.QAAgent }}
+{{- end }}
+{{- if .Lifecycle.QAAgentBinary }}
+      - --qa-agent-binary={{ .Lifecycle.QAAgentBinary }}
+{{- end }}
+{{- if .Lifecycle.ReleaseWindow }}
+      - --release-window={{ .Lifecycle.ReleaseWindow }}
+      - --release-min-samples={{ .Lifecycle.ReleaseMinSamples }}
+{{- end }}
+{{- end }}
     env_file: ["{{ .SecretsDir }}/control/supervisor.env"]
-    networks: [control]
+    environment:
+      SISF_GITHUB_API_URL: "{{ .GitHubAPIURL }}"
+    # control: GitHub, the edge's admin listener; factory: the state store
+    # as the control role, the dispatcher's run control; app: the health of
+    # the revisions it deploys; docker: the two filters. It serves nothing
+    # on any of them: its status socket is on loopback.
+    networks: [control, factory, app, docker]
     volumes:
       - "trust:/var/lib/sisf/trust"
       - "{{ .ReleaseFile }}:/etc/sisf/release/release-manifest.json:ro"
+      - "{{ .ConfigFile }}:/etc/sisf/factory.yaml:ro"
     healthcheck:
       test: ["CMD", "supervisor", "status", "--admin=127.0.0.1:{{ .PortSupervisor }}"]
       interval: 5s
       timeout: 5s
       retries: 20
+    depends_on:
+      state: {condition: service_healthy}
+      edge: {condition: service_started}
+      docker-filter-runner: {condition: service_started}
+      docker-filter-deploy: {condition: service_started}
+
+  # The Docker request filters: the supervisor's only Docker access, one per
+  # backend, each reachable on the docker network alone.
+  docker-filter-runner:
+    <<: *hardened
+    container_name: "{{ .Project }}-docker-filter-runner"
+    image: "{{ .Images.Sisf }}"
+    command:
+      - sisf
+      - docker-filter
+      - --role=runner
+      - --listen=0.0.0.0:{{ .PortDockerFilter }}
+      - --factory-id={{ .FactoryID }}
+      - --network={{ .Project }}-sandbox
+      - --image={{ .Images.Runner }}
+      - --image={{ .Images.QARunner }}
+    group_add: ["{{ .Host.SocketGID }}"]
+    networks: [docker]
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+
+  docker-filter-deploy:
+    <<: *hardened
+    container_name: "{{ .Project }}-docker-filter-deploy"
+    image: "{{ .Images.Sisf }}"
+    command:
+      - sisf
+      - docker-filter
+      - --role=deploy
+      - --listen=0.0.0.0:{{ .PortDockerFilter }}
+      - --factory-id={{ .FactoryID }}
+      - --network={{ .Project }}-app
+      - --image={{ .Images.App }}
+{{- if .Sim }}
+      - --sim-image=app={{ .Images.App }}
+{{- end }}
+    group_add: ["{{ .Host.SocketGID }}"]
+    networks: [docker]
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
 
   control:
     <<: *hardened
@@ -110,6 +208,10 @@ services:
       # /healthz of Zone 1 through the edge, and of Zone 2, for the zone report.
       SISF_APP_HEALTH_URL: "http://edge:{{ .PortEdge }}/healthz"
       SISF_DISPATCHER_HEALTH_URL: "http://dispatcher:{{ .PortDispatcher }}/healthz"
+{{- if .Host.TrustedProxies }}
+      # The control network: the edge forwards a reporter's address from it.
+      SISF_TRUSTED_PROXIES: "{{ .Host.TrustedProxies }}"
+{{- end }}
     networks: [control, factory]
     ports:
       - "127.0.0.1:{{ .PortControl }}:{{ .PortControl }}"
@@ -133,7 +235,15 @@ services:
     <<: *hardened
     container_name: "{{ .Project }}-dispatcher"
     image: "{{ .Images.Factoryd }}"
-    command: ["factoryd", "dispatcher"]
+    command:
+      - factoryd
+      - dispatcher
+      - --admin-listen=0.0.0.0:{{ .PortDispatcherAdmin }}
+{{- if .Sim }}
+      - --agent=fake
+      - --fake-agent-work={{ .Lifecycle.AgentWork }}
+      - --fake-agent-patch=/etc/sisf/agent/patch.diff
+{{- end }}
     env_file: ["{{ .SecretsDir }}/agent/runtime.env"]
     environment:
       SISF_FACTORY_ID: "{{ .FactoryID }}"
@@ -143,6 +253,9 @@ services:
     networks: [factory]
     volumes:
       - "{{ .ConfigFile }}:/etc/sisf/factory.yaml:ro"
+{{- if .Sim }}
+      - "{{ .SimAgentDir }}:/etc/sisf/agent:ro"
+{{- end }}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:{{ .PortDispatcher }}/healthz"]
       interval: 5s
@@ -153,14 +266,22 @@ services:
       state: {condition: service_healthy}
 
   # ---- Zone 1: application -------------------------------------------------
+  # The release `sisf up` installs, named and labelled as the supervisor's
+  # deployment backend names the revisions it runs, so the backend observes
+  # it as the last known good release and replaces it by a canary.
   app:
     <<: *hardened
-    container_name: "{{ .Project }}-app"
+    container_name: "{{ .AppContainer }}"
     image: "{{ .Images.App }}"
+    labels:
+      sisf.factory: "{{ .FactoryID }}"
+      sisf.unit: app
+      sisf.digest: "{{ .AppDigest }}"
     env_file: ["{{ .SecretsDir }}/application/runtime.env"]
     environment:
       HELLO_ADDR: "0.0.0.0:{{ .PortApp }}"
       HELLO_DATA_DIR: /data
+      SISF_REVISION: "{{ .AppDigest }}"
     networks: [app]
     volumes: ["app-data:/data"]
     healthcheck:
@@ -178,9 +299,20 @@ services:
       - edge
       - --listen=0.0.0.0:{{ .PortEdge }}
       - --allow-non-loopback
-      - --upstream=http://app:{{ .PortApp }}
+      - --upstream=http://{{ .AppContainer }}:{{ .PortApp }}
+      - --revision={{ .AppDigest }}
       - --route=/webhooks/github=http://control:{{ .PortControl }}
-    networks: [app, control, sandbox]
+      - --route=/report=http://control:{{ .PortControl }}
+      # Each listener is bound to the address of one network only: the
+      # admin listener to the control network, the egress proxy to the
+      # sandbox.
+      - --admin-listen=edge-admin:{{ .PortEdgeAdmin }}
+      - --egress-listen=egress:{{ .PortEgress }}
+    env_file: ["{{ .SecretsDir }}/edge/runtime.env"]
+    networks:
+      app: {}
+      control: {aliases: [edge-admin]}
+      sandbox: {aliases: [egress]}
     ports: ["127.0.0.1:{{ .PortEdge }}:{{ .PortEdge }}"]
     depends_on:
       app: {condition: service_healthy}
@@ -208,6 +340,24 @@ services:
     env_file: ["{{ .SecretsDir }}/sim/runtime.env"]
     depends_on:
       control: {condition: service_started}
+
+  # The supervisor's way to the fake GitHub: a plain relay in its network
+  # namespace, on its loopback, to the fake in control's namespace. The
+  # GitHub client sends a token over plain http to a loopback address only.
+  sim-github-relay:
+    <<: *hardened
+    profiles: ["sim"]
+    container_name: "{{ .Project }}-sim-github-relay"
+    image: "{{ .Images.Edge }}"
+    network_mode: "service:supervisor"
+    command:
+      - edge
+      - --listen=127.0.0.1:{{ .PortFakeGitHub }}
+      - --upstream=http://control:{{ .PortFakeGitHub }}
+      - --egress-listen=
+    depends_on:
+      supervisor: {condition: service_started}
+      sim-github: {condition: service_started}
 {{- end }}
 
 networks:
@@ -220,6 +370,9 @@ networks:
     name: "{{ .Project }}-control"
   sandbox:
     name: "{{ .Project }}-sandbox"
+    internal: true
+  docker:
+    name: "{{ .Project }}-docker"
     internal: true
 
 volumes:

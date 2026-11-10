@@ -99,7 +99,7 @@ func TestZoneOneHasNoPathIntoTheControlZone(t *testing.T) {
 	}
 }
 
-func TestNoServiceHasDockerAccessAndTheStateStoreIsOutOfTheEdgesReach(t *testing.T) {
+func TestOnlyTheFiltersHaveDockerAccessAndTheStateStoreIsOutOfTheEdgesReach(t *testing.T) {
 	t.Parallel()
 	for name, mutate := range map[string]func(*Options){
 		"sim":   nil,
@@ -108,9 +108,13 @@ func TestNoServiceHasDockerAccessAndTheStateStoreIsOutOfTheEdgesReach(t *testing
 		_, out := renderCompose(t, mutate)
 		f := composeFileOf(t, out)
 		for svc, s := range f.Services {
+			filter := svc == filterRunner || svc == filterDeploy
+			if filter && (!slices.Equal(s.Volumes, []string{socketMount}) || !slices.Equal([]string(s.Networks), []string{dockerNetwork})) {
+				t.Errorf("%s: filter %s mounts %v on %v, want the socket read-only on the docker network alone", name, svc, s.Volumes, s.Networks)
+			}
 			for _, v := range s.Volumes {
 				for _, sock := range dockerSocketNames {
-					if strings.Contains(v, sock) {
+					if strings.Contains(v, sock) && !filter {
 						t.Errorf("%s: service %s mounts %s", name, svc, v)
 					}
 				}

@@ -20,7 +20,8 @@ func (in *Installer) upStandalone(ctx context.Context, m *manifest.Manifest, rel
 	} else if pid != 0 {
 		return invalidf("this install is already running (process %d)", pid)
 	}
-	if _, err := in.release(ctx, m); err != nil {
+	b, err := in.release(ctx, m)
+	if err != nil {
 		return err
 	}
 	for _, dir := range []string{"state", "app", "control", "trust", "workspaces", "qa-workspaces", "artifacts"} {
@@ -30,6 +31,17 @@ func (in *Installer) upStandalone(ctx context.Context, m *manifest.Manifest, rel
 	}
 	if err := in.bootstrapState(ctx, m); err != nil {
 		return err
+	}
+	if err := in.installTrust(ctx, m, b); err != nil {
+		return err
+	}
+	if err := in.writeAppLauncher(); err != nil {
+		return err
+	}
+	if m.Extensions["profile"] == profileSim {
+		if err := in.ensureSimPatch(); err != nil {
+			return err
+		}
 	}
 	units, closers, err := in.standaloneUnits(m)
 	if err != nil {

@@ -12,8 +12,12 @@ import (
 
 const fakeID = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+// testHost is a Docker host whose socket belongs to group 0 and whose
+// control network exists.
+var testHost = HostFacts{SocketGID: "0", TrustedProxies: "172.30.0.0/16"}
+
 func testImages() Images {
-	return Images{Factoryd: fakeID, Supervisor: fakeID, Edge: fakeID, App: fakeID, Sisf: fakeID}
+	return Images{Factoryd: fakeID, Supervisor: fakeID, Edge: fakeID, App: fakeID, Sisf: fakeID, Runner: fakeID, QARunner: fakeID}
 }
 
 // renderCompose renders the project of a fresh Docker install.
@@ -28,7 +32,7 @@ func renderCompose(t *testing.T, mutate func(*Options)) (*Installer, []byte) {
 		t.Fatal(err)
 	}
 	o, _ = o.normalize()
-	data, err := newComposeData(in.Layout, o, testImages(), []string{"sisf", "state", "bootstrap"})
+	data, err := newComposeData(in.Layout, o, testImages(), []string{"sisf", "state", "bootstrap"}, testHost)
 	if err != nil {
 		t.Fatal(err)
 	}

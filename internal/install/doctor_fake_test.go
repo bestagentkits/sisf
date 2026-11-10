@@ -73,6 +73,7 @@ func healthyNet() *fakeNet {
 		"127.0.0.1:7460/healthz":              {code: 200, body: `{"status":"ok"}`},
 		"127.0.0.1:7465/healthz":              {code: 200, body: `{"status":"ok"}`},
 		"127.0.0.1:7467/repos/acme/hello-app": {code: 200, body: repoWritable},
+		"127.0.0.1:7469/":                     {code: 401},
 	}}
 }
 
@@ -117,7 +118,11 @@ func builtStandalone(t *testing.T, net *fakeNet, mutate func(*Options)) *Install
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := in.release(t.Context(), m); err != nil {
+	b, err := in.release(t.Context(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.installTrust(t.Context(), m, b); err != nil {
 		t.Fatal(err)
 	}
 	if err := in.bootstrapState(t.Context(), m); err != nil {

@@ -63,7 +63,7 @@ type composeService struct {
 	Healthcheck   composeHealthcheck           `yaml:"healthcheck"`
 	EnvFile       []string                     `yaml:"env_file"`
 	Environment   map[string]string            `yaml:"environment"`
-	Networks      []string                     `yaml:"networks"`
+	Networks      networkList                  `yaml:"networks"`
 	NetworkMode   string                       `yaml:"network_mode"`
 	Ports         []string                     `yaml:"ports"`
 	Volumes       []string                     `yaml:"volumes"`
@@ -71,6 +71,10 @@ type composeService struct {
 	Tmpfs         []string                     `yaml:"tmpfs"`
 	CapDrop       []string                     `yaml:"cap_drop"`
 	SecurityOpt   []string                     `yaml:"security_opt"`
+	// Labels name the release of the app container; GroupAdd gives the
+	// Docker request filters the socket's group.
+	Labels   map[string]string `yaml:"labels"`
+	GroupAdd []string          `yaml:"group_add"`
 
 	// Settings the template never writes, each refused with its reason.
 	CapAdd      []string    `yaml:"cap_add"`
@@ -110,18 +114,54 @@ type serviceRule struct {
 	networks []string
 	volumes  []string // named volumes
 	ports    []int
+	// networkMode is the one network_mode the service may set instead of
+	// networks: another service's namespace, or none.
+	networkMode string
+	// aliases are the network aliases it may have, by network.
+	aliases map[string][]string
+	// socket marks the two Docker request filters, the only services that
+	// mount the Docker socket, read-only and nothing else of the host.
+	socket bool
+	// simAgent lets the dispatcher mount the scripted agent's directory.
+	simAgent bool
 }
 
+// The services that mount the Docker socket, and the network only they and
+// the supervisor are on.
+const (
+	filterRunner  = "docker-filter-runner"
+	filterDeploy  = "docker-filter-deploy"
+	dockerNetwork = "docker"
+)
+
 var serviceRules = map[string]serviceRule{
-	"app":             {envFiles: []string{"application/runtime.env"}, networks: []string{"app"}, volumes: []string{"app-data"}},
-	"control":         {envFiles: []string{"control/runtime.env"}, networks: []string{"control", "factory"}, volumes: []string{"control-data"}, ports: []int{PortControl, PortFakeGitHub}},
-	"supervisor":      {envFiles: []string{"control/supervisor.env"}, networks: []string{"control"}, volumes: []string{"trust"}},
-	"dispatcher":      {envFiles: []string{"agent/runtime.env"}, networks: []string{"factory"}},
-	"edge":            {networks: []string{"app", "control", "sandbox"}, ports: []int{PortEdge}},
-	"state":           {envFiles: []string{"state/runtime.env"}, networks: []string{"factory"}, volumes: []string{"state-data"}, ports: []int{PortPostgres}},
-	"state-bootstrap": {envFiles: []string{"state/bootstrap.env"}, networks: []string{"factory"}},
-	"sim-github":      {envFiles: []string{"sim/runtime.env"}},
+	"app":     {envFiles: []string{"application/runtime.env"}, networks: []string{"app"}, volumes: []string{"app-data"}},
+	"control": {envFiles: []string{"control/runtime.env"}, networks: []string{"control", "factory"}, volumes: []string{"control-data"}, ports: []int{PortControl, PortFakeGitHub}},
+	// The supervisor reaches GitHub and the edge's admin listener (control),
+	// the store and the dispatcher's run control (factory), the revisions it
+	// deploys (app) and its two filters (docker).
+	"supervisor":      {envFiles: []string{"control/supervisor.env"}, networks: []string{"control", "factory", "app", dockerNetwork}, volumes: []string{"trust"}},
+	"trust-bootstrap": {envFiles: []string{"control/" + trustEnvFile}, volumes: []string{"trust"}, networkMode: "none"},
+	"dispatcher":      {envFiles: []string{"agent/runtime.env"}, networks: []string{"factory"}, simAgent: true},
+	"edge": {envFiles: []string{"edge/runtime.env"}, networks: []string{"app", "control", "sandbox"}, ports: []int{PortEdge},
+		aliases: map[string][]string{"control": {edgeAdminAlias}, "sandbox": {egressAlias}}},
+	"state":            {envFiles: []string{"state/runtime.env"}, networks: []string{"factory"}, volumes: []string{"state-data"}, ports: []int{PortPostgres}},
+	"state-bootstrap":  {envFiles: []string{"state/bootstrap.env"}, networks: []string{"factory"}},
+	"sim-github":       {envFiles: []string{"sim/runtime.env"}, networkMode: "service:control"},
+	"sim-github-relay": {networkMode: "service:supervisor"},
+	filterRunner:       {networks: []string{dockerNetwork}, socket: true},
+	filterDeploy:       {networks: []string{dockerNetwork}, socket: true},
 }
+
+// Aliases of the edge's two inner listeners. Each is bound to the address
+// the alias resolves to, so it is reachable on that one network only.
+const (
+	edgeAdminAlias = "edge-admin"
+	egressAlias    = "egress"
+)
+
+// socketMount is the one mount of the Docker socket a filter has.
+const socketMount = dockerSocket + ":" + dockerSocket + ":ro"
 
 // dockerSocketNames are file names of a container runtime's API socket. A
 // mount whose path contains one of them hands the holder the host.

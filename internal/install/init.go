@@ -98,6 +98,7 @@ func (in *Installer) writeSecrets(o Options) error {
 	pw := map[core.Zone]string{core.ZoneApplication: tok(), core.ZoneAgent: tok(), core.ZoneControl: tok()}
 	owner, webhook, statePW := tok(), tok(), tok()
 	simToken, qa := tok(), tok()
+	edgeAdmin, dispatcherAdmin := tok(), tok()
 	// The control zone signs approval decisions with an ed25519 key; a token
 	// is 32 random bytes in unpadded base64url, which is the seed's format.
 	approvalKey := tok()
@@ -130,7 +131,9 @@ func (in *Installer) writeSecrets(o Options) error {
 	if !token.IsZero() {
 		files[l.Secret(areaControl, "github-token")] = append(token.Reveal(), '\n')
 	}
-	envs, err := in.runtimeEnvs(o, pw, controlSecrets{owner: owner, webhook: webhook, approvalKey: approvalKey}, statePW, token, signing.EncodePublicKey(pub))
+	envs, err := in.runtimeEnvs(o, pw, controlSecrets{
+		owner: owner, webhook: webhook, approvalKey: approvalKey, edgeAdmin: edgeAdmin, dispatcherAdmin: dispatcherAdmin,
+	}, statePW, token, signing.EncodePublicKey(pub))
 	if err != nil {
 		return err
 	}

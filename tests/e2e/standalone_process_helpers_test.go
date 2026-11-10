@@ -21,7 +21,7 @@ import (
 // keep track of the foreground `sisf up` and the units it supervises.
 
 // The loopback ports a Factory install binds, in either mode.
-const firstFactoryPort, lastFactoryPort = 7460, 7468
+const firstFactoryPort, lastFactoryPort = 7460, 7469
 
 const (
 	// upLimit bounds how long `sisf up` may take to build the programs and
@@ -236,15 +236,15 @@ func (d *standaloneDeployment) dumpLogs(t *testing.T) {
 	}
 }
 
-// childPIDs lists the processes `sisf up` started whose command line ends
-// with suffix (all of them for an empty suffix). Only direct children of the
+// childPIDs lists the processes `sisf up` started whose command line starts
+// with prefix (all of them for an empty prefix). Only direct children of the
 // foreground process are considered, so nothing else on the machine is found.
-func (d *standaloneDeployment) childPIDs(t *testing.T, suffix string) []int {
+func (d *standaloneDeployment) childPIDs(t *testing.T, prefix string) []int {
 	t.Helper()
 	parent := d.up.Process.Pid
 	var pids []int
 	for _, p := range listProcesses(t) {
-		if p.ppid == parent && strings.HasSuffix(p.args, suffix) {
+		if p.ppid == parent && strings.HasPrefix(p.args, prefix) {
 			pids = append(pids, p.pid)
 		}
 	}
@@ -295,7 +295,7 @@ func (d *standaloneDeployment) installProcesses(t *testing.T) []int {
 // dispatcherPID is the running dispatcher unit, or 0 while there is none.
 func (d *standaloneDeployment) dispatcherPID(t *testing.T) int {
 	t.Helper()
-	pids := d.childPIDs(t, filepath.Join(d.home, "bin", "factoryd")+" dispatcher")
+	pids := d.childPIDs(t, filepath.Join(d.home, "bin", "factoryd")+" dispatcher ")
 	switch len(pids) {
 	case 0:
 		return 0

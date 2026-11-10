@@ -45,7 +45,12 @@ func (l *lifecycleFlags) startLifecycle(ctx context.Context, d lifecycleDeps, op
 		return nil, err
 	}
 	opts.Rollback = st.Pipeline.OwnerRollback
-	return func(ctx context.Context) { runStages(ctx, st, l, d.clock, d.log) }, nil
+	return func(ctx context.Context) {
+		if l.adopter != nil && !l.adopter.until(ctx, l, d.clock, d.log) {
+			return
+		}
+		runStages(ctx, st, l, d.clock, d.log)
+	}, nil
 }
 
 // getenv adapts lookupEnv to the getenv the process logger reads.

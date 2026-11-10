@@ -88,6 +88,13 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
+	monitor, err := l.tuning.monitor(sim)
+	if err != nil {
+		return nil, err
+	}
+	if l.deploy == "local" {
+		l.adopter = &lkgAdopter{factory: m.FactoryID, backend: backend, lkg: book, signer: keys.Artifact, image: "local/" + string(m.FactoryID) + "/" + adoptedUnit}
+	}
 	gate, err := prgate.New(prgate.Config{Visibility: prgate.Visibility(l.visibility), AgentLogins: []string{settings.Self.Login}, Audit: log, Clock: d.clock})
 	if err != nil {
 		return nil, err
@@ -114,7 +121,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 		GitHub: client, Judge: judge, QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
 		QASigner: keys.QA, ArtifactSigner: keys.Artifact, Verifier: keys.Verifier, ApprovalVerifier: approvalVerifier,
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
-		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log},
+		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor},
 	})
 }
 

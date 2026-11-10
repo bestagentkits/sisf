@@ -22,6 +22,8 @@ var dockerImages = []image{
 	{"supervisor", "supervisor.Dockerfile", []manifest.UnitName{manifest.UnitSupervisor}},
 	{"edge", "edge.Dockerfile", []manifest.UnitName{manifest.UnitEdge}},
 	{"sisf", "sisf.Dockerfile", nil},
+	{"runner", "runner.Dockerfile", []manifest.UnitName{manifest.UnitRunner}},
+	{"qa-runner", "qa-runner.Dockerfile", []manifest.UnitName{manifest.UnitQARunner}},
 }
 
 // buildDocker builds the images of the install and pins each by content.
@@ -51,7 +53,10 @@ func (in *Installer) buildDocker(ctx context.Context, proj string) (built, error
 			b.units[u] = digestOf(ref)
 		}
 	}
-	b.images = Images{Factoryd: refs["factoryd"], Supervisor: refs["supervisor"], Edge: refs["edge"], App: refs["hello-app"], Sisf: refs["sisf"]}
+	b.images = Images{
+		Factoryd: refs["factoryd"], Supervisor: refs["supervisor"], Edge: refs["edge"], App: refs["hello-app"], Sisf: refs["sisf"],
+		Runner: refs["runner"], QARunner: refs["qa-runner"],
+	}
 
 	// The supervisor measures its own executable, so ask the image, with
 	// nothing mounted and no network.

@@ -39,6 +39,10 @@ type lifecycleFlags struct {
 	appPort                                            int
 	dispatcherAdminURL                                 string
 	qa                                                 qaFlags
+	tuning                                             releaseTuning
+	// adopter starts the LKG under the local deploy backend; set when the
+	// lifecycle is wired.
+	adopter *lkgAdopter
 }
 
 func (l *lifecycleFlags) register(fs *flag.FlagSet) {
@@ -63,6 +67,7 @@ func (l *lifecycleFlags) register(fs *flag.FlagSet) {
 	fs.IntVar(&l.appPort, "deploy-app-port", 8080, "deploy compose: port the application listens on in its container")
 	fs.StringVar(&l.dispatcherAdminURL, "dispatcher-admin-url", "", "run control URL of the dispatcher the emergency stop cancels runs and revokes secrets through; token in "+runcontrol.EnvToken)
 	l.qa.register(fs)
+	l.tuning.register(fs)
 }
 
 // enabled reports whether the lifecycle stages run.
