@@ -252,6 +252,19 @@ Every protocol has the same `list approvals`, `get proposal + evidence + diff + 
 - Secrets: stored encrypted, not sent into issues/PRs, and an agent running on untrusted code is not allowed to read the GitHub App/Owner token. A per-run secret broker limits purpose/scope/TTL and revokes on cancel.
 - A sensitive approval is signed, single-use, subject/release/policy-bound and expiring; who performed it (human or agent) is audited.
 
+### Additional security requirements
+
+The requirements below add to the rules above and in section 6.3; they replace none of them. Requirements 1 to 3 decide how much harm a manipulated agent can do, so they must exist before the factory runs untrusted code (P1 to P2); the rest attach to P2 to P3. They are not yet assigned to the DoD of any phase and have no acceptance tests of their own in section 13.
+
+1. **Agent egress.** The egress policy is the Owner's decision and can be changed through every surface (Dashboard, API, CLI, MCP, WebMCP); each change goes through `plan -> approval -> execute -> audit`, and an agent cannot widen the policy for itself. The default is an allowlist of common domains sufficient for development: the configured model providers, GitHub, package registries (npm, PyPI, crates.io, Go proxy, Maven Central), image registries (Docker Hub, GHCR) and operating-system package repositories; other domains are blocked and logged so the Owner can review and add them. The Owner can narrow, widen or turn off blocking; widening and turning off show a risk warning. An `ExecutionBackend` publishes its ability to enforce egress policy in `capabilities`; for a backend that cannot enforce it, the rule in section 3.2 applies to untrusted code.
+2. **Isolation between the three zones.** Each zone has its own credentials, network segment and state-store permissions. Zone 1 has no write path into Zone 3 and cannot read the secrets of Zone 2 or Zone 3; Zone 2 calls Zone 3 only through the authenticated API. The conformance checker verifies these boundaries.
+3. **Supply chain.** A change to dependencies, lockfiles, base images or CI configuration is a hard gate of its own: versions must be pinned and pass vulnerability scanning, and a new dependency needs Owner approval. Every release has an SBOM, provenance and signed artifacts; the trusted release supervisor rejects an artifact whose signature cannot be verified.
+4. **Operational data is untrusted data.** Telemetry, feedback, report content and PRs from outside are handled like issues/comments/logs: data only, never instructions. The Decision Layer does not widen permissions or change policy on the basis of these sources. The public report endpoint has a rate limit, a size limit and deduplication. Accepting outside PRs follows the access of the GitHub repo: a public repo accepts PRs from forks but treats them as untrusted input (run in a sandbox with no secrets and no write access to the repo, and a Maintainer must accept them before they enter the pipeline); a private repo accepts PRs only from collaborators and the factory's agents.
+5. **Signing-key management.** The root key is held by the Owner outside the factory (KMS, HSM or a hardware key). The factory holds only short-lived signing keys delegated from the root key, stored in the Zone 3 secret store and usable only by the trusted release supervisor and the approval service; agents and candidates cannot read any key. If Zone 3 is compromised, the Owner revokes the delegated keys without replacing the root key. The local native profile may keep the root key in the Zone 3 secret store and must clearly display this lower level of assurance. The rotation period and revocation procedure are documented; the webhook secret can be rotated without losing events.
+6. **Tamper-evident audit log.** The audit log is append-only and hash-chained (or copied to storage outside the factory), so that deleting or editing a record is detected. No role in the factory, the Owner included, can edit a written record.
+7. **Sensitive data in telemetry and transcripts.** Secrets and personal data are redacted before being written to logs, agent transcripts, issues and PRs. Each kind of data has a retention period. Policy states which data may be sent to remote agents and model providers.
+8. **Kill switch and threat model.** The Owner has one emergency-stop command: stop claiming tasks, cancel running runs, revoke per-run secrets and freeze publishing; it does not depend on the part of the factory that may have been compromised. P0 creates `docs/threat-model.md` listing assets, trust boundaries and abuse scenarios; every high-severity scenario has an acceptance test.
+
 ## 8. Budget and cost
 
 - The default is **`budget.mode: unlimited`**, still with a usage ledger, dashboard expense/retry alerts, per-provider key controls and cancel. `unlimited` means that no *monetary limit set by SISF itself* is applied; it is not a commitment to unlimited actual spending or to the use of a free provider.
@@ -319,6 +332,48 @@ The requirements below apply when the corresponding surface is built (P1 to P3) 
 | Render / Railway | service group/containers + persistent state under one factory installation manifest | after E2E; sandbox hardening is not assumed by default |
 
 If a provider cannot satisfy `single_factory_deployment`, `durable_tasks`, `safe_exec`, `releasable_zone1` and `rollback`, the profile is in the **experimental/unsupported** state, and “deploy anywhere” with full capability is not written.
+
+### Deployment design: runtime units
+
+One factory deployment consists of nine runtime units. Unit names are the same on every platform; only the realization (process, container, pod, function) changes. The release manifest pins the digest of every unit.
+
+| Unit | Zone | Lifecycle | Role and constraints |
+|---|---|---|---|
+| `app` | 1 | long-running, with stable and canary revisions | Serves user traffic; scales horizontally. |
+| `control` | 3 | long-running | Dashboard, API, MCP, webhook receiver. Not public by default, except the webhook route and the report endpoint. |
+| `supervisor` | 3 | long-running, a separate process from `control` | Trusted release supervisor. The only unit that holds deploy rights and the delegated signing keys. |
+| `dispatcher` | 2 | long-running, one instance holding a lease | Claims tasks, keeps run state, creates and destroys runners. |
+| `runner` | 2 | ephemeral, one per run | Runs the coding agent. Accepts no inbound connections, egress by policy, holds only that run's secrets. |
+| `qa-runner` | 2 | ephemeral | Runs independent QA with an identity and credentials different from `runner`. |
+| `state` | shared | durable | SQLite WAL or PostgreSQL; one role per zone. |
+| `artifacts` | shared | durable | Volume or object store for artifacts, logs and snapshots. |
+| `edge` | shared | long-running | Reverse proxy and TLS; splits traffic between stable and canary. |
+
+The network is divided into four segments: `app`, `factory`, `control` and `sandbox`. Runners live in `sandbox` and reach the outside only through an egress proxy that enforces the policy in section 7.
+
+### Operating modes
+
+The table below is the target design of each mode; support status still follows the compliance table above and is raised only after E2E. Third-party platform service names must be re-verified against current documentation when the adapter is written.
+
+| Mode | `app`, `control`, `supervisor`, `dispatcher` | `runner`, `qa-runner` | `state`, `artifacts` | `edge` and access |
+|---|---|---|---|---|
+| Standalone | Processes on one machine, supervised by `sisf` through systemd or launchd | Local process (trusted code only), or a container if the machine has Docker | SQLite WAL and a local directory | Direct, Tailscale or a tunnel (see below) |
+| Docker | One compose project (stack), one service per unit, images pinned by digest | Ephemeral containers on the `sandbox` network, created through an API-restricted socket proxy; gVisor optional | PostgreSQL and named volumes | A reverse-proxy service in the stack |
+| Kubernetes | One Helm release in one namespace; one Deployment per unit; canary is a second weighted Deployment | Jobs, one pod per run; ServiceAccount with no mounted token, default-deny NetworkPolicy, an isolating RuntimeClass if the cluster has one | StatefulSet or external PostgreSQL; PVC or object store | Ingress or Gateway |
+| Vercel | `app` and `control` are function projects; `dispatcher` and `supervisor` are durable workflows or queues, because there is no always-on process | Vercel Sandbox | External PostgreSQL and object store | Platform edge; canary through percentage-based releases |
+| Cloudflare | `app` and `control` are Workers; `dispatcher` and `supervisor` are Durable Objects or Workflows | The platform's containers or Sandbox | D1 or external PostgreSQL; R2 | Platform edge; canary through gradual deployments |
+| TOSE (tose.sh, `saasvn/tose-app`) | Apps in one workspace, built from Git, with domains and TLS | TOSE runtime through `ExecutionBackend` | Managed database with a persistent disk | Platform domain |
+| Railway | Services in one project, connected over the private network | Remote executor, or trusted code only, because the platform has no nested sandbox | Platform PostgreSQL and volumes | Platform domain |
+
+**Standalone has three access paths.** Direct: `control` listens on localhost only, or sits behind a TLS reverse proxy when exposed to a network. Tailscale: `control` listens only inside the tailnet; the tailnet's device identity is an additional layer and does not replace SSO or RBAC. Tunnel: only `app` and the webhook route are exposed. GitHub webhooks need a public endpoint; without one, the factory runs in polling plus reconciliation mode and publishes that delay.
+
+**Constraints per mode.**
+
+- Docker: do not mount the Docker socket directly into `dispatcher`, because the socket equals root on the host. Use a socket proxy that only allows creating and destroying containers on the `sandbox` network, or rootless Docker.
+- Kubernetes: `supervisor` has RBAC only inside the factory's namespace. The factory does not need cluster-admin.
+- Vercel and Cloudflare: functions have execution time limits, so each run is split into checkpointed steps that can resume after an interruption.
+- Prepaid platforms: the adapter checks that the balance covers one rollback before publishing; if it does not, the issue stays in `Releasing`.
+- Every mode: if `supervisor` cannot be separated from the candidate (same process, same credentials), that mode must not self-publish.
 
 ## 11. Recommended repository layout
 

@@ -252,6 +252,19 @@ Mọi protocol có cùng `list approvals`, `get proposal + evidence + diff + aff
 - Secrets: lưu encrypted, không gửi vào issue/PR, không để agent chạy trên mã không tin cậy đọc token GitHub App/Owner. Per-run secret broker giới hạn purpose/scope/TTL, revoke on cancel.
 - Approval nhạy cảm là signed, single-use, subject/release/policy-bound, hết hạn; audit ai thực hiện (human hay agent).
 
+### Yêu cầu bảo mật bổ sung
+
+Các yêu cầu dưới đây bổ sung cho những quy tắc ở trên và ở mục 6.3, không thay thế quy tắc nào. Yêu cầu 1 đến 3 quyết định một agent bị thao túng gây hại được tới đâu, nên phải có trước khi factory chạy mã không tin cậy (P1 đến P2); các yêu cầu còn lại gắn với P2 đến P3. Chúng chưa được gán vào DoD của từng phase và chưa có acceptance test riêng ở mục 13.
+
+1. **Egress của agent.** Chính sách egress do Owner quyết định và đổi được qua mọi surface (Dashboard, API, CLI, MCP, WebMCP); mỗi thay đổi đi qua `plan -> approval -> execute -> audit`, và agent không tự nới chính sách cho chính nó. Mặc định là allowlist các domain phổ biến đủ cho việc phát triển: model provider đã cấu hình, GitHub, các registry gói (npm, PyPI, crates.io, Go proxy, Maven Central), registry image (Docker Hub, GHCR) và kho gói của hệ điều hành; domain khác bị chặn và ghi log để Owner xem rồi thêm vào. Owner có thể thu hẹp, mở rộng hoặc tắt việc chặn; mở rộng và tắt hiển thị cảnh báo rủi ro. `ExecutionBackend` công bố khả năng thực thi chính sách egress trong `capabilities`; backend không thực thi được thì áp dụng quy tắc ở mục 3.2 cho mã không tin cậy.
+2. **Cô lập giữa ba zone.** Mỗi zone có credential, phân vùng mạng và quyền truy cập state store riêng. Zone 1 không có đường ghi vào Zone 3 và không đọc được secret của Zone 2 hay Zone 3; Zone 2 chỉ gọi Zone 3 qua API có xác thực. Conformance checker kiểm tra các ranh giới này.
+3. **Chuỗi cung ứng.** Thay đổi dependency, lockfile, base image hoặc cấu hình CI là hard gate riêng: phải pin phiên bản, qua quét lỗ hổng, và dependency mới cần Owner duyệt. Mỗi release có SBOM, provenance và artifact được ký; trusted release supervisor từ chối artifact không xác minh được chữ ký.
+4. **Dữ liệu vận hành là dữ liệu không tin cậy.** Telemetry, feedback, nội dung report và PR từ bên ngoài được xử lý như issue/comment/log: chỉ là dữ liệu, không bao giờ là chỉ thị. Decision Layer không nâng quyền hay đổi policy dựa trên các nguồn này. Endpoint nhận report công khai có rate limit, giới hạn kích thước và chống trùng lặp. Việc nhận PR từ bên ngoài đi theo quyền truy cập của repo GitHub: repo public nhận PR từ fork nhưng coi là đầu vào không tin cậy (chạy trong sandbox không có secret, không có quyền ghi vào repo, và cần Maintainer chấp nhận trước khi vào pipeline); repo private chỉ nhận PR từ collaborator và agent của factory.
+5. **Quản lý khóa ký.** Khóa gốc do Owner giữ ngoài factory (KMS, HSM hoặc khóa phần cứng). Factory chỉ giữ khóa ký ngắn hạn được ủy quyền từ khóa gốc, lưu trong secret store của Zone 3, và chỉ trusted release supervisor cùng dịch vụ approval dùng được; agent và candidate không đọc được khóa nào. Nhờ vậy Zone 3 bị chiếm thì Owner thu hồi khóa ủy quyền mà không phải đổi khóa gốc. Profile local native được giữ khóa gốc trong secret store của Zone 3 và phải hiển thị rõ mức bảo đảm thấp hơn này. Chu kỳ xoay vòng và quy trình thu hồi được ghi thành tài liệu; webhook secret xoay vòng được mà không mất sự kiện.
+6. **Audit log chống sửa.** Audit log chỉ ghi thêm và có chuỗi băm (hoặc được sao sang nơi lưu ngoài factory), để việc xóa hay sửa bản ghi bị phát hiện. Không role nào trong factory, kể cả Owner, sửa được bản ghi đã ghi.
+7. **Dữ liệu nhạy cảm trong telemetry và transcript.** Secret và dữ liệu cá nhân được che trước khi ghi vào log, transcript của agent, issue và PR. Mỗi loại dữ liệu có thời hạn lưu. Policy quy định rõ dữ liệu nào được gửi cho remote agent và model provider.
+8. **Kill switch và threat model.** Owner có một lệnh dừng khẩn cấp: ngừng claim nhiệm vụ, hủy run đang chạy, thu hồi secret theo run và đóng băng publish; lệnh này không phụ thuộc vào phần factory có thể đã bị chiếm. P0 tạo `docs/threat-model.md` liệt kê tài sản, ranh giới tin cậy và kịch bản lạm dụng; mỗi kịch bản mức cao có một acceptance test.
+
 ## 8. Ngân sách và chi phí
 
 - Mặc định **`budget.mode: unlimited`**, vẫn có usage ledger, dashboard expense/retry alerts, per-provider key controls và cancel. `unlimited` là không áp *hạn mức tiền do SISF tự đặt*, không cam kết chi phí thực tế vô hạn hoặc dùng provider miễn phí.
@@ -319,6 +332,48 @@ Các yêu cầu dưới đây áp dụng khi surface tương ứng được xây
 | Render / Railway | service group/containers + persistent state dưới một factory installation manifest | sau E2E; không mặc định sandbox hardening |
 
 Nếu nhà cung cấp không thể đáp ứng `single_factory_deployment`, `durable_tasks`, `safe_exec`, `releasable_zone1`, `rollback` thì profile ở trạng thái **experimental/unsupported**, không viết “deploy anywhere” với full capability.
+
+### Thiết kế triển khai: các đơn vị chạy
+
+Một factory deployment gồm chín đơn vị chạy. Tên đơn vị giống nhau trên mọi nền tảng; chỉ cách hiện thực (process, container, pod, function) thay đổi. Release manifest ghim digest của mọi đơn vị.
+
+| Đơn vị | Zone | Vòng đời | Vai trò và ràng buộc |
+|---|---|---|---|
+| `app` | 1 | chạy liên tục, có revision stable và canary | Nhận traffic của người dùng; scale ngang. |
+| `control` | 3 | chạy liên tục | Dashboard, API, MCP, nhận webhook. Mặc định không công khai, trừ đường webhook và endpoint report. |
+| `supervisor` | 3 | chạy liên tục, tách tiến trình khỏi `control` | Trusted release supervisor. Đơn vị duy nhất giữ quyền deploy và khóa ký ủy quyền. |
+| `dispatcher` | 2 | chạy liên tục, một bản giữ lease | Claim nhiệm vụ, giữ run state, tạo và hủy runner. |
+| `runner` | 2 | tạm thời, một cái cho mỗi run | Chạy coding agent. Không nhận kết nối vào, egress theo policy, chỉ có secret của run đó. |
+| `qa-runner` | 2 | tạm thời | Chạy QA độc lập, có danh tính và credential khác `runner`. |
+| `state` | dùng chung | bền | SQLite WAL hoặc PostgreSQL; mỗi zone một role riêng. |
+| `artifacts` | dùng chung | bền | Volume hoặc object store cho artifact, log, snapshot. |
+| `edge` | dùng chung | chạy liên tục | Reverse proxy và TLS; chia traffic giữa stable và canary. |
+
+Mạng chia thành bốn phân vùng: `app`, `factory`, `control` và `sandbox`. Runner nằm trong `sandbox` và chỉ ra ngoài qua egress proxy thực thi policy ở mục 7.
+
+### Hình thức vận hành
+
+Bảng dưới là thiết kế đích của từng hình thức; trạng thái hỗ trợ vẫn theo bảng compliance ở trên và chỉ được nâng sau E2E. Tên dịch vụ của nền tảng bên thứ ba phải được xác minh lại với tài liệu hiện hành khi viết adapter.
+
+| Hình thức | `app`, `control`, `supervisor`, `dispatcher` | `runner`, `qa-runner` | `state`, `artifacts` | `edge` và truy cập |
+|---|---|---|---|---|
+| Standalone | Các process trên một máy, do `sisf` giám sát qua systemd hoặc launchd | Process cục bộ (chỉ mã tin cậy), hoặc container nếu máy có Docker | SQLite WAL và thư mục cục bộ | Trực tiếp, Tailscale hoặc tunnel (xem dưới) |
+| Docker | Một compose project (stack), mỗi đơn vị một service, image ghim digest | Container tạm thời trên network `sandbox`, tạo qua socket proxy giới hạn API; gVisor tùy chọn | PostgreSQL và named volume | Service reverse proxy trong stack |
+| Kubernetes | Một Helm release trong một namespace; mỗi đơn vị một Deployment; canary là Deployment thứ hai có trọng số | Job, mỗi run một pod; ServiceAccount không gắn token, NetworkPolicy chặn mặc định, RuntimeClass cách ly nếu cluster có | StatefulSet hoặc PostgreSQL ngoài; PVC hoặc object store | Ingress hoặc Gateway |
+| Vercel | `app` và `control` là project chạy function; `dispatcher` và `supervisor` là workflow bền hoặc queue, vì không có process chạy mãi | Vercel Sandbox | PostgreSQL và object store bên ngoài | Edge của nền tảng; canary bằng cơ chế phát hành theo tỷ lệ |
+| Cloudflare | `app` và `control` là Workers; `dispatcher` và `supervisor` là Durable Objects hoặc Workflows | Container hoặc Sandbox của nền tảng | D1 hoặc PostgreSQL ngoài; R2 | Edge của nền tảng; canary bằng gradual deployment |
+| TOSE (tose.sh, `saasvn/tose-app`) | Các app trong một workspace, build từ Git, có domain và TLS | TOSE runtime qua `ExecutionBackend` | Database quản lý có đĩa bền | Domain của nền tảng |
+| Railway | Các service trong một project, nối qua private network | Remote executor, hoặc chỉ mã tin cậy, vì nền tảng không có sandbox lồng nhau | PostgreSQL và volume của nền tảng | Domain của nền tảng |
+
+**Standalone có ba cách truy cập.** Trực tiếp: `control` chỉ nghe trên localhost, hoặc đặt sau reverse proxy có TLS khi mở ra mạng. Tailscale: `control` chỉ nghe trong tailnet; danh tính thiết bị của tailnet là lớp bổ sung và không thay SSO hay RBAC. Tunnel: chỉ mở `app` và đường webhook ra ngoài. GitHub webhook cần một endpoint công khai; khi không có, factory chạy ở chế độ polling kết hợp reconciliation và công bố độ trễ đó.
+
+**Ràng buộc theo hình thức.**
+
+- Docker: không mount Docker socket trực tiếp vào `dispatcher`, vì socket tương đương quyền root trên host. Dùng socket proxy chỉ cho phép tạo và hủy container trên network `sandbox`, hoặc Docker rootless.
+- Kubernetes: `supervisor` chỉ có RBAC trong namespace của factory. Factory không cần quyền cluster-admin.
+- Vercel và Cloudflare: function có giới hạn thời gian chạy, nên mỗi run chia thành các bước có checkpoint và tiếp tục được sau khi bị ngắt.
+- Nền tảng tính phí trả trước: adapter kiểm tra số dư đủ cho một lần rollback trước khi publish; không đủ thì giữ ở `Releasing`.
+- Mọi hình thức: nếu `supervisor` không thể tách khỏi candidate (cùng process, cùng credential) thì hình thức đó không được tự publish.
 
 ## 11. Repository layout khuyến nghị
 
