@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/signing"
@@ -104,26 +103,7 @@ func (s *LKGStore) Save(ctx context.Context, record LKGRecord) error {
 	if err != nil {
 		return invalid("the LKG record cannot be encoded").WithCause(err)
 	}
-	// CreateTemp makes the file readable and writable by its owner only.
-	temp, err := os.CreateTemp(filepath.Dir(s.path), ".lkg-*.tmp")
-	if err != nil {
-		return newError(core.CodeUnavailable, "the trust volume cannot be written").WithCause(err)
-	}
-	_, err = temp.Write(append(data, '\n'))
-	if err == nil {
-		err = temp.Sync()
-	}
-	if closeErr := temp.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Rename(temp.Name(), s.path)
-	}
-	if err != nil {
-		_ = os.Remove(temp.Name()) // best effort: the write already failed and is reported
-		return newError(core.CodeUnavailable, "LKG record %s cannot be written", s.path).WithCause(err)
-	}
-	return nil
+	return WriteTrustFile(s.path, append(data, '\n'))
 }
 
 // check requires a record to carry a release manifest of this factory whose
