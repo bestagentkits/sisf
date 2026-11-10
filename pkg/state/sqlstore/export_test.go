@@ -2,6 +2,7 @@ package sqlstore
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/state"
 )
@@ -31,4 +32,10 @@ func AddReleaseMigrations(s *Store, more ...TestMigration) {
 // MigrationScript returns the script a shipped migration runs on a dialect.
 func MigrationScript(version int, d Dialect) (string, error) {
 	return releaseMigrations[version-1].script(d)
+}
+
+// MigrationLock is the statement and argument that take the migration lock
+// of the schema a connection's search path names, as Migrate does.
+func MigrationLock() (string, int32) {
+	return strings.Replace(lockMigrations, "?", "$1", 1), migrationLockClass
 }

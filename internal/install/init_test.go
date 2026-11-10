@@ -1,6 +1,8 @@
 package install
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -201,5 +203,30 @@ func TestInitGeneratesServiceUnitsOnlyForStandalone(t *testing.T) {
 	mustInit(t, docker, manifest.ModeDocker)
 	if _, err := os.Stat(docker.Layout.ServiceDir()); err == nil {
 		t.Fatal("Docker mode generated service units")
+	}
+}
+
+func TestInitGivesOnlyTheControlZoneAnApprovalSigningKey(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []manifest.Mode{manifest.ModeStandalone, manifest.ModeDocker} {
+		in, _, _ := newTestInstaller(t)
+		mustInit(t, in, mode)
+		control, err := readEnvFile(in.Layout.RuntimeEnv(areaControl))
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed, err := base64.RawURLEncoding.DecodeString(control["SISF_APPROVAL_KEY"])
+		if err != nil || len(seed) != ed25519.SeedSize {
+			t.Fatalf("%s: the control zone's approval key is not an ed25519 seed (%d bytes, %v)", mode, len(seed), err)
+		}
+		for _, area := range []string{areaApplication, areaAgent} {
+			env, err := readEnvFile(in.Layout.RuntimeEnv(area))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := env["SISF_APPROVAL_KEY"]; ok {
+				t.Errorf("%s: the %s area holds the approval key", mode, area)
+			}
+		}
 	}
 }

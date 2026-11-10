@@ -101,7 +101,9 @@ func TestBootstrapGivesEachZoneItsOwnRoleOnPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = admin.Close() }()
+	// Closed after the cleanup below has dropped what the test made: a
+	// deferred close would run first and leave the database and roles behind.
+	t.Cleanup(func() { _ = admin.Close() })
 	suffix := strings.ToLower(strings.NewReplacer("/", "_", "-", "_").Replace(t.Name()))[:20]
 	database := "sisf_boot_" + suffix
 	roles := map[core.Zone]string{

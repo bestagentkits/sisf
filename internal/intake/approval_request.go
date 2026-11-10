@@ -19,7 +19,19 @@ func (s *Service) request(ctx context.Context, in input, sow SoW, verdict Classi
 	if err := revision.Validate(); err != nil {
 		return approvals.Request{}, err
 	}
-	id := fmt.Sprintf("intake:%s:%s:%s", sow.Issue, strings.TrimPrefix(string(sow.Digest), "sha256:")[:16], string(revision)[:12])
+	return s.file(ctx, in, sow, verdict, "intake:"+requestSubject(sow, revision))
+}
+
+// requestSubject names a scope version under a policy revision in the ID of
+// an approval request. revision must be valid.
+func requestSubject(sow SoW, revision core.CommitSHA) string {
+	return fmt.Sprintf("%s:%s:%s", sow.Issue, strings.TrimPrefix(string(sow.Digest), "sha256:")[:16], string(revision)[:12])
+}
+
+// file files the approval request with the given ID for one scope version
+// under the policy in force, or returns the one already filed under that ID.
+func (s *Service) file(ctx context.Context, in input, sow SoW, verdict Classification, id string) (approvals.Request, error) {
+	revision := in.policy.Revision
 	existing, err := s.cfg.Approvals.Get(ctx, id)
 	switch {
 	case err == nil && (existing.SubjectDigest != sow.Digest || existing.PolicyRevision != revision):

@@ -20,7 +20,8 @@ const (
 // controlOnlyKeys are the variables that exist only in the control zone's
 // env file. If another zone's file has one, that zone holds a secret of
 // Zone 3, which the isolation rule forbids.
-var controlOnlyKeys = []string{"SISF_OWNER_TOKEN", "SISF_WEBHOOK_SECRET", "SISF_GITHUB_TOKEN", "SISF_ROOT_PUBLIC_KEY",
+var controlOnlyKeys = []string{"SISF_OWNER_TOKEN", "SISF_WEBHOOK_SECRET", "SISF_GITHUB_TOKEN", "SISF_APPROVAL_KEY",
+	"SISF_ROOT_PUBLIC_KEY",
 	"SISF_STATE_OWNER_DSN", "POSTGRES_PASSWORD"}
 
 // CheckSecrets verifies the secrets directory of an install: that only its

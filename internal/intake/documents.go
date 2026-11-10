@@ -144,25 +144,38 @@ func put(ctx context.Context, tx state.Tx, key string, version int64, doc any) e
 func (s *Service) ApprovedScope(ctx context.Context, issue core.IssueRef) (SoW, error) {
 	var sow SoW
 	err := s.cfg.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
-		entry, err := tx.GetKV(ctx, namespace, issueKey(issue))
-		if err != nil {
-			if core.HasCode(err, core.CodeNotFound) {
-				return core.NewError(core.CodeNotFound, "intake has no record of this issue")
-			}
-			return err
-		}
-		var doc issueDoc
-		if err := decode(entry, &doc); err != nil {
-			return err
-		}
-		if doc.ApprovedVersion == 0 {
-			return core.NewError(core.CodeApprovalRequired, "the scope of this issue has not been permitted or approved yet")
-		}
-		sow, err = readSoW(ctx, tx, issue, doc.ApprovedVersion)
+		var err error
+		sow, err = ReadApprovedScope(ctx, tx, issue)
 		return err
 	})
 	if err != nil {
 		return SoW{}, err
 	}
 	return sow, nil
+}
+
+// ReadApprovedScope is ApprovedScope read through kv, for a caller that is
+// inside a store transaction or that only holds the store, such as a zone
+// that hands the scope to an agent without running intake itself.
+func ReadApprovedScope(ctx context.Context, kv state.KV, issue core.IssueRef) (SoW, error) {
+	entry, err := kv.GetKV(ctx, namespace, issueKey(issue))
+	if err != nil {
+		if core.HasCode(err, core.CodeNotFound) {
+			return SoW{}, core.NewError(core.CodeNotFound, "intake has no record of this issue")
+		}
+		return SoW{}, err
+	}
+	var doc issueDoc
+	if err := decode(entry, &doc); err != nil {
+		return SoW{}, err
+	}
+	if doc.ApprovedVersion == 0 {
+		return SoW{}, core.NewError(core.CodeApprovalRequired, "the scope of this issue has not been permitted or approved yet")
+	}
+	entry, err = kv.GetKV(ctx, namespace, sowKey(issue, doc.ApprovedVersion))
+	if err != nil {
+		return SoW{}, err
+	}
+	var sow SoW
+	return sow, decode(entry, &sow)
 }

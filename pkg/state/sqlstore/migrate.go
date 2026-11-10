@@ -13,9 +13,17 @@ import (
 
 var _ state.Migrator = (*Store)(nil)
 
-// migrationLockKey is the PostgreSQL advisory lock two migrators contend
-// for. SQLite needs none: a write transaction already excludes the other.
-const migrationLockKey int64 = 0x5153465f6d696772 // arbitrary, fixed
+// migrationLockClass and lockMigrations take the PostgreSQL advisory lock
+// two migrators of one schema contend for. The lock is keyed by the schema
+// being migrated, so migrators of different schemas in one database, such
+// as factories or tests that each own a schema, do not wait for each other.
+// coalesce keeps the lock taken when the search path names no schema: the
+// lock function ignores a call with a NULL key. SQLite needs no lock: a
+// write transaction already excludes the other.
+const (
+	migrationLockClass int32 = 0x51534d67 // arbitrary, fixed
+	lockMigrations           = `SELECT pg_advisory_xact_lock(?, hashtext(coalesce(current_schema(), '')))`
+)
 
 const createMigrationsTable = `CREATE TABLE IF NOT EXISTS schema_migrations (
 	version             BIGINT  NOT NULL PRIMARY KEY,
@@ -68,7 +76,7 @@ func (s *Store) Migrate(ctx context.Context, opts state.MigrateOptions) error {
 	}
 	err := s.inRawTx(ctx, false, func(ctx context.Context, q *querier) error {
 		if s.dialect == DialectPostgres {
-			if _, err := q.exec(ctx, "lock migrations", `SELECT pg_advisory_xact_lock(?)`, migrationLockKey); err != nil {
+			if _, err := q.exec(ctx, "lock migrations", lockMigrations, migrationLockClass); err != nil {
 				return err
 			}
 		}

@@ -22,8 +22,8 @@
 #
 # Runtime contract with factoryd: it reads its manifest from SISF_CONFIG,
 # listens on SISF_LISTEN, opens the state store with SISF_STATE_DSN, and
-# takes SISF_OWNER_TOKEN, SISF_WEBHOOK_SECRET and SISF_GITHUB_TOKEN from its
-# environment. Secrets arrive only through the env file of the zone.
+# takes SISF_OWNER_TOKEN, SISF_WEBHOOK_SECRET, SISF_GITHUB_TOKEN and
+# SISF_APPROVAL_KEY from its environment. Secrets arrive only through the env file of the zone.
 name: "{{ .Project }}"
 
 x-hardened: &hardened
@@ -141,6 +141,9 @@ services:
       SISF_LISTEN: "0.0.0.0:{{ .PortControl }}"
       SISF_LISTEN_ALLOW_NON_LOOPBACK: "true"
       SISF_GITHUB_API_URL: "{{ .GitHubAPIURL }}"
+      # /healthz of Zone 1 through the edge, and of Zone 2, for the zone report.
+      SISF_APP_HEALTH_URL: "http://edge:{{ .PortEdge }}/healthz"
+      SISF_DISPATCHER_HEALTH_URL: "http://dispatcher:{{ .PortDispatcher }}/healthz"
     networks: [control, factory]
     ports:
       - "127.0.0.1:{{ .PortControl }}:{{ .PortControl }}"

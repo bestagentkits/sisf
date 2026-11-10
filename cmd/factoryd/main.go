@@ -1,0 +1,138 @@
+// Command factoryd runs the factory's own units: the control plane of Zone 3
+// and the dispatcher of Zone 2. One binary serves both; the subcommand picks
+// the role, and each role reads only the env file of its own zone.
+//
+//	factoryd control      serve the dashboard, the API and the webhook route
+//	factoryd dispatcher   claim Ready issues and drive their runs
+//
+// Owner commands, run on the factory's host with the control zone's
+// environment (in Docker mode: docker compose exec control factoryd ...):
+//
+//	factoryd policy approve --revision SHA [--approval ID]
+//	factoryd issue retry --issue owner/repo#N
+//
+// A report about a run, with the agent zone's environment:
+//
+//	factoryd report --issue owner/repo#N --run ID --owner NAME --token N --pr REF
+//
+// Configuration comes from the environment: SISF_CONFIG, SISF_LISTEN,
+// SISF_STATE_DSN, SISF_OWNER_TOKEN, SISF_WEBHOOK_SECRET, SISF_GITHUB_TOKEN and
+// the others named in package wiring. Secrets are never taken from the
+// command line and never printed.
+//
+// Exit status: 0 on success, 1 on a failure, 2 when invoked wrongly.
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/bestagentkits/sisf/pkg/core"
+)
+
+// Exit statuses of the program.
+const (
+	exitOK      = 0
+	exitFailure = 1
+	exitUsage   = 2
+)
+
+const usage = `usage:
+  factoryd control
+  factoryd dispatcher [--fake-agent-work DURATION]
+  factoryd policy approve --revision SHA [--approval ID]
+  factoryd issue retry --issue owner/repo#N
+  factoryd report --issue owner/repo#N --run ID --owner NAME --token N (--pr REF)...
+`
+
+// errUsage marks a command line that cannot be run.
+var errUsage = errors.New("usage")
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	status := run(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr)
+	stop()
+	os.Exit(status)
+}
+
+// run executes one command line and returns the exit status.
+func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	err := dispatch(ctx, args, getenv, stdout, log)
+	switch {
+	case err == nil:
+		return exitOK
+	case errors.Is(err, flag.ErrHelp):
+		_, _ = io.WriteString(stdout, usage)
+		return exitOK
+	case errors.Is(err, errUsage):
+		_, _ = fmt.Fprintf(stderr, "factoryd: %v\n%s", err, usage)
+		return exitUsage
+	}
+	_, _ = fmt.Fprintf(stderr, "factoryd: %s\n", describe(err))
+	return exitFailure
+}
+
+// dispatch runs the subcommand named by args.
+func dispatch(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer, log *slog.Logger) error {
+	if len(args) == 0 {
+		return fmt.Errorf("%w: a subcommand is required", errUsage)
+	}
+	switch name, rest := args[0], args[1:]; {
+	case name == "control":
+		return runControl(ctx, rest, getenv, log)
+	case name == "dispatcher":
+		return runDispatcher(ctx, rest, getenv, log)
+	case name == "policy" && len(rest) > 0 && rest[0] == "approve":
+		return runPolicyApprove(ctx, rest[1:], getenv, stdout, log)
+	case name == "issue" && len(rest) > 0 && rest[0] == "retry":
+		return runIssueRetry(ctx, rest[1:], getenv, stdout, log)
+	case name == "report":
+		return runReport(ctx, rest, getenv, stdout)
+	case name == "-h" || name == "--help" || name == "help":
+		return flag.ErrHelp
+	}
+	return fmt.Errorf("%w: unknown command %q", errUsage, args[0])
+}
+
+// describe renders a failure for the operator: the code and the message of
+// a typed error, which are written for callers and carry no secret.
+func describe(err error) string {
+	var typed *core.Error
+	if !errors.As(err, &typed) {
+		return err.Error()
+	}
+	text := string(typed.Code) + ": " + typed.Message
+	for _, next := range typed.NextActions {
+		text += "\n  next: " + next.Description
+	}
+	return text
+}
+
+// newFlags returns a flag set whose problems are usage errors.
+func newFlags(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	return fs
+}
+
+// parse parses args and refuses leftovers.
+func parse(fs *flag.FlagSet, args []string) error {
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return fmt.Errorf("%w: %v", errUsage, err)
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("%w: unexpected argument %q", errUsage, fs.Arg(0))
+	}
+	return nil
+}

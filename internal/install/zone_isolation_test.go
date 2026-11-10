@@ -209,3 +209,18 @@ func TestSimulationProfileRunsTheFakeGitHubInsideControlsNamespaceOnly(t *testin
 		t.Fatal("port 7467 is published without the simulation profile")
 	}
 }
+
+// The control zone reports the health of the other two zones, so it must
+// reach Zone 1 through the edge and Zone 2 on a network both are on.
+func TestControlProbesTheOtherZonesOnAddressesItCanReach(t *testing.T) {
+	t.Parallel()
+	_, out := renderCompose(t, nil)
+	for _, want := range []string{
+		`SISF_APP_HEALTH_URL: "http://edge:7460/healthz"`,
+		`SISF_DISPATCHER_HEALTH_URL: "http://dispatcher:7465/healthz"`,
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("the control service lacks %s", want)
+		}
+	}
+}

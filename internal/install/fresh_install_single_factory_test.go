@@ -123,7 +123,7 @@ func TestStandaloneUnitsGetOnlyTheEnvironmentOfTheirOwnZone(t *testing.T) {
 	r.stop(t)
 	envOf := func(p *fakeProc) string { return strings.Join(p.cmd.Env, "\n") }
 	control, dispatcher := envOf(r.factoryd(t, "control")), envOf(r.factoryd(t, "dispatcher"))
-	for _, want := range []string{"SISF_OWNER_TOKEN=", "SISF_WEBHOOK_SECRET=", "SISF_GITHUB_TOKEN="} {
+	for _, want := range []string{"SISF_OWNER_TOKEN=", "SISF_WEBHOOK_SECRET=", "SISF_GITHUB_TOKEN=", "SISF_APPROVAL_KEY="} {
 		if !strings.Contains(control, want) {
 			t.Errorf("control lacks %s", want)
 		}

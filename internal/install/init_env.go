@@ -25,11 +25,19 @@ func postgresDSN(user, password string) string {
 	return "postgres://" + user + ":" + password + "@state:5432/" + stateDatabase + "?sslmode=disable"
 }
 
+// controlSecrets are the generated secrets only the control zone holds.
+type controlSecrets struct {
+	owner, webhook string
+	// approvalKey is the seed of the key that signs approval decisions.
+	approvalKey string
+}
+
 // runtimeEnvs builds the env file of every area. A unit gets the file of its
 // own area and no other, so what a zone cannot see it cannot leak: the
 // application and the agent zone hold their own store credential and nothing
-// of the control zone's token, webhook secret, GitHub token or root key.
-func (in *Installer) runtimeEnvs(o Options, pw map[core.Zone]string, owner, webhook, statePW string, github core.SecretValue, rootPub string) (map[string][]byte, error) {
+// of the control zone's token, webhook secret, approval key, GitHub token or root
+// key.
+func (in *Installer) runtimeEnvs(o Options, pw map[core.Zone]string, cs controlSecrets, statePW string, github core.SecretValue, rootPub string) (map[string][]byte, error) {
 	l := in.Layout
 	dsn := func(z core.Zone) string {
 		if o.Mode == manifest.ModeStandalone {
@@ -38,7 +46,7 @@ func (in *Installer) runtimeEnvs(o Options, pw map[core.Zone]string, owner, webh
 		return postgresDSN(zoneRoles[z], pw[z])
 	}
 	control := []string{"SISF_ZONE", "control", "SISF_STATE_DSN", dsn(core.ZoneControl),
-		"SISF_OWNER_TOKEN", owner, "SISF_WEBHOOK_SECRET", webhook}
+		"SISF_OWNER_TOKEN", cs.owner, "SISF_WEBHOOK_SECRET", cs.webhook, "SISF_APPROVAL_KEY", cs.approvalKey}
 	if !github.IsZero() {
 		control = append(control, "SISF_GITHUB_TOKEN", string(github.Reveal()))
 	}
@@ -58,7 +66,7 @@ func (in *Installer) runtimeEnvs(o Options, pw map[core.Zone]string, owner, webh
 		}
 	}
 	if o.Sim {
-		sets[l.RuntimeEnv(areaSim)] = []string{"SISF_SIM_WEBHOOK_SECRET", webhook}
+		sets[l.RuntimeEnv(areaSim)] = []string{"SISF_SIM_WEBHOOK_SECRET", cs.webhook}
 	}
 	out := map[string][]byte{}
 	for path, pairs := range sets {
