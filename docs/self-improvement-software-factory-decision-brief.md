@@ -267,7 +267,7 @@ Nếu nhà cung cấp không thể đáp ứng `single_factory_deployment`, `dur
 ## 11. Repository layout khuyến nghị
 
 ```text
-self-improvement-software-factory/          # new OSS repo, actual owner/org TBD
+sisf/                                      # OSS repo: github.com/bestagentkits/sisf
   cmd/sisf/                                # CLI
   cmd/factoryd/                           # Zone 3 server, dispatcher
   internal/ or pkg/core/                  # clean policy & decision contracts, no TOSE imports
@@ -288,13 +288,13 @@ self-improvement-software-factory/          # new OSS repo, actual owner/org TBD
 
 **Kế thừa:** ứng viên tái sử dụng từ `saasvn/tose-app/internal/harnessplatform` gồm `delegation`, `decision`, `scope`, `budget`, `promotion`, `upstream`. Phải loại `tose-v2/internal/policy`, TOSE OAuth/wallet/K8s binding và xác minh provenance/license trước khi public. `internal/services/piadapter` hiện gắn chặt vào K8s/agentsec; chỉ tái sử dụng contract và phần adapter giao thức, không mang cả TOSE agent service sang OSS. Giữ nguyên vận hành TOSE hiện tại trong lúc trích xuất.
 
-**Giấy phép:** khuyến nghị Apache-2.0 cho OSS mới (cần người nắm quyền sở hữu phê duyệt cùng audit dependencies; tài liệu này không tự cấp phép mã nguồn cũ).
+**Giấy phép:** MIT, Owner đã chốt ngày 2026-11-10 (`LICENSE`, bản quyền AgentKit.best). Giấy phép này áp dụng cho mã và tài liệu viết mới trong repo; mã trích từ TOSE chỉ được đưa vào sau khi audit provenance và dependencies, tài liệu này không tự cấp phép mã nguồn cũ. MIT không có điều khoản cấp bằng sáng chế như Apache-2.0; nếu sau này cần thì đổi giấy phép là một quyết định của Owner qua ADR.
 
 ## 12. SoW và thứ tự triển khai (fixed scope cho coding agent)
 
 ### P0: ADR + kiến trúc bất biến + khảo sát quyền tái sử dụng
 
-**Trong phạm vi:** xác nhận owner của OSS repo; lập ADR three-zones-one-deployment, trust roots, policy precedence; license/provenance; interface contracts; kịch bản test single-deployment; đánh dấu adapter capability matrix.
+**Trong phạm vi:** lập ADR three-zones-one-deployment, trust roots, policy precedence; license/provenance; interface contracts; kịch bản test single-deployment; đánh dấu adapter capability matrix.
 
 **DoD:** tài liệu + tests/conformance checker từ chối cấu hình thiếu zone; tách được danh tính factory/runtime IDs; không thay production TOSE; owner chấp thuận thay đổi API/format.
 
@@ -375,7 +375,7 @@ self-improvement-software-factory/          # new OSS repo, actual owner/org TBD
 
 - QA score khởi điểm 85/100 **cộng** hard gates; canary 5→25→100 khi platform hỗ trợ; threshold lỗi ví dụ 5xx>2% và delta>1pp với đủ mẫu. Không áp dụng máy móc cho app không có HTTP request hoặc lưu lượng thấp.
 - Local SQLite WAL, multi-worker Postgres; Compose là full-deployment profile đầu tiên; 2 built-in agents đầu tiên Claude CLI + Codex, tiếp Pi. Có thể thay nếu proof chỉ ra adapter khác khả thi hơn mà vẫn đủ hai backend.
-- GitHub App OAuth cho repository workflow, OIDC Google cho SSO, role mapping cần rõ. Repo/organization OSS và chọn giấy phép chỉ sau audit quyền sở hữu và quyết định người cấp phép.
+- GitHub App OAuth cho repository workflow, OIDC Google cho SSO, role mapping cần rõ. Repo OSS là `bestagentkits/sisf`, giấy phép MIT (đã chốt); mã kế thừa từ TOSE vẫn phải qua audit quyền sở hữu trước khi đưa vào.
 
 ## 16. Evidence & nguồn nghiên cứu
 
