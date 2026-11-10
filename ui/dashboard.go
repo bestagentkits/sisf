@@ -6,8 +6,7 @@ import (
 	"strings"
 )
 
-// The pages of the full dashboard. They share dash-layout.html and are
-// separate from the pages above, which the simple dashboard still renders.
+// The pages of the dashboard. They share dash-layout.html.
 const (
 	PageDashSignIn    = "dash-signin"
 	PageDashError     = "dash-error"
@@ -30,8 +29,9 @@ var dashboardPages = []string{
 	PageDashBlocked,
 }
 
-// LoadDashboard parses every page of the full dashboard together with its
-// layout. Like Load, it fails at start up on a template error.
+// LoadDashboard parses every page of the dashboard together with its
+// layout. It fails at start up on a template error, so a broken page is
+// never found by a visitor.
 func LoadDashboard() (*Pages, error) {
 	funcs := template.FuncMap{"utc": formatUTC, "iso": formatISO}
 	pages := &Pages{pages: map[string]*template.Template{}}
@@ -45,7 +45,7 @@ func LoadDashboard() (*Pages, error) {
 	return pages, nil
 }
 
-// ContentSecurityPolicy is the policy the full dashboard sends. Scripts and
+// ContentSecurityPolicy is the policy the dashboard sends. Scripts and
 // styles come only from the server itself, so a page holds no inline script,
 // no inline style and no inline event handler. Forms may post to the server;
 // formOrigins adds the origins a form POST may be redirected to, which a

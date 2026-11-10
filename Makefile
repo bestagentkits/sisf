@@ -15,7 +15,7 @@ e2e:
 	go test -tags e2e ./tests/e2e/... -count=1 -timeout 45m
 
 smoke:
-	go test -tags smoke ./tests/smoke/... -count=1
+	go test -tags smoke ./tests/smoke/... -count=1 -v -timeout 45m
 
 up:
 	go run ./cmd/sisf up $(ARGS)

@@ -24,7 +24,6 @@ const (
 	EnvListen           = "SISF_LISTEN"
 	EnvAllowNonLoopback = "SISF_LISTEN_ALLOW_NON_LOOPBACK"
 	EnvStateDSN         = "SISF_STATE_DSN"
-	EnvOwnerToken       = "SISF_OWNER_TOKEN"
 	EnvWebhookSecret    = "SISF_WEBHOOK_SECRET"
 	EnvGitHubToken      = "SISF_GITHUB_TOKEN"
 	EnvGitHubAPIURL     = "SISF_GITHUB_API_URL"
@@ -40,6 +39,12 @@ const (
 	// Standalone install.
 	EnvAppHealthURL        = "SISF_APP_HEALTH_URL"
 	EnvDispatcherHealthURL = "SISF_DISPATCHER_HEALTH_URL"
+	// EnvSupervisorAdminAddr is the release supervisor's admin socket, which
+	// carries out an emergency stop and an Owner rollback. It defaults to
+	// the supervisor's own default, 127.0.0.1:7464.
+	EnvSupervisorAdminAddr = "SISF_SUPERVISOR_ADMIN_ADDR"
+	// EnvDocsDir is the docs directory docs.list lists; unset lists none.
+	EnvDocsDir = "SISF_DOCS_DIR"
 )
 
 // Default addresses of a Standalone install; every port is on loopback.
@@ -58,7 +63,6 @@ type Env struct {
 	Listen              string
 	AllowNonLoopback    bool
 	StateDSN            core.SecretValue
-	OwnerToken          core.SecretValue
 	WebhookSecret       core.SecretValue
 	GitHubToken         core.SecretValue
 	GitHubAPIURL        string
@@ -76,7 +80,6 @@ func ReadEnv(getenv func(string) string) (Env, error) {
 		FactoryID:           core.FactoryID(strings.TrimSpace(getenv(EnvFactoryID))),
 		Listen:              strings.TrimSpace(getenv(EnvListen)),
 		StateDSN:            secret(getenv(EnvStateDSN)),
-		OwnerToken:          secret(getenv(EnvOwnerToken)),
 		WebhookSecret:       secret(getenv(EnvWebhookSecret)),
 		GitHubToken:         secret(getenv(EnvGitHubToken)),
 		GitHubAPIURL:        strings.TrimSpace(getenv(EnvGitHubAPIURL)),

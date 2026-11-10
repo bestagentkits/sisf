@@ -11,11 +11,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/actions"
 	"github.com/bestagentkits/sisf/internal/audit"
+	"github.com/bestagentkits/sisf/internal/auth"
 	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/intake"
 	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/internal/policy"
+	"github.com/bestagentkits/sisf/internal/rbac"
 	"github.com/bestagentkits/sisf/internal/redact"
 	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/pkg/approvals"
@@ -31,6 +34,12 @@ type GitHub interface {
 	intake.IssueReader
 	intake.IssueWriter
 	FileReader
+	// The actions of the surfaces open the sample issue and the catalog's
+	// pull requests.
+	CreateIssue(ctx context.Context, repo github.RepoRef, n github.NewIssue) (github.Issue, error)
+	BranchHead(ctx context.Context, repo github.RepoRef, branch string) (core.CommitSHA, error)
+	CommitToBranch(ctx context.Context, repo github.RepoRef, bc github.BranchCommit) (core.CommitSHA, error)
+	CreatePullRequest(ctx context.Context, repo github.RepoRef, pr github.NewPullRequest) (github.PullRequest, error)
 }
 
 // ControlConfig is what the control zone is built from.
@@ -42,9 +51,7 @@ type ControlConfig struct {
 	// Store is the operational store opened for the control zone.
 	Store  *sqlstore.Store
 	GitHub GitHub
-	// OwnerToken guards the API and the dashboard; WebhookSecret verifies
-	// deliveries; ApprovalKey signs approval decisions.
-	OwnerToken    core.SecretValue
+	// WebhookSecret verifies deliveries; ApprovalKey signs approval decisions.
 	WebhookSecret core.SecretValue
 	ApprovalKey   ed25519.PrivateKey
 	// ListenAddr and AllowNonLoopback configure the HTTP server.
@@ -61,20 +68,31 @@ type ControlConfig struct {
 	Upstream github.RepoRef
 	// TrustedProxies are where the edge connects from; see EnvTrustedProxies.
 	TrustedProxies []netip.Prefix
+	// Surfaces configures sign-in and the dashboard, REST, MCP and WebMCP
+	// surfaces. Nil builds the zone without its HTTP server, for the
+	// Owner's command-line use of the control zone.
+	Surfaces *SurfaceConfig
+	// Decision runs the decision layer on the edge's counters; nil runs none.
+	Decision *DecisionConfig
 }
 
 // Control is the control zone of one factory: the HTTP server, intake, the
 // approval store and the policy in force, and the passes that move
 // deliveries in and effects out.
 type Control struct {
-	cfg       ControlConfig
-	log       *slog.Logger
-	Server    *control.Server
-	Intake    *intake.Service
-	Approvals *approvals.KVStore
-	Baselines *policy.Baselines
-	Policy    *policy.Loader
-	Audit     *audit.Log
+	cfg ControlConfig
+	log *slog.Logger
+	// Server, Actions, Identity and Authorizer exist when the zone was
+	// built with its surfaces.
+	Server     *control.Server
+	Actions    *actions.Service
+	Identity   *auth.Service
+	Authorizer *rbac.Authorizer
+	Intake     *intake.Service
+	Approvals  *approvals.KVStore
+	Baselines  *policy.Baselines
+	Policy     *policy.Loader
+	Audit      *audit.Log
 
 	mu sync.Mutex
 	// published is the policy revision whose references were last published.
@@ -84,6 +102,8 @@ type Control struct {
 	backoff map[string]retryAt
 	// projected is the record version last shown on GitHub, per issue.
 	projected map[core.IssueRef]int64
+	// decisions runs the decision layer; nil when it is not configured.
+	decisions *decisionRunner
 }
 
 // retryAt is when a failed delivery is tried again, and how often it failed.
@@ -147,16 +167,33 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 		Approvals: c.Approvals, Clock: cfg.Clock}); err != nil {
 		return nil, err
 	}
+	if cfg.Decision != nil {
+		if cfg.Decision.Counters == nil {
+			return nil, core.NewError(core.CodeInvalidArgument, "the decision layer needs the edge's counters")
+		}
+		c.decisions = &decisionRunner{cfg: *cfg.Decision, policy: c.Policy, issues: cfg.GitHub, repo: repo,
+			store: cfg.Store, clock: cfg.Clock, log: cfg.Logger}
+	}
+	if cfg.Surfaces == nil {
+		return c, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), identityTimeout)
+	defer cancel()
+	surfaces, err := c.newSurfaces(ctx, *cfg.Surfaces, repo, settings.InstallationID)
+	if err != nil {
+		return nil, err
+	}
 	webhookSecret := cfg.WebhookSecret
 	if c.Server, err = control.New(control.Config{
-		FactoryID: m.FactoryID, ListenAddr: cfg.ListenAddr, AllowNonLoopback: cfg.AllowNonLoopback, OwnerToken: cfg.OwnerToken,
+		FactoryID: m.FactoryID, ListenAddr: cfg.ListenAddr, AllowNonLoopback: cfg.AllowNonLoopback,
 		Webhook: github.ReceiverConfig{
 			Secrets:        func() []core.SecretValue { return []core.SecretValue{webhookSecret} },
 			InstallationID: settings.InstallationID, Repos: []github.RepoRef{repo}, Self: settings.Self,
 		},
-	}, control.Deps{Store: cfg.Store, Probes: cfg.Probes, Clock: cfg.Clock, Logger: cfg.Logger, Report: &control.ReportRoute{
-		Store: report.NewMemoryStore(reportCapacity), Redactor: redact.New(redact.Config{}), TrustedProxies: cfg.TrustedProxies,
-	}}); err != nil {
+	}, control.Deps{Store: cfg.Store, Probes: cfg.Probes, Clock: cfg.Clock, Logger: cfg.Logger, Surfaces: surfaces,
+		Report: &control.ReportRoute{
+			Store: report.NewMemoryStore(reportCapacity), Redactor: redact.New(redact.Config{}), TrustedProxies: cfg.TrustedProxies,
+		}}); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -165,6 +202,9 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 // Run serves the control zone on ln and runs a pass every interval until
 // ctx ends. A failed pass is logged and the next one tries again.
 func (c *Control) Run(ctx context.Context, ln net.Listener, interval time.Duration) error {
+	if c.Server == nil {
+		return core.NewError(core.CodeInvalidArgument, "this control zone was built without its surfaces and cannot serve")
+	}
 	served := make(chan error, 1)
 	go func() { served <- c.Server.Serve(ctx, ln) }()
 	for {
@@ -184,7 +224,8 @@ func (c *Control) Run(ctx context.Context, ln net.Listener, interval time.Durati
 // Pass does one round of the control zone's background work: it publishes
 // the references of a newly approved policy, hands the stored webhook
 // deliveries and the decided approvals to intake, performs the effects intake queued on GitHub and
-// parks the issues whose wait for an answer is over. Each part runs even
+// parks the issues whose wait for an answer is over; when it is configured,
+// the decision layer reads the edge's counters. Each part runs even
 // when another failed; the error joins their failures.
 func (c *Control) Pass(ctx context.Context) error {
 	return errors.Join(
@@ -194,35 +235,8 @@ func (c *Control) Pass(ctx context.Context) error {
 		c.deliverOutbox(ctx),
 		c.expireClarifications(ctx),
 		c.projectLifecycle(ctx),
+		c.runDecisions(ctx),
 	)
-}
-
-// publishPolicy publishes the references of the approved revision once.
-func (c *Control) publishPolicy(ctx context.Context) error {
-	baseline, err := c.Baselines.Current(ctx)
-	switch {
-	case core.HasCode(err, core.CodeNotFound):
-		return nil // nothing approved yet: intake holds, and so does the agent zone
-	case err != nil:
-		return err
-	}
-	c.mu.Lock()
-	done := c.published == baseline.Revision
-	c.mu.Unlock()
-	if done {
-		return nil
-	}
-	snapshot, err := c.Policy.Current(ctx)
-	if err != nil {
-		return err
-	}
-	if err := PublishPolicyRefs(ctx, c.cfg.Store, snapshot); err != nil {
-		return err
-	}
-	c.mu.Lock()
-	c.published = snapshot.Revision
-	c.mu.Unlock()
-	return nil
 }
 
 // expireClarifications parks the issues nobody answered in time.
@@ -232,27 +246,4 @@ func (c *Control) expireClarifications(ctx context.Context) error {
 		c.log.Info("parked an issue that was not answered in time", "issue", issue.String())
 	}
 	return err
-}
-
-// LocalOwner is the Owner acting from the factory's own host, through the
-// factoryd command line. Running it needs the control zone's secrets, which
-// only the Owner of the install can read; the identity was just proven by
-// that access, so it counts as a fresh step-up.
-func LocalOwner(clock core.Clock) core.Actor {
-	return core.Actor{ID: "owner:local", Kind: core.ActorHuman, Roles: []core.Role{core.RoleOwner},
-		Surface: core.SurfaceCLI, StepUpAt: clock.Now()}
-}
-
-// ApproveBaseline makes revision the policy in force, as the Owner. The
-// first revision needs nothing more; replacing one needs approvalID, an
-// approval of exactly the new content.
-func (c *Control) ApproveBaseline(ctx context.Context, revision core.CommitSHA, approvalID string) (policy.Baseline, error) {
-	return c.Baselines.Approve(ctx, LocalOwner(c.cfg.Clock), revision, approvalID)
-}
-
-// RequestPolicyChange files, as the Owner, the approval request that making
-// revision the policy in force needs, and returns it. Approving it and then
-// ApproveBaseline with its ID puts the revision in force.
-func (c *Control) RequestPolicyChange(ctx context.Context, revision core.CommitSHA) (approvals.Request, error) {
-	return c.Baselines.RequestChange(ctx, LocalOwner(c.cfg.Clock), revision)
 }

@@ -2,14 +2,14 @@
 
 Maps each acceptance test of brief §14 (SISF-01 to SISF-20) and each additional security requirement of brief §7 to the test file that proves it. The brief is the contract; this page only routes to the proof. Run a row's package with `go test ./<dir>/...`; the whole matrix is covered by `go test ./... -race`.
 
-Status meanings: **present** means the file exists in this branch and its package passes `go test`. **lands with the integration of this phase** means the file is not in this branch yet and the behaviour is not claimed as proven.
+Status meanings: **present** means the file exists in this branch and its package passes `go test`.
 
 ## SISF-01 to SISF-20
 
 | ID | Test file | Status |
 |---|---|---|
 | SISF-01 | `internal/install/fresh_install_single_factory_test.go` | present |
-| SISF-02 | `tests/acceptance/issue_full_lifecycle_test.go` | lands with the integration of this phase |
+| SISF-02 | `tests/acceptance/issue_full_lifecycle_test.go` | present |
 | SISF-03 | `internal/intake/unauthorized_and_new_feature_test.go` | present |
 | SISF-04 | `tests/acceptance/duplicate_reordered_webhooks_test.go` | present |
 | SISF-05 | `internal/dispatcher/worker_crash_fencing_test.go` | present |
@@ -17,12 +17,12 @@ Status meanings: **present** means the file exists in this branch and its packag
 | SISF-07 | `internal/qa/hard_gate_overrides_score_test.go` | present |
 | SISF-08 | `internal/supervisor/release/publish_observed_revision_test.go` | present |
 | SISF-09 | `internal/supervisor/release/auto_rollback_restores_lkg_test.go` | present |
-| SISF-10 | `tests/acceptance/factory_self_update_zone3_test.go` | lands with the integration of this phase |
+| SISF-10 | `tests/acceptance/factory_self_update_zone3_test.go` | present |
 | SISF-11 | `internal/policy/unapproved_policy_change_ignored_test.go` | present |
 | SISF-12 | `internal/auth/sso_oauth_negative_test.go` | present (against fakes, not real Google SSO) |
-| SISF-13 | `tests/acceptance/five_surface_parity_test.go` | lands with the integration of this phase |
+| SISF-13 | `tests/acceptance/five_surface_parity_test.go` (with `cross_surface_approval_test.go` and `step_up_and_write_limits_test.go`) | present (CLI, REST, MCP, WebMCP tool path and dashboard forms against the wired control server and fake identity provider) |
 | SISF-14 | `internal/budget/budget_modes_test.go` | present |
-| SISF-15 | `tests/acceptance/two_factories_same_upstream_test.go` | lands with the integration of this phase |
+| SISF-15 | `tests/acceptance/two_factories_same_upstream_test.go` | present |
 | SISF-16 | `internal/conformance/backend_capability_matrix_test.go` | present |
 | SISF-17 | `internal/decision/no_benefit_signal_ignored_test.go` | present |
 | SISF-18 | `internal/agentrun/fresh_agent_context_rebuild_test.go` | present |
@@ -44,6 +44,7 @@ Status meanings: **present** means the file exists in this branch and its packag
 
 ## Not covered by unit-level proof yet
 
-- End-to-end lifecycle on Compose and Standalone: tests exist under `tests/e2e/` behind the `e2e` build tag; a passing run is not claimed here.
-- Real smoke run (`smoke` tag): in progress.
-- The Decision Layer (SISF-17 and requirement 4 cover only its negative rules), remote MCP and WebMCP: in progress or experimental.
+- End-to-end lifecycle on Compose and Standalone: tests exist under `tests/e2e/` behind the `e2e` build tag; a passing run is not claimed here. The e2e scenario still reads the dashboard with the removed Owner token and needs updating to a signed-in session.
+- Real smoke run: `tests/smoke/` behind the `smoke` tag (`make smoke`, `SISF_SMOKE_REPO=bestagentkits/sisf-sandbox` only). It needs an operator to approve the CLI sign-in in a browser, and install flags that do not exist yet; it has not been run, so no passing run is claimed.
+- The Decision Layer runs in the control process when `SISF_EDGE_ADMIN_URL` is set (`cmd/factoryd/wiring/decision_layer_test.go` covers rules only, the System One section and the interval). SISF-17 and requirement 4 cover its negative rules. It has not been proven against a live edge.
+- Remote MCP and WebMCP are tested only in process, against the fake identity provider.

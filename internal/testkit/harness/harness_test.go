@@ -2,6 +2,7 @@ package harness_test
 
 import (
 	"context"
+	"github.com/bestagentkits/sisf/internal/actions/runactions"
 	"slices"
 	"strings"
 	"testing"
@@ -189,9 +190,8 @@ func TestWithoutAnApprovedPolicyIntakeHoldsAndCatchesUpLater(t *testing.T) {
 	if err := f.Control.Pass(context.Background()); !core.HasCode(err, core.CodePolicyHold) {
 		t.Fatalf("a pass under no policy did not report the hold: %v", err)
 	}
-	var detail map[string]any
-	if status := f.Get("/api/v1/issues/"+f.Issue(number).String(), &detail); status != 404 {
-		t.Fatalf("the issue is tracked under no policy: %d %v", status, detail)
+	if rec, err := runactions.StoreRecords(f.ControlStore).Record(context.Background(), f.Issue(number)); !core.HasCode(err, core.CodeNotFound) {
+		t.Fatalf("the issue is tracked under no policy: %+v %v", rec, err)
 	}
 	if _, err := f.Control.ApproveBaseline(context.Background(), f.PolicyRevision, ""); err != nil {
 		t.Fatal(err)

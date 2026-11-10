@@ -42,7 +42,7 @@ func (s *Service) fileRequest(ctx context.Context, call invocation) (approvals.R
 	if err != nil {
 		return approvals.Request{}, err
 	}
-	digest, err := subjectDigest(s.cfg.FactoryID, call.spec.Name, call.req.Input)
+	digest, err := s.subjectFor(ctx, call)
 	if err != nil {
 		return approvals.Request{}, err
 	}
@@ -97,13 +97,21 @@ func (s *Service) executeApproved(ctx context.Context, call invocation) (core.Ac
 	if err != nil {
 		return core.ActionResult{}, err
 	}
-	digest, err := subjectDigest(s.cfg.FactoryID, call.spec.Name, call.req.Input)
+	digest, err := s.subjectFor(ctx, call)
 	if err != nil {
 		return core.ActionResult{}, err
 	}
 	bound := binding{digest: digest, policy: policy}
 	if _, err := s.appendBound(ctx, call, core.OutcomeAllowed, "execute", bound, nil); err != nil {
 		return core.ActionResult{}, core.NewError(core.CodeUnavailable, "the execution could not be audited, so nothing ran").WithCause(err)
+	}
+	if s.cfg.Registry.subjectOf(call.spec.Name) != nil {
+		// The performing component verifies and spends the approval.
+		if err := s.checkDelegated(ctx, call, bound); err != nil {
+			s.audit(ctx, call, core.OutcomeDenied, "execute", bound, err)
+			return core.ActionResult{}, approvalRefusal(call, err)
+		}
+		return s.execute(ctx, call, bound)
 	}
 	if _, err := s.cfg.Approvals.Consume(ctx, call.req.ApprovalID, digest, policy); err != nil {
 		s.audit(ctx, call, core.OutcomeDenied, "execute", bound, err)

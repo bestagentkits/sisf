@@ -56,12 +56,7 @@ func TestHealthzReportsADownZoneWithoutItsReason(t *testing.T) {
 		}
 
 		// The Owner sees that the zone is down, but still not the raw error.
-		var status control.FactoryStatus
-		getJSON(t, e.api(http.MethodGet, "/api/v1/factory/status"), &status)
-		if status.Healthy {
-			t.Error("the factory reports healthy with a zone down")
-		}
-		detail := zoneOf(t, status, core.ZoneAgent)
+		detail := zoneOf(t, e.server.Health(context.Background()), core.ZoneAgent)
 		if detail.Status != control.HealthDown || detail.Detail == "" || strings.Contains(detail.Detail, "hunter2") {
 			t.Errorf("agent zone = %+v, want down with a safe reason", detail)
 		}
@@ -74,9 +69,7 @@ func TestTypedProbeErrorsKeepTheirMessage(t *testing.T) {
 		e.probes.set(core.ZoneApplication, func(context.Context) error {
 			return core.NewError(core.CodeUnavailable, "the application answered 503")
 		})
-		var status control.FactoryStatus
-		getJSON(t, e.api(http.MethodGet, "/api/v1/factory/status"), &status)
-		if got := zoneOf(t, status, core.ZoneApplication).Detail; got != "UNAVAILABLE: the application answered 503" {
+		if got := zoneOf(t, e.server.Health(context.Background()), core.ZoneApplication).Detail; got != "UNAVAILABLE: the application answered 503" {
 			t.Errorf("detail = %q", got)
 		}
 	})
@@ -92,8 +85,7 @@ func TestProbeThatNeverAnswersIsDown(t *testing.T) {
 		// One probe honors cancellation, the other ignores it entirely.
 		e.probes.set(core.ZoneApplication, func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() })
 		e.probes.set(core.ZoneAgent, func(context.Context) error { <-release; return nil })
-		var status control.FactoryStatus
-		getJSON(t, e.api(http.MethodGet, "/api/v1/factory/status"), &status)
+		status := e.server.Health(context.Background())
 		for _, zone := range []core.Zone{core.ZoneApplication, core.ZoneAgent} {
 			if z := zoneOf(t, status, zone); z.Status != control.HealthDown {
 				t.Errorf("zone %s = %+v, want down after the probe timeout", zone, z)
@@ -150,13 +142,13 @@ func TestProbesForTheControlZoneAreRejected(t *testing.T) {
 	})
 }
 
-func zoneOf(t *testing.T, status control.FactoryStatus, zone core.Zone) control.ZoneHealth {
+func zoneOf(t *testing.T, zones []control.ZoneHealth, zone core.Zone) control.ZoneHealth {
 	t.Helper()
-	for _, z := range status.Zones {
+	for _, z := range zones {
 		if z.Zone == zone {
 			return z
 		}
 	}
-	t.Fatalf("zone %s missing from %+v", zone, status.Zones)
+	t.Fatalf("zone %s missing from %+v", zone, zones)
 	return control.ZoneHealth{}
 }

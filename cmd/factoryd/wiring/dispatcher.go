@@ -12,6 +12,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/budget"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/pkg/agent"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -34,6 +35,9 @@ type DispatcherConfig struct {
 	LeaseTTL     time.Duration
 	// NewRunID names runs; random when nil.
 	NewRunID func() core.RunID
+	// Estimate is what each run sets aside from a capped budget; a capped
+	// budget admits no run without one. Zero suits an unlimited budget.
+	Estimate core.Micros
 }
 
 // DispatcherOwner names one dispatcher process: its host and a random
@@ -64,8 +68,9 @@ func LimitsOf(m *manifest.Manifest) dispatcher.Limits {
 }
 
 // NewDispatcher builds the agent zone's dispatcher: the budget gate that
-// admits no run before the Owner confirmed the budget at install, briefs
-// read from what intake approved, and the manifest's run limits.
+// admits no run before the Owner confirmed the budget and holds a capped
+// budget to its cap, briefs read from what intake approved, and the
+// manifest's run limits.
 func NewDispatcher(cfg DispatcherConfig) (*dispatcher.Dispatcher, error) {
 	if cfg.Manifest == nil || cfg.Store == nil {
 		return nil, core.NewError(core.CodeInvalidArgument, "the dispatcher needs the manifest and a state store")
@@ -73,14 +78,11 @@ func NewDispatcher(cfg DispatcherConfig) (*dispatcher.Dispatcher, error) {
 	if cfg.Owner == "" {
 		cfg.Owner = DispatcherOwner()
 	}
-	gate, err := dispatcher.NewConfirmedBudgetGate(dispatcher.KVConfirmation{}, cfg.Clock)
-	if err != nil {
-		return nil, err
-	}
+	gate := budget.NewGate(budget.Config{Confirmations: dispatcher.KVConfirmation{}, Clock: cfg.Clock})
 	return dispatcher.New(dispatcher.Config{
 		Owner: cfg.Owner, State: cfg.Store, Agent: cfg.Agent, Budget: gate, Briefs: StoreBriefs(cfg.Store),
 		Limits: LimitsOf(cfg.Manifest), Clock: cfg.Clock, LeaseTTL: cfg.LeaseTTL, PollInterval: cfg.PollInterval,
-		NewRunID: cfg.NewRunID,
+		NewRunID: cfg.NewRunID, Estimate: cfg.Estimate,
 	})
 }
 

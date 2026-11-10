@@ -3,15 +3,16 @@ package control
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/bestagentkits/sisf/internal/intake/report"
-	"github.com/bestagentkits/sisf/ui"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// contentSecurityPolicy lets a page load only its own stylesheet and script
-// from this origin. No inline script or style, no external origin, no
-// framing and no base tag: even a title that slipped past escaping could not
-// run code or reach out.
+// contentSecurityPolicy is the default policy of every response. The
+// dashboard replaces it with its own, which adds the sign-in provider's
+// origin to form-action for a step-up; neither allows inline script or
+// style, an external origin, framing or a base tag.
 const contentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; " +
 	"img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; " +
 	"base-uri 'none'; frame-ancestors 'none'"
@@ -24,35 +25,21 @@ const webhookPath = "/webhooks/github"
 // the Owner on the factory's own network. The caller owns the slice.
 func PublicPaths() []string { return []string{webhookPath, report.Path} }
 
-// routes builds the route table. Only /healthz, the webhook route, the
-// report route and the static assets are open; the webhook route proves
-// itself with its signature and the report route is rate limited.
-func (s *Server) routes() http.Handler {
+// routes builds the route table. /healthz, the webhook route and the report
+// route are open: the webhook route proves itself with its signature and the
+// report route is rate limited. Every other route belongs to a surface, and
+// every surface authenticates its caller through the authentication service.
+func (s *Server) routes(surfaces Surfaces, clock core.Clock) (http.Handler, error) {
 	mux := http.NewServeMux()
-
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.Handle(webhookPath, s.webhook)
 	if s.report != nil {
 		mux.Handle(report.Path, s.report)
 	}
-	mux.Handle("GET /static/", ui.StaticHandler())
-
-	mux.HandleFunc("GET /api/v1/factory/status", s.requireOwner(s.apiFactoryStatus))
-	mux.HandleFunc("GET /api/v1/issues", s.requireOwner(s.apiListIssues))
-	mux.HandleFunc("GET /api/v1/issues/{id}", s.requireOwner(s.apiGetIssue))
-	// Any other API path answers like the rest of the API: 401 without the
-	// token, a typed 404 with it. A caller learns nothing about routes.
-	mux.HandleFunc("/api/", s.requireOwner(s.apiNotFound))
-
-	mux.HandleFunc("GET /login", s.handleLoginPage)
-	mux.HandleFunc("POST /login", s.handleLogin)
-	mux.HandleFunc("POST /logout", s.handleLogout)
-	mux.HandleFunc("GET /{$}", s.requireSession(s.pageOverview))
-	mux.HandleFunc("GET /workboard", s.requireSession(s.pageWorkboard))
-	mux.HandleFunc("GET /issues/{id}", s.requireSession(s.pageIssue))
-	mux.HandleFunc("/", s.requireSession(s.pageNotFound))
-
-	return s.withSafety(mux)
+	if err := surfaces.mount(mux, clock, s.log); err != nil {
+		return nil, err
+	}
+	return s.withSafety(mux), nil
 }
 
 // withSafety wraps every response with the security headers, and turns a
@@ -65,7 +52,9 @@ func (s *Server) withSafety(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
-		h.Set("Cache-Control", "no-store")
+		if !strings.HasPrefix(r.URL.Path, "/static/") {
+			h.Set("Cache-Control", "no-store")
+		}
 		defer func() {
 			if rec := recover(); rec != nil {
 				s.log.Error("handler panicked", "path", r.URL.Path, "panic", fmt.Sprint(rec))

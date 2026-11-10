@@ -1,13 +1,17 @@
-// Package control is the Zone 3 HTTP server: the read-only API, the minimal
-// dashboard, the health endpoint and the GitHub webhook route.
+// Package control is the Zone 3 HTTP server: the dashboard, the REST API,
+// the MCP endpoint and its OAuth authorization server, the WebMCP tool
+// list, the sign-in routes, the health endpoint, the GitHub webhook route
+// and the public bug report route.
 //
-// The API and the dashboard are two renderings of one Service. Both ask it
-// for the same structs, so neither can show a state the other does not, and
-// neither holds a power the other lacks.
+// Every surface calls one action service, so none can show a state another
+// does not, and none holds a power another lacks.
 //
 // Trust rules the package enforces:
-//   - every route except /healthz and the webhook route needs the bootstrap
-//     Owner token, compared in constant time and never logged or rendered;
+//   - every route except /healthz, the webhook route, the report route and
+//     the static assets authenticates its caller through the authentication
+//     service: a browser session, a personal access token, a service token
+//     or an OAuth access token; roles are resolved per call, never taken
+//     from the caller;
 //   - a webhook is verified by the GitHub receiver and stored in the inbox
 //     before it is acknowledged, and the inbox deduplicates on delivery ID;
 //   - issue titles and comments are untrusted data: pages escape them and a

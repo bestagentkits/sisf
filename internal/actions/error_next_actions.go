@@ -54,7 +54,12 @@ func (s *Service) defaultNext(spec core.ActionSpec, code core.ErrorCode) []core.
 	case core.CodeInvalidArgument:
 		return s.registered(spec, spec.Name, "fix the input against the action's input schema and call again")
 	case core.CodeStepUpRequired:
-		return s.registered(spec, spec.Name, "confirm your identity again, then call again within the step-up window")
+		next := s.registered(spec, spec.Name, "confirm your identity again, then call again within the step-up window")
+		if s.cfg.StepUpPage != "" {
+			next[0].Description = "a token never carries a step-up: sign in to the dashboard, confirm your identity there and decide in " + s.cfg.StepUpPage
+			next[0].Params = map[string]string{"dashboard": s.cfg.StepUpPage}
+		}
+		return next
 	case core.CodeApprovalRequired, core.CodeReplayed, core.CodeExpired:
 		return s.registered(spec, spec.Name, "call again without approval_id to plan this exact input")
 	case core.CodePermissionDenied, core.CodeUnauthenticated:

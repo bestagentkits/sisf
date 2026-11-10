@@ -4,10 +4,10 @@ An open-source framework for a closed-loop *software factory*: it takes in reque
 
 ## Status
 
-The factory core is implemented and tested in this repository (Go 1.25, see [ADR 0019](docs/adr/0019-go-1-25-toolchain.md)); some surfaces are still being integrated. The authoritative record of what a test proves is the [acceptance matrix](docs/acceptance-matrix.md).
+The factory core is implemented and tested in this repository (Go 1.25, see [ADR 0019](docs/adr/0019-go-1-25-toolchain.md)). The authoritative record of what a test proves is the [acceptance matrix](docs/acceptance-matrix.md).
 
-- **Implemented:** the three-zone conformance checker, install and lifecycle tooling (`sisf init`, `up`, `doctor`, `down`), signed Owner approvals, the audit log, the dispatcher with fencing, independent QA with hard gates, the trusted release supervisor with automatic rollback, the emergency stop, identity (GitHub/OIDC login, device-flow CLI login), the action service with its REST API, the `sisf` CLI and the dashboard, and budget modes. Identity is tested against fakes; a real GitHub App and real Google SSO are not yet exercised.
-- **In progress / experimental:** remote MCP and WebMCP, the full Decision Layer, final wiring of every surface into the running factory, the end-to-end lifecycle on Compose, and the real smoke run. Do not rely on them yet.
+- **Implemented:** the three-zone conformance checker, install and lifecycle tooling (`sisf init`, `up`, `doctor`, `down`), signed Owner approvals, the audit log, the dispatcher with fencing, independent QA with hard gates, the trusted release supervisor with automatic rollback, the emergency stop, identity (GitHub/OIDC login, device-flow CLI login), one action service behind the REST API, the `sisf` CLI, remote MCP, WebMCP and the dashboard, the Decision Layer on the edge's counters (rules, with an optional System One), and budget modes. Identity, MCP and WebMCP are tested against fakes; a real GitHub App, real Google SSO and real MCP clients are not yet exercised.
+- **Not yet proven:** the end-to-end lifecycle on Compose and the real smoke run (`make smoke`), which has not been run. Do not rely on them yet.
 - **Supported operating modes:** Standalone (trusted code only) and Docker Compose. Kubernetes, Vercel, Cloudflare, TOSE and Railway are unsupported or experimental; see the [capability matrix](docs/capability-matrix.md).
 - **Quickstart:** [docs/guides/quickstart.md](docs/guides/quickstart.md) runs a local factory against a simulated GitHub.
 

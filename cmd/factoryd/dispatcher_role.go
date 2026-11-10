@@ -21,6 +21,8 @@ type dispatcherFlags struct {
 	agent, patchFile, adminListen               string
 	workspaceRoot, workspaceSource, artifactDir string
 	sandboxed                                   bool
+	// estimate is what each run sets aside from a capped budget.
+	estimate int64
 }
 
 func (d *dispatcherFlags) register(fs *flag.FlagSet) {
@@ -31,6 +33,7 @@ func (d *dispatcherFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&d.workspaceSource, "workspace-source", "", "repository URL or path, without credentials, workspaces are checked out from")
 	fs.StringVar(&d.artifactDir, "artifact-dir", "", "absolute directory real agents write their artifacts to")
 	fs.BoolVar(&d.sandboxed, "sandboxed", false, "declare that this process runs inside a sandbox (required for pi)")
+	fs.Int64Var(&d.estimate, "run-estimate-micros", 0, "amount each run sets aside from a capped budget, in micro-units; a capped budget needs it")
 	fs.StringVar(&d.adminListen, "admin-listen", "", "address of the run control route the supervisor's emergency stop calls; needs "+runcontrol.EnvToken)
 }
 
@@ -46,6 +49,9 @@ func runDispatcher(ctx context.Context, args []string, getenv func(string) strin
 	if df.work < 0 {
 		return fmt.Errorf("%w: --fake-agent-work must not be negative", errUsage)
 	}
+	if df.estimate < 0 {
+		return fmt.Errorf("%w: --run-estimate-micros must not be negative", errUsage)
+	}
 	s, err := setup(ctx, getenv, core.ZoneAgent)
 	if err != nil {
 		return err
@@ -57,7 +63,7 @@ func runDispatcher(ctx context.Context, args []string, getenv func(string) strin
 	}
 	d, err := wiring.NewDispatcher(wiring.DispatcherConfig{
 		Manifest: s.manifest, Store: s.store, Agent: zone.Agent, Clock: s.clock,
-		PollInterval: wiring.DispatcherPollInterval, LeaseTTL: wiring.DispatcherLeaseTTL,
+		PollInterval: wiring.DispatcherPollInterval, LeaseTTL: wiring.DispatcherLeaseTTL, Estimate: core.Micros(df.estimate),
 	})
 	if err != nil {
 		return err

@@ -52,6 +52,6 @@ go run ./cmd/sisf down --dir ./factory
 ## Notes
 
 - The default budget mode is unlimited and must be confirmed (`--confirm-unlimited` with `--alert-threshold AMOUNT` or `--no-alert`). Until confirmed, the factory takes in issues and starts no work ([ADR 0007](../adr/0007-budget-default-unlimited.md)).
-- Secrets are written owner-only under `<dir>/secrets` and never printed. The bootstrap Owner token is in `<dir>/secrets/control/owner-token`.
+- Secrets are written owner-only under `<dir>/secrets` and never printed. The control server no longer accepts an Owner token: sign in to the dashboard at `http://127.0.0.1:7463` instead. In the simulation profile that sign-in is the fake identity provider of `sisf sim oidc` on `127.0.0.1:7468`, which must be running; see [Signing in](operations.md#signing-in).
 - `--dir` defaults to `$SISF_HOME`, else `~/.sisf/factory`.
 - Day-to-day use is in the [operations guide](operations.md); emergencies are in the [incident runbook](incident.md).

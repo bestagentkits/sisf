@@ -7,7 +7,7 @@ Scope: the SISF design in the [decision brief](self-improvement-software-factory
 | Asset | Why it matters |
 |---|---|
 | Root key and delegated signing keys | Forging approvals, receipts or artifacts |
-| GitHub App and Owner tokens | Write access to the repository |
+| GitHub App tokens, Owner sessions and personal access tokens | Write access to the repository |
 | Provider and per-run secrets | Spend and data exposure |
 | Release supervisor, LKG, QA baseline, policy files | The trusted control surface (brief §6.3) |
 | State store, ledger and audit log | Truth about what happened and what was spent |

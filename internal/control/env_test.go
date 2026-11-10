@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/control"
+	"github.com/bestagentkits/sisf/internal/testkit/fakeoidc"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 	"github.com/bestagentkits/sisf/pkg/github"
@@ -23,7 +22,6 @@ import (
 )
 
 const (
-	ownerToken     = "owner-token-0123456789abcdef0123456789abcdef"
 	webhookSecret  = "hook-secret-for-tests"
 	installationID = 4242
 	botID          = 900001
@@ -37,6 +35,7 @@ type env struct {
 	// handler is the server's complete handler; requests go straight to it.
 	handler http.Handler
 	probes  *probeSet
+	fake    *fakeoidc.Server
 	cfg     control.Config
 	deps    control.Deps
 }
@@ -80,8 +79,7 @@ func newEnv(t *testing.T, db *sqlstoretest.Database, tweak ...func(*control.Conf
 	}}
 	e := &env{db: db, store: db.Open(t, core.ZoneControl), probes: probes}
 	e.cfg = control.Config{
-		FactoryID:  sqlstoretest.Factory,
-		OwnerToken: core.NewSecretValue([]byte(ownerToken)),
+		FactoryID: sqlstoretest.Factory,
 		Webhook: github.ReceiverConfig{
 			Secrets:        func() []core.SecretValue { return []core.SecretValue{core.NewSecretValue([]byte(webhookSecret))} },
 			InstallationID: installationID,
@@ -92,8 +90,10 @@ func newEnv(t *testing.T, db *sqlstoretest.Database, tweak ...func(*control.Conf
 	for _, f := range tweak {
 		f(&e.cfg)
 	}
+	surfaces, fake := newSurfaces(t, db.Clock)
+	e.fake = fake
 	e.deps = control.Deps{
-		Store: e.store, Clock: db.Clock,
+		Store: e.store, Clock: db.Clock, Surfaces: surfaces,
 		Probes: map[core.Zone]control.HealthProbe{
 			core.ZoneApplication: probes.probe(core.ZoneApplication),
 			core.ZoneAgent:       probes.probe(core.ZoneAgent),
@@ -121,63 +121,12 @@ func (e *env) do(req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
-// api sends an authenticated API request and returns the recorder.
-func (e *env) api(method, path string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, nil)
-	req.Header.Set("Authorization", "Bearer "+ownerToken)
-	return e.do(req)
-}
-
 // getJSON decodes the body of rec into out.
 func getJSON(t *testing.T, rec *httptest.ResponseRecorder, out any) {
 	t.Helper()
 	if err := json.Unmarshal(rec.Body.Bytes(), out); err != nil {
 		t.Fatalf("decode %q: %v", rec.Body.String(), err)
 	}
-}
-
-// wantAPIError checks the status and the typed error in the body.
-func wantAPIError(t *testing.T, rec *httptest.ResponseRecorder, status int, code core.ErrorCode) core.Error {
-	t.Helper()
-	if rec.Code != status {
-		t.Fatalf("status = %d, want %d; body %s", rec.Code, status, rec.Body.String())
-	}
-	var env struct {
-		Error *core.Error `json:"error"`
-	}
-	getJSON(t, rec, &env)
-	if env.Error == nil || env.Error.Code != code {
-		t.Fatalf("error = %+v, want code %s", env.Error, code)
-	}
-	return *env.Error
-}
-
-// login performs the dashboard login and returns the session cookie.
-func (e *env) login(t *testing.T) *http.Cookie {
-	t.Helper()
-	form := url.Values{"token": {ownerToken}}
-	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := e.do(req)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("login status = %d, want 303", rec.Code)
-	}
-	for _, c := range rec.Result().Cookies() {
-		if c.Name == "sisf_session" {
-			return c
-		}
-	}
-	t.Fatal("login set no session cookie")
-	return nil
-}
-
-// page fetches a dashboard page with the session cookie.
-func (e *env) page(path string, session *http.Cookie) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, path, nil)
-	if session != nil {
-		req.AddCookie(session)
-	}
-	return e.do(req)
 }
 
 // issueRef is the n-th issue of the served repository.
@@ -234,11 +183,8 @@ func step(ctx context.Context, tx state.Tx, rec core.StateRecord, event core.Eve
 	return tx.Transition(ctx, write)
 }
 
-// toReady and toDeveloping are the event paths tests walk most.
-var (
-	toReady      = []core.Event{core.EventInfoSufficient, core.EventScopePermitted}
-	toDeveloping = []core.Event{core.EventInfoSufficient, core.EventScopePermitted, core.EventClaimed, core.EventDevelopmentStarted}
-)
+// toReady is the event path tests walk most.
+var toReady = []core.Event{core.EventInfoSufficient, core.EventScopePermitted}
 
 // pendingDeliveries reads the inbox through the store.
 func (e *env) pendingDeliveries(t *testing.T) []state.InboxEntry {
@@ -326,19 +272,12 @@ func (e *env) deliverRaw(delivery, eventType string, body []byte, signature stri
 	return e.do(req)
 }
 
-// advance takes issue n one step along event, from whatever state it is in.
-func (e *env) advance(t *testing.T, n int, event core.Event) {
+// issueView reads the stored view of issue n.
+func (e *env) issueView(t *testing.T, n int) control.IssueView {
 	t.Helper()
-	ref := issueRef(n)
-	err := e.store.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
-		rec, err := tx.GetRecord(ctx, ref)
-		if err != nil {
-			return err
-		}
-		_, err = step(ctx, tx, rec, event, fmt.Sprintf("advance-%d-%d", n, rec.Version))
-		return err
-	})
+	view, err := control.ReadIssueView(context.Background(), e.store, issueRef(n))
 	if err != nil {
-		t.Fatalf("advance issue %d by %s: %v", n, event, err)
+		t.Fatal(err)
 	}
+	return view
 }

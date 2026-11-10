@@ -12,7 +12,6 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/state"
-	"github.com/bestagentkits/sisf/ui"
 )
 
 // Config is the static configuration of the control server.
@@ -23,16 +22,11 @@ type Config struct {
 	// AllowNonLoopback permits a listen address that other hosts can reach.
 	// It is off by default; turn it on only behind TLS and a firewall.
 	AllowNonLoopback bool
-	// OwnerToken is the bootstrap Owner token generated at install. It is
-	// never logged, rendered or returned.
-	OwnerToken core.SecretValue
 	// Webhook configures the GitHub receiver behind the webhook route. Its
 	// Clock defaults to the server's clock.
 	Webhook github.ReceiverConfig
 	// ProbeTimeout bounds one zone health probe. Zero means DefaultProbeTimeout.
 	ProbeTimeout time.Duration
-	// SessionTTL is the dashboard login lifetime. Zero means DefaultSessionTTL.
-	SessionTTL time.Duration
 }
 
 // Deps are the collaborators of the server, all behind interfaces so the
@@ -50,25 +44,25 @@ type Deps struct {
 	Logger *slog.Logger
 	// Report, when set, serves the public bug report route.
 	Report *ReportRoute
+	// Surfaces are the dashboard, REST, MCP, WebMCP, OAuth and sign-in
+	// routes; all of them are required.
+	Surfaces Surfaces
 }
 
 // Server is the control HTTP server. Handler gives the routes for tests and
 // for embedding; Serve runs them on a listener.
 type Server struct {
-	cfg      Config
-	svc      *Service
-	token    *ownerToken
-	sessions *sessions
-	pages    *ui.Pages
-	webhook  *github.Receiver
-	report   http.Handler
-	log      *slog.Logger
-	handler  http.Handler
+	cfg     Config
+	health  *healthChecker
+	webhook *github.Receiver
+	report  http.Handler
+	log     *slog.Logger
+	handler http.Handler
 }
 
 // New validates the configuration and builds the server. It refuses to build
 // when the listen address is reachable from other hosts without an explicit
-// allowance, when the token is too short, or when the webhook receiver cannot
+// allowance, when a surface is missing, or when the webhook receiver cannot
 // make its checks.
 func New(cfg Config, deps Deps) (*Server, error) {
 	if cfg.ListenAddr == "" {
@@ -77,9 +71,11 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	if err := validateListenAddr(cfg.ListenAddr, cfg.AllowNonLoopback); err != nil {
 		return nil, err
 	}
-	token, err := newOwnerToken(cfg.OwnerToken)
-	if err != nil {
+	if err := cfg.FactoryID.Validate(); err != nil {
 		return nil, err
+	}
+	if deps.Store == nil {
+		return nil, core.NewError(core.CodeInvalidArgument, "the control server needs a state store")
 	}
 	if deps.Clock == nil {
 		deps.Clock = core.SystemClock{}
@@ -87,14 +83,7 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	if deps.Logger == nil {
 		deps.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	if cfg.SessionTTL <= 0 {
-		cfg.SessionTTL = DefaultSessionTTL
-	}
-	svc, err := NewService(cfg.FactoryID, deps.Store, deps.Probes, cfg.ProbeTimeout, deps.Clock)
-	if err != nil {
-		return nil, err
-	}
-	pages, err := ui.Load()
+	health, err := newHealthChecker(deps.Store, deps.Probes, cfg.ProbeTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -105,21 +94,17 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{
-		cfg: cfg, svc: svc, token: token, sessions: newSessions(deps.Clock, cfg.SessionTTL),
-		pages: pages, webhook: receiver, log: deps.Logger,
-	}
+	s := &Server{cfg: cfg, health: health, webhook: receiver, log: deps.Logger}
 	if deps.Report != nil {
 		if s.report, err = deps.Report.handler(deps.Clock); err != nil {
 			return nil, err
 		}
 	}
-	s.handler = s.routes()
+	if s.handler, err = s.routes(deps.Surfaces, deps.Clock); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
-
-// Service returns the read service both the API and the dashboard render from.
-func (s *Server) Service() *Service { return s.svc }
 
 // Handler returns the complete HTTP handler, security headers included.
 func (s *Server) Handler() http.Handler { return s.handler }

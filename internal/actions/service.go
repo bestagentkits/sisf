@@ -57,11 +57,26 @@ type Config struct {
 	// StepUpMaxAge is how recently a person must have confirmed their
 	// identity to execute an action that needs step-up.
 	StepUpMaxAge time.Duration
+	// Roles resolves the roles of the caller at the time of each call. When
+	// set, the roles a surface put in the actor are replaced by what it
+	// returns, so no surface and no caller can claim a role. Nil keeps the
+	// actor's roles, for tests that build actors by hand.
+	Roles RoleResolver
+	// RateLimit bounds how many writes one actor may run in a window; the
+	// zero value means DefaultWriteRate.
+	RateLimit RateLimit
+	// StepUpPage is the dashboard page where a person confirms their
+	// identity and decides. A STEP_UP_REQUIRED answer names it, because a
+	// token, on any surface, never carries a step-up. Empty names none.
+	StepUpPage string
 }
 
 // Service is the one action service behind every surface. Dashboard, REST,
 // CLI, MCP and WebMCP all call Invoke, so none of them holds extra power.
-type Service struct{ cfg Config }
+type Service struct {
+	cfg     Config
+	limiter *writeLimiter
+}
 
 // NewService builds the service, refusing a configuration that lacks a part.
 func NewService(cfg Config) (*Service, error) {
@@ -71,6 +86,8 @@ func NewService(cfg Config) (*Service, error) {
 			"the action service needs a registry, an authorizer, an approval store, a policy source and an audit log")
 	case cfg.RequestTTL < 0 || cfg.StepUpMaxAge < 0:
 		return nil, core.NewError(core.CodeInvalidArgument, "durations of the action service must not be negative")
+	case cfg.RateLimit.Writes < 0 || cfg.RateLimit.Window < 0:
+		return nil, core.NewError(core.CodeInvalidArgument, "the write rate limit must not be negative")
 	}
 	if err := cfg.FactoryID.Validate(); err != nil {
 		return nil, err
@@ -84,7 +101,7 @@ func NewService(cfg Config) (*Service, error) {
 	if cfg.StepUpMaxAge == 0 {
 		cfg.StepUpMaxAge = approvals.DefaultStepUpMaxAge
 	}
-	return &Service{cfg: cfg}, nil
+	return &Service{cfg: cfg, limiter: newWriteLimiter(cfg.RateLimit)}, nil
 }
 
 // Specs returns the specs of every registered action, sorted by name.
@@ -112,6 +129,9 @@ func (s *Service) invoke(ctx context.Context, action core.Action, req core.Actio
 	if err := authenticated(req.Actor); err != nil {
 		return core.ActionResult{}, err
 	}
+	if err := s.resolveRoles(ctx, &req); err != nil {
+		return core.ActionResult{}, err
+	}
 	canonical, err := canonicalInput(req.Input)
 	if err != nil {
 		return core.ActionResult{}, err
@@ -119,6 +139,9 @@ func (s *Service) invoke(ctx context.Context, action core.Action, req core.Actio
 	req.Input = canonical
 	call := invocation{spec: spec, handle: action.Handle, req: req}
 	effect, err := s.authorize(ctx, call)
+	if err == nil {
+		err = s.limitWrites(call)
+	}
 	if err != nil {
 		s.audit(ctx, call, core.OutcomeDenied, "authorize", binding{}, err)
 		return core.ActionResult{}, err

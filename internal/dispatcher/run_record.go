@@ -94,3 +94,18 @@ func (d *Dispatcher) RunRecord(ctx context.Context, run core.RunID) (RunRecord, 
 	})
 	return record, err
 }
+
+// StoredRunRecords reads run records from a store opened by another zone,
+// such as the control zone, which may read them but never writes them.
+type StoredRunRecords struct{ State state.Store }
+
+// RunRecord returns the stored record of a run, or NOT_FOUND.
+func (s StoredRunRecords) RunRecord(ctx context.Context, run core.RunID) (RunRecord, error) {
+	var record RunRecord
+	err := s.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		var err error
+		record, _, err = readRunRecord(ctx, tx, run)
+		return err
+	})
+	return record, err
+}

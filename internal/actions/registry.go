@@ -26,6 +26,9 @@ type Registry struct {
 type entry struct {
 	action   core.Action
 	fallback bool
+	// subject is set for an action whose approval the performing component
+	// spends; see RegisterDelegated.
+	subject ApprovalSubject
 }
 
 // NewRegistry returns an empty registry.
@@ -35,17 +38,17 @@ func NewRegistry() *Registry { return &Registry{entries: map[string]entry{}} }
 // or duplicate action leaves the registry unchanged. A name already held by
 // a real action is ALREADY_EXISTS; a name held by a fallback is replaced.
 func (r *Registry) Register(actions ...core.Action) error {
-	return r.add(actions, false)
+	return r.add(actions, false, nil)
 }
 
 // RegisterFallback adds actions only for names nothing else holds. A name
 // already registered keeps its action, so a fallback never displaces the
 // real owner.
 func (r *Registry) RegisterFallback(actions ...core.Action) error {
-	return r.add(actions, true)
+	return r.add(actions, true, nil)
 }
 
-func (r *Registry) add(actions []core.Action, fallback bool) error {
+func (r *Registry) add(actions []core.Action, fallback bool, subjects map[string]ApprovalSubject) error {
 	seen := map[string]bool{}
 	for _, a := range actions {
 		if err := validateAction(a); err != nil {
@@ -69,7 +72,7 @@ func (r *Registry) add(actions []core.Action, fallback bool) error {
 		if _, held := r.entries[a.Spec.Name]; held && fallback {
 			continue
 		}
-		r.entries[a.Spec.Name] = entry{action: a, fallback: fallback}
+		r.entries[a.Spec.Name] = entry{action: a, fallback: fallback, subject: subjects[a.Spec.Name]}
 	}
 	return nil
 }
@@ -112,6 +115,13 @@ func (r *Registry) Lookup(name string) (core.Action, bool) {
 	defer r.mu.RUnlock()
 	e, ok := r.entries[name]
 	return e.action, ok
+}
+
+// subjectOf returns the approval subject of a delegated action, or nil.
+func (r *Registry) subjectOf(name string) ApprovalSubject {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.entries[name].subject
 }
 
 // IsFallback reports whether name is served by a fallback.

@@ -31,11 +31,11 @@ func TestReadEnvNeedsTheManifestAndTheStore(t *testing.T) {
 		}
 	}
 	env, err := ReadEnv(envOf(map[string]string{EnvConfig: " f ", EnvStateDSN: "d", EnvAllowNonLoopback: "true",
-		EnvOwnerToken: "owner-secret-value"}))
+		EnvWebhookSecret: "webhook-secret-value"}))
 	if err != nil || env.Config != "f" || !env.AllowNonLoopback {
 		t.Fatalf("env = %+v, %v", env, err)
 	}
-	if strings.Contains(env.OwnerToken.String(), "owner-secret-value") {
+	if strings.Contains(env.WebhookSecret.String(), "webhook-secret-value") {
 		t.Fatal("a secret read from the environment prints as itself")
 	}
 }

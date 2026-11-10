@@ -20,10 +20,10 @@ These modules are approved. Each is pinned in `go.mod` at the version listed. A 
 | `github.com/santhosh-tekuri/jsonschema/v6` | v6.0.3 | Validating manifests and structured agent output against their schemas. |
 | `go.opentelemetry.io/otel` (with `otel/trace`) | v1.46.0 | Tracing API. |
 | `go.opentelemetry.io/otel/sdk` | v1.46.0 | Tracing SDK. v1.46.0 is the newest release that still declares Go 1.25. |
-| `github.com/coreos/go-oidc/v3` | v3.21.0 (when adopted) | OIDC sign-in of the dashboard. |
-| `golang.org/x/oauth2` | v0.36.0 (when adopted) | OAuth 2.0 flows for OIDC and GitHub. v0.37.0 and later declare Go 1.26. |
-| `github.com/go-jose/go-jose/v4` | v4.1.9 (when adopted) | JOSE and JWT verification. |
-| `github.com/modelcontextprotocol/go-sdk` | v1.8.0 (when adopted) | MCP servers and clients. |
+| `github.com/coreos/go-oidc/v3` | v3.21.0 (adopted) | OIDC sign-in of the dashboard (`internal/auth`). |
+| `golang.org/x/oauth2` | v0.36.0 (adopted) | OAuth 2.0 flows for OIDC and GitHub (`internal/auth`). v0.37.0 and later declare Go 1.26. |
+| `github.com/go-jose/go-jose/v4` | v4.1.9 (adopted) | JOSE and JWT signing and verification (`internal/oauthas`, `internal/testkit/fakeoidc`). |
+| `github.com/modelcontextprotocol/go-sdk` | v1.8.0 (adopted) | The remote MCP server (`internal/mcp`) and the MCP client of the acceptance tests. |
 
 The modules that an approved module requires are allowed as indirect dependencies, at the versions Go's minimal version selection picks. No package of an indirect dependency may be imported directly.
 

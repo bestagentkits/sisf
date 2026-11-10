@@ -20,39 +20,15 @@ import (
 	"time"
 )
 
-// The pages the dashboard can render.
-const (
-	PageLogin     = "login"
-	PageOverview  = "overview"
-	PageWorkboard = "workboard"
-	PageIssue     = "issue"
-	PageError     = "error"
-)
-
 //go:embed templates/*.html
 var templateFiles embed.FS
 
 //go:embed static/*
 var staticFiles embed.FS
 
-// Pages renders the dashboard pages. Build one with Load.
+// Pages renders the dashboard pages. Build one with LoadDashboard.
 type Pages struct {
 	pages map[string]*template.Template
-}
-
-// Load parses every page together with the shared layout. It fails at start
-// up on a template error, so a broken page is never found by a visitor.
-func Load() (*Pages, error) {
-	funcs := template.FuncMap{"utc": formatUTC, "iso": formatISO}
-	pages := &Pages{pages: map[string]*template.Template{}}
-	for _, name := range []string{PageLogin, PageOverview, PageWorkboard, PageIssue, PageError} {
-		t, err := template.New(name).Funcs(funcs).ParseFS(templateFiles, "templates/layout.html", "templates/"+name+".html")
-		if err != nil {
-			return nil, fmt.Errorf("parse dashboard page %s: %w", name, err)
-		}
-		pages.pages[name] = t
-	}
-	return pages, nil
 }
 
 // Render returns the finished page. Rendering to memory first means a failure

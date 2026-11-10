@@ -3,12 +3,34 @@ package control
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
 )
+
+// HealthStatus is the verdict on one zone.
+type HealthStatus string
+
+const (
+	// HealthOK means the zone answered its probe.
+	HealthOK HealthStatus = "ok"
+	// HealthDown means the probe failed or timed out.
+	HealthDown HealthStatus = "down"
+	// HealthUnknown means no probe is configured for the zone. It counts as
+	// unhealthy: a zone nobody checks is not assumed to be fine.
+	HealthUnknown HealthStatus = "unknown"
+)
+
+// ZoneHealth is the health of one zone. Detail is a short reason that is
+// safe to show to the Owner; the unauthenticated health endpoint omits it.
+type ZoneHealth struct {
+	Zone   core.Zone    `json:"zone"`
+	Status HealthStatus `json:"status"`
+	Detail string       `json:"detail,omitempty"`
+}
 
 // DefaultProbeTimeout bounds how long one zone probe may take.
 const DefaultProbeTimeout = 2 * time.Second
@@ -104,4 +126,22 @@ func describeProbeError(err error) string {
 		return string(typed.Code) + ": " + typed.Message
 	}
 	return "the health probe failed"
+}
+
+// Health reports the three zones, in zone order.
+func (s *Server) Health(ctx context.Context) []ZoneHealth { return s.health.check(ctx) }
+
+// handleHealthz answers the unauthenticated liveness check. It reports each
+// zone's verdict and nothing else; the reasons are for the Owner's log.
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	zones := map[core.Zone]HealthStatus{}
+	status, code := "ok", http.StatusOK
+	for _, z := range s.Health(r.Context()) {
+		zones[z.Zone] = z.Status
+		if z.Status != HealthOK {
+			status, code = "degraded", http.StatusServiceUnavailable
+			s.log.Warn("a zone is not healthy", "zone", string(z.Zone), "status", string(z.Status), "detail", z.Detail)
+		}
+	}
+	writeJSON(w, code, map[string]any{"status": status, "zones": zones})
 }

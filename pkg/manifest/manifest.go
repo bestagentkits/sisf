@@ -187,6 +187,8 @@ type Manifest struct {
 	// stated; without it such a backend is refused.
 	TrustedCodeOnly bool        `json:"trusted_code_only,omitempty" yaml:"trusted_code_only,omitempty"`
 	ModelRoutes     ModelRoutes `json:"model_routes" yaml:"model_routes"`
+	// Decision is nil when undeclared: the deterministic rules decide alone.
+	Decision *Decision `json:"decision,omitempty" yaml:"decision,omitempty"`
 	// Extensions carries settings these types do not model yet. Nothing in
 	// it can grant a permission or relax a check.
 	Extensions map[string]any `json:"extensions,omitempty" yaml:"extensions,omitempty"`

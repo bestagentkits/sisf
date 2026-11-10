@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -63,6 +64,34 @@ func TestTheReportRouteIsPublicAndLimitsEachClientTheEdgeForwards(t *testing.T) 
 		}
 		if len(store.All()) != report.DefaultPerClientLimit*2+1 {
 			t.Fatalf("stored %d reports", len(store.All()))
+		}
+	})
+}
+
+// The networks named in SISF_TRUSTED_PROXIES replace loopback: the edge
+// connecting from one of them is believed, and a loopback caller is then
+// limited by its own address like anyone else.
+func TestTheReportRouteBelievesOnlyTheConfiguredProxies(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e := newEnv(t, db)
+		e.deps.Report = &control.ReportRoute{Store: report.NewMemoryStore(100), Redactor: redact.New(redact.Config{}),
+			TrustedProxies: []netip.Prefix{netip.MustParsePrefix("172.18.0.0/16")}}
+		e.restart(t)
+
+		const edge = "172.18.0.2:40000"
+		for n := range report.DefaultPerClientLimit {
+			sendReport(e, n, edge, "203.0.113.5")
+		}
+		if code := sendReport(e, 50, edge, "203.0.113.6"); code != http.StatusAccepted {
+			t.Fatalf("another client behind the configured edge got %d", code)
+		}
+		const local = "127.0.0.1:40001"
+		for n := range report.DefaultPerClientLimit {
+			sendReport(e, 100+n, local, fmt.Sprintf("192.0.2.%d", n))
+		}
+		if code := sendReport(e, 200, local, "192.0.2.250"); code != http.StatusTooManyRequests {
+			t.Fatalf("loopback stayed trusted after the proxies were configured: %d", code)
 		}
 	})
 }
