@@ -1,0 +1,183 @@
+package stages
+
+import (
+	"context"
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+
+	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
+	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/github"
+)
+
+// Repository is the factory's repository as the builder uses it.
+type Repository interface {
+	// ReadFile returns a file at a commit, NOT_FOUND when it has none.
+	ReadFile(ctx context.Context, repo github.RepoRef, revision core.CommitSHA, path string) ([]byte, error)
+	CommitToBranch(ctx context.Context, repo github.RepoRef, bc github.BranchCommit) (core.CommitSHA, error)
+}
+
+// ImageRequest asks for the image of one candidate commit.
+type ImageRequest struct {
+	FactoryID core.FactoryID
+	RunID     core.RunID
+	Unit      string
+	Commit    core.CommitSHA
+	Branch    string
+	// Untrusted is set for code an agent or an outside contributor wrote.
+	Untrusted bool
+}
+
+// ImageResult is a finished image build and the suite run with it.
+type ImageResult struct {
+	Digest        core.Digest
+	Image         string
+	TestsPassed   bool
+	TestEvidence  string
+	SBOMRef       string
+	ProvenanceRef string
+}
+
+// ImageBuilder turns a candidate commit into an immutable image.
+type ImageBuilder interface {
+	Name() string
+	BuildImage(ctx context.Context, req ImageRequest) (ImageResult, error)
+}
+
+// BuildRequest is the patch of one run to build.
+type BuildRequest struct {
+	Issue   core.IssueRef
+	RunID   core.RunID
+	Attempt int
+	Base    core.CommitSHA
+	Diff    string
+}
+
+// Built is a candidate commit on the factory's branch and its image.
+type Built struct {
+	Record       handoff.BuildRecord
+	Branch       string
+	ChangedPaths []string
+}
+
+// CandidateBuilder applies a run's patch on top of the base commit, commits
+// the result to a branch of this factory only, and builds its image. It
+// runs in the supervisor, which holds the GitHub credentials and drives the
+// sandboxes; the agent zone has neither.
+type CandidateBuilder struct {
+	FactoryID core.FactoryID
+	Repo      github.RepoRef
+	Git       Repository
+	Images    ImageBuilder
+	Units     UnitRouter
+	Clock     core.Clock
+}
+
+// Branch is the branch a candidate of run's attempt is committed to: it
+// names the factory, so two factories on one upstream never share one.
+func Branch(factory core.FactoryID, run core.RunID, attempt int) string {
+	return fmt.Sprintf("sisf/%s/%s-%d", factory, run, attempt)
+}
+
+// Build builds the patch of req.
+func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, error) {
+	patches, err := parseUnifiedDiff(req.Diff)
+	if err != nil {
+		return Built{}, core.NewError(core.CodeInvalidArgument, "the run's patch cannot be read: "+err.Error())
+	}
+	files := map[string][]byte{}
+	for _, fp := range patches {
+		old := ""
+		if fp.oldPath != "" {
+			content, err := b.Git.ReadFile(ctx, b.Repo, req.Base, fp.oldPath)
+			if err != nil {
+				return Built{}, err
+			}
+			old = string(content)
+		}
+		updated, err := fp.apply(old)
+		if err != nil {
+			return Built{}, core.NewError(core.CodeConflict, "the run's patch does not apply to the base: "+err.Error())
+		}
+		if fp.newPath == "" {
+			files[fp.oldPath] = nil
+			continue
+		}
+		if fp.oldPath != "" && fp.oldPath != fp.newPath {
+			files[fp.oldPath] = nil
+		}
+		files[fp.newPath] = []byte(updated)
+	}
+	changed := slices.Sorted(maps.Keys(files))
+	unit, err := b.Units.UnitOf(changed)
+	if err != nil {
+		return Built{}, err
+	}
+	branch := Branch(b.FactoryID, req.RunID, req.Attempt)
+	commit, err := b.Git.CommitToBranch(ctx, b.Repo, github.BranchCommit{
+		Branch: branch, Base: req.Base, Author: "service:builder",
+		Message: fmt.Sprintf("Candidate of %s for %s, attempt %d", req.RunID, req.Issue, req.Attempt), Files: files,
+	})
+	if err != nil {
+		return Built{}, err
+	}
+	image, err := b.Images.BuildImage(ctx, ImageRequest{
+		FactoryID: b.FactoryID, RunID: req.RunID, Unit: unit, Commit: commit, Branch: branch, Untrusted: true,
+	})
+	if err != nil {
+		return Built{}, err
+	}
+	if err := image.Digest.Validate(); err != nil {
+		return Built{}, core.NewError(core.CodeInternal, "the image builder returned no image digest").WithCause(err)
+	}
+	return Built{Branch: branch, ChangedPaths: changed, Record: handoff.BuildRecord{
+		Commit: commit, Digest: image.Digest, Unit: unit, Image: image.Image, Builder: b.Images.Name(),
+		TestsPassed: image.TestsPassed, TestEvidence: image.TestEvidence,
+		SBOMRef: image.SBOMRef, ProvenanceRef: image.ProvenanceRef, BuiltAt: b.Clock.Now().UTC(),
+	}}, nil
+}
+
+// UnitRouter decides which runtime unit a change is a build of, by the
+// longest path prefix that covers a changed path.
+type UnitRouter struct {
+	// Prefixes maps a path prefix ("ui/") to a unit ("control").
+	Prefixes map[string]string
+	// Default is the unit of every other path; "app" when empty.
+	Default string
+}
+
+// DefaultUnitRouter routes the dashboard and the control plane to the
+// control unit and everything else to the application.
+func DefaultUnitRouter() UnitRouter {
+	return UnitRouter{Prefixes: map[string]string{"ui/": "control", "internal/control/": "control", "cmd/factoryd/": "control"}, Default: "app"}
+}
+
+// UnitOf returns the one unit a change set is a build of. A change set
+// that spans units is refused: one release replaces one unit, so the rest of
+// the change would never be deployed or observed.
+func (u UnitRouter) UnitOf(paths []string) (string, error) {
+	prefixes := slices.SortedFunc(maps.Keys(u.Prefixes), func(a, b string) int { return len(b) - len(a) })
+	unit := ""
+	for _, p := range paths {
+		of := u.Default
+		if of == "" {
+			of = "app"
+		}
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(p, prefix) {
+				of = u.Prefixes[prefix]
+				break
+			}
+		}
+		if unit != "" && of != unit {
+			return "", core.NewError(core.CodeInvalidArgument, "the change spans the units "+unit+" and "+of+"; one candidate changes one unit")
+		}
+		unit = of
+	}
+	if unit == "" {
+		return "", core.NewError(core.CodeInvalidArgument, "the change touches no path")
+	}
+	return unit, nil
+}

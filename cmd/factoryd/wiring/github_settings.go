@@ -24,6 +24,11 @@ const (
 	profileSim        = "sim"
 )
 
+// SimulationProfile reports whether m declares the trusted simulation
+// profile: a fake GitHub and a scripted agent, where no code an agent wrote
+// is ever run.
+func SimulationProfile(m *manifest.Manifest) bool { return m.Extensions[extProfile] == profileSim }
+
 // GitHubSettings are the GitHub facts the control zone needs.
 type GitHubSettings struct {
 	APIURL         string
@@ -40,7 +45,7 @@ func GitHubSettingsOf(m *manifest.Manifest) (GitHubSettings, error) {
 	if url, ok := m.Extensions[extGitHubAPIURL].(string); ok && url != "" {
 		s.APIURL = url
 	}
-	sim := m.Extensions[extProfile] == profileSim
+	sim := SimulationProfile(m)
 	if sim {
 		bot := fakegithub.New().Bot()
 		s.InstallationID, s.Self = fakegithub.DefaultInstallationID, github.Identity{ID: bot.ID, Login: bot.Login}

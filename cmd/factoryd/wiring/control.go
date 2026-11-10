@@ -7,13 +7,16 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/audit"
 	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/intake"
+	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/internal/policy"
+	"github.com/bestagentkits/sisf/internal/redact"
 	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/pkg/approvals"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -52,6 +55,12 @@ type ControlConfig struct {
 	Clock  core.Clock
 	// Logger receives operational messages, never a secret or a payload.
 	Logger *slog.Logger
+	// Upstream is the repository the factory's own repository is a fork
+	// of; zero when there is none. Nothing is contributed to it unless the
+	// Owner asks (see ContributeUpstream).
+	Upstream github.RepoRef
+	// TrustedProxies are where the edge connects from; see EnvTrustedProxies.
+	TrustedProxies []netip.Prefix
 }
 
 // Control is the control zone of one factory: the HTTP server, intake, the
@@ -73,6 +82,8 @@ type Control struct {
 	// backoff keeps deliveries whose processing failed from being retried on
 	// every pass.
 	backoff map[string]retryAt
+	// projected is the record version last shown on GitHub, per issue.
+	projected map[core.IssueRef]int64
 }
 
 // retryAt is when a failed delivery is tried again, and how often it failed.
@@ -80,6 +91,9 @@ type retryAt struct {
 	at       time.Time
 	failures int
 }
+
+// reportCapacity bounds the bug reports the control zone keeps in memory.
+const reportCapacity = 1000
 
 // NewControl builds the control zone. Nothing runs until Run or Pass.
 func NewControl(cfg ControlConfig) (*Control, error) {
@@ -103,7 +117,7 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 		return nil, err
 	}
 	repo := github.RepoRef{Owner: m.Repository.Owner, Name: m.Repository.Repo}
-	c := &Control{cfg: cfg, log: cfg.Logger, backoff: map[string]retryAt{}}
+	c := &Control{cfg: cfg, log: cfg.Logger, backoff: map[string]retryAt{}, projected: map[core.IssueRef]int64{}}
 	c.Audit = audit.New(cfg.Store, cfg.Clock)
 
 	signer, err := signing.NewSigner(cfg.ApprovalKey)
@@ -140,7 +154,9 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 			Secrets:        func() []core.SecretValue { return []core.SecretValue{webhookSecret} },
 			InstallationID: settings.InstallationID, Repos: []github.RepoRef{repo}, Self: settings.Self,
 		},
-	}, control.Deps{Store: cfg.Store, Probes: cfg.Probes, Clock: cfg.Clock, Logger: cfg.Logger}); err != nil {
+	}, control.Deps{Store: cfg.Store, Probes: cfg.Probes, Clock: cfg.Clock, Logger: cfg.Logger, Report: &control.ReportRoute{
+		Store: report.NewMemoryStore(reportCapacity), Redactor: redact.New(redact.Config{}), TrustedProxies: cfg.TrustedProxies,
+	}}); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -177,6 +193,7 @@ func (c *Control) Pass(ctx context.Context) error {
 		c.reconcileDecided(ctx),
 		c.deliverOutbox(ctx),
 		c.expireClarifications(ctx),
+		c.projectLifecycle(ctx),
 	)
 }
 

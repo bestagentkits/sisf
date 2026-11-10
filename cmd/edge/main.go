@@ -28,7 +28,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/netip"
 	"os"
@@ -36,7 +35,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/observe"
 	"github.com/bestagentkits/sisf/internal/edge"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Exit statuses of the program.
@@ -117,7 +118,13 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 		return usage("--upstream: %v", err)
 	}
 	opts.stable, opts.routes, opts.adminToken = edge.Target{Revision: opts.revision, URL: def.String()}, routes, os.Getenv(adminTokenEnv)
-	log := slog.New(slog.NewTextHandler(stderr, nil))
+	proc, err := observe.Start(stderr, os.Getenv, core.SystemClock{})
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "edge: %v\n", err)
+		return exitFailure
+	}
+	defer func() { _ = proc.Shutdown(context.WithoutCancel(ctx)) }()
+	log := proc.Log
 	srv, err := newServers(ctx, opts, log)
 	if err != nil {
 		var u usageError

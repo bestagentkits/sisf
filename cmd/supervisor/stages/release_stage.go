@@ -1,0 +1,111 @@
+package stages
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
+	"github.com/bestagentkits/sisf/internal/supervisor/release"
+	"github.com/bestagentkits/sisf/internal/supplychain"
+	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/deploy"
+	"github.com/bestagentkits/sisf/pkg/state"
+)
+
+// Releaser runs a candidate through the release pipeline.
+type Releaser interface {
+	Release(ctx context.Context, req release.Request) (release.Outcome, error)
+}
+
+// ReleaseStage hands every release candidate, with its signed receipt and
+// its signed artifact, to the release pipeline once. The pipeline decides
+// everything after: it holds, refuses, rolls back or closes.
+type ReleaseStage struct {
+	FactoryID core.FactoryID
+	State     state.Store
+	Pipeline  Releaser
+	// ArtifactSigner is the supervisor's delegated deploy_artifact key.
+	ArtifactSigner core.Signer
+	Clock          core.Clock
+}
+
+// ReleasePassResult lists the releases one pass ran, by result.
+type ReleasePassResult struct {
+	Outcomes map[core.IssueRef]release.Outcome
+	Errors   []error
+}
+
+// Pass releases the candidates waiting in ReleaseCandidate.
+func (s *ReleaseStage) Pass(ctx context.Context) ReleasePassResult {
+	res := ReleasePassResult{Outcomes: map[core.IssueRef]release.Outcome{}}
+	type job struct {
+		record core.StateRecord
+		qa     QAResult
+		build  handoff.BuildRecord
+		doc    handoff.CandidateDoc
+	}
+	var jobs []job
+	err := s.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		records, err := tx.ListRecords(ctx, state.RecordFilter{States: []core.State{core.StateReleaseCandidate}})
+		if err != nil {
+			return err
+		}
+		for _, r := range records {
+			if _, err := ReadRelease(ctx, tx, r.RunID, r.Attempt); !core.HasCode(err, core.CodeNotFound) {
+				continue
+			}
+			j := job{record: r}
+			if j.qa, err = ReadQAResult(ctx, tx, r.RunID, r.Attempt); err == nil {
+				if j.doc, err = handoff.ReadCandidate(ctx, tx, r.RunID, r.Attempt); err == nil {
+					j.build, err = handoff.ReadBuild(ctx, tx, j.qa.Candidate.CommitSHA)
+				}
+			}
+			if err != nil {
+				res.Errors = append(res.Errors, fmt.Errorf("%s: %w", r.IssueID, err))
+				continue
+			}
+			jobs = append(jobs, j)
+		}
+		return nil
+	})
+	if err != nil {
+		return ReleasePassResult{Errors: []error{err}}
+	}
+	for _, j := range jobs {
+		out, err := s.release(ctx, j.record, j.qa, j.doc, j.build)
+		if err != nil && out.Result == "" {
+			res.Errors = append(res.Errors, fmt.Errorf("%s: %w", j.record.IssueID, err))
+			continue
+		}
+		res.Outcomes[j.record.IssueID] = out
+	}
+	return res
+}
+
+// release signs the build as a deploy artifact and runs the pipeline. The
+// outcome is recorded whatever it is, so a held or refused release is not
+// retried by itself: a person decides what happens next.
+func (s *ReleaseStage) release(ctx context.Context, record core.StateRecord, r QAResult, doc handoff.CandidateDoc, build handoff.BuildRecord) (release.Outcome, error) {
+	artifact, err := supplychain.SignArtifact(ctx, s.ArtifactSigner, deploy.Artifact{
+		FactoryID: s.FactoryID, Unit: build.Unit, Digest: core.ReleaseDigest(build.Digest), Image: build.Image,
+		SBOMRef: build.SBOMRef, ProvenanceRef: build.ProvenanceRef,
+	})
+	if err != nil {
+		return release.Outcome{}, err
+	}
+	out, relErr := s.Pipeline.Release(ctx, release.Request{
+		IssueID: record.IssueID, RunID: record.RunID, Candidate: r.Candidate, Receipt: r.Receipt,
+		Artifact: artifact, Feature: doc.Feature, Summary: doc.Summary,
+	})
+	if out.Result == "" {
+		return out, relErr
+	}
+	rec := ReleaseRecord{Result: string(out.Result), State: out.State, Release: out.Release, Reason: out.Reason, At: s.Clock.Now().UTC()}
+	err = s.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		return put(ctx, tx, ReleaseKey(record.RunID, record.Attempt), rec)
+	})
+	if err != nil {
+		return out, err
+	}
+	return out, relErr
+}

@@ -1,0 +1,201 @@
+package fakegithub
+
+import (
+	"maps"
+	"net/http"
+	"slices"
+	"strings"
+)
+
+type jObject struct {
+	SHA  string `json:"sha"`
+	Type string `json:"type,omitempty"`
+}
+
+type jRef struct {
+	Ref    string  `json:"ref"`
+	Object jObject `json:"object"`
+}
+
+// getRef answers GET /git/ref/heads/{branch}.
+func (g *GitData) getRef(w http.ResponseWriter, r *http.Request) {
+	branch := r.PathValue("branch")
+	g.mu.Lock()
+	sha, ok := g.refs[strings.ToLower(repoName(r))][branch]
+	g.mu.Unlock()
+	if !ok {
+		writeError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, jRef{Ref: "refs/heads/" + branch, Object: jObject{SHA: sha, Type: "commit"}})
+}
+
+// getCommit answers GET /git/commits/{sha}; the tree of a commit made with
+// Server.Commit is named by the commit's own SHA.
+func (g *GitData) getCommit(w http.ResponseWriter, r *http.Request) {
+	sha := r.PathValue("sha")
+	if _, ok := g.files(repoName(r), sha); !ok {
+		writeError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	g.mu.Lock()
+	tree, ok := g.commitTree[strings.ToLower(repoName(r))+"@"+sha]
+	g.mu.Unlock()
+	if !ok {
+		tree = sha
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sha": sha, "tree": jObject{SHA: tree}})
+}
+
+// createTree answers POST /git/trees with inline file contents on top of
+// base_tree. An entry whose sha is explicitly null deletes the path.
+func (g *GitData) createTree(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		BaseTree string `json:"base_tree"`
+		Tree     []struct {
+			Path    string  `json:"path"`
+			Mode    string  `json:"mode"`
+			Type    string  `json:"type"`
+			Content *string `json:"content"`
+		} `json:"tree"`
+	}
+	if !readJSON(r, &in) || len(in.Tree) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "Problems parsing JSON")
+		return
+	}
+	files := map[string][]byte{}
+	if in.BaseTree != "" {
+		base, ok := g.files(repoName(r), in.BaseTree)
+		if !ok {
+			writeError(w, http.StatusUnprocessableEntity, "base_tree is not a valid tree")
+			return
+		}
+		files = maps.Clone(base)
+	}
+	for _, entry := range in.Tree {
+		if !validPath(entry.Path) || entry.Type != "blob" {
+			writeError(w, http.StatusUnprocessableEntity, "tree entries must be blobs at plain paths")
+			return
+		}
+		if entry.Content == nil {
+			delete(files, entry.Path)
+			continue
+		}
+		files[entry.Path] = []byte(*entry.Content)
+	}
+	sha := treeSHA(files)
+	g.mu.Lock()
+	g.trees[sha] = files
+	g.mu.Unlock()
+	writeJSON(w, http.StatusCreated, jObject{SHA: sha})
+}
+
+// createCommit answers POST /git/commits. The commit is recorded in the
+// Server too, so the contents API serves its files.
+func (g *GitData) createCommit(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Message string   `json:"message"`
+		Tree    string   `json:"tree"`
+		Parents []string `json:"parents"`
+	}
+	if !readJSON(r, &in) || in.Message == "" || in.Tree == "" {
+		writeError(w, http.StatusUnprocessableEntity, "a commit needs a message and a tree")
+		return
+	}
+	files, ok := g.files(repoName(r), in.Tree)
+	if !ok {
+		writeError(w, http.StatusUnprocessableEntity, "tree is not a valid tree")
+		return
+	}
+	for _, parent := range in.Parents {
+		if _, ok := g.files(repoName(r), parent); !ok {
+			writeError(w, http.StatusUnprocessableEntity, "parent is not a valid commit")
+			return
+		}
+	}
+	text := make(map[string]string, len(files))
+	for path, content := range files {
+		text[path] = string(content)
+	}
+	sha, err := g.s.Commit(repoName(r), text)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	g.mu.Lock()
+	g.commitTree[strings.ToLower(repoName(r))+"@"+sha] = in.Tree
+	g.mu.Unlock()
+	writeJSON(w, http.StatusCreated, map[string]any{"sha": sha, "tree": jObject{SHA: in.Tree}})
+}
+
+// createRef answers POST /git/refs; an existing branch is a 422.
+func (g *GitData) createRef(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Ref string `json:"ref"`
+		SHA string `json:"sha"`
+	}
+	branch, isBranch := "", false
+	if readJSON(r, &in) {
+		branch, isBranch = strings.CutPrefix(in.Ref, "refs/heads/")
+	}
+	if !isBranch || branch == "" {
+		writeError(w, http.StatusUnprocessableEntity, "ref must be refs/heads/<branch>")
+		return
+	}
+	g.mu.Lock()
+	_, exists := g.refs[strings.ToLower(repoName(r))][branch]
+	g.mu.Unlock()
+	if exists {
+		writeError(w, http.StatusUnprocessableEntity, "Reference already exists")
+		return
+	}
+	if err := g.SetBranch(repoName(r), branch, in.SHA); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "Object does not exist")
+		return
+	}
+	writeJSON(w, http.StatusCreated, jRef{Ref: in.Ref, Object: jObject{SHA: in.SHA, Type: "commit"}})
+}
+
+// updateRef answers PATCH /git/refs/heads/{branch}.
+func (g *GitData) updateRef(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		SHA string `json:"sha"`
+	}
+	branch := r.PathValue("branch")
+	if !readJSON(r, &in) || g.SetBranch(repoName(r), branch, in.SHA) != nil {
+		writeError(w, http.StatusUnprocessableEntity, "Object does not exist")
+		return
+	}
+	writeJSON(w, http.StatusOK, jRef{Ref: "refs/heads/" + branch, Object: jObject{SHA: in.SHA, Type: "commit"}})
+}
+
+// compare answers GET /compare/{base}...{head} with the paths that differ.
+func (g *GitData) compare(w http.ResponseWriter, r *http.Request) {
+	base, head, ok := strings.Cut(r.PathValue("basehead"), "...")
+	baseFiles, okBase := g.files(repoName(r), base)
+	headFiles, okHead := g.files(repoName(r), head)
+	if !ok || !okBase || !okHead {
+		writeError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	type jFile struct {
+		Filename string `json:"filename"`
+		Status   string `json:"status"`
+	}
+	files := []jFile{}
+	for _, path := range slices.Sorted(maps.Keys(headFiles)) {
+		before, existed := baseFiles[path]
+		switch {
+		case !existed:
+			files = append(files, jFile{path, "added"})
+		case string(before) != string(headFiles[path]):
+			files = append(files, jFile{path, "modified"})
+		}
+	}
+	for _, path := range slices.Sorted(maps.Keys(baseFiles)) {
+		if _, kept := headFiles[path]; !kept {
+			files = append(files, jFile{path, "removed"})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+}

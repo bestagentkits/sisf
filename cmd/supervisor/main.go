@@ -6,14 +6,16 @@
 //
 //	supervisor run     check this supervisor against the signed release
 //	                   manifest, then serve status on a local socket and,
-//	                   given the state store, the emergency stop
+//	                   given the state store, the emergency stop; given
+//	                   the factory manifest too, build, evaluate and
+//	                   release candidates and serve the Owner rollback
 //	supervisor digest  print the digest this supervisor measures of itself,
 //	                   the value a release manifest pins
 //	supervisor status  ask a running supervisor for its status
 //
 // "run" refuses to start, with exit status 1, when it cannot prove that it
-// is the supervisor the Owner signed for, or when it was given a state store
-// it cannot open. It performs no release steps.
+// is the supervisor the Owner signed for, when it was given a state store
+// it cannot open, or when the lifecycle it was asked to run cannot be wired.
 //
 // Exit status: 0 on success, 1 when a command fails or the supervisor
 // refuses to start, 2 when it was invoked wrongly.
@@ -31,6 +33,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/observe"
 	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/internal/supervisor/killswitch"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -53,6 +56,7 @@ const usageText = `supervisor is the trusted release supervisor of one factory d
 
 Usage:
   supervisor run --factory-id ID --manifest FILE --root-key-ref REF --trust-dir DIR [--lkg FILE] [--admin ADDR] [--state-dsn-env NAME]
+                 [--dispatcher-admin-url URL] [--factory-manifest FILE --edge-admin-url URL --deploy local|compose ...]
   supervisor digest
   supervisor status [--admin ADDR]
 
@@ -129,7 +133,9 @@ func parseFlags(flags *flag.FlagSet, args []string, e env) (status int, ok bool)
 func runSupervisor(ctx context.Context, args []string, e env) int {
 	var cfg supervisor.Config
 	var factoryID, dsnEnv string
+	var lf lifecycleFlags
 	flags := flag.NewFlagSet(program+" run", flag.ContinueOnError)
+	lf.register(flags)
 	flags.StringVar(&factoryID, "factory-id", "", "factory_id of the deployment this supervisor belongs to")
 	flags.StringVar(&cfg.ManifestPath, "manifest", "", "path of the signed release manifest")
 	flags.StringVar(&cfg.RootKeyRef, "root-key-ref", "", "root public key reference, for example env:SISF_ROOT_PUBLIC_KEY")
@@ -143,7 +149,13 @@ func runSupervisor(ctx context.Context, args []string, e env) int {
 	cfg.FactoryID = core.FactoryID(factoryID)
 
 	clock := core.SystemClock{}
-	stop, err := openEmergencyStop(ctx, cfg.FactoryID, dsnEnv, e.lookupEnv, clock)
+	proc, err := observe.Start(e.stderr, getenv(e.lookupEnv), clock)
+	if err != nil {
+		printError(e.stderr, err)
+		return exitFailure
+	}
+	defer func() { _ = proc.Shutdown(context.WithoutCancel(ctx)) }()
+	stop, err := openEmergencyStop(ctx, cfg.FactoryID, dsnEnv, lf.dispatcherAdminURL, e.lookupEnv, clock)
 	if err != nil {
 		say(e.stderr, "%s: refusing to start: the emergency stop needs the state store\n", program)
 		printError(e.stderr, err)
@@ -152,18 +164,34 @@ func runSupervisor(ctx context.Context, args []string, e env) int {
 	if stop != nil {
 		defer stop.close()
 	}
-	sup, err := supervisor.Start(ctx, cfg, stop.options(supervisor.Options{LookupEnv: e.lookupEnv, Clock: clock}))
+	opts := stop.options(supervisor.Options{LookupEnv: e.lookupEnv, Clock: clock})
+	stages, err := lf.startLifecycle(ctx, lifecycleDeps{cfg: cfg, stop: stop, lookupEnv: e.lookupEnv,
+		redactor: proc.Redactor, log: proc.Log, clock: clock}, &opts)
+	if err != nil {
+		say(e.stderr, "%s: refusing to start: the lifecycle cannot be wired\n", program)
+		printError(e.stderr, err)
+		return exitFailure
+	}
+	sup, err := supervisor.Start(ctx, cfg, opts)
 	if err != nil {
 		say(e.stderr, "%s: refusing to start\n", program)
 		printError(e.stderr, err)
 		return exitFailure
 	}
-	// Enforcement ends before the store it uses is closed.
+	// Enforcement and the stages end before the store they use is closed.
 	enforceCtx, stopEnforcing := context.WithCancel(ctx)
 	enforced := make(chan struct{})
 	go func() {
 		defer close(enforced)
+		staged := make(chan struct{})
+		go func() {
+			defer close(staged)
+			if stages != nil {
+				stages(enforceCtx)
+			}
+		}()
 		stop.enforce(enforceCtx, clock, e.stderr)
+		<-staged
 	}()
 	defer func() {
 		stopEnforcing()

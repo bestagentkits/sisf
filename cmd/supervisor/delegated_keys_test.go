@@ -1,0 +1,100 @@
+package main
+
+import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/bestagentkits/sisf/internal/signing"
+	"github.com/bestagentkits/sisf/internal/signing/delegation"
+	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
+)
+
+// trustVolume is a supervisor-only directory and a root key.
+func trustVolume(t *testing.T) (string, ed25519.PublicKey, core.Signer) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "trust")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := signing.NewSigner(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir, pub, root
+}
+
+// Keys the supervisor issued are loaded again without the root key, a key
+// near its end is replaced, and a delegation edited on the volume is refused.
+func TestDelegatedKeysAreIssuedReloadedRenewedAndChecked(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	clock := sqlstoretest.NewClock(time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC))
+	dir, pub, root := trustVolume(t)
+
+	issued, err := loadSupervisorKeys(ctx, dir, testFactory, pub, root, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := loadSupervisorKeys(ctx, dir, testFactory, pub, nil, clock)
+	if err != nil || reloaded.QA.KeyID() != issued.QA.KeyID() || reloaded.Artifact.KeyID() != issued.Artifact.KeyID() {
+		t.Fatalf("the issued keys were not reloaded: %v", err)
+	}
+	if issued.QA.KeyID() == issued.Artifact.KeyID() {
+		t.Fatal("one key signs two kinds of record")
+	}
+
+	clock.Advance(delegation.MaxLifetime - renewBefore/2)
+	renewed, err := loadSupervisorKeys(ctx, dir, testFactory, pub, root, clock)
+	if err != nil || renewed.QA.KeyID() == issued.QA.KeyID() {
+		t.Fatalf("a key about to expire was not replaced: %v", err)
+	}
+
+	other, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSupervisorKeys(ctx, dir, testFactory, other, nil, clock); err == nil {
+		t.Fatal("keys delegated by another root were trusted")
+	}
+	path := filepath.Join(dir, delegationFile(delegation.PurposeQAReceipt))
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var signed delegation.SignedDelegation
+	if err := json.Unmarshal(raw, &signed); err != nil {
+		t.Fatal(err)
+	}
+	signed.Delegation.NotBefore = signed.Delegation.NotBefore.Add(time.Hour)
+	edited, err := json.Marshal(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, edited, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSupervisorKeys(ctx, dir, testFactory, pub, nil, clock); err == nil {
+		t.Fatal("an edited delegation was trusted")
+	}
+}
+
+// Without the root key and without keys on the volume nothing is loaded.
+func TestMissingDelegatedKeysAreNotFound(t *testing.T) {
+	t.Parallel()
+	dir, pub, _ := trustVolume(t)
+	_, err := loadSupervisorKeys(context.Background(), dir, testFactory, pub, nil, core.SystemClock{})
+	if !core.HasCode(err, core.CodeNotFound) {
+		t.Fatalf("got %v, want NOT_FOUND", err)
+	}
+}

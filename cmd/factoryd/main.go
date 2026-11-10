@@ -35,6 +35,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/observe"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -47,11 +48,14 @@ const (
 
 const usage = `usage:
   factoryd control
-  factoryd dispatcher [--fake-agent-work DURATION]
+  factoryd dispatcher [--agent fake|claude|codex|pi] [--fake-agent-work DURATION] [--fake-agent-patch FILE]
+                      [--workspace-root DIR --workspace-source REPO --artifact-dir DIR] [--sandboxed]
+                      [--admin-listen ADDR]
   factoryd policy request --revision SHA
   factoryd policy approve --revision SHA [--approval ID]
   factoryd issue retry --issue owner/repo#N
   factoryd report --issue owner/repo#N --run ID --owner NAME --token N (--pr REF)...
+  factoryd approval-public-key
 `
 
 // errUsage marks a command line that cannot be run.
@@ -66,8 +70,13 @@ func main() {
 
 // run executes one command line and returns the exit status.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
-	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	err := dispatch(ctx, args, getenv, stdout, log)
+	proc, err := observe.Start(stderr, getenv, core.SystemClock{})
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "factoryd: %s\n", describe(err))
+		return exitFailure
+	}
+	defer func() { _ = proc.Shutdown(context.WithoutCancel(ctx)) }()
+	err = dispatch(ctx, args, getenv, stdout, proc.Log)
 	switch {
 	case err == nil:
 		return exitOK
@@ -100,6 +109,8 @@ func dispatch(ctx context.Context, args []string, getenv func(string) string, st
 		return runIssueRetry(ctx, rest[1:], getenv, stdout, log)
 	case name == "report":
 		return runReport(ctx, rest, getenv, stdout)
+	case name == "approval-public-key":
+		return runApprovalPublicKey(rest, getenv, stdout)
 	case name == "-h" || name == "--help" || name == "help":
 		return flag.ErrHelp
 	}
