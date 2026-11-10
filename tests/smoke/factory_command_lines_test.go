@@ -20,7 +20,32 @@ const (
 	alertThresholdUnits = "2"
 
 	issueTitle = "add GET /version returning the build revision"
-	issueBody  = "add GET /version returning the build revision"
+	// issueBody carries the sections intake reads (internal/intake/sections.go)
+	// so an improvement goes straight to Ready: the scope, the affected
+	// feature, which the sandbox's FEATURES.md lists, and a Definition of
+	// Done. It names no file that holds the rules, which would make the work
+	// a policy change for the Owner to approve.
+	issueBody = `## Scope
+
+Add a ` + "`GET " + versionRoute + "`" + ` route to the application that answers with the build
+revision the process runs as, as plain text.
+
+## Affected features
+
+- ` + sandboxFeature + `
+
+## Definition of Done
+
+- ` + "`GET " + versionRoute + "`" + ` answers 200 with the build revision as plain text.
+- A Go test covers the ` + "`" + versionRoute + "`" + ` handler.
+- ` + "`go test ./...`" + ` passes.
+`
+	// sandboxFeature is the feature of the sandbox's FEATURES.md the issue
+	// improves.
+	sandboxFeature = "Revision reporting"
+	// versionRoute is the route the issue asks for; the merged change must
+	// add it.
+	versionRoute = "/version"
 )
 
 var issueLabels = []string{"sisf:ready", "kind:improvement"}

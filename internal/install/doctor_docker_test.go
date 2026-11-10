@@ -32,6 +32,9 @@ type dockerHost struct {
 	missingImage     bool
 	trust            map[string][]byte
 	supervisorBlocks bool
+	// sandboxInternal is what the sandbox network reports as its internal
+	// flag; empty when the network does not exist.
+	sandboxInternal string
 }
 
 // healthyDockerHost is a host on which every topology check passes; the
@@ -45,6 +48,7 @@ func healthyDockerHost(t *testing.T, in *Installer) dockerHost {
 	return dockerHost{
 		dockerNetwork: "sisf-hello-app-supervisor sisf-hello-app-docker-filter-runner sisf-hello-app-docker-filter-deploy",
 		edgePorts:     "7460/tcp=127.0.0.1:7460 ", adminRefusal: "wget: server returned error: HTTP/1.1 401 Unauthorized", trust: files,
+		sandboxInternal: "true",
 	}
 }
 
@@ -60,6 +64,11 @@ func (h dockerHost) answer(ps, status string) func(Cmd) ([]byte, error) {
 				return nil, errors.New("no such container")
 			}
 			return []byte(status), nil
+		case strings.HasPrefix(args, "network inspect --format {{.Internal}} "):
+			if h.sandboxInternal == "" {
+				return nil, errors.New("Error response from daemon: network not found")
+			}
+			return []byte(h.sandboxInternal + "\n"), nil
 		case strings.HasPrefix(args, "network inspect"):
 			return []byte(h.dockerNetwork), nil
 		case strings.HasPrefix(args, "inspect --format"):
@@ -126,7 +135,7 @@ func TestAHealthyDockerFactoryPassesAndSeesZonesThroughTheirContainers(t *testin
 		}
 	}
 	for _, name := range []string{"container app", "container dispatcher", "container state", "compose isolation",
-		"docker filters", "edge admin", "runner images", "delegated keys", "lifecycle"} {
+		"docker filters", "edge admin", "runner images", "sandbox network", "delegated keys", "lifecycle"} {
 		if len(verdictOf(r, name)) == 0 {
 			t.Errorf("no %q check ran", name)
 		}

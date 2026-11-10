@@ -89,15 +89,41 @@ func safeMethod(m string) bool {
 	return m == http.MethodGet || m == http.MethodHead || m == http.MethodOptions
 }
 
-// NavigatedFormPost reports whether r is an HTML form post a person
-// submitted: a form-encoded body, and no Sec-Fetch-Mode other than
-// "navigate". A browser marks a script's fetch with another mode, and a
-// script cannot send a form-encoded body as a navigation, so a script in the
-// page, such as a WebMCP agent, cannot pass for the person even with the
-// session cookie and the CSRF token. Only such a post may spend a step-up.
+// The Fetch Metadata a browser sends with a form a person submits on one of
+// the control plane's own pages: a top-level navigation to a document, from
+// the same origin, started by a user activation. A request that lacks any
+// of them, as from a browser without Fetch Metadata or from a plain HTTP
+// client, is refused.
+var navigatedFormFetchMetadata = [...][2]string{
+	{"Sec-Fetch-Mode", "navigate"},
+	{"Sec-Fetch-Dest", "document"},
+	{"Sec-Fetch-Site", "same-origin"},
+	{"Sec-Fetch-User", "?1"},
+}
+
+// NavigatedFormPost reports whether r looks like an HTML form post a person
+// submitted on one of the control plane's pages: a POST with a form-encoded
+// body and the Fetch Metadata of a same-origin, user-activated navigation
+// (navigatedFormFetchMetadata), each present and exact.
+//
+// It is defence in depth, not the control. It refuses a script's fetch(),
+// which a browser marks with another mode and destination, and a browser
+// that sends no Fetch Metadata at all. It cannot tell a person's click from
+// a script in the page that submits a form (form.submit() after any user
+// activation is a navigation too). What stops a script in the page, such as
+// a WebMCP agent, from acting for the person is the step-up: a fresh sign-in
+// at the identity provider, bound to one action and target and spent once.
+// Every call that spends a step-up is served only to such a post.
 func NavigatedFormPost(r *http.Request) bool {
-	mode := r.Header.Get("Sec-Fetch-Mode")
-	return r.Method == http.MethodPost && isForm(r) && (mode == "" || mode == "navigate")
+	if r.Method != http.MethodPost || !isForm(r) {
+		return false
+	}
+	for _, want := range navigatedFormFetchMetadata {
+		if values := r.Header.Values(want[0]); len(values) != 1 || values[0] != want[1] {
+			return false
+		}
+	}
+	return true
 }
 
 func isForm(r *http.Request) bool {

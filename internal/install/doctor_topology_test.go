@@ -28,6 +28,8 @@ func TestTheDoctorFailsEveryBreachOfTheReleaseTopology(t *testing.T) {
 		"a runner image is gone":                  {"runner images", func(h *dockerHost) { h.missingImage = true }},
 		"a delegated key is gone":                 {"delegated keys", func(h *dockerHost) { delete(h.trust, "delegation-deploy_artifact.key") }},
 		"the delegations are gone":                {"delegated keys", func(h *dockerHost) { h.trust = nil }},
+		"the sandbox network is not internal":     {"sandbox network", func(h *dockerHost) { h.sandboxInternal = "false" }},
+		"the sandbox network is gone":             {"sandbox network", func(h *dockerHost) { h.sandboxInternal = "" }},
 	} {
 		r := runDoctor(t, dockerFactoryOn(t, dockerPS, supervisorJSON, tc.change))
 		if v := verdictOf(r, tc.check); len(v) != 1 || v[0] != VerdictFail {

@@ -242,7 +242,14 @@ func (b *browser) post(t *testing.T, target string, form url.Values) reply {
 
 func (b *browser) postRaw(t *testing.T, target string, form url.Values) reply {
 	t.Helper()
-	return b.do(t, http.MethodPost, target, form.Encode(), map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+	return b.do(t, http.MethodPost, target, form.Encode(), navigatedForm())
+}
+
+// navigatedForm are the headers a browser sends with a form a person submits
+// on one of the dashboard's pages.
+func navigatedForm() map[string]string {
+	return map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Mode": "navigate",
+		"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "same-origin", "Sec-Fetch-User": "?1"}
 }
 
 func (b *browser) hop(t *testing.T, method, target string) string {

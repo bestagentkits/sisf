@@ -107,3 +107,36 @@ func TestInitRefusesAnIncompleteOrMisplacedBuildSandbox(t *testing.T) {
 		t.Error("an incomplete sandbox in the manifest was accepted")
 	}
 }
+
+// The doctor reads a Standalone install's build sandbox network through its
+// runner filter, as the docker backend does, and fails a network that is
+// not internal, missing or not reported.
+func TestTheDoctorFailsABuildSandboxNetworkThatIsNotInternal(t *testing.T) {
+	t.Parallel()
+	const route = "127.0.0.1:17480/v1.44/networks/sisf-shop-sandbox"
+	for name, tc := range map[string]struct {
+		answer *reply
+		want   Verdict
+	}{
+		"internal":              {&reply{code: 200, body: `{"Name":"sisf-shop-sandbox","Internal":true}`}, VerdictOK},
+		"an ordinary bridge":    {&reply{code: 200, body: `{"Name":"sisf-shop-sandbox","Internal":false}`}, VerdictFail},
+		"missing":               {&reply{code: 404, body: `{"message":"no such network"}`}, VerdictFail},
+		"another network":       {&reply{code: 200, body: `{"Name":"bridge","Internal":true}`}, VerdictFail},
+		"a filter that is down": {nil, VerdictFail},
+	} {
+		net := healthyNet()
+		if tc.answer != nil {
+			net = net.with(route, *tc.answer)
+		}
+		in := builtStandalone(t, net, func(o *Options) { sandboxed(t, o) })
+		r := runDoctor(t, in)
+		if v := verdictOf(r, sandboxNetworkCheck); len(v) != 1 || v[0] != tc.want {
+			t.Errorf("%s: %s = %v, want %s (%s)", name, sandboxNetworkCheck, v, tc.want, detailOf(r, sandboxNetworkCheck))
+		}
+	}
+	// Without a build sandbox there is no sandbox network to check.
+	r := runDoctor(t, builtStandalone(t, healthyNet(), nil))
+	if v := verdictOf(r, sandboxNetworkCheck); len(v) != 0 {
+		t.Errorf("a Standalone install without a build sandbox: %s = %v", sandboxNetworkCheck, v)
+	}
+}

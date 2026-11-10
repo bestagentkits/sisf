@@ -63,14 +63,28 @@ func (b *Browser) StepUpFor(action, target string) {
 	b.follow(resp, http.StatusSeeOther)
 }
 
-// signInAs makes the fake identity provider answer as the person.
+// signInAs makes the fake identity provider answer as the person. The post
+// comes from the provider's own origin, as from its own page: a locked
+// development provider takes a POST to /_sim from nowhere else.
 func (b *Browser) signInAs() {
 	b.t.Helper()
 	body, _ := json.Marshal(map[string]string{"subject": b.Subject})
-	resp := b.Do(http.MethodPost, b.provider+"/_sim/sign-in", bytes.NewReader(body), http.Header{"Content-Type": {"application/json"}})
+	resp := b.Do(http.MethodPost, b.provider+"/_sim/sign-in", bytes.NewReader(body),
+		http.Header{"Content-Type": {"application/json"}, "Origin": {b.ProviderOrigin()}})
 	if resp.StatusCode != http.StatusNoContent {
 		b.t.Fatalf("harness: the identity provider has no %s (%d)", b.Subject, resp.StatusCode)
 	}
+}
+
+// ProviderOrigin is the origin of the fake identity provider the browser
+// signs in at, as its own pages would name it in an Origin header.
+func (b *Browser) ProviderOrigin() string {
+	b.t.Helper()
+	u, err := url.Parse(b.provider)
+	if err != nil || u.Host == "" {
+		b.t.Fatalf("harness: the identity provider's URL %q has no origin", b.provider)
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // follow walks the provider's redirect back to the control plane's callback.
@@ -122,7 +136,7 @@ func (b *Browser) ApproveDevice(userCode string) {
 	b.t.Helper()
 	b.StepUpFor(auth.DeviceApprovalStepUpAction, userCode)
 	form := url.Values{"user_code": {userCode}, auth.CSRFFormField: {b.CSRF()}}
-	resp := b.Do(http.MethodPost, api.DeviceApprovePath, strings.NewReader(form.Encode()), navigatedForm())
+	resp := b.Do(http.MethodPost, api.DeviceApprovePath, strings.NewReader(form.Encode()), NavigatedForm())
 	if resp.StatusCode != http.StatusOK {
 		b.t.Fatalf("harness: the login code was not approved: %d", resp.StatusCode)
 	}
@@ -135,7 +149,7 @@ func (b *Browser) PAT(scopes ...string) string {
 	req := auth.PATRequest{Name: "e2e", Scopes: scopes}
 	target := req.StepUpTarget()
 	b.StepUpFor(target.Action, target.Target)
-	resp := b.Do(http.MethodPost, auth.TokensPath, strings.NewReader(tokenForm(req, b.CSRF())), navigatedForm())
+	resp := b.Do(http.MethodPost, auth.TokensPath, strings.NewReader(tokenForm(req, b.CSRF())), NavigatedForm())
 	var out struct {
 		Token string `json:"token"`
 	}

@@ -97,26 +97,53 @@ func assertOutcome(ctx context.Context, r *commandRunner, o *factoryObserver, lo
 	result(r, "exactly one progress comment", err == nil && n == 1, fmt.Sprintf("%d progress comments, error %v", n, err))
 
 	linked, linkEvidence := false, "the run recorded no pull request"
+	var merged mergedPullRequest
+	mergeEvidence := "the run recorded no pull request"
 	for _, pr := range rep.PullRequests {
 		ok, state, err := pullRequestLinks(ctx, r, pr, number)
-		linkEvidence = fmt.Sprintf("%s state %s links #%d: %t, error %v", pr, state, number, ok, err)
-		if ok && err == nil {
+		if ok && err == nil && !linked {
 			linked = true
+			linkEvidence = fmt.Sprintf("%s state %s links #%d", pr, state, number)
+		} else if !linked {
+			linkEvidence = fmt.Sprintf("%s state %s links #%d: %t, error %v", pr, state, number, ok, err)
+		}
+		m, err := pullRequestMerge(ctx, r, pr)
+		mergeEvidence = fmt.Sprintf("%s state %q, merge commit %q, error %v", pr, m.State, m.MergeCommit, err)
+		if err == nil && m.State == "MERGED" && m.MergeCommit != "" {
+			merged = m
 			break
 		}
 	}
 	result(r, "pull request linked to the issue", linked, linkEvidence)
+	result(r, "pull request merged in the sandbox", merged.MergeCommit != "", mergeEvidence)
 
-	rep.Receipt = fmt.Sprintf("candidate digest %s, release digest %s; the signature was not verified: "+
-		"no sisf command or REST route verifies a QA receipt", orNone(rec.CandidateDigest), orNone(rec.ReleaseDigest))
-	rep.check("QA receipt verifies", statusNotChecked, "no CLI or route verifies a receipt; recorded the digests only")
-
-	status, body, err := httpGet(ctx, loopbackURL(install.PortEdge, "/version"))
-	result(r, "GET /version served", err == nil && status == http.StatusOK && strings.TrimSpace(body) != "",
-		fmt.Sprintf("HTTP %d, body %q, error %v", status, truncate(body, 200), err))
-	if rec.CandidateDigest != "" && !strings.Contains(body, rec.CandidateDigest) {
-		rep.deviate("the /version body does not name the candidate digest %s (informational)", rec.CandidateDigest)
+	// The proof the agent's change landed: Standalone deploys the installed
+	// application, not the candidate, so the change is looked for where it
+	// was merged.
+	landed, landEvidence := false, "no merged pull request"
+	if merged.MergeCommit != "" {
+		ok, evidence, err := changeOnDefaultBranch(ctx, r, merged.MergeCommit, versionRoute)
+		landed, landEvidence = ok && err == nil, fmt.Sprintf("%s, error %v", evidence, err)
 	}
+	result(r, "requested change merged on the default branch", landed, landEvidence)
+
+	qaRecords, err := o.supervisorRecords(ctx, qaKeyPrefix+rec.RunID+"/")
+	passed, qaEvidence := passingReceipt(qaRecords)
+	result(r, fmt.Sprintf("signed QA receipt scoring at least %d", passScore), err == nil && rec.RunID != "" && passed,
+		fmt.Sprintf("run %q: %s, error %v", rec.RunID, qaEvidence, err))
+	rep.Receipt = fmt.Sprintf("candidate digest %s, release digest %s; %s", orNone(rec.CandidateDigest), orNone(rec.ReleaseDigest), r.scrub.clean(qaEvidence))
+	rep.check("QA receipt signature verifies", statusNotChecked,
+		"no CLI or route verifies a receipt; the run checked the supervisor's record of a signed receipt and that the issue passed the QA guard into ReleaseCandidate")
+
+	releases, err := o.supervisorRecords(ctx, releaseKeyPrefix+rec.RunID+"/")
+	released, releaseEvidence := completedRelease(releases)
+	visited := visitedInOrder(journal, "QAEvaluation", "ReleaseCandidate", "Verified", "Closed")
+	result(r, "release completed", err == nil && rec.RunID != "" && released && visited,
+		fmt.Sprintf("%s; journal through QAEvaluation, ReleaseCandidate, Verified and Closed: %t; error %v", releaseEvidence, visited, err))
+
+	status, body, err := httpGet(ctx, loopbackURL(install.PortEdge, "/healthz"))
+	result(r, "application healthy through the edge", err == nil && status == http.StatusOK,
+		fmt.Sprintf("GET /healthz on the edge: HTTP %d, body %q, error %v", status, truncate(body, 200), err))
 
 	b, err := o.budget(ctx)
 	rep.Cost = b.summary()

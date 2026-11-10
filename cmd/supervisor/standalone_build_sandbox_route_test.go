@@ -41,6 +41,7 @@ var routeImage = "127.0.0.1:17481/sisf-smoke-runner@sha256:" + strings.Repeat("e
 func newSandboxRoute(t *testing.T) sandboxRoute {
 	t.Helper()
 	daemon := dockerfiltertest.New("runc")
+	daemon.AddNetwork(routeNetwork, true)
 	upstream := httptest.NewServer(daemon)
 	t.Cleanup(upstream.Close)
 	filter, err := dockerfilter.New(dockerfilter.Config{Role: dockerfilter.RoleRunner, Upstream: upstream.Client().Transport,
@@ -151,5 +152,28 @@ func TestAStandaloneInstallWithABuildSandboxGetsPastTheSupervisorsStartChecks(t 
 	}
 	if _, err := lf.imageBuilder(ctx, route.manifest, false, nil, docker, local); !core.HasCode(err, core.CodePermissionDenied) {
 		t.Fatalf("the local backend outside the simulation: %v, want PERMISSION_DENIED", err)
+	}
+}
+
+// The supervisor of a Standalone install whose build sandbox network is an
+// ordinary bridge refuses to select the sandbox at start, before any
+// candidate is built: a runner there would reach the internet around the
+// egress proxy.
+func TestTheSupervisorRefusesABuildSandboxOnANetworkThatIsNotInternal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	route := newSandboxRoute(t)
+	route.daemon.AddNetwork(routeNetwork, false)
+	lf := parseRunFlags(t, route.args)
+	docker, local, err := lf.execBackends(route.manifest, core.SystemClock{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lf.imageBuilder(ctx, route.manifest, false, nil, docker, local); !core.HasCode(err, core.CodeNotSupported) ||
+		!strings.Contains(err.Error(), "not internal") {
+		t.Fatalf("the build backend selection on a non-internal network: %v", err)
+	}
+	if created := route.daemon.Created(); len(created) != 0 {
+		t.Fatalf("a container was created: %d", len(created))
 	}
 }

@@ -52,6 +52,7 @@ func (s *Server) withSafety(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		if !strings.HasPrefix(r.URL.Path, "/static/") {
 			h.Set("Cache-Control", "no-store")
 		}

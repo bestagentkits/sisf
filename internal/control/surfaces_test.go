@@ -156,3 +156,19 @@ func TestFormOriginsReachEveryPageWithAStepUpForm(t *testing.T) {
 		}
 	})
 }
+
+// No page of the control plane shares a browsing context group with the
+// window that opened it or with one it opens, so another site cannot keep
+// a handle on a dashboard window.
+func TestEveryResponseIsolatesItsBrowsingContext(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e := newEnv(t, db)
+		for _, path := range []string{"/healthz", "/signin", "/api/v1/device/verify", "/no-such-page"} {
+			rec := e.do(httptest.NewRequest(http.MethodGet, path, nil))
+			if got := rec.Header().Get("Cross-Origin-Opener-Policy"); got != "same-origin" {
+				t.Errorf("%s Cross-Origin-Opener-Policy = %q", path, got)
+			}
+		}
+	})
+}

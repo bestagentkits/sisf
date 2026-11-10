@@ -119,6 +119,7 @@ func (h *handler) withHeaders(next http.Handler) http.Handler {
 		hd.Set("X-Content-Type-Options", "nosniff")
 		hd.Set("X-Frame-Options", "DENY")
 		hd.Set("Referrer-Policy", "no-referrer")
+		hd.Set("Cross-Origin-Opener-Policy", "same-origin")
 		if !strings.HasPrefix(r.URL.Path, PathStatic) {
 			hd.Set("Cache-Control", "no-store")
 		}

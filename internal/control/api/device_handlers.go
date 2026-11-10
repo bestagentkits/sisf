@@ -106,9 +106,12 @@ func (h *handler) deviceToken(w http.ResponseWriter, r *http.Request) {
 // request from the verification page's form. The token is minted from that
 // session, which must hold a step-up for approving exactly this request, and
 // never carries more authority than the person holds. Approving spends that
-// step-up, so only the person's own form post is served: a script's fetch
-// or a JSON body is refused before anything is claimed, and a bearer token
-// cannot approve because it has no session to mint from.
+// step-up, so only what looks like the person's own form post is served
+// (auth.NavigatedFormPost): a script's fetch(), a JSON body or a browser
+// without Fetch Metadata is refused before anything is claimed, and a
+// bearer token cannot approve because it has no session to mint from. The
+// step-up, a fresh sign-in bound to this user code and spent once, is the
+// control; the header check is defence in depth.
 func (h *handler) deviceApprove(w http.ResponseWriter, r *http.Request) {
 	actor, ok := auth.ActorFrom(r.Context())
 	if !ok {
@@ -117,7 +120,7 @@ func (h *handler) deviceApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	if !auth.NavigatedFormPost(r) {
 		h.fail(w, core.NewError(core.CodePermissionDenied,
-			"a login request is approved only from the verification page's form; a script cannot approve it"))
+			"a login request is approved only from the verification page's form submitted in a browser that sends Fetch Metadata"))
 		return
 	}
 	userCode := r.PostFormValue("user_code")

@@ -169,10 +169,11 @@ const (
 	TokenTTLField    = "ttl_seconds"
 )
 
-// handleCreateToken mints a personal access token from the person's own
-// form post. Minting spends a step-up, so a script's fetch, a JSON body or
-// a token is refused before anything is spent; the step-up must name this
-// exact request (PATRequest.StepUpTarget).
+// handleCreateToken mints a personal access token from what looks like the
+// person's own form post (NavigatedFormPost): a script's fetch(), a JSON
+// body, a browser without Fetch Metadata or a token is refused before
+// anything is spent. The control is the step-up, which must name this exact
+// request (PATRequest.StepUpTarget) and is spent once.
 func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	ss, err := s.sessionFromRequest(r, true)
@@ -182,7 +183,7 @@ func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	}
 	if !NavigatedFormPost(r) {
 		writeError(w, core.NewError(core.CodePermissionDenied,
-			"a token is minted only from a form you submit in the browser; a script cannot mint one"))
+			"a token is minted only from the token form submitted in a browser that sends Fetch Metadata"))
 		return
 	}
 	req, err := patRequestFromForm(r)

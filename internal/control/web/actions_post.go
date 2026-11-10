@@ -58,14 +58,16 @@ type detail struct{ Key, Value string }
 
 // postAction runs one action for a form POST. The session and the CSRF token
 // were checked by the guard before this runs. It is the only path on which
-// the action service accepts a step-up, so it answers only a navigation: a
-// browser marks a script's fetch with another Sec-Fetch-Mode, and a script
-// in the page, such as a WebMCP agent, cannot pass for the person's own
-// form post even with the session cookie and the CSRF token.
+// the action service accepts a step-up, so it answers only what looks like
+// the person's own form submission (auth.NavigatedFormPost): a script's
+// fetch() and a browser without Fetch Metadata are refused. That check is
+// defence in depth; a script in the page that submits the form still needs
+// a step-up, a fresh sign-in at the identity provider bound to this one
+// action and target and spent once, before a sensitive action runs.
 func (h *handler) postAction(w http.ResponseWriter, r *http.Request, s *session) {
-	if mode := r.Header.Get("Sec-Fetch-Mode"); mode != "" && mode != "navigate" {
+	if !auth.NavigatedFormPost(r) {
 		h.fail(w, r, s, core.NewError(core.CodePermissionDenied,
-			"dashboard actions run only from a form you submit; a script cannot post them"))
+			"dashboard actions run only from a form submitted on the dashboard in a browser that sends Fetch Metadata"))
 		return
 	}
 	name := r.PathValue("name")

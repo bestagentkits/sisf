@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/bestagentkits/sisf/internal/auth"
+	"github.com/bestagentkits/sisf/internal/testkit/harness"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -86,7 +87,7 @@ func (c *clients) dashboard(t *testing.T, action string, req call) outcome {
 		form.Set("approval_id", req.ApprovalID)
 	}
 	resp := c.person.Do(http.MethodPost, "/actions/"+action, strings.NewReader(form.Encode()),
-		http.Header{"Content-Type": {"application/x-www-form-urlencoded"}})
+		harness.NavigatedForm())
 	raw, _ := io.ReadAll(resp.Body)
 	if m := pageCode.FindSubmatch(raw); m != nil {
 		out := outcome{Code: core.ErrorCode(m[1]), Message: html.UnescapeString(string(m[2]))}

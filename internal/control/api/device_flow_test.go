@@ -58,7 +58,7 @@ func (b *browser) approve(t *testing.T, code string, header map[string]string) r
 	if csrf := header[auth.CSRFHeader]; csrf != "" {
 		form.Set(auth.CSRFFormField, csrf)
 	}
-	h := map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Mode": "navigate"}
+	h := map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "same-origin", "Sec-Fetch-User": "?1"}
 	for k, v := range header {
 		if k != auth.CSRFHeader {
 			h[k] = v
@@ -262,6 +262,14 @@ func TestALoginRequestIsApprovedOnlyFromTheVerificationPagesForm(t *testing.T) {
 		if r := person.approve(t, s.UserCode, map[string]string{auth.CSRFHeader: csrf[auth.CSRFHeader], "Sec-Fetch-Mode": mode}); r.status != http.StatusForbidden ||
 			r.errorCode(t) != core.CodePermissionDenied {
 			t.Errorf("a fetch in mode %s approved: %d %s", mode, r.status, r.body)
+		}
+	}
+	// A browser without Fetch Metadata, or a post from another site, is
+	// refused too: each header of a same-origin form submission must be there.
+	for name, value := range map[string]string{"Sec-Fetch-Mode": "", "Sec-Fetch-Dest": "", "Sec-Fetch-Site": "cross-site", "Sec-Fetch-User": ""} {
+		if r := person.approve(t, s.UserCode, map[string]string{auth.CSRFHeader: csrf[auth.CSRFHeader], name: value}); r.status != http.StatusForbidden ||
+			r.errorCode(t) != core.CodePermissionDenied {
+			t.Errorf("%s %q approved: %d %s", name, value, r.status, r.body)
 		}
 	}
 	e.clock.Advance(10 * time.Second)

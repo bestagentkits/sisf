@@ -96,7 +96,8 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	}
 	sb.selfBuild(ctx, r, factoryID, core.CommitSHA(head))
 	rep.check("released artifact is the sandboxed build", statusNotChecked,
-		"Standalone's local deployment backend starts the installed application for every release; the sandboxed build is tested and digested, not deployed")
+		"Standalone's local deploy backend serves the installed application rather than the candidate build for every release; "+
+			"the sandboxed build is tested and digested, not deployed, so the run looks for the requested change in the merged commit instead")
 	proc, err := startFactory(r, bins.sisf, upArgs(home, repoRoot()), env, upLog)
 	if err != nil {
 		r.fatalf("start sisf up: %v", err)

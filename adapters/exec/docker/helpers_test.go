@@ -59,6 +59,10 @@ type options struct {
 	cfg      func(*docker.Config)
 	// rewrite changes what the daemon answers to inspect requests.
 	rewrite func(view map[string]any)
+	// externalNetwork makes the sandbox network an ordinary, non-internal one.
+	externalNetwork bool
+	// noNetwork leaves the daemon without the sandbox network.
+	noNetwork bool
 }
 
 func newEnv(t *testing.T, o options) env {
@@ -67,6 +71,9 @@ func newEnv(t *testing.T, o options) env {
 		o.runtimes = []string{"runc", "runsc"}
 	}
 	daemon := dockerfiltertest.New(o.runtimes...)
+	if !o.noNetwork {
+		daemon.AddNetwork(network, !o.externalNetwork)
+	}
 	var handler http.Handler = daemon
 	if o.rewrite != nil {
 		handler = rewriteInspect(daemon, o.rewrite)

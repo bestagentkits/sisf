@@ -107,7 +107,7 @@ func (p *Person) PAT(scopes ...string) string {
 	req := auth.PATRequest{Name: "harness", Scopes: scopes}
 	target := req.StepUpTarget()
 	p.StepUpFor(target.Action, target.Target)
-	resp := p.Do(http.MethodPost, auth.TokensPath, strings.NewReader(tokenForm(req, p.CSRF())), navigatedForm())
+	resp := p.Do(http.MethodPost, auth.TokensPath, strings.NewReader(tokenForm(req, p.CSRF())), NavigatedForm())
 	var out struct {
 		Token string `json:"token"`
 	}
@@ -122,9 +122,12 @@ func tokenForm(req auth.PATRequest, csrf string) string {
 	return url.Values{auth.TokenNameField: {req.Name}, auth.TokenScopesField: req.Scopes, auth.CSRFFormField: {csrf}}.Encode()
 }
 
-// navigatedForm are the headers of a form a person submits in a browser.
-func navigatedForm() http.Header {
-	return http.Header{"Content-Type": {"application/x-www-form-urlencoded"}, "Sec-Fetch-Mode": {"navigate"}}
+// NavigatedForm are the headers a browser sends with a form a person
+// submits on one of the control plane's own pages: a form-encoded body and
+// the Fetch Metadata of a same-origin, user-activated navigation.
+func NavigatedForm() http.Header {
+	return http.Header{"Content-Type": {"application/x-www-form-urlencoded"}, "Sec-Fetch-Mode": {"navigate"},
+		"Sec-Fetch-Dest": {"document"}, "Sec-Fetch-Site": {"same-origin"}, "Sec-Fetch-User": {"?1"}}
 }
 
 // consentField finds the consent form's hidden field.

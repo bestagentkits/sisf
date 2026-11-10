@@ -181,3 +181,35 @@ func (f *Filter) info(w http.ResponseWriter, r *http.Request, rt route) *denial 
 	writeJSON(w, http.StatusOK, answer)
 	return nil
 }
+
+// NetworkView is what the filter answers about the sandbox network: its
+// name and whether it is internal, and nothing else the daemon reports,
+// such as the containers on it and their addresses.
+type NetworkView struct {
+	Name     string `json:"Name"`
+	Internal bool   `json:"Internal"`
+}
+
+// network answers an inspect of the sandbox network. The daemon looks a
+// network up by ID, then name, then ID prefix, so the answer is used only
+// when it names the sandbox network itself.
+func (f *Filter) network(w http.ResponseWriter, r *http.Request, rt route) *denial {
+	status, body, d := f.fetch(r, rt.version, "/networks/"+f.cfg.SandboxNetwork)
+	switch {
+	case d != nil:
+		return d
+	case status == http.StatusNotFound:
+		return deny(http.StatusNotFound, "no such network")
+	case status != http.StatusOK:
+		return deny(http.StatusBadGateway, "the daemon could not inspect the sandbox network")
+	}
+	var seen NetworkView
+	if err := json.Unmarshal(body, &seen); err != nil {
+		return deny(http.StatusBadGateway, "the daemon's network answer is not understood")
+	}
+	if seen.Name != f.cfg.SandboxNetwork {
+		return deny(http.StatusBadGateway, "the daemon answered for another network than the sandbox network")
+	}
+	writeJSON(w, http.StatusOK, seen)
+	return nil
+}

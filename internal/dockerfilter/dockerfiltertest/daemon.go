@@ -61,13 +61,22 @@ type Daemon struct {
 	requests   []Request
 	seq        int
 	runtimes   []string
+	networks   map[string]bool
 	// Run decides what a started container does; it exits 0 at once when nil.
 	run func(Container) Outcome
 }
 
 // New returns a daemon that reports the given runtimes.
 func New(runtimes ...string) *Daemon {
-	return &Daemon{containers: map[string]*Container{}, runtimes: runtimes}
+	return &Daemon{containers: map[string]*Container{}, runtimes: runtimes, networks: map[string]bool{}}
+}
+
+// AddNetwork records a user-defined network, internal or not. A network
+// that was not added is unknown to the daemon.
+func (d *Daemon) AddNetwork(name string, internal bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.networks[name] = internal
 }
 
 // OnStart sets what every container started from now on does.
@@ -150,6 +159,8 @@ func (d *Daemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		d.create(w, r, body)
 	case path == "/containers/json" && r.Method == http.MethodGet:
 		d.list(w, r)
+	case len(parts) == 2 && parts[0] == "networks" && r.Method == http.MethodGet:
+		d.network(w, parts[1])
 	case len(parts) >= 2 && parts[0] == "containers":
 		d.container(w, r, parts[1], strings.Join(parts[2:], "/"))
 	default:
@@ -157,6 +168,20 @@ func (d *Daemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// honest about what got through.
 		writeJSON(w, http.StatusOK, map[string]string{"message": "done"})
 	}
+}
+
+// network answers an inspect of a network by name.
+func (d *Daemon) network(w http.ResponseWriter, name string) {
+	d.mu.Lock()
+	internal, ok := d.networks[name]
+	d.mu.Unlock()
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"message": "network " + name + " not found"})
+		return
+	}
+	sum := sha256.Sum256([]byte("network-" + name))
+	writeJSON(w, http.StatusOK, map[string]any{"Name": name, "Id": hex.EncodeToString(sum[:]), "Driver": "bridge",
+		"Internal": internal, "Containers": map[string]any{}})
 }
 
 func (d *Daemon) info(w http.ResponseWriter) {

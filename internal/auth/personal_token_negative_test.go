@@ -57,7 +57,7 @@ func confirmToken(t *testing.T, b *browser, subject, csrf string, form url.Value
 
 // mint posts the token form as the person's own navigation, with csrf in
 // the form when it is set, and returns the status and the token. header
-// adds to or overrides the request headers.
+// adds to or overrides the request headers; an empty value removes one.
 func mint(t *testing.T, b *browser, csrf string, form url.Values, header map[string]string) (int, string, auth.TokenInfo) {
 	t.Helper()
 	body := url.Values{}
@@ -67,8 +67,12 @@ func mint(t *testing.T, b *browser, csrf string, form url.Values, header map[str
 	if csrf != "" {
 		body.Set(auth.CSRFFormField, csrf)
 	}
-	h := map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Mode": "navigate"}
+	h := navigatedFormHeaders()
 	for k, v := range header {
+		if v == "" {
+			delete(h, k)
+			continue
+		}
 		h[k] = v
 	}
 	resp := b.do(t, http.MethodPost, "/auth/tokens", body.Encode(), h)
@@ -194,4 +198,11 @@ func TestATokenCanNeitherMintTokensNorSatisfyStepUp(t *testing.T) {
 	if _, code := cli.actor(t, http.MethodGet, bearer(token)); code != http.StatusUnauthorized {
 		t.Fatalf("revoking the actor left its token alive: %d", code)
 	}
+}
+
+// navigatedFormHeaders are the headers a browser sends with a form a person
+// submits on one of the control plane's pages.
+func navigatedFormHeaders() map[string]string {
+	return map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Mode": "navigate",
+		"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "same-origin", "Sec-Fetch-User": "?1"}
 }

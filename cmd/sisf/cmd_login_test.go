@@ -178,7 +178,7 @@ func (f *factory) approve(t *testing.T, code string) int {
 	send(http.MethodGet, follow(http.MethodGet, follow(http.MethodPost, f.url+"/auth/step-up/google?"+stepUp.Encode(), csrf), nil), "", nil)
 	form := url.Values{"user_code": {code}, auth.CSRFFormField: {view.CSRFToken}}
 	resp, _ := send(http.MethodPost, f.url+api.DeviceApprovePath, form.Encode(),
-		map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Mode": "navigate"})
+		map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "same-origin", "Sec-Fetch-User": "?1"})
 	return resp.StatusCode
 }
 

@@ -31,6 +31,7 @@ func (in *Installer) checkTopology(ctx context.Context, c *collector, m *manifes
 		c.ok("runner images", "Standalone builds candidates as local processes of the trusted simulation; no runner image is used")
 		in.checkDelegations(c, m, dirReader(in.Layout.Data("trust")))
 	}
+	in.checkSandboxNetwork(ctx, c, m)
 	in.checkStages(c, m)
 }
 

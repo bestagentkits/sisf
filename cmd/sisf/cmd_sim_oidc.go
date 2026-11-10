@@ -55,7 +55,9 @@ lets --addr name another address where the network around it is closed.
 
 --sign-in-secret-file locks sign-in, as a development install does: every
 sign-in and every /_sim endpoint is refused to a browser that has not first
-posted the secret in that file to /_sim/unlock (a form when opened with GET).
+posted the secret in that file to /_sim/unlock (a form when opened with GET),
+and a POST to /_sim is taken only with an Origin header naming the fake's own
+origin. The browser keeps an HMAC of the secret, never the secret.
 
 Control endpoints, for tests that drive it over HTTP:
   POST /_sim/users        {"subject","email","email_verified","name","login","github_id"}
@@ -164,7 +166,7 @@ func serveSimOIDC(ctx context.Context, env *Env, ln net.Listener, opts simOIDCOp
 	}
 	var handler http.Handler = fake
 	if opts.signInSecret != "" {
-		handler = signInGate(fake, opts.signInSecret)
+		handler = signInGate(fake, opts.signInSecret, ownOrigins(issuer, ln.Addr()))
 	}
 	if err := fakegithub.Serve(ctx, ln, handler); err != nil {
 		return core.NewError(core.CodeInternal, "the fake identity provider stopped unexpectedly").WithCause(err)

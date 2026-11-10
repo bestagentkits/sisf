@@ -116,7 +116,7 @@ func postForm(t *testing.T, b *harness.Browser, action string, fields url.Values
 		form[k] = v
 	}
 	resp := b.Do(http.MethodPost, "/actions/"+action, strings.NewReader(form.Encode()),
-		http.Header{"Content-Type": {"application/x-www-form-urlencoded"}})
+		harness.NavigatedForm())
 	raw, _ := io.ReadAll(resp.Body)
 	if m := pageCode.FindSubmatch(raw); m != nil {
 		var stepUp [2]string

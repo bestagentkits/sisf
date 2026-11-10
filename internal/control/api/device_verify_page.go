@@ -120,6 +120,7 @@ func (h *handler) writePage(w http.ResponseWriter, status int, data pageData) {
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	hdr.Set("X-Frame-Options", "DENY")
 	hdr.Set("Referrer-Policy", "no-referrer")
+	hdr.Set("Cross-Origin-Opener-Policy", "same-origin")
 	hdr.Set("Content-Security-Policy", h.pagePolicy())
 	w.WriteHeader(status)
 	_ = verifyPage.Execute(w, data)

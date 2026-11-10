@@ -83,6 +83,11 @@ func (f *Filter) serve(w http.ResponseWriter, r *http.Request) *denial {
 			return d
 		}
 		return f.info(w, r, rt)
+	case endpointNetwork:
+		if d := noBody(r); d != nil {
+			return d
+		}
+		return f.network(w, r, rt)
 	default:
 		if d := noBody(r); d != nil {
 			return d

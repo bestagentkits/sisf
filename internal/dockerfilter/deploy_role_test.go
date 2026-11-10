@@ -212,6 +212,7 @@ func TestTheDeployRoleRefusesWhatADeploymentDoesNotNeed(t *testing.T) {
 		"exec":                              {http.MethodPost, "/containers/" + revisionName + "/exec"},
 		"an image pull":                     {http.MethodPost, "/images/create?fromImage=alpine"},
 		"removing volumes with a container": {http.MethodDelete, "/containers/" + revisionName + "?force=1&v=1"},
+		"an inspect of the deploy network":  {http.MethodGet, "/networks/" + deployNetwork},
 	} {
 		before := len(e.daemon.Requests())
 		status, out := e.do(t, req.method, deployVersion+req.path, "")

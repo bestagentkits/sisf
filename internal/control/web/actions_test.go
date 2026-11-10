@@ -153,9 +153,22 @@ func TestAStepUpActionRunsOnlyFromTheDashboardsFormPost(t *testing.T) {
 	if scripted.status != http.StatusForbidden || !strings.Contains(scripted.body, `data-error-code="PERMISSION_DENIED"`) {
 		t.Fatalf("a scripted post to the dashboard = %d: %.300s", scripted.status, scripted.body)
 	}
-	// The confirmation survived both refusals and decides the request once.
-	submitted := b.do(t, http.MethodPost, "/actions/approvals.decide", fetched.Encode(),
-		map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Mode": "navigate"})
+	// A browser that sends no Fetch Metadata, or only part of it, is refused.
+	for _, drop := range []string{"Sec-Fetch-Mode", "Sec-Fetch-Dest", "Sec-Fetch-Site", "Sec-Fetch-User"} {
+		h := navigatedForm()
+		delete(h, drop)
+		if r := b.do(t, http.MethodPost, "/actions/approvals.decide", fetched.Encode(), h); r.status != http.StatusForbidden ||
+			!strings.Contains(r.body, `data-error-code="PERMISSION_DENIED"`) {
+			t.Fatalf("a post without %s = %d: %.300s", drop, r.status, r.body)
+		}
+	}
+	bare := b.do(t, http.MethodPost, "/actions/approvals.decide", fetched.Encode(),
+		map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+	if bare.status != http.StatusForbidden {
+		t.Fatalf("a post without any Fetch Metadata = %d: %.300s", bare.status, bare.body)
+	}
+	// The confirmation survived every refusal and decides the request once.
+	submitted := b.do(t, http.MethodPost, "/actions/approvals.decide", fetched.Encode(), navigatedForm())
 	if submitted.status != http.StatusOK {
 		t.Fatalf("the person's own form post = %d: %.300s", submitted.status, submitted.body)
 	}

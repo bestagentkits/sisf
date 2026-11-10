@@ -235,6 +235,7 @@ func (resolver) LookupNetIP(_ context.Context, _, host string) ([]netip.Addr, er
 func (c *containment) startDocker(t *testing.T, f *harness.Factory) {
 	t.Helper()
 	c.daemon = dockerfiltertest.New("runc", "runsc")
+	c.daemon.AddNetwork("sisf_sandbox", true)
 	c.daemon.OnStart(func(ct dockerfiltertest.Container) dockerfiltertest.Outcome {
 		c.mu.Lock()
 		c.seen = slices.Clone(ct.Env)
