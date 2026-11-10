@@ -1,0 +1,14 @@
+{{define "title"}}Approvals{{end}}
+{{define "content"}}
+<h1>Approvals</h1>
+<p class="filters"><a href="/approvals">All</a>{{range .Statuses}} <a href="/approvals?status={{.}}"{{if eq . $.Selected}} aria-current="true"{{end}}>{{.}}</a>{{end}}</p>
+{{if .List.OK}}
+<table class="grid">
+  <thead><tr><th>Risk</th><th>Action</th><th>Issue</th><th>Status</th><th>Expires</th></tr></thead>
+  <tbody>
+  {{range .Rows}}<tr data-approval="{{.ID}}"><td><a href="/approvals/{{.ID}}">{{.Risk}}</a></td><td><code>{{.Action}}</code></td><td>{{.Issue}}</td><td>{{.Status}}</td><td><time datetime="{{iso .Expires}}">{{utc .Expires}}</time></td></tr>
+  {{else}}<tr><td colspan="5" class="empty">No approval requests.</td></tr>{{end}}
+  </tbody>
+</table>
+{{else}}{{template "panelstate" .List}}{{end}}
+{{end}}

@@ -1,0 +1,6 @@
+{{define "title"}}Error{{end}}
+{{define "content"}}
+<h1>Something went wrong</h1>
+<div class="notice failed" role="alert" data-error-code="{{.Code}}"><strong>{{.Code}}</strong> {{.Message}}{{template "nextactions" .Next}}</div>
+<p><a href="/">Back to the overview</a></p>
+{{end}}

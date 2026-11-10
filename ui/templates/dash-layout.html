@@ -1,0 +1,42 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{template "title" .}} - SISF control</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+<script src="/static/webmcp.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <span class="brand">SISF control</span>
+  {{if .LoggedIn}}
+  <nav aria-label="Pages">
+    <a href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}>Overview</a>
+    <a href="/workboard"{{if eq .Nav "workboard"}} aria-current="page"{{end}}>Workboard</a>
+    <a href="/runs"{{if eq .Nav "runs"}} aria-current="page"{{end}}>Run graph</a>
+    <a href="/telemetry"{{if eq .Nav "telemetry"}} aria-current="page"{{end}}>Telemetry</a>
+    <a href="/approvals"{{if eq .Nav "approvals"}} aria-current="page"{{end}}>Approvals</a>
+    <a href="/product"{{if eq .Nav "product"}} aria-current="page"{{end}}>Product</a>
+    <a href="/security"{{if eq .Nav "security"}} aria-current="page"{{end}}>Security &amp; finance</a>
+    <a href="/setup"{{if eq .Nav "setup"}} aria-current="page"{{end}}>Setup</a>
+  </nav>
+  <span class="who" data-field="who">{{.Who}}</span>
+  <form method="post" action="/logout" class="logout">{{template "csrf" .}}<button type="submit">Log out</button></form>
+  {{end}}
+</header>
+<main>
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.CSRF}}">{{end}}
+
+{{define "nextactions"}}{{if .}}<ul class="next-actions">{{range .}}<li data-next-action="{{.Action}}">{{if .Link}}<a href="{{.Link}}"><code>{{.Action}}</code></a>{{else}}<code>{{.Action}}</code>{{end}} {{.Description}}{{if .Params}} <span class="params">({{.Params}})</span>{{end}}</li>{{end}}</ul>{{end}}{{end}}
+
+{{define "panelstate"}}{{if .Unavailable}}<div class="notice unavailable" data-state="unavailable"><strong>Not available yet.</strong> {{.Message}}{{template "nextactions" .Next}}</div>{{else}}<div class="notice failed" data-state="error" data-error-code="{{.Code}}"><strong>{{.Code}}</strong> {{.Message}}{{template "nextactions" .Next}}</div>{{end}}{{end}}
+
+{{define "table"}}{{if .Rows}}<div class="scroll"><table class="grid"><thead><tr>{{range .Cols}}<th>{{.}}</th>{{end}}</tr></thead><tbody>{{range .Rows}}<tr>{{range .}}<td>{{.}}</td>{{end}}</tr>{{end}}</tbody></table></div>{{else}}<p class="empty">Nothing to show.</p>{{end}}{{end}}

@@ -14,6 +14,16 @@
     });
   }
 
+  // Ask before a form that carries a data-confirm message is sent. The
+  // server still decides what the request may do; this only prevents a slip.
+  document.querySelectorAll('form[data-confirm]').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      if (!window.confirm(form.getAttribute('data-confirm'))) {
+        event.preventDefault();
+      }
+    });
+  });
+
   // Reload the page on a timer while the box is ticked.
   var auto = document.getElementById('auto-refresh');
   if (auto) {

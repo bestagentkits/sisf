@@ -19,3 +19,32 @@ main { max-width: 70rem; margin: 0 auto; padding: 1rem 1.2rem 3rem; }
 .comment .body, .title { white-space: pre-wrap; overflow-wrap: anywhere; }
 .error { color: #cf222e; }
 .login { display: grid; gap: .5rem; max-width: 22rem; }
+.who { color: #8a8a8a; }
+.bar nav { flex-wrap: wrap; }
+.scroll { overflow-x: auto; }
+.notice { border: 1px solid #8886; border-left-width: 4px; border-radius: .3rem; padding: .5rem .8rem; margin: .8rem 0; }
+.notice.unavailable { border-left-color: #9a6700; }
+.notice.failed { border-left-color: #cf222e; }
+.notice.warn { border-left-color: #9a6700; }
+.notice.ok { border-left-color: #1a7f37; }
+.cards { display: flex; gap: 1rem; list-style: none; padding: 0; }
+.cards li { border: 1px solid #8886; border-radius: .3rem; padding: .5rem 1rem; }
+.cards .n { font-size: 1.6rem; font-weight: 700; }
+.controls { display: flex; gap: 2rem; flex-wrap: wrap; }
+.controls section, .decide, .inline { display: grid; gap: .5rem; }
+.inline { grid-auto-flow: column; justify-content: start; align-items: end; margin-bottom: 1rem; }
+.decide { max-width: 40rem; }
+button, .button { font: inherit; padding: .3rem .8rem; cursor: pointer; }
+button.danger { color: #cf222e; font-weight: 600; }
+pre.diff, pre.output { overflow-x: auto; border: 1px solid #8884; padding: .6rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.graph { display: flex; flex-wrap: wrap; gap: .4rem; list-style: none; padding: 0; }
+.graph li { border: 1px solid #8886; border-radius: 1rem; padding: 0 .7rem; }
+.graph li.current { background: #0969da; color: #fff; font-weight: 700; }
+.steps li { margin-bottom: 1rem; }
+.badge { font-size: .8rem; border: 1px solid #8886; border-radius: 1rem; padding: 0 .5rem; }
+.status-pass { color: #1a7f37; font-weight: 600; }
+.status-fail { color: #cf222e; font-weight: 600; }
+.status-unavailable { color: #9a6700; font-weight: 600; }
+.empty { color: #8a8a8a; }
+.next-actions { margin: .3rem 0 0; }
+.risk { font-size: 1.1rem; }

@@ -1,0 +1,44 @@
+{{define "title"}}Run graph{{end}}
+{{define "content"}}
+<h1>Run graph</h1>
+<form method="get" action="/runs" class="inline">
+  <label>Issue <input type="text" name="issue" value="{{.Issue}}" placeholder="owner/repo#123"></label>
+  <button type="submit">Show</button>
+</form>
+{{if not .Issue}}
+<h2>Recent issues</h2>
+{{if .List.OK}}<ul>{{range .Recent}}<li><a href="/runs?issue={{.}}">{{.}}</a></li>{{else}}<li class="empty">No issues yet.</li>{{end}}</ul>{{else}}{{template "panelstate" .List}}{{end}}
+{{else}}
+{{if .Inspect.OK}}
+<h2>State graph</h2>
+<ol class="graph" aria-label="Lifecycle states">{{range .Graph}}<li data-state="{{.Name}}"{{if .Current}} aria-current="step" class="current"{{end}}>{{.Name}}</li>{{end}}</ol>
+<dl class="fields">
+  <dt>State</dt><dd data-field="state">{{.Record.State}}</dd>
+  <dt>Version</dt><dd>{{.Record.Version}}</dd>
+  <dt>Attempt</dt><dd>{{.Record.Attempt}}</dd>
+  <dt>Run</dt><dd><code>{{.Record.RunID}}</code></dd>
+  <dt>Candidate</dt><dd><code>{{.Record.CandidateDigest}}</code></dd>
+  <dt>Release</dt><dd><code>{{.Record.ReleaseDigest}}</code></dd>
+  <dt>Updated</dt><dd><time datetime="{{iso .Record.UpdatedAt}}">{{utc .Record.UpdatedAt}}</time></dd>
+</dl>
+{{with .Run}}
+<h2>Run</h2>
+<dl class="fields">
+  <dt>Status</dt><dd>{{.Status}}</dd><dt>Attempt</dt><dd>{{.Attempt}}</dd>
+  <dt>Claimed</dt><dd><time datetime="{{iso .ClaimedAt}}">{{utc .ClaimedAt}}</time></dd>
+  <dt>Last update</dt><dd><time datetime="{{iso .UpdatedAt}}">{{utc .UpdatedAt}}</time></dd>
+  {{if .Agent}}<dt>Agent</dt><dd>{{.Agent}}</dd>{{end}}
+</dl>
+{{if .Failures}}<h3>Failed attempts</h3><table class="grid"><thead><tr><th>Attempt</th><th>Code</th><th>Detail</th><th>At</th></tr></thead><tbody>{{range .Failures}}<tr><td>{{.Attempt}}</td><td>{{.Code}}</td><td>{{.Detail}}</td><td>{{utc .At}}</td></tr>{{end}}</tbody></table>{{end}}
+{{if .Artifacts}}<h3>Artifacts</h3><table class="grid"><thead><tr><th>Name</th><th>Kind</th><th>Digest</th></tr></thead><tbody>{{range .Artifacts}}<tr><td>{{.Name}}</td><td>{{.Kind}}</td><td><code>{{.Digest}}</code></td></tr>{{end}}</tbody></table>{{end}}
+{{if .PullRequests}}<h3>Pull requests</h3><ul>{{range .PullRequests}}<li>{{.}}</li>{{end}}</ul>{{end}}
+{{else}}<p class="empty">No dispatcher run is recorded for this issue.</p>{{end}}
+{{else}}{{template "panelstate" .Inspect}}{{end}}
+<h2>Evidence</h2>
+{{if .Explain.OK}}
+<p data-field="cause">{{.Explanation.Reason}}</p>
+{{template "table" .Evidence}}
+<p><a href="/blocked?issue={{.Issue}}">Open the explanation page</a></p>
+{{else}}{{template "panelstate" .Explain}}{{end}}
+{{end}}
+{{end}}

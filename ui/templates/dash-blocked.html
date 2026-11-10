@@ -1,0 +1,21 @@
+{{define "title"}}Why is this stopped?{{end}}
+{{define "content"}}
+<h1>Why is this stopped?</h1>
+<form method="get" action="/blocked" class="inline">
+  <label>Issue <input type="text" name="issue" value="{{.Issue}}" placeholder="owner/repo#123" required></label>
+  <button type="submit">Explain</button>
+</form>
+{{if .Issue}}
+{{if .Explain.OK}}{{with .Explanation}}
+<div class="notice {{if .Stopped}}warn{{else}}ok{{end}}" data-cause="{{.Cause}}">
+  <p><strong>{{.Issue}}</strong> is in state <strong>{{.State}}</strong>{{if .Stopped}} and is stopped{{end}}.</p>
+  <p class="reason" data-field="reason">{{.Reason}}</p>
+</div>
+<h2>Evidence</h2>
+{{template "table" $.Evidence}}
+<h2>What you can do next</h2>
+{{template "nextactions" $.Next}}
+{{if not $.Next}}<p class="empty">No next step is suggested.</p>{{end}}
+{{end}}{{else}}{{template "panelstate" .Explain}}{{end}}
+{{end}}
+{{end}}
