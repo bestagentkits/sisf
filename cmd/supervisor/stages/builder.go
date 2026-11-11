@@ -142,8 +142,7 @@ func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, 
 		Message: fmt.Sprintf("Candidate of %s for %s, attempt %d", req.RunID, req.Issue, req.Attempt), Files: files,
 	})
 	if err != nil {
-		_, classified := classifyRepositoryError(err, "")
-		return Built{}, classified
+		return Built{}, b.commitFault(ctx, req.Base, err)
 	}
 	image, err := b.Images.BuildImage(ctx, ImageRequest{
 		FactoryID: b.FactoryID, RunID: req.RunID, Unit: unit, Commit: commit, Branch: branch, Untrusted: true,
@@ -184,6 +183,21 @@ func (b *CandidateBuilder) readFault(ctx context.Context, base core.CommitSHA, p
 		return classified
 	}
 	return refuse(core.CodeConflict, RefusalDoesNotApply, path, "the run's patch changes "+path+", which the base does not have")
+}
+
+// commitFault decides an error committing the patch's files. GitHub
+// answers 422 on the tree both for paths it will not hold and for a base
+// tree that is no longer there, so, as for a base file, the refusal is
+// charged to the patch only once the base commit itself has been read.
+func (b *CandidateBuilder) commitFault(ctx context.Context, base core.CommitSHA, err error) error {
+	reason, classified := classifyRepositoryError(err, "")
+	if reason != RefusalPathRejected || github.ErrorStep(err) != github.StepTree || github.ErrorStatus(err) == 0 {
+		return classified
+	}
+	if baseErr := b.Git.CommitExists(ctx, b.Repo, base); baseErr != nil {
+		_, classified = classifyRepositoryError(baseErr, "")
+	}
+	return classified
 }
 
 // UnitRouter decides which runtime unit a change is a build of, by the
