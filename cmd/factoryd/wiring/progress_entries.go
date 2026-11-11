@@ -19,10 +19,17 @@ const progressNamespace = "progress"
 
 // progressEntry is what the control zone keeps of one issue's progress.
 type progressEntry struct {
-	Issue    core.IssueRef `json:"issue"`
-	Digest   string        `json:"digest,omitempty"`
-	Failures int           `json:"failures,omitempty"`
-	RetryAt  time.Time     `json:"retry_at,omitzero"`
+	Issue  core.IssueRef `json:"issue"`
+	Digest string        `json:"digest,omitempty"`
+	// Failures counts the failed writes in a row, whatever their cause;
+	// the pause before the next try grows with it.
+	Failures int       `json:"failures,omitempty"`
+	RetryAt  time.Time `json:"retry_at,omitzero"`
+	// AtEnd: the counts are those of writing the run's end, which starts
+	// them afresh. Refusals counts the writes GitHub refused for good
+	// there; only they give the end up.
+	AtEnd    bool `json:"at_end,omitempty"`
+	Refusals int  `json:"refusals,omitempty"`
 }
 
 func decodeProgress(e state.KVEntry) (progressEntry, bool) {

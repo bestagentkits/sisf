@@ -79,9 +79,11 @@ func (c *Control) projectProgress(ctx context.Context) error {
 }
 
 // showProgress writes the progress of one issue when it changed. An issue
-// whose comment cannot be written, a locked one say, is tried again only
-// after a pause that doubles each time; an ended issue is given up after
-// maxProgressFailures, so its close is not held back by it.
+// whose comment cannot be written is tried again only after a pause that
+// doubles each time. An ended issue's last progress is given up only after
+// GitHub refused it for good maxProgressFailures times since the run
+// ended, a locked issue say, so its close is not held back by it; an
+// outage, a rate limit or an error from before the end never gives it up.
 func (c *Control) showProgress(ctx context.Context, r core.StateRecord) error {
 	if r.RunID == "" {
 		return nil
@@ -92,6 +94,11 @@ func (c *Control) showProgress(ctx context.Context, r core.StateRecord) error {
 	}
 	if !found && endState(r.State) {
 		return nil // ended before it had a progress comment, or already shown at its end
+	}
+	ended := endState(r.State)
+	if found && ended && !entry.AtEnd {
+		// The end is written at once, with tries of its own.
+		entry = progressEntry{Issue: entry.Issue, Digest: entry.Digest, AtEnd: true}
 	}
 	now := c.cfg.Clock.Now().UTC()
 	if found && now.Before(entry.RetryAt) {
@@ -111,9 +118,14 @@ func (c *Control) showProgress(ctx context.Context, r core.StateRecord) error {
 	stored := found && entry.Digest == progressDigest(body)
 	if !shown && !stored {
 		if err := c.writeProgress(ctx, r.IssueID, body); err != nil {
-			entry.Issue, entry.Failures = r.IssueID, entry.Failures+1
+			entry.Issue, entry.AtEnd, entry.Failures = r.IssueID, ended, entry.Failures+1
+			if !ended {
+				entry.Refusals = 0
+			} else if refusedForGood(err) {
+				entry.Refusals++
+			}
 			entry.RetryAt = now.Add(progressPause(entry.Failures))
-			if endState(r.State) && entry.Failures >= maxProgressFailures {
+			if ended && entry.Refusals >= maxProgressFailures {
 				return errors.Join(err, c.dropProgress(ctx, r.IssueID))
 			}
 			return errors.Join(err, c.storeProgress(ctx, entry))
@@ -122,15 +134,29 @@ func (c *Control) showProgress(ctx context.Context, r core.StateRecord) error {
 	c.mu.Lock()
 	c.progressShown[r.IssueID] = body
 	c.mu.Unlock()
-	if endState(r.State) {
+	if ended {
 		return c.dropProgress(ctx, r.IssueID)
 	}
 	return c.storeProgress(ctx, progressEntry{Issue: r.IssueID, Digest: progressDigest(body)})
 }
 
+// refusedForGood reports whether GitHub, or the comment writer before it,
+// refused a progress write in a way trying again does not change: the
+// issue is locked or the token may not comment (403), the issue is gone
+// (404, 410), or the comment is refused (422). An outage, a 5xx, a rate
+// limit, a refused token or any error of unknown cause is not.
+func refusedForGood(err error) bool {
+	for _, code := range []core.ErrorCode{core.CodePermissionDenied, core.CodeNotFound, core.CodeInvalidArgument, core.CodeAlreadyExists, core.CodeNotSupported} {
+		if core.HasCode(err, code) {
+			return true
+		}
+	}
+	return false
+}
+
 // progressGivenUp reports whether the issue's progress is no longer
-// written: it ended and its comment could not be written in
-// maxProgressFailures tries, or it never had one.
+// written: it ended and GitHub refused its comment for good
+// maxProgressFailures times, or it never had one.
 func (c *Control) progressGivenUp(ctx context.Context, issue core.IssueRef) bool {
 	_, found, err := c.progressEntry(ctx, issue)
 	return err == nil && !found
@@ -147,8 +173,8 @@ func (c *Control) writeProgress(ctx context.Context, issue core.IssueRef, body s
 	})
 }
 
-// maxProgressFailures is how often an ended issue's last progress is tried
-// before it is given up.
+// maxProgressFailures is how often GitHub may refuse an ended issue's last
+// progress for good before it is given up.
 const maxProgressFailures = 3
 
 // progressPause is the pause after the n-th failure in a row to write an
