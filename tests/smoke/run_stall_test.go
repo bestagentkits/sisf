@@ -15,11 +15,12 @@ import (
 // deadline and the spend:
 //   - QA held a candidate: a held verdict is final for the run, the issue
 //     waits in QAEvaluation for a person and the lifecycle has no step out;
-//   - the journal has not moved for longer than the state can take: a
-//     coding attempt is bounded by the manifest's run_timeout, an
-//     evaluation by the candidate build and the judgment. The release
-//     states wait out observation windows and holds by design and are
-//     bounded by the run's deadline only.
+//   - the journal has not moved for longer than the state can take: the
+//     coding attempts of one Developing visit by the manifest's
+//     run_timeout each (an attempt that fails before QA starts the next in
+//     place, with no journal row), an evaluation by one candidate build and
+//     the judgment. The release states wait out observation windows and
+//     holds by design and are bounded by the run's deadline only.
 
 const (
 	// candidateBuildTimeout is the supervisor's default limit of one
@@ -31,9 +32,9 @@ const (
 
 // stallBounds says how long the run may stay in a state with no journal
 // movement before it counts as stalled. States not named are not bounded.
-func stallBounds(runTimeout time.Duration) map[string]time.Duration {
+func stallBounds(maxAttempts int, runTimeout time.Duration) map[string]time.Duration {
 	return map[string]time.Duration{
-		"Developing":   runTimeout + stallSlack,
+		"Developing":   time.Duration(max(maxAttempts, 1))*runTimeout + stallSlack,
 		"QAEvaluation": candidateBuildTimeout + agentjudge.DefaultTimeout + stallSlack,
 	}
 }
@@ -82,5 +83,5 @@ func qaStopped(ctx context.Context, o *factoryObserver, issue, runID string, now
 	if err != nil {
 		return ""
 	}
-	return stalled(journal, now, stallBounds(o.runTimeout))
+	return stalled(journal, now, stallBounds(o.maxAttempts, o.runTimeout))
 }

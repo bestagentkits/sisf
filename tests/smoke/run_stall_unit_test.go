@@ -59,7 +59,7 @@ func TestTheRunStopsWaitingWhenTheJournalStalls(t *testing.T) {
 		{State: "Developing", At: at("12:20:22")},
 		{State: "QAEvaluation", At: at("12:31:45")},
 	}
-	bounds := stallBounds(30 * time.Minute)
+	bounds := stallBounds(3, 30*time.Minute)
 	for i := 1; i < len(journal); i++ {
 		if why := stalled(journal[:i], journal[i].At, bounds); why != "" {
 			t.Errorf("visit %d of %s counted as stalled before it moved on: %s", i, journal[i-1].State, why)
@@ -75,7 +75,13 @@ func TestTheRunStopsWaitingWhenTheJournalStalls(t *testing.T) {
 	if why := stalled(append(journal, stateVisit{State: "Monitoring", At: at("13:00:00")}), at("13:45:00"), bounds); why != "" {
 		t.Errorf("a 45-minute Monitoring hold counted as stalled: %s", why)
 	}
-	if why := stalled([]stateVisit{{State: "Developing", At: at("12:00:00")}}, at("12:41:00"), bounds); !strings.Contains(why, "Developing") {
-		t.Errorf("a coding attempt past run_timeout reads %q", why)
+	// Attempts that fail before QA retry in place: two timed-out attempts
+	// and a third still within its limit are a run at work.
+	developing := []stateVisit{{State: "Developing", At: at("12:00:00")}}
+	if why := stalled(developing, at("13:25:00"), bounds); why != "" {
+		t.Errorf("a third coding attempt within its limit counted as stalled: %s", why)
+	}
+	if why := stalled(developing, at("13:41:00"), bounds); !strings.Contains(why, "Developing") {
+		t.Errorf("coding past every attempt's run_timeout reads %q", why)
 	}
 }
