@@ -50,12 +50,57 @@ func writeManifest(path string, m *manifest.Manifest) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return unavailablef(err, "cannot create the install directory")
 	}
-	// The manifest holds no secret, so it is readable by the containers that
-	// mount it, which run as another user.
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	// The manifest holds no secret, so a new one is readable by the
+	// containers that mount it, which run as another user; one the Owner
+	// restricted keeps its mode.
+	mode := fs.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return unavailablef(err, "cannot read %s", path)
+	}
+	return replaceFile(path, buf.Bytes(), mode)
+}
+
+// replaceFile writes data to path with mode as a whole: to a new file
+// beside it, synced to disk, renamed over path, and the directory synced,
+// so a crash or a full disk leaves the old file or the new one, never a
+// cut one.
+func replaceFile(path string, data []byte, mode fs.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return unavailablef(err, "cannot create a file in %s", dir)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }() // gone after a successful rename; cleanup after a failure
+	if err := writeSynced(tmp, data, mode); err != nil {
 		return unavailablef(err, "cannot write %s", path)
 	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return unavailablef(err, "cannot place %s", path)
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return unavailablef(err, "cannot sync %s", dir)
+	}
+	defer func() { _ = d.Close() }()
+	if err := d.Sync(); err != nil {
+		return unavailablef(err, "cannot sync %s", dir)
+	}
 	return nil
+}
+
+// writeSynced sets f's mode, writes data to it, syncs it to disk and
+// closes it.
+func writeSynced(f *os.File, data []byte, mode fs.FileMode) error {
+	err := f.Chmod(mode)
+	if err == nil {
+		_, err = f.Write(data)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	return errors.Join(err, f.Close())
 }
 
 // installed reports whether a manifest exists in the install directory.
