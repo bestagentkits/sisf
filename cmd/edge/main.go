@@ -64,6 +64,10 @@ const (
 )
 
 func main() {
+	// A Standalone install hands each unit its run lock on descriptor 3 so the
+	// install counts as running while the unit lives. Nothing this unit starts
+	// (an agent, a build, the application) may hold that lock after it.
+	syscall.CloseOnExec(3)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	status := run(ctx, os.Args[1:], os.Stderr)
 	stop()
