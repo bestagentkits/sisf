@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
@@ -36,6 +37,9 @@ type CandidatePRs struct {
 	// is the one the run was pinned to.
 	Policy PolicyRefs
 	Clock  core.Clock
+
+	selfMu sync.Mutex
+	self   github.User // the factory's own account, learned once
 }
 
 // CandidatePRPassResult is what one pass did.
@@ -94,68 +98,6 @@ func (c *CandidatePRs) Pass(ctx context.Context) CandidatePRPassResult {
 	return res
 }
 
-// ensure returns the run's candidate pull request, opening it the first
-// time. One already on GitHub for the branch, open or closed, is taken
-// over rather than opened again, so a restart never opens a second.
-func (c *CandidatePRs) ensure(ctx context.Context, issue core.IssueRef, run core.RunID, attempt int) (handoff.CandidatePR, error) {
-	var doc handoff.CandidateDoc
-	var qa QAResult
-	var scope core.Digest
-	var stored *handoff.CandidatePR
-	err := c.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
-		pr, err := handoff.ReadCandidatePR(ctx, tx, run)
-		if err == nil {
-			stored = &pr
-			return nil
-		}
-		if !core.HasCode(err, core.CodeNotFound) {
-			return err
-		}
-		if qa, err = ReadQAResult(ctx, tx, run, attempt); err != nil {
-			return err
-		}
-		if doc, err = handoff.ReadCandidate(ctx, tx, run, attempt); err != nil {
-			return err
-		}
-		scope = scopeOf(ctx, tx, run)
-		return nil
-	})
-	if err != nil || stored != nil {
-		if stored != nil {
-			return *stored, nil
-		}
-		return handoff.CandidatePR{}, err
-	}
-	if qa.Verdict != VerdictPassed || doc.Branch == "" || qa.Candidate.CommitSHA.Validate() != nil {
-		return handoff.CandidatePR{}, core.NewError(core.CodeGuardFailed, "only a candidate QA passed has a pull request")
-	}
-	existing, err := c.GitHub.FindPullRequests(ctx, c.Repo, doc.Branch)
-	if err != nil {
-		return handoff.CandidatePR{}, err
-	}
-	var pr github.PullRequest
-	if len(existing) > 0 {
-		pr = existing[0]
-	} else {
-		title, err := c.title(ctx, issue)
-		if err != nil {
-			return handoff.CandidatePR{}, err
-		}
-		if pr, err = c.GitHub.CreatePullRequest(ctx, c.Repo, github.NewPullRequest{
-			Title: title, Body: prBody(issue, run, attempt, scope, qa), HeadRef: doc.Branch, BaseRef: c.Base,
-		}); err != nil {
-			return handoff.CandidatePR{}, err
-		}
-	}
-	record := handoff.CandidatePR{
-		IssueID: issue, RunID: run, Attempt: attempt, Branch: doc.Branch, Base: c.Base, Number: pr.Number, URL: pr.URL,
-		Commit: qa.Candidate.CommitSHA, State: handoff.LandingOpen, OpenedAt: c.Clock.Now().UTC(),
-	}
-	return record, c.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-		return handoff.PutCandidatePR(ctx, tx, record)
-	})
-}
-
 // scopeOf is the Scope of Work digest the run was briefed from, "" when the
 // dispatcher's record of the run cannot say.
 func scopeOf(ctx context.Context, kv state.KV, run core.RunID) core.Digest {
@@ -199,6 +141,7 @@ func prBody(issue core.IssueRef, run core.RunID, attempt int, scope core.Digest,
 	fmt.Fprintf(&b, "- QA receipt: `%s:%s`, signed by `%s`, score %d\n", Namespace, QAResultKey(run, attempt), qa.Receipt.Signature.KeyID, qa.Receipt.Score)
 	fmt.Fprintf(&b, "- Candidate: commit `%s`, build `%s`\n\n", qa.Candidate.CommitSHA, qa.Candidate.Digest)
 	b.WriteString("The factory merges this pull request itself, at exactly this commit, once the release built from it is verified in production. " +
-		"It never merges a candidate whose release was rolled back, or one that changes foundation or policy files.\n")
+		"It never merges a candidate whose release was rolled back, or one that changes foundation or policy files.\n\n")
+	b.WriteString(candidateMarker(run))
 	return b.String()
 }

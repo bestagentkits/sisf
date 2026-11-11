@@ -3,6 +3,7 @@ package stages
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
@@ -44,6 +45,15 @@ func (c *CandidatePRs) Land(ctx context.Context, req release.LandRequest) (relea
 			return release.Landing{}, err
 		}
 	}
+	live, ok, err := c.live(ctx, pr)
+	if err != nil {
+		return release.Landing{}, err
+	}
+	// A merge already made at the candidate commit, as after a restart in
+	// the middle of one, stands whatever changed since.
+	if ok && live.Merged && live.HeadSHA == pr.Commit {
+		return c.decide(ctx, pr, handoff.LandingMerged, "", "")
+	}
 	reason, err := c.mayNotMerge(ctx, req, pr)
 	if err != nil {
 		return release.Landing{}, err
@@ -51,22 +61,19 @@ func (c *CandidatePRs) Land(ctx context.Context, req release.LandRequest) (relea
 	if reason != "" {
 		return c.leave(ctx, pr, reason)
 	}
-	found, err := c.GitHub.FindPullRequests(ctx, c.Repo, pr.Branch)
+	self, err := c.factoryAccount(ctx)
 	if err != nil {
 		return release.Landing{}, err
 	}
-	live, ok := pullNumbered(found, pr.Number)
 	switch {
 	case !ok:
 		return c.leave(ctx, pr, "the pull request is no longer on GitHub")
-	case live.Merged && live.HeadSHA == pr.Commit:
-		return c.decide(ctx, pr, handoff.LandingMerged, "", "")
+	case !c.opened(self, req.RunID, live):
+		return c.leave(ctx, pr, "the pull request is no longer the one the factory opened for this run")
 	case live.Merged:
 		return c.leave(ctx, pr, "the pull request was merged at another commit than the candidate")
 	case live.State != github.IssueOpen:
 		return c.leave(ctx, pr, "the pull request was closed")
-	case live.BaseRef != c.Base:
-		return c.leave(ctx, pr, "the pull request does not target "+c.Base)
 	case live.HeadSHA != pr.Commit:
 		return c.leave(ctx, pr, "the branch moved after QA judged the candidate")
 	}
@@ -83,15 +90,48 @@ func (c *CandidatePRs) Land(ctx context.Context, req release.LandRequest) (relea
 	}
 	// A refusal may answer a retry of a merge GitHub had already made, its
 	// first answer lost: the pull request tells.
-	if again, findErr := c.GitHub.FindPullRequests(ctx, c.Repo, pr.Branch); findErr != nil {
+	if again, ok, findErr := c.live(ctx, pr); findErr != nil {
 		return release.Landing{}, findErr
-	} else if live, ok := pullNumbered(again, pr.Number); ok && live.Merged && live.HeadSHA == pr.Commit {
+	} else if ok && again.Merged && again.HeadSHA == pr.Commit {
 		return c.decide(ctx, pr, handoff.LandingMerged, "", "")
 	}
-	if core.HasCode(err, core.CodeConflict) {
+	switch {
+	case core.HasCode(err, core.CodeConflict):
 		return c.leave(ctx, pr, "the branch moved after QA judged the candidate")
+	case tryAgain(err) && pr.Retries < maxMergeRetries:
+		pr.Retries++
+		if putErr := c.put(ctx, pr); putErr != nil {
+			return release.Landing{}, putErr
+		}
+		return release.Landing{}, core.NewError(core.CodeUnavailable, "GitHub asked to try the merge again").WithCause(err)
 	}
 	return c.leave(ctx, pr, fmt.Sprintf("GitHub refused the merge (status %d)", github.ErrorStatus(err)))
+}
+
+// maxMergeRetries bounds the merges tried again because GitHub asked to,
+// one per round; then the refusal is final.
+const maxMergeRetries = 5
+
+// tryAgain reports whether GitHub refused the merge for now only: the
+// base branch was modified just before, or GitHub has not yet worked out
+// whether the pull request can be merged.
+func tryAgain(err error) bool {
+	if github.ErrorStatus(err) != http.StatusMethodNotAllowed {
+		return false
+	}
+	msg := strings.ToLower(github.ErrorMessage(err))
+	return strings.Contains(msg, "base branch was modified") || strings.Contains(msg, "try the merge again") ||
+		strings.Contains(msg, "not mergeable")
+}
+
+// live reads the pull request as GitHub shows it now.
+func (c *CandidatePRs) live(ctx context.Context, pr handoff.CandidatePR) (github.PullRequest, bool, error) {
+	found, err := c.GitHub.FindPullRequests(ctx, c.Repo, pr.Branch)
+	if err != nil {
+		return github.PullRequest{}, false, err
+	}
+	live, ok := pullNumbered(found, pr.Number)
+	return live, ok, nil
 }
 
 // mayNotMerge says why the factory may not merge this candidate, "" when
@@ -167,6 +207,9 @@ func landingOf(pr handoff.CandidatePR) release.Landing {
 	ref := handoff.BuildNamespace + ":" + handoff.CandidatePRKey(pr.RunID)
 	if pr.State == handoff.LandingMerged {
 		return release.Landing{Merged: true, Ref: ref, Summary: fmt.Sprintf("the change is merged on %s by pull request #%d", pr.Base, pr.Number)}
+	}
+	if pr.Number == 0 {
+		return release.Landing{Ref: ref, Summary: fmt.Sprintf("the change is NOT merged: the factory opened no pull request for it, left for the Owner (%s)", pr.Reason)}
 	}
 	return release.Landing{Ref: ref, Summary: fmt.Sprintf("the change is NOT merged: pull request #%d is left for the Owner (%s)", pr.Number, pr.Reason)}
 }

@@ -28,16 +28,21 @@ func (c *CandidatePRs) leaveRolledBack(ctx context.Context, run core.RunID) erro
 	return c.State.Update(ctx, func(ctx context.Context, tx state.Tx) error { return handoff.PutCandidatePR(ctx, tx, pr) })
 }
 
-// note comments on the pull request once per run.
+// note comments on the pull request once per run. Only the factory's own
+// comment counts as the note already made: anyone can copy its marker.
 func (c *CandidatePRs) note(ctx context.Context, pr handoff.CandidatePR, text string) error {
 	ref := core.IssueRef{Owner: c.Repo.Owner, Repo: c.Repo.Name, Number: pr.Number}
 	marker := "<!-- sisf:landing " + string(pr.RunID) + " -->"
+	self, err := c.factoryAccount(ctx)
+	if err != nil {
+		return err
+	}
 	comments, err := c.GitHub.ListComments(ctx, ref, time.Time{})
 	if err != nil {
 		return err
 	}
 	for _, cm := range comments {
-		if strings.Contains(cm.Body, marker) {
+		if sameAccount(self, cm.Author) && strings.Contains(cm.Body, marker) {
 			return nil
 		}
 	}

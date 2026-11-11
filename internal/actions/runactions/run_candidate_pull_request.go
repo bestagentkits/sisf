@@ -51,7 +51,7 @@ func (pr CandidatePR) summary() string {
 	case "merged":
 		return fmt.Sprintf("pull request #%d is merged", pr.Number)
 	case "left_for_owner":
-		return fmt.Sprintf("pull request #%d is not merged and left for the Owner: %s", pr.Number, pr.Reason)
+		return fmt.Sprintf("%s is not merged and left for the Owner: %s", pr.name(), pr.Reason)
 	case "rolled_back":
 		return fmt.Sprintf("pull request #%d is not merged: its release was rolled back", pr.Number)
 	case "pending":
@@ -75,6 +75,15 @@ func explainPullRequest(out *Explanation, pr *CandidatePR) {
 	case "merged":
 		out.Reason += fmt.Sprintf(" The change is merged by pull request #%d.", pr.Number)
 	case "left_for_owner":
-		out.Reason += fmt.Sprintf(" The change is not merged: pull request #%d is left for the Owner (%s).", pr.Number, pr.Reason)
+		out.Reason += fmt.Sprintf(" The change is not merged: %s is left for the Owner (%s).", pr.name(), pr.Reason)
 	}
+}
+
+// name names the pull request; the factory opened none when another was
+// on the candidate's branch or GitHub refused to open it.
+func (pr CandidatePR) name() string {
+	if pr.Number == 0 {
+		return "the candidate"
+	}
+	return fmt.Sprintf("pull request #%d", pr.Number)
 }

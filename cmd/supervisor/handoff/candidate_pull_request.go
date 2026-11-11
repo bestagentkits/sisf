@@ -47,16 +47,21 @@ type CandidatePR struct {
 	Attempt int    `json:"attempt"`
 	Branch  string `json:"branch"`
 	Base    string `json:"base"`
-	Number  int    `json:"number"`
-	URL     string `json:"url"`
+	// Number is 0 when the factory opened no pull request: another was on
+	// the branch, or GitHub refused to open one.
+	Number int    `json:"number"`
+	URL    string `json:"url"`
 	// Commit is the candidate commit QA judged and the release was built
 	// from; the pull request is merged only at exactly this head.
 	Commit      core.CommitSHA `json:"commit"`
 	State       LandingState   `json:"state"`
 	Reason      string         `json:"reason,omitempty"`
 	MergeCommit core.CommitSHA `json:"merge_commit,omitempty"`
-	OpenedAt    time.Time      `json:"opened_at"`
-	DecidedAt   time.Time      `json:"decided_at,omitzero"`
+	// Retries counts the merges GitHub asked to try again, as when the
+	// default branch moved just before; they are bounded.
+	Retries   int       `json:"retries,omitempty"`
+	OpenedAt  time.Time `json:"opened_at"`
+	DecidedAt time.Time `json:"decided_at,omitzero"`
 }
 
 // CandidatePRKey is the key of the pull request of a run's candidate.
@@ -74,7 +79,9 @@ func ReadCandidatePR(ctx context.Context, kv state.KV, run core.RunID) (Candidat
 	if err := readDoc(ctx, kv, BuildNamespace, CandidatePRKey(run), &pr); err != nil {
 		return CandidatePR{}, err
 	}
-	if pr.RunID != run || pr.Number < 1 {
+	// Number is 0 only for a candidate left for the Owner without a pull
+	// request of the factory's.
+	if pr.RunID != run || pr.Number < 0 || pr.Number == 0 && pr.State != LandingLeftOpen {
 		return CandidatePR{}, core.NewError(core.CodeTampered, "the stored pull request of run "+string(run)+" cannot be read")
 	}
 	return pr, nil

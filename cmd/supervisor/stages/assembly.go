@@ -32,6 +32,9 @@ type GitHub interface {
 	GetIssue(ctx context.Context, ref core.IssueRef) (github.Issue, error)
 	ListComments(ctx context.Context, ref core.IssueRef, since time.Time) ([]github.Comment, error)
 	CreateComment(ctx context.Context, ref core.IssueRef, body string) (github.Comment, error)
+	// Viewer names the factory's own account: only a pull request it
+	// opened is the candidate's.
+	Viewer(ctx context.Context) (github.User, error)
 }
 
 // Config wires the supervisor's lifecycle stages. Keys are given only as

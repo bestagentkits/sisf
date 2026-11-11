@@ -50,7 +50,7 @@ func renderProgress(f progressFacts) string {
 	if f.hold != nil {
 		line("**Held:** %s", f.hold.Summary())
 	}
-	if f.pr != nil {
+	if f.pr != nil && f.pr.Number != 0 {
 		line("Candidate pull request: #%d (%s).", f.pr.Number, f.pr.URL)
 	}
 	if reached := reachedRelease(f.record.State); reached != "" {
@@ -119,6 +119,9 @@ func landingText(pr handoff.CandidatePR) string {
 		}
 		return fmt.Sprintf("**Merged** #%d into `%s`.", pr.Number, pr.Base)
 	case handoff.LandingLeftOpen:
+		if pr.Number == 0 {
+			return fmt.Sprintf("**Not merged:** the candidate is left for the Owner: %s.", oneLine(pr.Reason))
+		}
 		return fmt.Sprintf("**Not merged:** #%d is left for the Owner: %s.", pr.Number, oneLine(pr.Reason))
 	}
 	return ""

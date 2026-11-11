@@ -27,6 +27,7 @@ const (
 // it.
 type landingWorld struct {
 	prs     *CandidatePRs
+	fake    *fakegithub.Server
 	data    *fakegithub.GitData
 	client  *github.RESTClient
 	req     release.LandRequest
@@ -89,7 +90,7 @@ func newLandingWorld(t *testing.T, store state.Store, changed ...string) *landin
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := &landingWorld{data: data, client: client, branch: branch, inForce: pinnedPolicy,
+	w := &landingWorld{fake: fake, data: data, client: client, branch: branch, inForce: pinnedPolicy,
 		req: release.LandRequest{IssueID: issue, RunID: run, Release: core.ReleaseDigest(landingDigest), Candidate: candidate, Receipt: receipt}}
 	w.prs = &CandidatePRs{Repo: repo, Base: "main", State: store, GitHub: client, Merger: merger, Clock: core.SystemClock{},
 		Policy: func(context.Context) (core.PolicyRefs, error) { return core.PolicyRefs{PolicySHA: w.inForce}, nil }}
