@@ -64,11 +64,17 @@ func validRedirectURI(raw string) bool {
 
 func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 
-// client returns the registered client with id.
+// client returns the registered client with id. A dynamically registered
+// client that expired is forgotten here.
 func (s *Server) client(id string) (Client, bool) {
+	now := s.cfg.Clock.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.clients[id]
+	if u, dynamic := s.dynamic[id]; ok && dynamic && u.expired(now) && !s.clientsInFlightLocked(now)[id] {
+		s.dropClientLocked(id)
+		return Client{}, false
+	}
 	return c.clone(), ok
 }
 
@@ -119,7 +125,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_redirect_uri", messageOf(err))
 		return
 	}
-	if !s.addDynamicClient(c) {
+	if !s.addDynamicClient(c, s.clientKey(r)) {
 		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "no more clients can be registered")
 		return
 	}
@@ -129,21 +135,4 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		"redirect_uris": c.RedirectURIs, "grant_types": []string{"authorization_code"},
 		"response_types": []string{"code"}, "token_endpoint_auth_method": "none",
 	})
-}
-
-// addDynamicClient stores c unless the dynamic client limit is reached.
-func (s *Server) addDynamicClient(c Client) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n := 0
-	for _, held := range s.clients {
-		if held.Dynamic {
-			n++
-		}
-	}
-	if n >= s.cfg.MaxClients {
-		return false
-	}
-	s.clients[c.ID] = c
-	return true
 }

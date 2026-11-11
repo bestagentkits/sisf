@@ -70,6 +70,10 @@ type Config struct {
 	DynamicRegistration bool
 	// MaxClients bounds dynamically registered clients.
 	MaxClients int
+	// ClientKey names the network source of a registration, which bounds
+	// how many unused clients one source may hold. Nil means the remote IP
+	// address.
+	ClientKey func(*http.Request) string
 	// SigningKey signs access tokens; nil generates one, so a restart voids
 	// every token, which is the safe failure.
 	SigningKey *ecdsa.PrivateKey
@@ -86,9 +90,12 @@ type Server struct {
 
 	mu      sync.Mutex
 	clients map[string]Client
-	pending map[string]*pendingConsent // by digest of the consent ID
-	codes   map[string]*codeGrant      // by digest of the code
-	revoked map[string]time.Time       // token ID -> its expiry
+	// dynamic holds the bookkeeping of the dynamically registered clients.
+	dynamic   map[string]*clientUse
+	clientSeq uint64
+	pending   map[string]*pendingConsent // by digest of the consent ID
+	codes     map[string]*codeGrant      // by digest of the code
+	revoked   map[string]time.Time       // token ID -> its expiry
 }
 
 // New validates cfg and returns a server.
@@ -134,7 +141,7 @@ func New(cfg Config) (*Server, error) {
 	} else if cfg.SigningKey.Curve != elliptic.P256() {
 		return nil, invalidConfig("the signing key must be a P-256 key")
 	}
-	s := &Server{cfg: cfg, clients: map[string]Client{}, pending: map[string]*pendingConsent{},
+	s := &Server{cfg: cfg, clients: map[string]Client{}, dynamic: map[string]*clientUse{}, pending: map[string]*pendingConsent{},
 		codes: map[string]*codeGrant{}, revoked: map[string]time.Time{}}
 	for _, c := range cfg.Clients {
 		if err := c.validate(); err != nil {

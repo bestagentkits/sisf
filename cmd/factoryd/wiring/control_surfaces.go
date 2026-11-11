@@ -92,7 +92,7 @@ func (c *Control) newSurfaces(ctx context.Context, sc SurfaceConfig, repo github
 	oauth, err := oauthas.New(oauthas.Config{Issuer: sc.Identity.ExternalURL, Resource: sc.Identity.ExternalURL + mcp.Path,
 		ResourceName: "SISF factory " + string(cfg.Manifest.FactoryID), LoginPath: web.PathSignIn, Sessions: signIn.service,
 		Scopes: oauthas.RoleScopes{Roles: roles, Specs: svc.Specs}, ScopesSupported: oauthas.ScopesOf(svc.Specs()),
-		DynamicRegistration: true, Clock: cfg.Clock})
+		DynamicRegistration: true, Clock: cfg.Clock, ClientKey: control.ClientAddress(cfg.TrustedProxies)})
 	if err != nil {
 		return control.Surfaces{}, err
 	}

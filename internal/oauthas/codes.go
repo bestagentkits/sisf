@@ -47,6 +47,7 @@ func (s *Server) issueCode(req authRequest, actor core.Actor) (string, error) {
 		return "", core.NewError(core.CodeUnavailable, "too many codes are outstanding; try again later")
 	}
 	s.codes[digest(code)] = g
+	s.markClientUsedLocked(req.client.ID, now)
 	return code, nil
 }
 
