@@ -92,6 +92,11 @@ func (g *reportGitHub) PollIssues(_ context.Context, _ github.RepoRef, opts gith
 			page.Issues = append(page.Issues, issue)
 		}
 	}
+	// GitHub lists 100 issues a page; a listing bounded to fewer pages
+	// than it has is cut there.
+	if opts.MaxPages > 0 && len(page.Issues) > opts.MaxPages*100 {
+		page.Issues, page.More = page.Issues[:opts.MaxPages*100], true
+	}
 	return page, nil
 }
 
@@ -579,6 +584,36 @@ func TestAFailureOfGitHubCountsAgainstNoReport(t *testing.T) {
 		}
 		if countKeys(t, e, "r/") != 2 || countKeys(t, e, "f/") != 0 {
 			t.Fatalf("after failures of GitHub: %d waiting, %d given up", countKeys(t, e, "r/"), countKeys(t, e, "f/"))
+		}
+	})
+}
+
+// In a busy repository more than a page of issues changes between a lost
+// answer and the next try; the lookup pages through them and still finds
+// the unlabelled issue the factory opened, so it is not opened again.
+func TestAnUnlabelledIssueIsFoundBeyondTheFirstPage(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e, gh, p := reportEnv(t, db)
+		sendReportText(t, e, "Login loops", "It keeps asking.", 1)
+		gh.unlabelled, gh.labelRefused, gh.lose = true, true, true
+		if _, err := p.Publish(context.Background()); err == nil {
+			t.Fatal("a lost answer reported no error")
+		}
+		gh.lose = false
+		gh.mu.Lock()
+		busy := make([]github.Issue, 0, 350)
+		for n := range 350 {
+			busy = append(busy, github.Issue{Ref: core.IssueRef{Owner: "acme", Repo: "app", Number: 1000 + n}, Body: "Another issue.",
+				Author: github.User{ID: 99, Login: "someone"}})
+		}
+		gh.issues = append(busy, gh.issues...)
+		gh.mu.Unlock()
+		if res := publish(t, p); res.Published != 1 {
+			t.Fatalf("publish after the lost answer: %+v", res)
+		}
+		if gh.creates != 1 {
+			t.Fatalf("the issue opened before the crash, listed after 350 others, was opened again: %d creates", gh.creates)
 		}
 	})
 }

@@ -30,6 +30,8 @@ const (
 	// reportLookupSlack is how long before an unanswered attempt the
 	// lookup of the issue it may have opened starts, for clock skew.
 	reportLookupSlack = time.Minute
+	// reportLookupPages bounds the pages of 100 issues that lookup reads.
+	reportLookupPages = 10
 )
 
 // reportIDForm is the form the report endpoint gives report IDs.
@@ -88,8 +90,8 @@ type ReportPublishResult struct {
 // last attempt got no answer is first looked for among the issues the
 // factory's account opened since, by the marker its body opens with and
 // with or without the label, so an issue opened just before a crash is
-// recorded instead of opened again; when GitHub lists more than a page of
-// issues changed since, one such report may be published twice. An issue
+// recorded instead of opened again; only when GitHub lists more than 1,000
+// issues changed since may one such report be published twice. An issue
 // GitHub shows without the label is given it; when that fails, the
 // factory's status says the token may not label issues. GitHub refusing the issue of a report, a client error that is not
 // about the token, the repository or the rate limit, is counted against
@@ -287,13 +289,14 @@ func (p ReportPublisher) recordIssue(ctx context.Context, key string, stored sto
 // which may name any ID, cannot pass for it. The report issues changed
 // since the attempt are looked at first; a token that may open issues but
 // not label them opens them without the label, so then every issue
-// changed since is. Each listing reads one page of 100 issues: when more
-// changed since the attempt, the issue may be missed and opened again.
+// changed since is. Each listing reads at most reportLookupPages pages of
+// 100 issues: only when more than 1,000 issues changed since the attempt
+// may the issue be missed and opened again.
 func (p ReportPublisher) findIssue(ctx context.Context, r storedReport) (github.Issue, bool, error) {
 	since := r.Publish.AttemptedAt.Add(-reportLookupSlack)
 	marker := report.IssueMarker(r.ID) + "\n"
 	for _, labels := range [][]string{{report.IssueLabel}, nil} {
-		page, err := p.Issues.PollIssues(ctx, p.Repo, github.ListIssuesOptions{Labels: labels, Since: since, MaxPages: 1}, "")
+		page, err := p.Issues.PollIssues(ctx, p.Repo, github.ListIssuesOptions{Labels: labels, Since: since, MaxPages: reportLookupPages}, "")
 		if err != nil {
 			return github.Issue{}, false, err
 		}
