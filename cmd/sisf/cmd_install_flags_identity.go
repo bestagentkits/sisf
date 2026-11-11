@@ -37,7 +37,7 @@ func (f *identityFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.ghURL, "github-login-url", "", "web origin of GitHub sign-in (default https://github.com)")
 	fs.StringVar(&f.ghAPIURL, "github-login-api-url", "", "REST API GitHub sign-in reads the login from (default https://api.github.com)")
 	fs.BoolVar(&f.dev, "dev", false, "development install: Standalone on loopback only, signing in at the fake identity provider on 127.0.0.1:7468")
-	fs.StringVar(&f.githubCredential, "github-credential", "", "with --dev: \"gh-cli\" takes the GitHub token from `gh auth token` at init and at every start")
+	fs.StringVar(&f.githubCredential, "github-credential", "", "with --dev: the `source` of the GitHub token; \"gh-cli\" reads it with the command gh auth token at init and at every start")
 }
 
 // identity builds the sign-in options, reading each client secret from the
