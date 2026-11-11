@@ -275,19 +275,15 @@ func TestAnOutageLeavesTheReportToALaterCall(t *testing.T) {
 	})
 }
 
-// GitHub refusing the issue as invalid is counted against the report; after
-// a few refusals it is kept apart, marked with the code, and not tried
-// again. Any other client error is not taken for a refusal.
+// GitHub refusing the issue of a report is counted against the report;
+// after a few refusals it is kept apart, marked with the code, and not
+// tried again.
 func TestAReportGitHubRefusesIsGivenUpAfterAFewTries(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		e, gh, p := reportEnv(t, db)
 		sendReportText(t, e, "Odd report", "Something GitHub will not take.", 1)
-		gh.fail = []error{rejected(http.StatusBadRequest)}
-		if _, err := p.Publish(context.Background()); err == nil {
-			t.Fatal("a 400 was taken for a refusal of the report")
-		}
-		gh.fail = []error{rejected(422), rejected(422), rejected(422)}
+		gh.fail = []error{rejected(http.StatusBadRequest), rejected(422), rejected(422)}
 		for range 3 {
 			if res := publish(t, p); res.Rejected != 1 {
 				t.Fatalf("a refusal: %+v", res)
@@ -447,6 +443,54 @@ func TestAFullStoreMakesRoomOnlyFromReportsGivenUp(t *testing.T) {
 		}
 		if code, state := sendReportText(t, e, "Waiting", "Still to publish.", 5); code != http.StatusOK || state != "duplicate" {
 			t.Fatalf("a waiting report after the refusal: %d %s, want it kept", code, state)
+		}
+	})
+}
+
+// A refusal of one report does not hold up the others: the reports after
+// it are published in the same call, and the refused one is given up after
+// a few tries with the code GitHub answered.
+func TestARefusedReportDoesNotHoldUpTheOthers(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e, gh, p := reportEnv(t, db)
+		sendReportText(t, e, "Too large", "GitHub will not take this one.", 1)
+		for n, refusal := range []int{http.StatusRequestEntityTooLarge, http.StatusConflict, http.StatusRequestEntityTooLarge} {
+			sendReportText(t, e, fmt.Sprintf("Fine report %d", n), "Body.", n+2)
+			gh.fail = []error{rejected(refusal)}
+			if res := publish(t, p); res.Rejected != 1 || res.Published != 1 {
+				t.Fatalf("call %d: %+v, want the refused report counted and the next one published", n, res)
+			}
+		}
+		if countKeys(t, e, "r/") != 0 || countKeys(t, e, "f/") != 1 || len(gh.created()) != 3 {
+			t.Fatalf("after three refusals: %d waiting, %d given up, %d issues", countKeys(t, e, "r/"), countKeys(t, e, "f/"), len(gh.created()))
+		}
+	})
+}
+
+// A failure that holds for every report, GitHub being out, the token or
+// its permission refused, the repository gone or the rate limit reached,
+// ends the call and counts against no report.
+func TestAFailureOfGitHubCountsAgainstNoReport(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e, gh, p := reportEnv(t, db)
+		sendReportText(t, e, "Waiting", "Body.", 1)
+		sendReportText(t, e, "Waiting too", "Body.", 2)
+		for _, failure := range []error{
+			core.NewError(core.CodeUnavailable, "GitHub is down"), rejected(http.StatusUnauthorized),
+			rejected(http.StatusForbidden), rejected(http.StatusNotFound), rejected(http.StatusTooManyRequests),
+			rejected(http.StatusBadGateway),
+		} {
+			gh.fail = []error{failure}
+			creates := gh.creates
+			res, err := p.Publish(context.Background())
+			if err == nil || res.Rejected != 0 || gh.creates != creates+1 {
+				t.Fatalf("%v: %+v, %v, %d tries; want the call ended at the first", failure, res, err, gh.creates-creates)
+			}
+		}
+		if countKeys(t, e, "r/") != 2 || countKeys(t, e, "f/") != 0 {
+			t.Fatalf("after failures of GitHub: %d waiting, %d given up", countKeys(t, e, "r/"), countKeys(t, e, "f/"))
 		}
 	})
 }

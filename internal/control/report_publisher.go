@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,7 +64,7 @@ type ReportPublisher struct {
 // ReportPublishResult is what one Publish did.
 type ReportPublishResult struct {
 	// Published counts the reports now shown as issues, Rejected those
-	// GitHub refused as invalid this time, and Unlabelled the issues opened
+	// whose issue GitHub refused this time, and Unlabelled the issues opened
 	// that GitHub shows without report.IssueLabel, as it does for a token
 	// that may open issues but not label them.
 	Published  int
@@ -75,9 +77,11 @@ type ReportPublishResult struct {
 // report issues the factory opened since, so an issue opened just before a
 // crash is recorded instead of opened again; when GitHub lists more than a
 // page of report issues changed since, one such report may be published
-// twice. GitHub refusing a report as invalid is counted against it, and
-// after maxReportRejections it is kept apart and not tried again. Any other
-// failure, an outage or a refused token, ends the call with that error and
+// twice. GitHub refusing the issue of a report, a client error that is not
+// about the token, the repository or the rate limit, is counted against
+// that report and the next one is tried; after maxReportRejections it is
+// kept apart and not tried again. Any other failure, an outage or a refused
+// token, holds for every report: it ends the call with that error and
 // leaves the report waiting, for the caller to try again after a pause.
 func (p ReportPublisher) Publish(ctx context.Context) (ReportPublishResult, error) {
 	var result ReportPublishResult
@@ -111,16 +115,16 @@ func (p ReportPublisher) Publish(ctx context.Context) (ReportPublishResult, erro
 // stops at the first failure that is not about one report.
 func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEntry, result *ReportPublishResult) error {
 	for _, entry := range waiting {
-		published, labelled, err := p.publishOne(ctx, entry)
+		published, labelled, refused, err := p.publishOne(ctx, entry)
 		switch {
+		case refused != nil:
+			result.Rejected++
+			if err := p.reject(ctx, entry.Key, core.CodeOf(refused)); err != nil && !core.HasCode(err, core.CodeConflict) {
+				return err
+			}
 		case core.HasCode(err, core.CodeConflict):
 			// The report changed meanwhile, a duplicate counted; the next
 			// call reads it again.
-		case isRejection(err):
-			result.Rejected++
-			if err := p.reject(ctx, entry.Key, core.CodeOf(err)); err != nil && !core.HasCode(err, core.CodeConflict) {
-				return err
-			}
 		case err != nil:
 			return err
 		case published:
@@ -196,18 +200,20 @@ func ReadReportPublication(ctx context.Context, store state.Store) (ReportPublic
 
 // publishOne publishes the report stored at entry and reports whether it
 // is now shown as an issue, and whether that issue carries the label.
-func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (published, labelled bool, err error) {
+// GitHub's refusal of the report's issue is returned as refused, apart
+// from the failures that hold for every report.
+func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (published, labelled bool, refused, err error) {
 	var stored storedReport
 	if err := json.Unmarshal(entry.Value, &stored); err != nil || !reportIDForm.MatchString(stored.ID) || stored.Fingerprint == "" {
-		return false, false, p.reject(ctx, entry.Key, core.CodeTampered)
+		return false, false, nil, p.reject(ctx, entry.Key, core.CodeTampered)
 	}
 	if !stored.Publish.AttemptedAt.IsZero() {
 		issue, found, err := p.findIssue(ctx, stored)
 		if err != nil {
-			return false, false, err
+			return false, false, nil, err
 		}
 		if found {
-			return true, issue.HasLabel(report.IssueLabel), p.markPublished(ctx, entry.Key, stored, issue.Ref.Number)
+			return true, issue.HasLabel(report.IssueLabel), nil, p.markPublished(ctx, entry.Key, stored, issue.Ref.Number)
 		}
 	}
 	attempt := stored
@@ -215,16 +221,19 @@ func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (p
 	if err := p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		return putStored(ctx, tx, entry.Key, entry.Version, attempt)
 	}); err != nil {
-		return false, false, err
+		return false, false, nil, err
 	}
 	shown := stored.Report
 	shown.Title, shown.Body = p.Redactor.Redact(shown.Title), p.Redactor.Redact(shown.Body)
 	issue, err := p.Issues.CreateIssue(ctx, p.Repo, github.NewIssue{
 		Title: reportIssueTitle(shown), Body: reportIssueBody(shown), Labels: []string{report.IssueLabel}})
-	if err != nil {
-		return false, false, err
+	switch {
+	case refusesReport(err):
+		return false, false, err, nil
+	case err != nil:
+		return false, false, nil, err
 	}
-	return true, issue.HasLabel(report.IssueLabel), p.markPublished(ctx, entry.Key, stored, issue.Ref.Number)
+	return true, issue.HasLabel(report.IssueLabel), nil, p.markPublished(ctx, entry.Key, stored, issue.Ref.Number)
 }
 
 // findIssue looks for the issue an unanswered attempt to publish r may have
@@ -334,12 +343,23 @@ func putIndex(ctx context.Context, tx state.Tx, fingerprint, key string) error {
 	return err
 }
 
-// isRejection reports whether GitHub refused the issue as invalid (422), a
-// refusal about the report itself rather than GitHub's or the token's state.
-func isRejection(err error) bool {
+// refusesReport reports whether err is GitHub refusing to open the issue
+// of one report: a client error (4xx) other than those that hold for every
+// report, a refused token (401), a missing permission or a rate limit
+// (403, 429) and a repository not found (404, 410). An outage (5xx) or an
+// error without GitHub's answer is not one either.
+func refusesReport(err error) bool {
 	var typed *core.Error
-	if !core.HasCode(err, core.CodeInvalidArgument) || !errors.As(err, &typed) {
+	if !errors.As(err, &typed) {
 		return false
 	}
-	return typed.Details["status"] == "422"
+	status, convErr := strconv.Atoi(typed.Details["status"])
+	if convErr != nil || status < 400 || status >= 500 {
+		return false
+	}
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusGone, http.StatusTooManyRequests:
+		return false
+	}
+	return true
 }
