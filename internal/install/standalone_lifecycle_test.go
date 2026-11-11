@@ -3,6 +3,7 @@ package install
 import (
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -100,24 +101,44 @@ func TestDownKeepsDataUnlessAskedAndNeverTheSecrets(t *testing.T) {
 	}
 }
 
-func TestWithoutARunningFactoryTheCommandsSayNotFound(t *testing.T) {
+// Stop and down are idempotent, so cleanup scripts and a factory left
+// behind by a crash need no special case; down -v still removes the data.
+// Restart has nothing to restart and says how to start.
+func TestWithoutARunningFactoryStopAndDownSucceedAndRestartSaysHowToStart(t *testing.T) {
 	t.Parallel()
 	in, _, _ := newTestInstaller(t)
 	mustInit(t, in, manifest.ModeStandalone)
 	in.Signal = (&fakeSignals{alive: map[int]bool{}}).send
-	for name, run := range map[string]func() error{
-		"stop":    func() error { return in.Stop(t.Context()) },
-		"restart": func() error { return in.Restart(t.Context()) },
-		"down":    func() error { return in.Down(t.Context(), true) },
-	} {
-		var typed *core.Error
-		if err := run(); !asCoreError(err, &typed) || typed.Code != core.CodeNotFound {
-			t.Errorf("%s = %v, want NOT_FOUND", name, err)
+	if err := os.MkdirAll(in.Layout.Data("state"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Stop(t.Context()); err != nil {
+		t.Errorf("stop of a stopped factory = %v", err)
+	}
+	if err := in.Down(t.Context(), false); err != nil {
+		t.Errorf("down of a stopped factory = %v", err)
+	}
+	if _, err := os.Stat(in.Layout.Data()); err != nil {
+		t.Error("down without -v removed the data")
+	}
+	if err := in.Down(t.Context(), true); err != nil {
+		t.Errorf("down -v of a stopped factory = %v", err)
+	}
+	if _, err := os.Stat(in.Layout.Data()); err == nil {
+		t.Error("down -v of a stopped factory kept the data")
+	}
+	err := in.Restart(t.Context())
+	var typed *core.Error
+	if !asCoreError(err, &typed) || typed.Code != core.CodeNotFound || len(typed.NextActions) == 0 || !strings.Contains(typed.NextActions[0].Action, "sisf up") {
+		t.Errorf("restart = %v, want NOT_FOUND with the start command", err)
+	}
+	for _, keep := range []string{in.Layout.Config(), in.Layout.Secret(areaControl, "root-key.pem")} {
+		if _, err := os.Stat(keep); err != nil {
+			t.Errorf("%s is gone", keep)
 		}
 	}
-	// Nothing was deleted by a down that found nothing to stop.
-	if _, err := os.Stat(in.Layout.Config()); err != nil {
-		t.Error("the manifest is gone")
+	if running, err := in.Running(); err != nil || running {
+		t.Errorf("Running = %v, %v", running, err)
 	}
 }
 

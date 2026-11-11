@@ -100,6 +100,18 @@ func (in *Installer) Stop(ctx context.Context) error {
 	if m.Mode == manifest.ModeDocker {
 		return in.dockerStop(ctx, m, "stop")
 	}
+	return in.stopStandalone(ctx)
+}
+
+// stopStandalone stops the foreground process when one runs. A factory
+// that is not running is already stopped: stop and down are idempotent, so
+// a cleanup script, or a factory left behind by a crash, needs no special
+// case.
+func (in *Installer) stopStandalone(ctx context.Context) error {
+	running, err := in.Running()
+	if err != nil || !running {
+		return err
+	}
 	return in.signalStandalone(ctx, syscall.SIGTERM)
 }
 
@@ -115,7 +127,7 @@ func (in *Installer) Down(ctx context.Context, removeData bool) error {
 	if m.Mode == manifest.ModeDocker {
 		return in.dockerDown(ctx, m, removeData)
 	}
-	if err := in.signalStandalone(ctx, syscall.SIGTERM); err != nil {
+	if err := in.stopStandalone(ctx); err != nil {
 		return err
 	}
 	if removeData {
@@ -136,6 +148,14 @@ func (in *Installer) Restart(ctx context.Context) error {
 		return in.dockerStop(ctx, m, "restart")
 	}
 	return in.signalStandalone(ctx, syscall.SIGHUP)
+}
+
+// Running reports whether the factory of a Standalone install runs: its
+// foreground `sisf up` process is alive. Docker mode answers false; Compose
+// knows its own containers.
+func (in *Installer) Running() (bool, error) {
+	pid, err := in.runningPID()
+	return pid != 0, err
 }
 
 // signal sends sig to a process.
@@ -175,7 +195,8 @@ func (in *Installer) signalStandalone(ctx context.Context, sig syscall.Signal) e
 		return err
 	}
 	if pid == 0 {
-		return core.NewError(core.CodeNotFound, "no running standalone factory was found for "+in.Layout.Dir)
+		return core.NewError(core.CodeNotFound, "the factory in "+in.Layout.Dir+" is not running",
+			core.NextAction{Action: "sisf up --dir " + in.Layout.Dir, Description: "start it"})
 	}
 	if err := in.signal(pid, sig); err != nil {
 		return unavailablef(err, "cannot signal the factory process")
