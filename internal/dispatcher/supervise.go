@@ -162,7 +162,11 @@ func (d *Dispatcher) startAttempt(ctx context.Context, r *activeRun, run RunReco
 // failAttempt records a failed attempt and starts the next one, if any is left.
 func (d *Dispatcher) failAttempt(ctx context.Context, r *activeRun, run RunRecord, version int64, code core.ErrorCode, detail string, res *TickResult) error {
 	failure := AttemptFailure{Attempt: run.Attempt, Code: code, Detail: detail, At: d.cfg.Clock.Now()}
-	lease, written, err := d.fenced(ctx, r.issue, r.run, r.lease, version, func(_ context.Context, _ state.Tx, _ core.StateRecord, stored *RunRecord) error {
+	usage, reported := d.attemptUsage(ctx, run)
+	lease, written, err := d.fenced(ctx, r.issue, r.run, r.lease, version, func(ctx context.Context, tx state.Tx, _ core.StateRecord, stored *RunRecord) error {
+		if err := bookAttempt(ctx, tx, stored, usage, reported); err != nil {
+			return err
+		}
 		stored.Failures = append(stored.Failures, failure)
 		stored.Agent, stored.AttemptStartedAt = nil, failure.At
 		return nil
@@ -183,7 +187,11 @@ func (d *Dispatcher) succeed(ctx context.Context, r *activeRun, run RunRecord, v
 	if err != nil {
 		return err
 	}
+	usage, reported := d.attemptUsage(ctx, run)
 	_, _, err = d.fenced(ctx, r.issue, r.run, r.lease, version, func(ctx context.Context, tx state.Tx, _ core.StateRecord, stored *RunRecord) error {
+		if err := bookAttempt(ctx, tx, stored, usage, reported); err != nil {
+			return err
+		}
 		stored.Artifacts = mergeArtifacts(stored.Artifacts, artifacts)
 		stored.Status = RunSucceeded
 		return releaseIssueLease(ctx, tx, r.lease)
@@ -209,11 +217,11 @@ func (d *Dispatcher) exhaust(ctx context.Context, r *activeRun, version int64, r
 	return nil
 }
 
-// stopRun marks a run exhausted, releases its reservation, since it will
+// stopRun marks a run exhausted, closes its reservation, since it will
 // spend nothing more, and gives up its issue lease.
 func (d *Dispatcher) stopRun(ctx context.Context, tx state.Tx, run *RunRecord, lease state.Lease) error {
 	run.Status, run.Agent = RunExhausted, nil
-	if err := d.cfg.Budget.Release(ctx, tx, run.ReservationID); err != nil {
+	if err := CloseRunReservation(ctx, d.cfg.Budget, tx, run.ReservationID, run.Spend); err != nil {
 		return err
 	}
 	return releaseIssueLease(ctx, tx, lease)

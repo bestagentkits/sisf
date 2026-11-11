@@ -23,7 +23,8 @@ const (
 	// for evaluation and no agent works on it.
 	RunSucceeded RunStatus = "succeeded"
 	// RunExhausted means the run used every attempt it was allowed; its
-	// reservation was released and nothing more is started for it.
+	// reservation was closed (see CloseRunReservation) and nothing more is
+	// started for it.
 	RunExhausted RunStatus = "exhausted"
 )
 
@@ -54,8 +55,10 @@ type RunRecord struct {
 	Failures         []AttemptFailure `json:"failures,omitempty"`
 	Artifacts        []agent.Artifact `json:"artifacts,omitempty"`
 	PullRequests     []string         `json:"pull_requests,omitempty"`
-	ClaimedAt        time.Time        `json:"claimed_at"`
-	UpdatedAt        time.Time        `json:"updated_at"`
+	// Spend tallies what the attempts' agents reported; see RunSpend.
+	Spend     RunSpend  `json:"spend,omitzero"`
+	ClaimedAt time.Time `json:"claimed_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func recordKey(run core.RunID) string { return "run/" + string(run) }
