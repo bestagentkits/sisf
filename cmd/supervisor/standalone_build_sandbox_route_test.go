@@ -122,7 +122,21 @@ func TestAStandaloneInstallWithABuildSandboxGetsPastTheSupervisorsStartChecks(t 
 		if c.Image != routeImage || strings.Join(c.Cmd, " ") != "/usr/local/bin/sisf-smoke-build" {
 			return dockerfiltertest.Outcome{ExitCode: 97}
 		}
-		return dockerfiltertest.Outcome{Stdout: "sisf-tests: passed\nsisf-image-digest: " + digest + "\nsisf-image: local/hello-app@" + digest + "\n"}
+		env := map[string]string{}
+		for _, kv := range c.Env {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				env[k] = v
+			}
+		}
+		if env["SISF_PHASE"] != "report" {
+			return dockerfiltertest.Outcome{}
+		}
+		report := ""
+		for key, value := range map[string]string{"image-digest": digest, "image": "local/hello-app@" + digest,
+			"sbom": "sbom:local", "provenance": "provenance:local"} {
+			report += "sisf-report " + env["SISF_REPORT_NONCE"] + " " + key + ": " + value + "\n"
+		}
+		return dockerfiltertest.Outcome{Stdout: report}
 	})
 	built, err := images.BuildImage(ctx, stages.ImageRequest{FactoryID: routeFactory, RunID: "run-0001", Unit: "app",
 		Commit: "0123456789abcdef0123456789abcdef01234567", Untrusted: true})

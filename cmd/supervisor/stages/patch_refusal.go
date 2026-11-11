@@ -25,15 +25,16 @@ const (
 	// than the state record of its run.
 	RefusalAttemptMismatch RefusalReason = "attempt_mismatch"
 	// RefusalBuildFailed: the sandbox ran the build command on the
-	// candidate and it exited non-zero, for example because the code does
-	// not compile or its tests fail to run.
+	// candidate and its build phase exited non-zero, for example because
+	// the code does not compile.
 	RefusalBuildFailed RefusalReason = "build_failed"
 	// RefusalBuildTimeout: the build command ran on the candidate past its
-	// timeout.
+	// timeout, in any of its phases.
 	RefusalBuildTimeout RefusalReason = "build_timeout"
-	// RefusalNoImageReported: the build command exited 0 on the candidate
-	// without reporting a valid image and digest, which the candidate's own
-	// build scripts decide.
+	// RefusalNoImageReported: an image builder built the candidate without
+	// naming a valid image and digest. The sandboxed build reports its image
+	// from a phase that runs no code of the candidate, so a report it does
+	// not make there is an outage of the build command, not this refusal.
 	RefusalNoImageReported RefusalReason = "no_image_reported"
 	// RefusalPathRejected: the patch names a path no commit can hold, such
 	// as one inside .git, or GitHub refused the tree of its paths.

@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,29 +19,54 @@ import (
 )
 
 // reportingSandbox stands in for an isolating execution backend whose build
-// command succeeds and reports, for the commit it was given, exactly the
-// lines report returns.
+// command passes its test and build phases and, in its report phase,
+// reports under the nonce it was given the keys report returns for the
+// commit it was told.
 type reportingSandbox struct {
 	buildSandbox
-	report func(commit string) string
+	report func(commit string) map[string]string
 }
 
 func (s *reportingSandbox) Exec(_ context.Context, _ execution.SandboxID, cmd execution.Command) (execution.ExecResult, error) {
-	return execution.ExecResult{Stdout: []byte(s.report(cmd.Env["SISF_COMMIT"]))}, nil
+	if cmd.Env["SISF_PHASE"] != "report" {
+		return execution.ExecResult{}, nil
+	}
+	var out strings.Builder
+	for key, value := range s.report(cmd.Env["SISF_REPORT_COMMIT"]) {
+		fmt.Fprintf(&out, "sisf-report %s %s: %s\n", cmd.Env["SISF_REPORT_NONCE"], key, value)
+	}
+	return execution.ExecResult{Stdout: []byte(out.String())}, nil
 }
 
-// testsDigestAndImage is what a build command prints when it reports its
-// tests, its image and its digest but no SBOM and no provenance.
-func testsDigestAndImage(commit string) string {
+// commitDigest is the image digest the fake builds report for a commit.
+func commitDigest(commit string) core.Digest {
 	sum := sha256.Sum256([]byte(commit))
-	digest := "sha256:" + hex.EncodeToString(sum[:])
-	return "sisf-tests: passed\nsisf-image-digest: " + digest + "\nsisf-image: local/app@" + digest + "\n"
+	return core.Digest("sha256:" + hex.EncodeToString(sum[:]))
 }
 
-// A sandboxed build that reports no SBOM and no provenance fails the
-// observed-build hard gate on every attempt, however well the judge
-// scores it: a high score never buys past a hard gate. With no attempt
-// left the verdict is held, and the issue stays in QAEvaluation.
+// digestAndImage is the report of a build command that names its image and
+// digest but no SBOM and no provenance.
+func digestAndImage(commit string) map[string]string {
+	digest := string(commitDigest(commit))
+	return map[string]string{"image-digest": digest, "image": "local/app@" + digest}
+}
+
+// unrecordedImages builds images with tests passed but names no SBOM and no
+// provenance: an image builder other than the sandbox, whose results the
+// observed-build hard gate alone stands between and a release.
+type unrecordedImages struct{}
+
+func (unrecordedImages) Name() string { return "unrecorded" }
+
+func (unrecordedImages) BuildImage(_ context.Context, req stages.ImageRequest) (stages.ImageResult, error) {
+	digest := commitDigest(string(req.Commit))
+	return stages.ImageResult{Digest: digest, Image: "local/app@" + string(digest), TestsPassed: true, TestEvidence: "passed"}, nil
+}
+
+// A build that names no SBOM and no provenance fails the observed-build
+// hard gate on every attempt, however well the judge scores it: a high
+// score never buys past a hard gate. With no attempt left the verdict is
+// held, and the issue stays in QAEvaluation.
 func TestABuildWithoutSBOMAndProvenanceFailsTheObservedBuildGateWhateverTheScore(t *testing.T) {
 	t.Parallel()
 	f := harness.New(t, harness.Options{})
@@ -47,9 +75,7 @@ func TestABuildWithoutSBOMAndProvenanceFailsTheObservedBuildGateWhateverTheScore
 	for range attempts {
 		f.ScriptPatch(number, 0, greetingDiff)
 	}
-	f.Stages.Build.Builder.Images = stages.SandboxImages{
-		Exec: &reportingSandbox{report: testsDigestAndImage}, Argv: []string{"build"}, Timeout: time.Minute,
-	}
+	f.Stages.Build.Builder.Images = unrecordedImages{}
 
 	f.Cycle(4 * attempts)
 	record := f.Record(number)
@@ -77,8 +103,10 @@ func TestABuildThatReportsItsSBOMAndProvenanceIsReleased(t *testing.T) {
 	number := f.OpenIssue("maintainer", "MEMBER", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
 	f.ScriptPatch(number, 0, greetingDiff)
 	f.Stages.Build.Builder.Images = stages.SandboxImages{
-		Exec: &reportingSandbox{report: func(commit string) string {
-			return testsDigestAndImage(commit) + "sisf-sbom: sbom:" + commit + "\nsisf-provenance: provenance:" + commit + "\n"
+		Exec: &reportingSandbox{report: func(commit string) map[string]string {
+			report := digestAndImage(commit)
+			report["sbom"], report["provenance"] = "sbom:"+commit, "provenance:"+commit
+			return report
 		}}, Argv: []string{"build"}, Timeout: time.Minute,
 	}
 
@@ -86,6 +114,35 @@ func TestABuildThatReportsItsSBOMAndProvenanceIsReleased(t *testing.T) {
 	wantSurfaces(t, f, number, core.StateClosed)
 	if r := qaResult(t, f, number, 1); r.Verdict != stages.VerdictPassed {
 		t.Fatalf("the first attempt was %s: %s", r.Verdict, r.Reason)
+	}
+}
+
+// A sandboxed build command whose report names no SBOM and no provenance
+// does not report as the build protocol asks: its candidate is never judged
+// on it, and the build is held for the Owner as an outage of the build
+// command, spending no attempt, rather than charged to the patch.
+func TestASandboxedBuildReportingNoSBOMOrProvenanceIsHeldNotJudged(t *testing.T) {
+	t.Parallel()
+	f := harness.New(t, harness.Options{})
+	number := f.OpenIssue("maintainer", "MEMBER", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
+	f.ScriptPatch(number, 0, greetingDiff)
+	exportedPatch(t, f, number)
+	build := f.Stages.Build
+	build.Builder.Images = stages.SandboxImages{
+		Exec: &reportingSandbox{report: digestAndImage}, Argv: []string{"build"}, Timeout: time.Minute,
+	}
+	build.Retry = stages.BuildRetry{First: time.Minute, Max: time.Minute, HoldAfter: 1, RemindEvery: 24 * time.Hour, MaxReminders: 1}
+
+	res := build.Pass(context.Background())
+	if !slices.Equal(res.Held, []core.IssueRef{f.Issue(number)}) || len(res.Unbuildable) != 0 || len(res.Submitted) != 0 {
+		t.Fatalf("the build was not held as an outage: %+v", res)
+	}
+	record := f.Record(number)
+	if record.State != core.StateDeveloping || record.Attempt != 1 {
+		t.Fatalf("the issue is %s at attempt %d, want Developing at its first attempt", record.State, record.Attempt)
+	}
+	if held := heldListing(t, f); len(held) != 1 || held[0].RunID != record.RunID {
+		t.Fatalf("the build was not held for the Owner: %+v", held)
 	}
 }
 

@@ -10,7 +10,6 @@ import (
 
 	"github.com/bestagentkits/sisf/internal/testkit/fakegithub"
 	"github.com/bestagentkits/sisf/pkg/core"
-	"github.com/bestagentkits/sisf/pkg/execution"
 	"github.com/bestagentkits/sisf/pkg/github"
 )
 
@@ -237,24 +236,13 @@ func TestWhatThePatchsContentMakesGitHubRefuseIsThePatchsFault(t *testing.T) {
 	}
 }
 
-// A build command that exits 0 without reporting its image and digest is
-// the candidate's doing: the candidate controls what the command prints.
+// An image builder that builds the candidate but names no image digest
+// is refused as the candidate's doing. The sandboxed build never gets here:
+// its report phase runs no code of the candidate, so a report it does not
+// make is an outage of the build command (see
+// TestABuildCommandThatDoesNotReportAsAskedIsAnOutage).
 func TestABuildThatReportsNoImageIsThePatchsFault(t *testing.T) {
 	t.Parallel()
-	req := ImageRequest{RunID: "run-1", Unit: "app", Commit: baseSHA, Untrusted: true}
-	for name, out := range map[string]string{
-		"nothing":         "",
-		"no digest":       "sisf-image: registry.local/app@sha256:01\n",
-		"no image":        "sisf-image-digest: sha256:0000000000000000000000000000000000000000000000000000000000000001\n",
-		"a broken digest": "sisf-image-digest: sha256:xyz\nsisf-image: registry.local/app\n",
-	} {
-		_, err := SandboxImages{Exec: scriptedSandbox{result: execution.ExecResult{Stdout: []byte(out)}}, Argv: []string{"build"},
-			Timeout: time.Minute}.BuildImage(context.Background(), req)
-		if r, ok := RefusalOf(err); !ok || r.Reason != RefusalNoImageReported {
-			t.Errorf("%s: %v", name, err)
-		}
-	}
-	// The same holds for any image builder the builder is given.
 	repo := &recordingRepo{files: map[string]string{"app/main.go": "a\n"}}
 	b := newTestBuilder(repo)
 	b.Images = noDigestImages{}

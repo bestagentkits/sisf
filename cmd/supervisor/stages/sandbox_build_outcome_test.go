@@ -36,9 +36,6 @@ func (s scriptedSandbox) Exec(context.Context, execution.SandboxID, execution.Co
 
 func (scriptedSandbox) Destroy(context.Context, execution.SandboxID) error { return nil }
 
-const goodBuildOutput = "sisf-image-digest: sha256:0000000000000000000000000000000000000000000000000000000000000001\n" +
-	"sisf-image: registry.local/app@sha256:01\nsisf-tests: passed\n"
-
 func TestABuildCommandThatRanAndFailedIsTheCandidatesFault(t *testing.T) {
 	t.Parallel()
 	req := ImageRequest{RunID: "run-1", Unit: "app", Commit: baseSHA, Untrusted: true}
@@ -90,9 +87,8 @@ func TestABuildThatCouldNotRunIsAnOutageNotTheCandidatesFault(t *testing.T) {
 			t.Errorf("%s: %v, want an outage with %s", name, err, c.want)
 		}
 	}
-	out, err := SandboxImages{Exec: scriptedSandbox{result: execution.ExecResult{Stdout: []byte(goodBuildOutput)}},
-		Argv: []string{"build"}, Timeout: time.Minute}.BuildImage(context.Background(), req)
-	if err != nil || out.Image != "registry.local/app@sha256:01" || !out.TestsPassed {
+	out, err := sandboxBuild(t, &phasedSandbox{phase: map[string]execution.ExecResult{}})
+	if err != nil || out.Image != "registry.local/app@"+reportedDigest || !out.TestsPassed {
 		t.Errorf("a successful build: %+v, %v", out, err)
 	}
 }

@@ -44,10 +44,14 @@ func (b *buildSandbox) CreateSandbox(context.Context, execution.SandboxSpec) (ex
 	return execution.SandboxInfo{ID: "build-1", State: execution.SandboxRunning}, nil
 }
 
-func (b *buildSandbox) Exec(context.Context, execution.SandboxID, execution.Command) (execution.ExecResult, error) {
+// Exec answers every phase of the build command alike and counts the runs
+// of its build phase.
+func (b *buildSandbox) Exec(_ context.Context, _ execution.SandboxID, cmd execution.Command) (execution.ExecResult, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.ran++
+	if cmd.Env["SISF_PHASE"] == "build" {
+		b.ran++
+	}
 	return execution.ExecResult{ExitCode: b.exitCode, Stderr: []byte("main.go:3: syntax error")}, nil
 }
 
@@ -95,7 +99,7 @@ func TestAPatchThatDoesNotCompileFailsEvaluationAndIsRetried(t *testing.T) {
 	f.Cycle(6)
 	wantSurfaces(t, f, number, core.StateClosed)
 	if sandbox.ran != 1 {
-		t.Fatalf("the build command ran %d times in the sandbox, want once", sandbox.ran)
+		t.Fatalf("the candidate was built %d times in the sandbox, want once", sandbox.ran)
 	}
 	doc := candidateOf(t, f, first)
 	if doc.BuildRefusal != string(stages.RefusalBuildFailed) || doc.Branch != stages.Branch(f.Manifest.FactoryID, first.RunID, first.Attempt) ||
