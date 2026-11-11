@@ -32,6 +32,10 @@ type BuildOutage struct {
 	// counts how often that happened.
 	Held  bool `json:"held"`
 	Holds int  `json:"holds,omitempty"`
+	// HeldAt is when the build was last held, and Reminders how many times
+	// the Owner was reminded on the issue since.
+	HeldAt    time.Time `json:"held_at,omitzero"`
+	Reminders int       `json:"reminders,omitempty"`
 	// ResumedBy and ResumedAt name the Owner's last retry of a held build.
 	ResumedBy string    `json:"resumed_by,omitempty"`
 	ResumedAt time.Time `json:"resumed_at,omitzero"`
@@ -46,6 +50,10 @@ type BuildHeldNotice struct {
 	Failures int            `json:"failures"`
 	LastCode core.ErrorCode `json:"last_code"`
 	Holds    int            `json:"holds"`
+	// Reminder numbers a reminder that the build is still held, from 1;
+	// zero on the notice of the hold itself. HeldAt is when it was held.
+	Reminder int       `json:"reminder,omitempty"`
+	HeldAt   time.Time `json:"held_at,omitzero"`
 }
 
 // BuildOutageKey is the key of the outage record of one evaluator attempt.
@@ -193,7 +201,7 @@ func ResumeHeldBuild(ctx context.Context, kv state.KV, run core.RunID, attempt i
 	if !o.Held {
 		return core.NewError(core.CodeConflict, "the build is being retried and is not held")
 	}
-	o.Held, o.Failures, o.NextTryAt = false, 0, now
+	o.Held, o.Failures, o.NextTryAt, o.Reminders = false, 0, now, 0
 	o.ResumedBy, o.ResumedAt, o.UpdatedAt = owner, now, now
 	_, err = PutBuildOutage(ctx, kv, o, version)
 	return err

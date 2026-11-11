@@ -47,7 +47,9 @@ type BuildPassResult struct {
 	// earlier. A held build is not tried again until the Owner retries the
 	// issue.
 	Deferred, Held, StillHeld []core.IssueRef
-	Errors                    []error
+	// Reminded are held builds whose Owner this pass reminded on the issue.
+	Reminded []core.IssueRef
+	Errors   []error
 }
 
 // buildJob is one exported patch waiting for its build.
@@ -103,6 +105,11 @@ func (s *BuildStage) Pass(ctx context.Context) BuildPassResult {
 			res.StillHeld = append(res.StillHeld, j.record.IssueID)
 			if err := s.listHeld(ctx, j); err != nil {
 				res.Errors = append(res.Errors, fmt.Errorf("%s: %w", j.record.IssueID, err))
+			}
+			if reminded, err := s.remind(ctx, j, retry, now); err != nil {
+				res.Errors = append(res.Errors, fmt.Errorf("%s: %w", j.record.IssueID, err))
+			} else if reminded {
+				res.Reminded = append(res.Reminded, j.record.IssueID)
 			}
 			continue
 		}

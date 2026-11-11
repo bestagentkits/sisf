@@ -13,9 +13,14 @@ import (
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
-// heldBuildMarker identifies the notice of one hold of an attempt's build.
+// heldBuildMarker identifies the notice of one hold of an attempt's build,
+// or one reminder of it.
 func heldBuildMarker(n handoff.BuildHeldNotice) string {
-	return "<!-- sisf:build-held " + string(n.RunID) + "/" + strconv.Itoa(n.Attempt) + "/" + strconv.Itoa(n.Holds) + " -->"
+	id := string(n.RunID) + "/" + strconv.Itoa(n.Attempt) + "/" + strconv.Itoa(n.Holds)
+	if n.Reminder > 0 {
+		id += "/reminder-" + strconv.Itoa(n.Reminder)
+	}
+	return "<!-- sisf:build-held " + id + " -->"
 }
 
 // deliverBuildHeld posts the supervisor's notice that a candidate build is
@@ -43,8 +48,13 @@ func (c *Control) deliverBuildHeld(ctx context.Context, m state.OutboxMessage) e
 // code only; no message of the failure is posted.
 func heldBuildComment(n handoff.BuildHeldNotice) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "### Candidate build held\n\nThe build of attempt %d of run `%s` failed %d times in a row on errors outside the patch "+
-		"(GitHub, Docker or the configuration), so the supervisor stopped trying it. No attempt was spent.\n\n", n.Attempt, n.RunID, n.Failures)
+	if n.Reminder > 0 {
+		fmt.Fprintf(&b, "### Candidate build still held\n\nThe build of attempt %d of run `%s` has been held since %s "+
+			"and waits for the Owner (reminder %d).\n\n", n.Attempt, n.RunID, n.HeldAt.UTC().Format("2006-01-02 15:04 MST"), n.Reminder)
+	} else {
+		fmt.Fprintf(&b, "### Candidate build held\n\nThe build of attempt %d of run `%s` failed %d times in a row on errors outside the patch "+
+			"(GitHub, Docker or the configuration), so the supervisor stopped trying it. No attempt was spent.\n\n", n.Attempt, n.RunID, n.Failures)
+	}
 	fmt.Fprintf(&b, "- Last error: `%s`\n", oneLine(string(n.LastCode)))
 	fmt.Fprintf(&b, "- To resume once the cause is fixed: `factoryd issue retry --issue %s`, as the Owner.", n.IssueID)
 	return b.String()

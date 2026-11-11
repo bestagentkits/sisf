@@ -19,11 +19,18 @@ type BuildRetry struct {
 	// held: the supervisor stops trying it and tells the Owner, and only
 	// the Owner's retry lets it try again.
 	HoldAfter int
+	// RemindEvery is how long a build stays held before the Owner is
+	// reminded on the issue, and again after as long, at most MaxReminders
+	// times: a held build does not wait unnoticed behind one comment.
+	RemindEvery  time.Duration
+	MaxReminders int
 }
 
 // DefaultBuildRetry waits 30 seconds after the first outage, at most ten
-// minutes between tries, and holds the build after five in a row.
-var DefaultBuildRetry = BuildRetry{First: 30 * time.Second, Max: 10 * time.Minute, HoldAfter: 5}
+// minutes between tries, holds the build after five in a row, and reminds
+// the Owner of a held build once a day, three times.
+var DefaultBuildRetry = BuildRetry{First: 30 * time.Second, Max: 10 * time.Minute, HoldAfter: 5,
+	RemindEvery: 24 * time.Hour, MaxReminders: 3}
 
 func (r BuildRetry) settled() BuildRetry {
 	d := DefaultBuildRetry
@@ -35,6 +42,12 @@ func (r BuildRetry) settled() BuildRetry {
 	}
 	if r.HoldAfter > 0 {
 		d.HoldAfter = r.HoldAfter
+	}
+	if r.RemindEvery > 0 {
+		d.RemindEvery = r.RemindEvery
+	}
+	if r.MaxReminders > 0 {
+		d.MaxReminders = r.MaxReminders
 	}
 	d.Max = max(d.Max, d.First)
 	return d
@@ -50,6 +63,12 @@ func (r BuildRetry) backoff(n int) time.Duration {
 }
 
 func (r BuildRetry) held(e retryEntry) bool { return e.Failures >= r.HoldAfter }
+
+// remindDue reports whether a held build is owed its next reminder at now.
+func (r BuildRetry) remindDue(e retryEntry, now time.Time) bool {
+	return e.Held && !e.HeldAt.IsZero() && e.Reminders < r.MaxReminders &&
+		!now.Before(e.HeldAt.Add(time.Duration(e.Reminders+1)*r.RemindEvery))
+}
 
 // BuildOutage is the record of the outages one attempt's build met.
 type BuildOutage = handoff.BuildOutage
@@ -104,7 +123,7 @@ func (s *BuildStage) recordOutage(ctx context.Context, j buildJob, cause error, 
 		next.LastCode, next.UpdatedAt = core.CodeOf(cause), now
 		next.NextTryAt = now.Add(r.backoff(next.Failures))
 		if r.held(next) && !cur.Held {
-			next.Held = true
+			next.Held, next.HeldAt, next.Reminders = true, now, 0
 			next.Holds++
 			if err := enqueueHeldNotice(ctx, tx, next.BuildOutage); err != nil {
 				return err
@@ -116,13 +135,38 @@ func (s *BuildStage) recordOutage(ctx context.Context, j buildJob, cause error, 
 	return next, err
 }
 
-// enqueueHeldNotice queues the Owner's notice of a held build, once per hold.
+// remind queues the next reminder of a held build when it is due, with
+// the count of reminders in the same write. It reports whether it did.
+func (s *BuildStage) remind(ctx context.Context, j buildJob, r BuildRetry, now time.Time) (bool, error) {
+	if !r.remindDue(j.retry, now) {
+		return false, nil
+	}
+	err := s.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		cur, err := readRetry(ctx, tx, j.record.RunID, j.record.Attempt)
+		if err != nil || !r.remindDue(cur, now) {
+			return err
+		}
+		cur.Reminders++
+		if err := enqueueHeldNotice(ctx, tx, cur.BuildOutage); err != nil {
+			return err
+		}
+		_, err = handoff.PutBuildOutage(ctx, tx, cur.BuildOutage, cur.version)
+		return err
+	})
+	return err == nil, err
+}
+
+// enqueueHeldNotice queues the Owner's notice of a held build, once per
+// hold, or the reminder numbered o.Reminders when it is not zero.
 func enqueueHeldNotice(ctx context.Context, tx state.Tx, o BuildOutage) error {
 	raw, err := json.Marshal(handoff.BuildHeldNotice{IssueID: o.IssueID, RunID: o.RunID, Attempt: o.Attempt,
-		Failures: o.Failures, LastCode: o.LastCode, Holds: o.Holds})
+		Failures: o.Failures, LastCode: o.LastCode, Holds: o.Holds, Reminder: o.Reminders, HeldAt: o.HeldAt})
 	if err != nil {
 		return core.NewError(core.CodeInternal, "a held build notice cannot be encoded").WithCause(err)
 	}
-	return tx.Enqueue(ctx, state.OutboxMessage{Topic: handoff.TopicBuildHeld, Payload: raw,
-		Key: handoff.BuildOutageKey(o.RunID, o.Attempt) + "/held/" + itoa(o.Holds)})
+	key := handoff.BuildOutageKey(o.RunID, o.Attempt) + "/held/" + itoa(o.Holds)
+	if o.Reminders > 0 {
+		key += "/reminder/" + itoa(o.Reminders)
+	}
+	return tx.Enqueue(ctx, state.OutboxMessage{Topic: handoff.TopicBuildHeld, Payload: raw, Key: key})
 }

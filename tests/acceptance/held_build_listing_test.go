@@ -22,7 +22,7 @@ func heldBuild(t *testing.T, f *harness.Factory) (int, core.StateRecord, *stages
 	record := exportedPatch(t, f, number)
 	build := f.Stages.Build
 	build.Builder.Git = &failingCommits{Repository: build.Builder.Git, fail: 100}
-	build.Retry = stages.BuildRetry{First: time.Minute, Max: time.Minute, HoldAfter: 1}
+	build.Retry = stages.BuildRetry{First: time.Minute, Max: time.Minute, HoldAfter: 1, RemindEvery: 24 * time.Hour, MaxReminders: 2}
 	if res := build.Pass(context.Background()); !slices.Equal(res.Held, []core.IssueRef{f.Issue(number)}) {
 		t.Fatalf("the build was not held: %+v", res)
 	}
