@@ -199,7 +199,8 @@ func runPolicyRequest(ctx context.Context, args []string, getenv func(string) st
 	return err
 }
 
-// runIssueRetry sends a Blocked issue back to Ready, as the Owner.
+// runIssueRetry sends a Blocked issue back to Ready, or resumes its held
+// build or held release, as the Owner.
 func runIssueRetry(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer, log *slog.Logger) error {
 	fs := newFlags("issue retry")
 	ref := fs.String("issue", "", "issue to retry, owner/repo#N")

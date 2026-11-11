@@ -35,8 +35,9 @@ type ReleasePassResult struct {
 	Errors   []error
 }
 
-// Pass releases the candidates waiting in ReleaseCandidate, then finishes
-// the verified ones whose landing is pending.
+// Pass releases the candidates waiting in ReleaseCandidate that have no
+// release yet, or whose held release the Owner resumed, then finishes the
+// verified ones whose landing is pending.
 func (s *ReleaseStage) Pass(ctx context.Context) ReleasePassResult {
 	res := ReleasePassResult{Outcomes: map[core.IssueRef]release.Outcome{}}
 	type job struct {
@@ -52,7 +53,10 @@ func (s *ReleaseStage) Pass(ctx context.Context) ReleasePassResult {
 			return err
 		}
 		for _, r := range records {
-			if _, err := ReadRelease(ctx, tx, r.RunID, r.Attempt); !core.HasCode(err, core.CodeNotFound) {
+			if again, err := releaseDue(ctx, tx, r); err != nil {
+				res.Errors = append(res.Errors, fmt.Errorf("%s: %w", r.IssueID, err))
+				continue
+			} else if !again {
 				continue
 			}
 			j := job{record: r}
@@ -84,9 +88,31 @@ func (s *ReleaseStage) Pass(ctx context.Context) ReleasePassResult {
 	return res
 }
 
+// releaseDue reports whether the candidate of r is to be released: it has
+// no release yet, or the Owner resumed its held release.
+func releaseDue(ctx context.Context, tx state.Tx, r core.StateRecord) (bool, error) {
+	_, err := ReadRelease(ctx, tx, r.RunID, r.Attempt)
+	switch {
+	case core.HasCode(err, core.CodeNotFound):
+		return true, nil
+	case err != nil:
+		return false, err
+	}
+	hold, err := handoff.ReadReleaseHold(ctx, tx, r.RunID, r.Attempt)
+	switch {
+	case core.HasCode(err, core.CodeNotFound):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return hold.Resumed(), nil
+}
+
 // release signs the build as a deploy artifact and runs the pipeline. The
 // outcome is recorded whatever it is, so a held or refused release is not
-// retried by itself: a person decides what happens next.
+// retried by itself: a held or refused one is also recorded as the
+// release's hold, which the Owner sees, and only the Owner's retry lets a
+// held one start over.
 func (s *ReleaseStage) release(ctx context.Context, record core.StateRecord, r QAResult, doc handoff.CandidateDoc, build handoff.BuildRecord) (release.Outcome, error) {
 	artifact, err := supplychain.SignArtifact(ctx, s.ArtifactSigner, deploy.Artifact{
 		FactoryID: s.FactoryID, Unit: build.Unit, Digest: core.ReleaseDigest(build.Digest), Image: build.Image,
@@ -103,8 +129,20 @@ func (s *ReleaseStage) release(ctx context.Context, record core.StateRecord, r Q
 		return out, relErr
 	}
 	rec := ReleaseRecord{Result: string(out.Result), State: out.State, Release: out.Release, Reason: out.Reason, At: s.Clock.Now().UTC()}
+	if relErr != nil {
+		rec.Code = string(core.CodeOf(relErr))
+	}
 	err = s.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-		return put(ctx, tx, ReleaseKey(record.RunID, record.Attempt), rec)
+		if err := put(ctx, tx, ReleaseKey(record.RunID, record.Attempt), rec); err != nil {
+			return err
+		}
+		if out.Result != release.ResultHeld && out.Result != release.ResultRefused {
+			return handoff.DropReleaseHold(ctx, tx, record.RunID, record.Attempt)
+		}
+		return handoff.PutReleaseHold(ctx, tx, handoff.ReleaseHold{
+			IssueID: record.IssueID, RunID: record.RunID, Attempt: record.Attempt, Result: string(out.Result),
+			Code: core.CodeOf(relErr), Reason: out.Reason, Release: out.Release, HeldAt: rec.At,
+		})
 	})
 	if err != nil {
 		return out, err

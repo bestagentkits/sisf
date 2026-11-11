@@ -24,13 +24,19 @@ import (
 // An issue in Developing whose candidate build the supervisor held after
 // repeated outages is not Blocked: the lifecycle has no step from
 // Developing to Blocked. The Owner's retry of such an issue resumes the
-// build instead, and the supervisor tries it again at once.
+// build instead, and the supervisor tries it again at once. Likewise an
+// issue in ReleaseCandidate whose release the supervisor held: the retry
+// lets the release start over, and the supervisor releases the candidate
+// again in its next round. A refused release is never started over.
 //
 // Any other block is judged by the lifecycle's retry guard, with intake's
 // rule in front of it; no other cause of a block has a retry rule yet, so
 // such a retry is refused.
 func (c *Control) Retry(ctx context.Context, issue core.IssueRef, actor core.Actor) (intake.Result, error) {
 	if result, held, err := c.resumeHeldBuild(ctx, issue, actor); held {
+		return result, err
+	}
+	if result, held, err := c.resumeHeldRelease(ctx, issue, actor); held {
 		return result, err
 	}
 	decision := core.AuthzDecision{Effect: core.EffectAllow, Reason: "the Owner asked for the retry"}
@@ -84,6 +90,31 @@ func (c *Control) guardedRetry(ctx context.Context, issue core.IssueRef, actor c
 		_, err := tx.Transition(ctx, step)
 		return err
 	})
+}
+
+// resumeHeldRelease lets the held release of issue's current attempt start
+// over on the Owner's retry. held is false when the issue does not wait in
+// ReleaseCandidate on a held or refused release.
+func (c *Control) resumeHeldRelease(ctx context.Context, issue core.IssueRef, actor core.Actor) (result intake.Result, held bool, err error) {
+	err = c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		record, err := tx.GetRecord(ctx, issue)
+		if err != nil || record.State != core.StateReleaseCandidate {
+			return nil
+		}
+		if _, err := handoff.ReadReleaseHold(ctx, tx, record.RunID, record.Attempt); core.HasCode(err, core.CodeNotFound) {
+			return nil
+		} else if err != nil {
+			held = true
+			return err
+		}
+		held = true
+		result = intake.Result{Issue: issue, State: record.State}
+		if !actor.HasRole(core.RoleOwner) {
+			return core.NewError(core.CodePermissionDenied, "only the Owner resumes a held release")
+		}
+		return handoff.ResumeHeldRelease(ctx, tx, record.RunID, record.Attempt, actor.ID, c.cfg.Clock.Now().UTC())
+	})
+	return result, held, err
 }
 
 // resumeHeldBuild resumes the held build of issue's current attempt on the
