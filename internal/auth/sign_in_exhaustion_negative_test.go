@@ -150,6 +150,26 @@ func TestAStepUpOutlastsAFloodOfUnauthenticatedSignIns(t *testing.T) {
 	}
 }
 
+// A person who holds a role can still start a step-up while a flood of one
+// sign-in per address has every slot taken and new sign-ins are refused.
+func TestAStepUpStartsWhileAFloodOfOneSignInPerAddressFillsEverySlot(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, ownerHoldsARole)
+	b := e.browser(t)
+	csrf := signedIn(t, b, "owner-sub")
+	if refused := flood(t, e, 1100, 1); refused == 0 {
+		t.Fatal("more sign-ins than slots were all accepted")
+	}
+	target := auth.PATRequest{Name: "cli", Scopes: []string{"prs:write"}}.StepUpTarget()
+	_, providerURL := b.hop(t, http.MethodPost, "/auth/step-up/google"+stepUpQuery(target), map[string]string{auth.CSRFHeader: csrf})
+	if providerURL == "" {
+		t.Fatal("the Owner's step-up did not start while the flood filled every slot")
+	}
+	if resp, _ := b.hop(t, http.MethodGet, b.atProvider(t, "owner-sub", providerURL), nil); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the Owner's step-up started during a flood: %d, want it completed", resp.StatusCode)
+	}
+}
+
 // Any account can sign in and start step-ups, so a role-less account
 // starting them by the thousand pushes out neither a person's sign-in nor
 // the Owner's step-up, even from the same address.
