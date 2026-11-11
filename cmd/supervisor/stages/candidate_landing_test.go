@@ -122,6 +122,9 @@ func TestAVerifiedCandidateIsMergedOnlyWhileItIsWhatWasJudgedAndReleased(t *test
 			"another build was released": {bend: func(_ *testing.T, w *landingWorld) {
 				w.req.Release = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
 			}, reason: "not the build"},
+			"its changes may be listed in part": {bend: func(_ *testing.T, w *landingWorld) {
+				w.req.Candidate.ChangedPathsIncomplete = true
+			}, reason: "only part of the paths"},
 			"the branch moved": {bend: func(t *testing.T, w *landingWorld) {
 				if _, err := w.prs.ensure(context.Background(), w.req.IssueID, w.req.RunID, 1); err != nil {
 					t.Fatal(err)

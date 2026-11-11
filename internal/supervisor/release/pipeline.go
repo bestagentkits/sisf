@@ -71,6 +71,9 @@ func (p *Pipeline) Release(ctx context.Context, req Request) (Outcome, error) {
 	if p.frozen(ctx) {
 		return stop(ResultHeld, core.NewError(core.CodeFrozen, "an emergency stop froze publishing"))
 	}
+	if req.Candidate.ChangedPathsIncomplete {
+		return stop(ResultRefused, governance("GitHub may list only part of the paths the candidate changes, so it cannot be shown to leave the trusted control surface alone"))
+	}
 	if err := checkGovernance(p.cfg.Protected, req.Artifact.Unit, req.Candidate.ChangedPaths); err != nil {
 		return stop(ResultRefused, err)
 	}

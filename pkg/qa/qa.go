@@ -170,6 +170,10 @@ type Candidate struct {
 	CodingAgentIdentity string          `json:"coding_agent_identity"`
 	CodingModelRoute    core.ModelRoute `json:"coding_model_route"`
 	ChangedPaths        []string        `json:"changed_paths,omitempty"`
+	// ChangedPathsIncomplete marks a candidate whose changed paths GitHub
+	// may have listed only in part: it is never released or merged by the
+	// factory, since it cannot be shown to leave the trusted surface alone.
+	ChangedPathsIncomplete bool `json:"changed_paths_incomplete,omitempty"`
 	// WorkspaceID names the read-only checkout the evaluator inspects.
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	// Attempt is the evaluator attempt, starting at 1.

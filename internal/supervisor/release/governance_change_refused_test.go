@@ -58,3 +58,18 @@ func TestAnOrdinaryCandidateIsNotAGovernanceChange(t *testing.T) {
 		t.Fatalf("an ordinary candidate was refused: %v", err)
 	}
 }
+
+// A candidate whose changed paths GitHub may have listed only in part
+// cannot be shown to leave the trusted surface alone: it is left for the
+// Owner like a governance change, before anything is deployed.
+func TestACandidateWhoseChangesMayBeListedInPartIsLeftForTheOwner(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	issue, run := issueRef(41), core.RunID("run-41")
+	w.seedReleaseCandidate(issue, run, firstBuild)
+	req := w.request(issue, run, firstBuild)
+	req.Candidate.ChangedPathsIncomplete = true
+	req.Receipt = w.keys.receiptFor(t, req.Candidate, nil)
+	out, err := w.pipeline().Release(context.Background(), req)
+	requireRefusedUntouched(t, w, issue, out, err, core.CodeApprovalRequired)
+}

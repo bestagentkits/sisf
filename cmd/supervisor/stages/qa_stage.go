@@ -114,8 +114,9 @@ func (s *QAStage) evaluate(ctx context.Context, record core.StateRecord) (QAResu
 	listed, err := s.Tree.ChangedPaths(ctx, c.BaselineSHA, c.CommitSHA)
 	switch {
 	case core.HasCode(err, core.CodeLimitExceeded):
-		return s.conclude(ctx, record, lease, QAResult{Candidate: c, Verdict: VerdictFailed,
-			Reason: "GitHub lists only part of the files the candidate changes, so it cannot be shown to leave the foundation and policy files alone"})
+		// The listing may be cut short: the candidate is judged on what is
+		// listed, and release governance then leaves it for the Owner.
+		c.ChangedPathsIncomplete = true
 	case err != nil:
 		return QAResult{}, err
 	}

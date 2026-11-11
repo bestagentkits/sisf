@@ -46,7 +46,10 @@ func (c *CandidatePRs) Land(ctx context.Context, req release.LandRequest) (relea
 		}
 	}
 	live, ok, err := c.live(ctx, pr)
-	if err != nil {
+	switch {
+	case err != nil && !transient(err):
+		return c.leave(ctx, pr, fmt.Sprintf("GitHub refused to show the pull request (status %d, %s)", github.ErrorStatus(err), core.CodeOf(err)))
+	case err != nil:
 		return release.Landing{}, err
 	}
 	// A merge already made at the candidate commit, as after a restart in
@@ -149,6 +152,9 @@ func (c *CandidatePRs) mayNotMerge(ctx context.Context, req release.LandRequest,
 	if err != nil || string(build.Digest) != string(req.Release) || req.Candidate.CommitSHA != pr.Commit {
 		return "the verified release is not the build of the pull request's candidate commit", nil
 	}
+	if req.Candidate.ChangedPathsIncomplete {
+		return "GitHub may list only part of the paths it changes, so only the Owner merges it", nil
+	}
 	var touched []string
 	for _, p := range req.Candidate.ChangedPaths {
 		if foundationOrProtected(p) {
@@ -224,8 +230,9 @@ func pullNumbered(prs []github.PullRequest, number int) (github.PullRequest, boo
 }
 
 // transient reports whether GitHub could not answer, as opposed to
-// refusing.
+// refusing. A refused token counts as not answering: an installation
+// token is renewed, and an expired one must not decide a landing.
 func transient(err error) bool {
 	return core.HasCode(err, core.CodeUnavailable) || core.HasCode(err, core.CodeRateLimited) ||
-		core.HasCode(err, core.CodeTimeout) || core.HasCode(err, core.CodeInternal)
+		core.HasCode(err, core.CodeTimeout) || core.HasCode(err, core.CodeInternal) || core.HasCode(err, core.CodeUnauthenticated)
 }
