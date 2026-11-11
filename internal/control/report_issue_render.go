@@ -90,8 +90,8 @@ func reportIssueTitle(r report.Report) string {
 // reportIssueBody is the body of the issue for r. It opens with the marker
 // that names the report, says under a fixed header where the text came from
 // and that nothing checked it, and gives the text defused in fenced blocks,
-// with only when it was received and how often it was sent: nothing about
-// who sent it.
+// with only when it was received and the report's ID: nothing about who
+// sent it.
 func reportIssueBody(r report.Report) string {
 	title := defuse(r.Title, false)
 	body := cut(defuse(r.Body, true), maxReportIssueBodyRunes, "\n[cut to "+fmt.Sprint(maxReportIssueBodyRunes)+" characters]")
@@ -101,7 +101,7 @@ func reportIssueBody(r report.Report) string {
 	b.WriteString("Someone outside the project sent this through the factory's public report endpoint. " +
 		"Nobody has checked it, it may be wrong or hostile, and the factory starts no work from it. " +
 		"A person decides what to do with it.\n\n")
-	fmt.Fprintf(&b, "- Received: %s\n- Report: `%s`\n- Times sent: %d\n\n", r.ReceivedAt.UTC().Format(time.RFC3339), r.ID, max(r.Count, 1))
+	fmt.Fprintf(&b, "- Received: %s\n- Report: `%s`\n\n", r.ReceivedAt.UTC().Format(time.RFC3339), r.ID)
 	b.WriteString("**Title as sent**\n\n" + fenced(title) + "\n\n")
 	b.WriteString("**Report as sent**\n\n" + fenced(body) + "\n")
 	return b.String()

@@ -3,9 +3,11 @@ package wiring_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,7 +39,12 @@ func keptReports(t *testing.T, f *harness.Factory, prefixes ...string) int {
 	return n
 }
 
-// sendReport posts a bug report to the control zone's public report route.
+// reportClients numbers the clients that send reports, so the route's
+// per-client limit does not refuse a test's reports.
+var reportClients atomic.Int64
+
+// sendReport posts a bug report to the control zone's public report route,
+// each from a client of its own.
 func sendReport(t *testing.T, f *harness.Factory, title, body string) {
 	t.Helper()
 	raw, err := json.Marshal(map[string]string{"title": title, "body": body})
@@ -46,6 +53,8 @@ func sendReport(t *testing.T, f *harness.Factory, title, body string) {
 	}
 	req := httptest.NewRequest(http.MethodPost, report.Path, strings.NewReader(string(raw)))
 	req.Header.Set("Content-Type", "application/json")
+	n := reportClients.Add(1)
+	req.RemoteAddr = fmt.Sprintf("198.51.%d.%d:4000", n/250%250, n%250+1)
 	rec := httptest.NewRecorder()
 	f.Control.Server.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted {

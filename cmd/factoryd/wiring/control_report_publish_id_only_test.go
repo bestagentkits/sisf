@@ -9,6 +9,7 @@ import (
 
 	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/redact"
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 )
 
@@ -31,7 +32,7 @@ func (r refusingIssues) PollIssues(context.Context, github.RepoRef, github.ListI
 func TestAnInstallNamingTheFactoryByIDOnlyPublishesNoReport(t *testing.T) {
 	t.Parallel()
 	var logged bytes.Buffer
-	c := &Control{log: slog.New(slog.NewTextHandler(&logged, nil)), backoff: map[string]retryAt{},
+	c := &Control{cfg: ControlConfig{Clock: core.SystemClock{}}, log: slog.New(slog.NewTextHandler(&logged, nil)), backoff: map[string]retryAt{},
 		reports: &control.ReportPublisher{Issues: refusingIssues{t}, Self: github.Identity{ID: 7}, Redactor: redact.New(redact.Config{})}}
 	for range 3 {
 		if err := c.publishReports(context.Background()); err != nil {

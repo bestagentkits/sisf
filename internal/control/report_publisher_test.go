@@ -169,7 +169,7 @@ func TestAStoredReportBecomesOneIssueLabelledForTriage(t *testing.T) {
 			t.Errorf("title %q", issue.Title)
 		}
 		for _, part := range []string{report.IssueMarkerPrefix + "report-", "Unverified report from the public report endpoint",
-			"The pay button does nothing.", "Times sent: 1"} {
+			"The pay button does nothing.", "Received: "} {
 			if !strings.Contains(issue.Body, part) {
 				t.Errorf("the body does not say %q:\n%s", part, issue.Body)
 			}
