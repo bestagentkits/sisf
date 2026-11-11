@@ -12,6 +12,11 @@ import (
 // reference as its only argument.
 const appLauncher = "sisf-app-launcher"
 
+// syntheticProgram is the application's synthetic suite, built from the
+// application's source. The supervisor runs it against a release whose
+// real traffic is too thin to judge it.
+const syntheticProgram = "hello-app-synthetic"
+
 // standaloneSupervisorArgs is the supervisor's command line in Standalone
 // mode: native processes, the local deployment backend, the local
 // execution backend or, when the install has one, its Docker build sandbox,
@@ -32,6 +37,9 @@ func (in *Installer) standaloneSupervisorArgs(m *manifest.Manifest, c LifecycleC
 		"--deploy=local", "--edge-admin-url=http://"+addr(PortEdgeAdmin),
 		"--deploy-local-program="+l.Bin(appLauncher), "--qa-judge="+c.QAJudge,
 	)
+	if m.Release.LowTraffic.SyntheticSuite != "" {
+		args = append(args, "--synthetic-program="+l.Bin(syntheticProgram))
+	}
 	if c.QAJudge == "agent" {
 		args = append(args, "--qa-agent="+c.QAAgent)
 		if c.QAAgentBinary != "" {

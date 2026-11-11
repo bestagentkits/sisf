@@ -100,3 +100,28 @@ func TestTheScriptedCoderOfAProductionInstallLeavesTheInstallsPatch(t *testing.T
 		t.Errorf("a real coding agent is given the scripted agent's patch: %v", real)
 	}
 }
+
+// A release whose real traffic is too thin is judged by the application's
+// synthetic suite: an install whose manifest names one builds it next to
+// the application and gives it to the supervisor; one that names none
+// gives none, and such a release holds.
+func TestTheSupervisorRunsTheSyntheticSuiteTheManifestNames(t *testing.T) {
+	t.Parallel()
+	if !slices.ContainsFunc(standalonePrograms, func(p program) bool {
+		return p.file == syntheticProgram && p.pkg == "./examples/hello-app/cmd/hello-app-synthetic" && len(p.units) == 0
+	}) {
+		t.Errorf("the install does not build the synthetic suite: %+v", standalonePrograms)
+	}
+	in, _, _ := newTestInstaller(t)
+	c := lifecycleChoice(Options{}, manifest.ModeStandalone)
+	m := &manifest.Manifest{FactoryID: "sisf-shop"}
+	m.Release.LowTraffic.SyntheticSuite = "synthetic"
+	want := "--synthetic-program=" + in.Layout.Bin(syntheticProgram)
+	if args := in.standaloneSupervisorArgs(m, c); !slices.Contains(args, want) {
+		t.Errorf("the supervisor lacks %s: %v", want, args)
+	}
+	m.Release.LowTraffic.SyntheticSuite = ""
+	if args := strings.Join(in.standaloneSupervisorArgs(m, c), " "); strings.Contains(args, "--synthetic-program") {
+		t.Errorf("a manifest with no synthetic suite runs one: %s", args)
+	}
+}

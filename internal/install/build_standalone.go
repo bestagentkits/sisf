@@ -33,6 +33,8 @@ type program struct {
 
 var standalonePrograms = []program{
 	{"hello-app", "./examples/hello-app", []manifest.UnitName{manifest.UnitApp}},
+	// The application's synthetic suite is no unit: the supervisor runs it.
+	{syntheticProgram, "./examples/hello-app/cmd/hello-app-synthetic", nil},
 	{"factoryd", "./cmd/factoryd", []manifest.UnitName{manifest.UnitControl, manifest.UnitDispatcher}},
 	{"sisf-supervisor", "./cmd/supervisor", []manifest.UnitName{manifest.UnitSupervisor}},
 	{"sisf-edge", "./cmd/edge", []manifest.UnitName{manifest.UnitEdge}},
