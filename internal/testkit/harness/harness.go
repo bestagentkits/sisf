@@ -73,6 +73,10 @@ type Options struct {
 	// FactoryID gives the factory its own ID; with it the factory serves
 	// its own repository, "<factory id>/hello-app".
 	FactoryID core.FactoryID
+	// ReleaseUnits replaces the manifest's release.units, the units the
+	// Owner lets the factory publish by itself. The sample manifest names
+	// the application alone.
+	ReleaseUnits []manifest.UnitName
 	// Upstream is a fake GitHub shared with other factories, where the
 	// factory's repository is a fork of the upstream one. A factory gets a
 	// fake GitHub of its own when it is nil.
@@ -159,6 +163,9 @@ func New(t testing.TB, opts Options) *Factory {
 	manifestBytes := read(t, root, policy.PathFactory)
 	if opts.FactoryID != "" {
 		manifestBytes = forkManifest(manifestBytes, opts.FactoryID)
+	}
+	if len(opts.ReleaseUnits) > 0 {
+		manifestBytes = releaseUnitsManifest(t, manifestBytes, opts.ReleaseUnits)
 	}
 	m, err := manifest.Parse(manifestBytes)
 	if err != nil {

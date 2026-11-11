@@ -13,6 +13,7 @@ import (
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
+	"github.com/bestagentkits/sisf/pkg/manifest"
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
@@ -61,7 +62,9 @@ func TestACandidateThatChangesAFoundationFileIsLeftForTheOwner(t *testing.T) {
 // candidate, judged against the same approved policy, is merged too.
 func TestTwoVerifiedCandidatesAreBothMerged(t *testing.T) {
 	t.Parallel()
-	f, greeting := greetingIssue(t)
+	f := harness.New(t, harness.Options{ReleaseUnits: []manifest.UnitName{manifest.UnitApp, manifest.UnitControl}})
+	greeting := f.OpenIssue("maintainer", "MEMBER", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
+	f.ScriptPatch(greeting, 0, greetingDiff)
 	dashboard := f.OpenIssue("maintainer", "MEMBER", "Say when the status was checked", bugBody, github.LabelReady, github.LabelKindBug)
 	f.ScriptPatch(dashboard, 0, dashboardDiff)
 	for range 10 {

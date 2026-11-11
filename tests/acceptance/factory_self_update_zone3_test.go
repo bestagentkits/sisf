@@ -9,6 +9,7 @@ import (
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
+	"github.com/bestagentkits/sisf/pkg/manifest"
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
@@ -22,7 +23,7 @@ const dashboardBody = "The status page should say when it was checked.\n\n### De
 func TestTheFactoryUpdatesItsDashboardAndRollsABrokenBuildBack(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f := harness.New(t, harness.Options{})
+	f := harness.New(t, harness.Options{ReleaseUnits: []manifest.UnitName{manifest.UnitApp, manifest.UnitControl}})
 	installed := f.Trust.Installed["control"]
 
 	first := f.OpenIssue("maintainer", "MEMBER", "Say who checked the status", dashboardBody, github.LabelReady, github.LabelKindBug)

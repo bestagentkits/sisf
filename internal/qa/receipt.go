@@ -82,7 +82,8 @@ func mismatch(what string) *core.Error {
 }
 
 // QAFailedKey is the idempotency key of the qa_failed step of one evaluator
-// attempt. The agent zone may write that step only under the "qa/" prefix.
+// attempt. Only the supervisor writes that step, under the "qa/" prefix; the
+// store refuses it from the agent zone.
 func QAFailedKey(run core.RunID, attempt int) string {
 	return "qa/" + string(run) + "/" + strconv.Itoa(attempt)
 }

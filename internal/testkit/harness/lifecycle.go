@@ -14,6 +14,7 @@ import (
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/agent"
 	"github.com/bestagentkits/sisf/pkg/github"
+	"github.com/bestagentkits/sisf/pkg/manifest"
 	"github.com/bestagentkits/sisf/pkg/qa"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
@@ -88,7 +89,8 @@ func (f *Factory) startLifecycle(client *github.RESTClient) {
 		Budget: budget.NewGate(budget.Config{Clock: f.Clock}),
 		Release: release.Config{
 			Backend: f.Deploy, LKG: f.Trust.LKG, Freeze: f.Freeze,
-			Monitor: release.MonitorConfig{Window: ReleaseWindow, MinSamples: minSamples},
+			SelfPublishable: unitNames(m.Release.Units),
+			Monitor:         release.MonitorConfig{Window: ReleaseWindow, MinSamples: minSamples},
 		},
 	})
 	must(f.t, err)
@@ -153,4 +155,14 @@ func (f *Factory) Cycle(rounds int) {
 		}
 		f.Pass()
 	}
+}
+
+// unitNames returns units as the release pipeline names them. The result is
+// never nil, so a manifest naming no unit publishes nothing.
+func unitNames(units []manifest.UnitName) []string {
+	names := make([]string, 0, len(units))
+	for _, u := range units {
+		names = append(names, string(u))
+	}
+	return names
 }

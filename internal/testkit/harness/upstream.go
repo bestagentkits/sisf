@@ -11,6 +11,7 @@ import (
 
 	"github.com/bestagentkits/sisf/internal/testkit/fakegithub"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
 // Upstream is one fake GitHub that several factories share: it holds the
@@ -104,4 +105,19 @@ func forkManifest(sample []byte, factory core.FactoryID) []byte {
 	text := strings.Replace(string(sample), "factory_id: acme-hello", "factory_id: "+string(factory), 1)
 	text = strings.Replace(text, "repository:\n  owner: acme\n", "repository:\n  owner: "+string(factory)+"\n", 1)
 	return []byte(text)
+}
+
+// releaseUnitsManifest is the sample manifest with release.units naming
+// units instead of the application alone.
+func releaseUnitsManifest(t testing.TB, sample []byte, units []manifest.UnitName) []byte {
+	t.Helper()
+	const listed = "\n  units: [app]\n"
+	if strings.Count(string(sample), listed) != 1 {
+		t.Fatalf("harness: the sample manifest does not list release.units as %q exactly once", strings.TrimSpace(listed))
+	}
+	names := make([]string, 0, len(units))
+	for _, u := range units {
+		names = append(names, string(u))
+	}
+	return []byte(strings.Replace(string(sample), listed, "\n  units: ["+strings.Join(names, ", ")+"]\n", 1))
 }

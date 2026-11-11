@@ -139,6 +139,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
 		BuildRetry: stages.BuildRetry{HoldAfter: l.buildOutageLimit}, Budget: spend,
 		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor,
+			SelfPublishable: selfPublishableUnits(m),
 			// A rollback reserves through the rollback reserve and records
 			// its spend; an exhausted budget never blocks it.
 			Budget: spend},
