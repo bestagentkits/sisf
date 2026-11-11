@@ -3,7 +3,9 @@
 package smoke
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,22 +28,15 @@ func TestTheBuildScriptReportsTheSBOMAndProvenanceTheObservedBuildGateNeeds(t *t
 	dir := t.TempDir()
 	commit := sandboxCommit(t, filepath.Join(dir, "repo"), filepath.Join(dir, "mirror.git"))
 	script := filepath.Join(repoRoot(), "tests", "smoke", "sandbox", "build-candidate.sh")
-	cmd := exec.Command(script)
-	cmd.Env = append(os.Environ(), "SISF_COMMIT="+commit, "SISF_SMOKE_MIRROR="+filepath.Join(dir, "mirror.git"),
-		"SISF_SMOKE_WORKDIR="+filepath.Join(dir, "work"), "GOFLAGS=-mod=readonly", "CGO_ENABLED=0")
-	stdout, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("the build script failed: %v\n%s", err, stdout)
-	}
-
-	// The supervisor reads the lines as it reads a sandboxed build's.
-	images := stages.SandboxImages{Exec: printedBuild{stdout: stdout}, Argv: []string{"build"}, Timeout: time.Minute}
+	images := stages.SandboxImages{Exec: scriptBuild{t: t, script: script, env: []string{
+		"SISF_SMOKE_MIRROR=" + filepath.Join(dir, "mirror.git"), "GOFLAGS=-mod=readonly"}, work: filepath.Join(dir, "work")},
+		Argv: []string{"build"}, Timeout: 5 * time.Minute}
 	built, err := images.BuildImage(context.Background(), stages.ImageRequest{Commit: core.CommitSHA(commit), Unit: "app", RunID: "run-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !built.TestsPassed || built.SBOMRef == "" || built.ProvenanceRef == "" {
-		t.Fatalf("the build reported tests passed %t, SBOM %q and provenance %q:\n%s", built.TestsPassed, built.SBOMRef, built.ProvenanceRef, stdout)
+		t.Fatalf("the build reported tests passed %t, SBOM %q and provenance %q", built.TestsPassed, built.SBOMRef, built.ProvenanceRef)
 	}
 	for _, ref := range []string{built.SBOMRef, built.ProvenanceRef} {
 		if !strings.Contains(ref, ":sha256:") {
@@ -84,24 +79,44 @@ func sandboxCommit(t *testing.T, repo, mirror string) string {
 	return git(repo, "rev-parse", "HEAD")
 }
 
-// printedBuild is a sandbox whose build command printed stdout.
-type printedBuild struct {
+// scriptBuild is a sandbox that runs the build script on the host, each
+// phase in a work directory of its own as each runs in a fresh container.
+type scriptBuild struct {
 	execution.Backend
-	stdout []byte
+	t      *testing.T
+	script string
+	env    []string
+	work   string
 }
 
-func (printedBuild) Name() string { return "docker" }
+func (scriptBuild) Name() string { return "docker" }
 
-func (printedBuild) Capabilities(context.Context) (core.CapabilitySet, error) {
+func (scriptBuild) Capabilities(context.Context) (core.CapabilitySet, error) {
 	return core.CapabilitySet{core.CapExecIsolation: core.SupportSupported, core.CapExecEgressEnforcement: core.SupportSupported}, nil
 }
 
-func (printedBuild) CreateSandbox(context.Context, execution.SandboxSpec) (execution.SandboxInfo, error) {
+func (scriptBuild) CreateSandbox(context.Context, execution.SandboxSpec) (execution.SandboxInfo, error) {
 	return execution.SandboxInfo{ID: "build-1", State: execution.SandboxRunning}, nil
 }
 
-func (p printedBuild) Exec(context.Context, execution.SandboxID, execution.Command) (execution.ExecResult, error) {
-	return execution.ExecResult{Stdout: p.stdout}, nil
+func (b scriptBuild) Exec(ctx context.Context, _ execution.SandboxID, c execution.Command) (execution.ExecResult, error) {
+	cmd := exec.CommandContext(ctx, b.script)
+	cmd.Env = append(os.Environ(), b.env...)
+	cmd.Env = append(cmd.Env, "SISF_SMOKE_WORKDIR="+filepath.Join(b.work, c.Env["SISF_PHASE"]))
+	for k, v := range c.Env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	b.t.Logf("phase %s: %v\n%s", c.Env["SISF_PHASE"], err, stderr.Bytes())
+	res := execution.ExecResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		res.ExitCode = exit.ExitCode()
+		return res, nil
+	}
+	return res, err
 }
 
-func (printedBuild) Destroy(context.Context, execution.SandboxID) error { return nil }
+func (scriptBuild) Destroy(context.Context, execution.SandboxID) error { return nil }
