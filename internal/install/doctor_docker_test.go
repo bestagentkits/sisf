@@ -169,11 +169,15 @@ func TestAnUnhealthyOrStoppedContainerFailsTheReport(t *testing.T) {
 func TestADockerFactoryWithoutContainersSaysHowToStartIt(t *testing.T) {
 	t.Parallel()
 	r := runDoctor(t, dockerFactory(t, "", ""))
-	if v := verdictOf(r, "containers"); len(v) != 1 || v[0] != VerdictFail || !strings.Contains(detailOf(r, "containers"), "sisf up") {
-		t.Fatalf("containers = %v %q", v, detailOf(r, "containers"))
+	// One line says the factory is not running and how to start it; the
+	// checks that would only repeat it are skipped.
+	if v := verdictOf(r, runningCheck); len(v) != 1 || v[0] != VerdictFail || !strings.Contains(detailOf(r, runningCheck), "sisf up") {
+		t.Fatalf("running = %v %q", v, detailOf(r, runningCheck))
 	}
-	if v := verdictOf(r, "rollback"); len(v) != 1 || v[0] != VerdictFail {
-		t.Fatalf("rollback = %v", v)
+	for _, name := range []string{"zones", "rollback"} {
+		if v := verdictOf(r, name); len(v) != 1 || v[0] != VerdictSkip {
+			t.Fatalf("%s = %v, want skipped", name, v)
+		}
 	}
 }
 

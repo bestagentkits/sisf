@@ -94,7 +94,7 @@ func TestAFactoryThatIsDownFailsEachLiveCheckWithTheStartCommand(t *testing.T) {
 func TestAZoneThatReportsDownFailsOnlyThatZone(t *testing.T) {
 	t.Parallel()
 	net := healthyNet().with("127.0.0.1:7463/healthz", reply{code: 503,
-		body: `{"status":"degraded","zones":{"application":"ok","agent":"down","control":"ok"}}`})
+		body: `{"factory_id":"sisf-hello-app","status":"degraded","zones":{"application":"ok","agent":"down","control":"ok"}}`})
 	r := runDoctor(t, builtStandalone(t, net, nil))
 	if v := verdictOf(r, "zone agent"); len(v) != 1 || v[0] != VerdictFail {
 		t.Errorf("agent zone = %v", v)
@@ -174,7 +174,7 @@ func TestATokenWithTheWorkflowScopeIsAWarning(t *testing.T) {
 func TestWithoutALastKnownGoodReleaseRollbackIsAWarning(t *testing.T) {
 	t.Parallel()
 	in := builtStandalone(t, healthyNet(), nil)
-	in.SupervisorStatus = supervisorWith(false)
+	in.SupervisorStatus = asThisInstall(in, supervisorWith(false))
 	r := runDoctor(t, in)
 	if v := verdictOf(r, "rollback"); len(v) != 1 || v[0] != VerdictWarn {
 		t.Fatalf("rollback = %v", v)
@@ -187,7 +187,7 @@ func TestWithoutALastKnownGoodReleaseRollbackIsAWarning(t *testing.T) {
 func TestASupervisorThatFailedItsSelfCheckFailsRollback(t *testing.T) {
 	t.Parallel()
 	in := builtStandalone(t, healthyNet(), nil)
-	in.SupervisorStatus = func(_ context.Context, _ string) (supervisor.Status, error) { return supervisor.Status{}, nil }
+	in.SupervisorStatus = asThisInstall(in, func(_ context.Context, _ string) (supervisor.Status, error) { return supervisor.Status{}, nil })
 	if v := verdictOf(runDoctor(t, in), "rollback"); len(v) != 1 || v[0] != VerdictFail {
 		t.Fatalf("rollback = %v", v)
 	}
