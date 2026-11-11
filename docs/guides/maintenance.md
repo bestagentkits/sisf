@@ -24,16 +24,18 @@ The env files hold absolute paths (Standalone: the SQLite path; both modes: unit
 
 ## Back up
 
+The commands below use `D` for the install directory; set it first, for example `D=$HOME/.sisf/factory`.
+
 Prerequisites: the factory is stopped, so no process writes the database while it is copied.
 
-1. Stop it: `sisf stop --dir <dir>`. In Standalone the command returns once the foreground `sisf up` has exited; `sisf up` running elsewhere (a terminal, a service) ends with it. A service manager set to restart it must be stopped instead (`systemctl --user stop ...`, `launchctl bootout ...`).
-2. Standalone: archive the whole directory, keeping permissions:
+1. Stop it: `sisf stop --dir "$D"`. In Standalone the command returns once the foreground `sisf up` has exited; `sisf up` running elsewhere (a terminal, a service) ends with it. A service manager set to restart it must be stopped instead (`systemctl --user stop ...`, `launchctl bootout ...`).
+2. Archive the whole directory, keeping permissions:
 
    ```sh
-   tar -C "$(dirname <dir>)" -cpf sisf-backup.tar "$(basename <dir>)"
+   tar -C "$(dirname "$D")" -cpf sisf-backup.tar "$(basename "$D")"
    ```
 
-3. Docker: archive `<dir>` the same way, then each named volume with your usual Docker volume tool. One way, with standard Docker (not exercised by this project's tests):
+3. Docker mode only: the data is in the project's named volumes, which step 2 does not include. Copy each with your usual Docker volume tool while the project is stopped. One way, with standard Docker (not exercised by this project's tests), for the project `sisf-hello`:
 
    ```sh
    for v in state-data control-data trust app-data artifacts workspaces qa-workspaces; do
@@ -41,22 +43,25 @@ Prerequisites: the factory is stopped, so no process writes the database while i
    done
    ```
 
-4. Start it again: `sisf up --dir <dir>` from the checkout, then `sisf doctor --dir <dir>`.
+4. Start it again from the checkout: `sisf up --dir "$D"`, then `sisf doctor --dir "$D"`.
 
 The archive holds the root signing key and every credential in clear text: keep it where only the Owner can read it.
 
-Verify: the archive lists `factory.yaml`, `secrets/control/root-key.pem` and, for Standalone, `data/state/factory.db` (`tar -tf sisf-backup.tar`).
+Verify: `tar -tf sisf-backup.tar` lists `factory.yaml`, `secrets/control/root-key.pem` and, in Standalone, `data/state/factory.db`.
 
 ## Restore
 
-1. Stop the factory (as above) and move the current directory aside: `mv <dir> <dir>.old`.
-2. Unpack the archive to the same path: `tar -C "$(dirname <dir>)" -xpf sisf-backup.tar`.
-3. Docker: restore each volume into a volume of the same name (removing the current one first with `docker volume rm`, after `sisf down` without `-v` has removed the containers).
-4. `sisf up --dir <dir>` from a checkout of the same build that made the backup, then `sisf doctor --dir <dir>`.
+Standalone (observed on a scratch install: after the restore the policy record was back in force):
+
+1. Stop the factory (as above) and move the current directory aside: `mv "$D" "$D.old"`.
+2. Unpack the archive to the same path: `tar -C "$(dirname "$D")" -xpf sisf-backup.tar`.
+3. From a checkout of the same build that made the backup: `sisf up --dir "$D"`, then `sisf doctor --dir "$D"`.
+
+Docker mode: unpack `<dir>` the same way. Putting the volumes back has no tested procedure in this release: each volume must be refilled under the same name while no container uses it, and nothing here has been exercised.
 
 What is not restored: the state of everything after the backup, and the trust record, which `sisf up` replaces with the release it builds; GitHub keeps issues, comments and pull requests made since, and the factory meets them again through reconciliation. Sessions and tokens are in memory and lost on every restart anyway, so everyone signs in again.
 
-Undo: stop, remove the restored directory and move `<dir>.old` back.
+Undo: stop the factory, `rm -rf "$D"`, and `mv "$D.old" "$D"`.
 
 ## Upgrade
 
@@ -64,8 +69,8 @@ Undo: stop, remove the restored directory and move `<dir>.old` back.
 
 1. [Back up](#back-up) (the factory is stopped after step 1 of it).
 2. Update the checkout to the build you want, and rebuild the command line: `git pull` (or `git checkout <tag or commit>`), then `go install ./cmd/sisf`.
-3. From the checkout: `sisf up --dir <dir>`. Expected: `building ...` lines, then `factory <id> is up: control http://127.0.0.1:7463, app via edge http://127.0.0.1:7460`.
-4. `sisf doctor --dir <dir>`.
+3. From the checkout: `sisf up --dir "$D"`. Expected: `building ...` lines, then `factory <id> is up: control http://127.0.0.1:7463, app via edge http://127.0.0.1:7460`.
+4. `sisf doctor --dir "$D"`.
 
 Verify: `sisf doctor` reports no failure, its `release manifest` line is `OK`, and `sisf status` answers.
 
@@ -79,4 +84,4 @@ The rebuilt programs get new digests in `<dir>/factory.yaml`. If the repository'
 
 ## Removing an install
 
-`sisf down -v --dir <dir>` stops the factory and removes its data: `<dir>/data` in Standalone, and in Docker mode the project's containers, networks and volumes. Secrets and `factory.yaml` are never removed by it; delete `<dir>` yourself afterwards. Note that `-v` also removes the control zone's `local:` secret store and the trust record.
+`sisf down -v --dir "$D"` stops the factory and removes its data: `<dir>/data` in Standalone, and in Docker mode the project's containers, networks and volumes. Secrets and `factory.yaml` are never removed by it; delete the directory yourself afterwards. On a Standalone install that is not running, `down -v` answers `NOT_FOUND` and removes nothing: delete `"$D/data"` or the whole directory yourself. Note that `-v` also removes the control zone's `local:` secret store and the trust record.
