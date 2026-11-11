@@ -3,6 +3,7 @@ package report_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -207,5 +208,41 @@ func TestStoreKeepsReportsForTheirRetentionPeriodOnly(t *testing.T) {
 	n, err := store.Purge(context.Background(), c.Now().Add(-24*time.Hour))
 	if err != nil || n != 1 || len(store.All()) != 1 || store.All()[0].Title != "new" {
 		t.Fatalf("purge removed %d (%v), left %+v", n, err, store.All())
+	}
+}
+
+// The defaults bound acceptance per hour: five reports from one client and
+// sixty from everyone together, counted again an hour after a window began.
+func TestDefaultLimitsArePerHour(t *testing.T) {
+	t.Parallel()
+	if report.DefaultPerClientLimit != 5 || report.DefaultGlobalLimit != 60 || report.DefaultWindow != time.Hour {
+		t.Fatalf("defaults %d per client, %d overall per %s; want 5 and 60 per hour",
+			report.DefaultPerClientLimit, report.DefaultGlobalLimit, report.DefaultWindow)
+	}
+	h, _, c := newHandler(t, func(c *report.Config) { c.PerClientLimit, c.GlobalLimit, c.Window = 0, 0, 0 })
+	body := func(i int) string { return fmt.Sprintf(`{"title":"t","body":"report %d"}`, i) }
+	for i := range 5 {
+		if rec := post(h, "198.51.100.1", jsonType, body(i)); rec.Code != http.StatusAccepted {
+			t.Fatalf("report %d: %d", i, rec.Code)
+		}
+	}
+	c.After(59 * time.Minute)
+	if rec := post(h, "198.51.100.1", jsonType, body(5)); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("a sixth report from one client within the hour: %d, want refused", rec.Code)
+	}
+	accepted := 5
+	for n := 2; n < 40; n++ {
+		for i := range 5 {
+			if rec := post(h, fmt.Sprintf("198.51.100.%d", n), jsonType, body(n*10+i)); rec.Code == http.StatusAccepted {
+				accepted++
+			}
+		}
+	}
+	if accepted != 60 {
+		t.Fatalf("%d reports accepted within the hour from all clients, want 60", accepted)
+	}
+	c.After(time.Minute)
+	if rec := post(h, "198.51.100.1", jsonType, body(999)); rec.Code != http.StatusAccepted {
+		t.Fatalf("a report an hour after the window began: %d", rec.Code)
 	}
 }

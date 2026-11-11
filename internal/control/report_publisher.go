@@ -20,7 +20,8 @@ import (
 // Bounds of the publication of stored reports.
 const (
 	// DefaultReportPublishBatch bounds the issues one Publish opens, so a
-	// full store drains over many passes and never bursts GitHub.
+	// full store drains over many passes and never bursts GitHub; the
+	// daily budget (ReportDailyPublishBudget) bounds them over a day.
 	DefaultReportPublishBatch = 5
 	// maxReportRejections is how many times GitHub may refuse a report's
 	// issue as invalid before the report is given up: one refusal may be
@@ -70,10 +71,16 @@ type ReportPublishResult struct {
 	Published  int
 	Rejected   int
 	Unlabelled int
+	// PausedUntil is when publishing goes on, set once the daily budget of
+	// report issues is spent; zero while it is not.
+	PausedUntil time.Time
 }
 
-// Publish publishes the oldest reports waiting, at most Batch of them. A
-// report whose last attempt got no answer is first looked for among the
+// Publish publishes the reports waiting in the order they were received,
+// at most Batch of them and no more than the daily budget has left
+// (ReportDailyPublishBudget); with the budget spent it opens nothing and
+// says until when publishing pauses, keeping every report. A report whose
+// last attempt got no answer is first looked for among the
 // report issues the factory opened since, so an issue opened just before a
 // crash is recorded instead of opened again; when GitHub lists more than a
 // page of report issues changed since, one such report may be published
@@ -97,16 +104,30 @@ func (p ReportPublisher) Publish(ctx context.Context) (ReportPublishResult, erro
 	}
 	var waiting []state.KVEntry
 	err := p.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
-		var err error
-		waiting, err = tx.ListKV(ctx, ReportsNamespace, reportPrefix, batch)
+		budget, err := readPublishBudget(ctx, tx, p.Clock.Now())
+		if err != nil {
+			return err
+		}
+		if budget.remaining() == 0 {
+			result.PausedUntil = budget.pausedUntil()
+			return nil
+		}
+		waiting, err = tx.ListKV(ctx, ReportsNamespace, reportPrefix, min(batch, budget.remaining()))
 		return err
 	})
-	if err != nil {
+	if err != nil || !result.PausedUntil.IsZero() {
 		return result, err
 	}
 	err = p.publishBatch(ctx, waiting, &result)
 	if noted := p.noteError(ctx, err); err == nil {
 		err = noted
+	}
+	if err == nil && result.Published > 0 {
+		err = p.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
+			budget, err := readPublishBudget(ctx, tx, p.Clock.Now())
+			result.PausedUntil = budget.pausedUntil()
+			return err
+		})
 	}
 	return result, err
 }
@@ -167,44 +188,6 @@ func (p ReportPublisher) noteError(ctx context.Context, failure error) error {
 	})
 }
 
-// ReportPublication is how the publication of stored reports stands, as
-// the factory's status shows it.
-type ReportPublication struct {
-	// Waiting counts the stored reports not published yet, Failed those
-	// given up after GitHub refused them, which will never be published.
-	Waiting int
-	Failed  int
-	// LastError is why the last publication failed; "" when it did not.
-	LastError string
-}
-
-// ReadReportPublication reads how the publication of the reports stored in
-// store stands.
-func ReadReportPublication(ctx context.Context, store state.Store) (ReportPublication, error) {
-	var out ReportPublication
-	err := store.View(ctx, func(ctx context.Context, tx state.Tx) error {
-		waiting, err := tx.ListKV(ctx, ReportsNamespace, reportPrefix, 0)
-		if err != nil {
-			return err
-		}
-		out.Waiting = len(waiting)
-		failed, err := tx.ListKV(ctx, ReportsNamespace, reportFailedPrefix, 0)
-		if err != nil {
-			return err
-		}
-		out.Failed = len(failed)
-		entry, err := tx.GetKV(ctx, ReportsNamespace, reportPublishErrorKey)
-		switch {
-		case err == nil:
-			out.LastError = string(entry.Value)
-		case !core.HasCode(err, core.CodeNotFound):
-			return err
-		}
-		return nil
-	})
-	return out, err
-}
-
 // publishOne publishes the report stored at entry and reports whether it
 // is now shown as an issue, and whether that issue carries the label.
 // GitHub's refusal of the report's issue is returned as refused, apart
@@ -263,12 +246,16 @@ func (p ReportPublisher) findIssue(ctx context.Context, r storedReport) (github.
 }
 
 // markPublished replaces the report stored at key with what answers a
-// duplicate of it, the issue it is shown as included, in one write. The
+// duplicate of it, the issue it is shown as included, and counts the issue
+// against the daily budget, in one write. The
 // report may have been counted again, pruned or pushed out meanwhile; what
 // answers a duplicate is recorded all the same.
 func (p ReportPublisher) markPublished(ctx context.Context, key string, r storedReport, number int) error {
 	return p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-		count, err := readCount(ctx, tx)
+		if err := chargePublication(ctx, tx, p.Clock.Now()); err != nil {
+			return err
+		}
+		count, err := readCounter(ctx, tx, reportCountKey)
 		if err != nil {
 			return err
 		}
@@ -320,6 +307,9 @@ func (p ReportPublisher) reject(ctx context.Context, key string, code core.Error
 			return putStored(ctx, tx, key, entry.Version, stored)
 		}
 		if err := tx.DeleteKV(ctx, ReportsNamespace, key, entry.Version); err != nil {
+			return err
+		}
+		if err := addFailed(ctx, tx, 1); err != nil {
 			return err
 		}
 		failedKey := reportFailedPrefix + strings.TrimPrefix(key, reportPrefix)

@@ -43,6 +43,7 @@ func Specs() []core.ActionSpec {
 "token_checked_at":{"type":"string","format":"date-time"},"parking_deferred_since":{"type":"string","format":"date-time"},"parking_deferred_reason":{"type":"string"},
 "reports_waiting":{"type":"integer","description":"Bug reports from the public report route not yet published as GitHub issues for triage."},
 "reports_failed":{"type":"integer","description":"Bug reports given up after GitHub refused their issue; they are never published."},
+"reports_publish_paused_until":{"type":"string","format":"date-time","description":"When publishing bug reports goes on while the daily budget of report issues is spent; absent while it is not."},
 "report_publish_error":{"type":"string","description":"Why the last publication of bug reports failed."}}}}}`)},
 		{Name: ActionIssuesList, Summary: "List tracked issues with their lifecycle record, most recently changed first.",
 			Sensitivity: core.SensitivityRead, Scopes: []string{"issues:read"}, Roles: readers,

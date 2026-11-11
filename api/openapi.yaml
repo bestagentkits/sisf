@@ -841,6 +841,10 @@ paths:
                           reports_failed:
                             description: Bug reports given up after GitHub refused their issue; they are never published.
                             type: integer
+                          reports_publish_paused_until:
+                            description: When publishing bug reports goes on while the daily budget of report issues is spent; absent while it is not.
+                            format: date-time
+                            type: string
                           reports_waiting:
                             description: Bug reports from the public report route not yet published as GitHub issues for triage.
                             type: integer

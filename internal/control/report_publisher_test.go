@@ -255,7 +255,7 @@ func TestAnOutageLeavesTheReportToALaterCall(t *testing.T) {
 				t.Fatalf("%d reports wait after a failure, want the report kept", n)
 			}
 		}
-		if st, err := control.ReadReportPublication(context.Background(), e.store); err != nil || st.Waiting != 1 ||
+		if st, err := control.ReadReportPublication(context.Background(), e.store, db.Clock.Now()); err != nil || st.Waiting != 1 ||
 			!strings.Contains(st.LastError, string(core.CodeUnauthenticated)) {
 			t.Fatalf("the status after failures: %+v, %v", st, err)
 		}
@@ -269,7 +269,7 @@ func TestAnOutageLeavesTheReportToALaterCall(t *testing.T) {
 		if gh.polls == 0 {
 			t.Error("a report whose attempt got no answer was published without looking for the issue it may have opened")
 		}
-		if st, err := control.ReadReportPublication(context.Background(), e.store); err != nil || st.Waiting != 0 || st.LastError != "" {
+		if st, err := control.ReadReportPublication(context.Background(), e.store, db.Clock.Now()); err != nil || st.Waiting != 0 || st.LastError != "" {
 			t.Fatalf("the status once published: %+v, %v", st, err)
 		}
 	})
@@ -292,7 +292,7 @@ func TestAReportGitHubRefusesIsGivenUpAfterAFewTries(t *testing.T) {
 		if countKeys(t, e, "r/") != 0 || countKeys(t, e, "f/") != 1 {
 			t.Fatalf("a report refused three times: %d waiting, %d given up", countKeys(t, e, "r/"), countKeys(t, e, "f/"))
 		}
-		if st, err := control.ReadReportPublication(context.Background(), e.store); err != nil || st.Waiting != 0 || st.Failed != 1 {
+		if st, err := control.ReadReportPublication(context.Background(), e.store, db.Clock.Now()); err != nil || st.Waiting != 0 || st.Failed != 1 {
 			t.Fatalf("the status of a report given up: %+v, %v", st, err)
 		}
 		creates := gh.creates

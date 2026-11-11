@@ -177,11 +177,12 @@ func (c *Control) GitHubSync(ctx context.Context) (runactions.GitHubSync, error)
 		c.access.status(&out)
 	}
 	if c.reports != nil {
-		published, err := control.ReadReportPublication(ctx, c.cfg.Store)
+		published, err := control.ReadReportPublication(ctx, c.cfg.Store, c.cfg.Clock.Now())
 		if err != nil {
 			return out, err
 		}
 		out.ReportsWaiting, out.ReportsFailed, out.ReportPublishError = published.Waiting, published.Failed, published.LastError
+		out.ReportsPublishPausedUntil = published.PausedUntil
 	}
 	return out, nil
 }

@@ -20,21 +20,26 @@ const ReportsNamespace = "control.reports"
 // MaxStored at zero.
 const DefaultMaxStoredReports = 1000
 
-// Keys of the reports namespace. A report lives under the UTC day it was
-// first received, so the oldest sort first and lapsed ones are pruned from
-// the front: under r/ while it waits to be published as a GitHub issue,
-// under f/ once GitHub refused it for good, and, once published, only as a
-// small record under p/ that answers a duplicate. An index by fingerprint
-// finds any of them again for a duplicate, and one counter holds how many
-// reports are stored under r/ and f/, so the capacity check reads one
-// document; a published report no longer counts.
+// Keys of the reports namespace. A report lives under the UTC day and then
+// the instant it was first received, its fingerprint last, so reports sort
+// in the order they were received, which nobody sending them can choose,
+// and lapsed ones are pruned from the front: under r/ while it waits to be
+// published as a GitHub issue, under f/ once GitHub refused it for good,
+// and, once published, only as a small record under p/ that answers a
+// duplicate. An index by fingerprint finds any of them again for a
+// duplicate. One counter holds how many reports are stored under r/ and
+// f/, so the capacity check reads one document, and another how many of
+// them are under f/, so the factory's status reads no report; a published
+// report no longer counts.
 const (
 	reportDayLayout     = "20060102"
+	reportTimeLayout    = "150405.000000000"
 	reportPrefix        = "r/"
 	reportFailedPrefix  = "f/"
 	reportPublishPrefix = "p/"
 	reportIndexPrefix   = "fp/"
 	reportCountKey      = "count"
+	reportFailedKey     = "failed-count"
 	// reportPruneBatch bounds how many lapsed reports one save, or one
 	// round of the periodic prune, removes, and so how many documents it
 	// reads to find them.
@@ -78,9 +83,12 @@ type publishedReport struct {
 	Count       int       `json:"count"`
 }
 
-// reportKey is the key of a report first received at under prefix.
+// reportKey is the key of a report first received at under prefix: the
+// day, the instant within it and the fingerprint, so keys sort in the order
+// reports were received and the day stays a prefix for pruning.
 func reportKey(prefix string, at time.Time, fingerprint string) string {
-	return prefix + at.UTC().Format(reportDayLayout) + "/" + fingerprint
+	at = at.UTC()
+	return prefix + at.Format(reportDayLayout) + "/" + at.Format(reportTimeLayout) + "/" + fingerprint
 }
 
 // storedReports is a report.Store over the control zone's operational
@@ -176,7 +184,7 @@ func (s storedReports) dropOldest(ctx context.Context, tx state.Tx, count *repor
 		return false, err
 	}
 	count.n = max(count.n-1, 0)
-	return true, nil
+	return true, addFailed(ctx, tx, -1)
 }
 
 // putCountIf stores count when changed says it changed.
@@ -247,12 +255,12 @@ func (s storedReports) countDuplicate(ctx context.Context, tx state.Tx, r report
 // published ones. It returns the count of stored reports left and whether
 // it removed any.
 func (s storedReports) pruneLapsed(ctx context.Context, tx state.Tx, now time.Time) (reportCount, bool, error) {
-	count, err := readCount(ctx, tx)
+	count, err := readCounter(ctx, tx, reportCountKey)
 	if err != nil {
 		return count, false, err
 	}
 	day := now.Add(-s.retention).UTC().Format(reportDayLayout) + "/"
-	pruned := false
+	pruned, failed := false, 0
 	for _, prefix := range []string{reportPrefix, reportFailedPrefix, reportPublishPrefix} {
 		entries, err := tx.ListKV(ctx, ReportsNamespace, prefix, reportPruneBatch)
 		if err != nil {
@@ -268,10 +276,13 @@ func (s storedReports) pruneLapsed(ctx context.Context, tx state.Tx, now time.Ti
 			if prefix != reportPublishPrefix {
 				count.n = max(count.n-1, 0)
 			}
+			if prefix == reportFailedPrefix {
+				failed++
+			}
 			pruned = true
 		}
 	}
-	return count, pruned, nil
+	return count, pruned, addFailed(ctx, tx, -failed)
 }
 
 // pruneLapsedReports removes the reports past their retention at now, in
@@ -296,16 +307,19 @@ func (s storedReports) pruneLapsedReports(ctx context.Context, now time.Time) er
 	return nil
 }
 
-// reportCount is the stored number of reports and the version it was read at.
+// reportCount is a stored number of reports, the key it is stored at and
+// the version it was read at.
 type reportCount struct {
+	key     string
 	n       int
 	version int64
 }
 
-func readCount(ctx context.Context, tx state.Tx) (reportCount, error) {
-	entry, err := tx.GetKV(ctx, ReportsNamespace, reportCountKey)
+// readCounter reads the counter stored at key; an absent one is zero.
+func readCounter(ctx context.Context, tx state.Tx, key string) (reportCount, error) {
+	entry, err := tx.GetKV(ctx, ReportsNamespace, key)
 	if core.HasCode(err, core.CodeNotFound) {
-		return reportCount{}, nil
+		return reportCount{key: key}, nil
 	}
 	if err != nil {
 		return reportCount{}, err
@@ -314,13 +328,26 @@ func readCount(ctx context.Context, tx state.Tx) (reportCount, error) {
 	if err != nil || n < 0 {
 		return reportCount{}, core.NewError(core.CodeTampered, "the stored report count cannot be read")
 	}
-	return reportCount{n: n, version: entry.Version}, nil
+	return reportCount{key: key, n: n, version: entry.Version}, nil
 }
 
 func putCount(ctx context.Context, tx state.Tx, c reportCount) error {
-	_, err := tx.PutKV(ctx, state.KVEntry{Namespace: ReportsNamespace, Key: reportCountKey,
+	_, err := tx.PutKV(ctx, state.KVEntry{Namespace: ReportsNamespace, Key: c.key,
 		Value: []byte(strconv.Itoa(c.n)), Version: c.version})
 	return err
+}
+
+// addFailed changes the count of reports given up under f/ by delta.
+func addFailed(ctx context.Context, tx state.Tx, delta int) error {
+	if delta == 0 {
+		return nil
+	}
+	failed, err := readCounter(ctx, tx, reportFailedKey)
+	if err != nil {
+		return err
+	}
+	failed.n = max(failed.n+delta, 0)
+	return putCount(ctx, tx, failed)
 }
 
 // putStored writes a report waiting to be published, or refused, at key.

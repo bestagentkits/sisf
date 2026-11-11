@@ -29,17 +29,21 @@ import (
 // Path is where the handler is meant to be mounted.
 const Path = "/report"
 
-// Defaults for the limits a Config leaves at zero.
+// Defaults for the limits a Config leaves at zero. A client may report five
+// times an hour and everyone together sixty times an hour: what is accepted
+// waits in a bounded store for the publisher, which opens at most a daily
+// budget of issues, so acceptance is kept near what can be published.
 const (
 	DefaultMaxBytes       = 16 << 10
 	DefaultPerClientLimit = 5
-	DefaultGlobalLimit    = 120
-	DefaultWindow         = time.Minute
+	DefaultGlobalLimit    = 60
+	DefaultWindow         = time.Hour
 	DefaultMaxClients     = 10000
 	// MaxTitleRunes bounds the title of a report.
 	MaxTitleRunes = 200
 	// fullStoreRetry is the Retry-After of a report refused because the
-	// store is full: stored reports leave it as they are published.
+	// store is full: stored reports leave it as they are published, a few
+	// a minute while the day's budget of issues lasts.
 	fullStoreRetry = 5 * time.Minute
 )
 

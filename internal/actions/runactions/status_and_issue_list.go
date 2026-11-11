@@ -65,11 +65,14 @@ type GitHubSync struct {
 	ParkingDeferredReason string    `json:"parking_deferred_reason,omitempty"`
 	// ReportsWaiting counts the bug reports from the public report route
 	// not yet published as GitHub issues for triage, ReportsFailed those
-	// given up after GitHub refused them; ReportPublishError says why the
-	// last publication failed, "" when it did not.
-	ReportsWaiting     int    `json:"reports_waiting"`
-	ReportsFailed      int    `json:"reports_failed"`
-	ReportPublishError string `json:"report_publish_error,omitempty"`
+	// given up after GitHub refused them; ReportsPublishPausedUntil is when
+	// publishing goes on while the daily budget of report issues is spent,
+	// zero while it is not; ReportPublishError says why the last
+	// publication failed, "" when it did not.
+	ReportsWaiting            int       `json:"reports_waiting"`
+	ReportsFailed             int       `json:"reports_failed"`
+	ReportsPublishPausedUntil time.Time `json:"reports_publish_paused_until,omitzero"`
+	ReportPublishError        string    `json:"report_publish_error,omitempty"`
 }
 
 // SyncIssue is one issue change reconciliation could not store.

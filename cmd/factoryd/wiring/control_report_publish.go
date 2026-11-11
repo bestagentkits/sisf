@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
@@ -16,9 +17,10 @@ const reportPublishKey = "reports:publish"
 // reportPublishSpacing is the least time between two publications. The
 // control pass runs every second, and the factory's token also writes its
 // own comments and labels, so with control.DefaultReportPublishBatch per
-// publication at most 300 report issues are opened an hour, below GitHub's
-// limit of 500 content-creating requests an hour, and a full store of
-// 1,000 reports drains in under four hours.
+// publication a backlog is published a few issues a minute, and
+// control.ReportDailyPublishBudget bounds the report issues of any 24
+// hours, well below GitHub's limit of 500 content-creating requests an
+// hour. With the budget spent publishing pauses and the reports wait.
 const reportPublishSpacing = time.Minute
 
 // publishReports publishes a small batch of the stored bug reports as
@@ -69,6 +71,9 @@ func (c *Control) publishReports(ctx context.Context) error {
 	c.mu.Unlock()
 	if res.Published > 0 {
 		c.log.Info("published stored bug reports as issues for triage", "published", res.Published)
+	}
+	if !res.PausedUntil.IsZero() {
+		c.log.Info("publishing bug reports is paused: the daily budget of report issues is spent", "budget", control.ReportDailyPublishBudget, "until", res.PausedUntil)
 	}
 	return nil
 }
