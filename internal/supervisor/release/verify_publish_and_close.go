@@ -42,7 +42,7 @@ func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
 		IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Released: r.rev.Digest, Observed: observed.Digest,
 		Healthy: observed.Healthy, ObservedAt: observed.ObservedAt, WindowEndsAt: windowEnd, DoD: dod,
 	}
-	due, err := p.verifiedDue(ctx, FinishDue{IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Release: r.rev.Digest, Unit: r.unit})
+	due, floor, err := p.verifiedDue(ctx, FinishDue{IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Release: r.rev.Digest, Unit: r.unit})
 	if err != nil {
 		return p.restore(ctx, r, undo{cause: statemachine.BlockReleaseInterrupted,
 			reason: "the install in force could not be read, so the verified release could not be recorded: " + err.Error()})
@@ -53,7 +53,9 @@ func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
 		guards: statemachine.Guards{PostDeploy: statemachine.PostDeployGuardFunc(func(context.Context, core.Transition) (statemachine.PostDeployProof, error) {
 			return proof, nil
 		})},
-		also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error { return putVerifiedDue(ctx, tx, &due) },
+		also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error {
+			return putVerifiedDue(ctx, tx, &due, floor)
+		},
 	})
 	if err != nil {
 		// The LKG still names the release before this one, so the release

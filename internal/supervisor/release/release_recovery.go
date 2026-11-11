@@ -203,7 +203,7 @@ func (p *Pipeline) verifyRecordedLKG(ctx context.Context, h *holding, unit strin
 			{Item: "the release is observed running and healthy", Met: true, EvidenceRef: "observed:" + string(observed.Digest)},
 		},
 	}
-	due, err := p.verifiedDue(ctx, FinishDue{IssueID: h.record.IssueID, RunID: h.record.RunID, Release: rev.Digest, Unit: unit})
+	due, floor, err := p.verifiedDue(ctx, FinishDue{IssueID: h.record.IssueID, RunID: h.record.RunID, Release: rev.Digest, Unit: unit})
 	if err != nil {
 		return out, err
 	}
@@ -213,7 +213,9 @@ func (p *Pipeline) verifyRecordedLKG(ctx context.Context, h *holding, unit strin
 		guards: statemachine.Guards{PostDeploy: statemachine.PostDeployGuardFunc(func(context.Context, core.Transition) (statemachine.PostDeployProof, error) {
 			return proof, nil
 		})},
-		also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error { return putVerifiedDue(ctx, tx, &due) },
+		also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error {
+			return putVerifiedDue(ctx, tx, &due, floor)
+		},
 	})
 	out.State = h.record.State
 	if err != nil {

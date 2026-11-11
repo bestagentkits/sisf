@@ -2,10 +2,12 @@ package release
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/state"
 )
 
 // Releases of a unit are ordered by the order their Verified steps were
@@ -87,5 +89,53 @@ func TestAnInstallAfterTheVerifiedStepSupersedesTheReleaseWhateverTheClockSays(t
 	}
 	if n := w.published(); n != 0 {
 		t.Fatalf("%d releases were published, want none: the verified release does not serve", n)
+	}
+}
+
+// The counter of Verified steps is a document of the control zone, which
+// factoryd shares. Deleted, it does not number a release verified later
+// before the LKG: the release, which serves, still becomes the LKG and is
+// published, rather than being closed as superseded by an earlier one.
+func TestADeletedCounterDoesNotOrderALaterReleaseBeforeTheLKG(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := newWorld(t)
+	w.cfg.Lander = &countingLander{}
+	for i, build := range []core.Digest{firstBuild, secondBuild} {
+		issue, run := issueRef(243+i), core.RunID(fmt.Sprintf("run-%d", 243+i))
+		w.seedReleaseCandidate(issue, run, build)
+		if out, err := w.pipeline().Release(ctx, w.request(issue, run, build)); err != nil || out.Result != ResultClosed {
+			t.Fatalf("Release of %s = %+v, %v; want closed", build, out, err)
+		}
+	}
+	if lkg := w.lkg(); lkg.VerifiedSequence != 2 {
+		t.Fatalf("the LKG is %+v, want the second Verified step", lkg)
+	}
+	if err := w.store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		entry, err := tx.GetKV(ctx, RecoveryNamespace, verifiedSequenceKey)
+		if err != nil {
+			return err
+		}
+		return tx.DeleteKV(ctx, RecoveryNamespace, verifiedSequenceKey, entry.Version)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	unlock := w.lockTrustVolume()
+	issue, run := issueRef(245), core.RunID("run-245")
+	w.seedReleaseCandidate(issue, run, otherBuild)
+	req := w.request(issue, run, otherBuild)
+	if out, err := w.pipeline().Release(ctx, req); err == nil || out.State != core.StateVerified {
+		t.Fatalf("Release = %+v, %v; want held in Verified on the LKG", out, err)
+	}
+	unlock()
+	if out, err := w.pipeline().FinishVerified(ctx, req); err != nil || out.Result != ResultClosed {
+		t.Fatalf("FinishVerified = %+v, %v; want closed", out, err)
+	}
+	if lkg := w.lkg(); lkg.Digest != core.ReleaseDigest(otherBuild) || lkg.VerifiedSequence <= 2 {
+		t.Fatalf("the LKG is %+v, want the release verified last, numbered after the one before", lkg)
+	}
+	if n := w.published(); n != 3 {
+		t.Fatalf("%d releases were published, want all three", n)
 	}
 }
