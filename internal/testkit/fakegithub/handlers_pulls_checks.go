@@ -38,6 +38,13 @@ func (s *Server) createPull(w http.ResponseWriter, r *http.Request) {
 	if owner, branch, forked := strings.Cut(in.Head, ":"); forked {
 		spec.HeadRef, spec.HeadRepo = branch, owner+"/"+r.PathValue("repo")
 	}
+	if spec.HeadRepo == "" && s.openPullOn(repoName(r), spec.HeadRef, spec.BaseRef) {
+		// GitHub refuses a second open pull request from the same branch.
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"message": "Validation Failed", "errors": []map[string]string{{
+			"resource": "PullRequest", "code": "custom", "message": "A pull request already exists for " + r.PathValue("owner") + ":" + spec.HeadRef + ".",
+		}}})
+		return
+	}
 	n, err := s.OpenPullRequest(repoName(r), s.actor(r), spec)
 	if err != nil {
 		fail(w, err)
@@ -138,4 +145,21 @@ func (s *Server) createRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	rp.releases = append(rp.releases, &in)
 	writeJSON(w, http.StatusCreated, in)
+}
+
+// openPullOn reports whether the repository has an open pull request from
+// its own branch head to base.
+func (s *Server) openPullOn(repoName, head, base string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rp, err := s.repoFor(repoName)
+	if err != nil {
+		return false
+	}
+	for _, is := range rp.issues {
+		if is.pr != nil && is.state == "open" && is.pr.headOwner == rp.owner && is.pr.headName == rp.name && is.pr.headRef == head && is.pr.baseRef == base {
+			return true
+		}
+	}
+	return false
 }

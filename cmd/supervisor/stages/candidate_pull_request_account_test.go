@@ -2,6 +2,7 @@ package stages
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -112,6 +113,32 @@ func TestAWrongConfiguredLoginIsNamedInTheReason(t *testing.T) {
 		want := "`" + w.fake.Bot().Login + "` is not the factory's configured account `renamed-app[bot]`"
 		if !strings.Contains(landing.Summary, want) {
 			t.Fatalf("the reason does not say the configured account is not the author: %s", landing.Summary)
+		}
+	})
+}
+
+// GitHub may open the factory's pull request and lose the answer, and its
+// listing may not show the new pull request yet. The retry's refusal that
+// one already exists is then no reason to give the candidate up: the
+// factory looks again, adopts its own pull request and merges it.
+func TestALostAnswerToOpeningThePullRequestStillAdoptsIt(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		ctx := context.Background()
+		w := newLandingWorld(t, db.Open(t, core.ZoneControl))
+		w.prs.self = github.User{Login: w.fake.Bot().Login}
+		w.data.FailAfter(http.MethodPost, "/pulls", http.StatusBadGateway, "Server Error")
+		if _, err := w.prs.Land(ctx, w.req); err == nil {
+			t.Fatal("an unanswered open was decided")
+		}
+		w.data.ListNoPullsFor(1)
+		landing, err := w.prs.Land(ctx, w.req)
+		if err != nil || !landing.Merged || w.data.Merges() != 1 {
+			t.Fatalf("Land = %+v, %v after %d merges", landing, err, w.data.Merges())
+		}
+		open, err := w.client.FindPullRequests(ctx, w.prs.Repo, w.branch)
+		if err != nil || len(open) != 1 {
+			t.Fatalf("pull requests on the branch: %d, %v", len(open), err)
 		}
 	})
 }

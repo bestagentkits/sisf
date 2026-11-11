@@ -45,7 +45,8 @@ func statusError(method, path string, resp apiResponse) error {
 		err = core.NewError(core.CodeNotFound, what)
 	case resp.status == http.StatusConflict:
 		err = core.NewError(core.CodeConflict, what)
-	case resp.status == http.StatusUnprocessableEntity && strings.Contains(string(resp.body), "already_exists"):
+	case resp.status == http.StatusUnprocessableEntity && (strings.Contains(string(resp.body), "already_exists") ||
+		strings.Contains(strings.ToLower(string(resp.body)), "a pull request already exists")):
 		err = core.NewError(core.CodeAlreadyExists, what)
 	case resp.status >= 400 && resp.status < 500:
 		err = core.NewError(core.CodeInvalidArgument, what)

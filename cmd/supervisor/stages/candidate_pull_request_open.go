@@ -99,7 +99,22 @@ func (c *CandidatePRs) openOnGitHub(ctx context.Context, issue core.IssueRef, ru
 	pr, err = c.GitHub.CreatePullRequest(ctx, c.Repo, github.NewPullRequest{
 		Title: title, Body: prBody(issue, run, attempt, scope, qa), HeadRef: branch, BaseRef: c.Base,
 	})
-	return pr, 0, "", err
+	if !core.HasCode(err, core.CodeAlreadyExists) {
+		return pr, 0, "", err
+	}
+	// A pull request is open on the branch though none was listed: the
+	// factory's own, opened by a try whose answer was lost, or one the
+	// listing did not show yet. It is looked for again, and not given up
+	// on while GitHub does not list it.
+	if existing, err = c.GitHub.FindPullRequests(ctx, c.Repo, branch); err != nil {
+		return github.PullRequest{}, 0, "", err
+	}
+	pr, ours, other, why, err = c.sortOut(ctx, run, existing)
+	if err != nil || ours || other.Number != 0 {
+		return pr, other.Number, why, err
+	}
+	return github.PullRequest{}, 0, "", core.NewError(core.CodeUnavailable,
+		"GitHub says a pull request is open on "+branch+" but does not list it yet")
 }
 
 // sortOut finds, among the pull requests on a candidate's branch, the one

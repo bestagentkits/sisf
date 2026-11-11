@@ -37,6 +37,9 @@ type GitData struct {
 	// beyondLimit makes every comparison answer as one of more files than
 	// GitHub lists; see CompareBeyondTheLimit.
 	beyondLimit bool
+	// listingLag is how many more listings of pull requests answer none;
+	// see ListNoPullsFor.
+	listingLag int
 }
 
 // NewGitData wraps s.

@@ -43,7 +43,25 @@ func (g *GitData) getPull(w http.ResponseWriter, r *http.Request) {
 
 // listPulls answers GET /pulls, filtered by state and by a head of
 // "owner:branch".
+// ListNoPullsFor makes the next n listings of pull requests answer none,
+// as GitHub's listing can lag behind a pull request just opened.
+func (g *GitData) ListNoPullsFor(n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.listingLag = n
+}
+
 func (g *GitData) listPulls(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	lagging := g.listingLag > 0
+	if lagging {
+		g.listingLag--
+	}
+	g.mu.Unlock()
+	if lagging {
+		writeJSON(w, http.StatusOK, []jPull{})
+		return
+	}
 	state := r.URL.Query().Get("state")
 	if state == "" {
 		state = "open"
