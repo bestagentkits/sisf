@@ -34,6 +34,11 @@ type activeRun struct {
 	issue core.IssueRef
 	run   core.RunID
 	lease state.Lease
+	// unreachableSince is when the agent backend began answering the
+	// current attempt's status calls with UNAVAILABLE; zero while it
+	// answers. It lives only in this instance: a successor that takes the
+	// run over starts its own count, still bounded by the run timeout.
+	unreachableSince time.Time
 }
 
 // New builds a dispatcher. It touches neither the store nor the backend.

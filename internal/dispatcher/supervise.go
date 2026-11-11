@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/bestagentkits/sisf/pkg/agent"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -37,7 +38,8 @@ func fencedOff(err error) bool {
 
 // step looks at one run and the agent working on it, and acts: it starts an
 // attempt that has not started, collects the artifacts of one that
-// succeeded, and counts one that failed, crashed or ran out of time as a
+// succeeded, and counts one that failed, ran out of time, or that the
+// backend lost or could not be reached about for a lease lifetime, as a
 // failed attempt.
 func (d *Dispatcher) step(ctx context.Context, r *activeRun, res *TickResult) error {
 	var (
@@ -66,9 +68,28 @@ func (d *Dispatcher) step(ctx context.Context, r *activeRun, res *TickResult) er
 		return d.startAttempt(ctx, r, run, version, res)
 	}
 	status, err := d.cfg.Agent.Status(ctx, *run.Agent)
+	unreachable := core.HasCode(err, core.CodeUnavailable)
+	if !unreachable {
+		r.unreachableSince = time.Time{}
+	}
 	switch {
-	case core.HasCode(err, core.CodeUnavailable) || core.HasCode(err, core.CodeNotFound):
-		return d.failAttempt(ctx, r, run, version, core.CodeOf(err), "the agent run was lost: "+err.Error(), res)
+	case core.HasCode(err, core.CodeNotFound):
+		// The backend answered and no longer knows the run: it is lost.
+		return d.failAttempt(ctx, r, run, version, core.CodeNotFound, "the agent run was lost: "+err.Error(), res)
+	case unreachable:
+		// The backend could not answer. A short outage of a remote backend
+		// must not cost the run an attempt, so the run is watched on within
+		// the lease, which keeps being renewed, and counted as lost only
+		// once the backend stayed unreachable for a whole lease lifetime.
+		// The run timeout still applies below.
+		now := d.cfg.Clock.Now()
+		if r.unreachableSince.IsZero() {
+			r.unreachableSince = now
+		}
+		if since := now.Sub(r.unreachableSince); since >= d.cfg.LeaseTTL {
+			return d.failAttempt(ctx, r, run, version, core.CodeUnavailable,
+				fmt.Sprintf("the agent run was lost: the backend stayed unreachable for %s: %s", since, err.Error()), res)
+		}
 	case err != nil:
 		return err
 	case status.Phase == agent.PhaseSucceeded:
@@ -174,7 +195,7 @@ func (d *Dispatcher) failAttempt(ctx context.Context, r *activeRun, run RunRecor
 	if err != nil {
 		return err
 	}
-	r.lease = lease
+	r.lease, r.unreachableSince = lease, time.Time{}
 	res.Failed = append(res.Failed, FailedAttempt{Issue: r.issue, RunID: r.run, AttemptFailure: failure})
 	run.Agent = nil
 	return d.startAttempt(ctx, r, run, written, res)
