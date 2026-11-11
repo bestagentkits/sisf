@@ -1,6 +1,6 @@
 # CLI reference
 
-Every `sisf` command, its flags and where it is used. The command line is the authority: `sisf help` lists the commands and `sisf help <command>` (for a pair such as `runs explain`, `sisf help runs explain`) prints the full text. Most commands, such as `init`, `call`, `emergency-stop`, `doctor` and `down`, print a list of their flags there; `conformance check`, `docker-filter`, `sim github`, `sim oidc`, `state bootstrap` and `trust install` name them only in their usage line. This page groups the commands and gives the flags of those six in tables, read from the flag definitions in `cmd/sisf/`.
+Every `sisf` command, its flags and where it is used. The command line is the authority: `sisf help` lists the commands and `sisf help <command>` (for a pair such as `runs explain`, `sisf help runs explain`) prints the full text. Most commands, such as `init`, `call`, `emergency-stop`, `doctor` and `down`, print a list of their flags there; `docker-filter`, `sim github`, `sim oidc`, `state bootstrap` and `trust install` name them only in their usage line, and `conformance check` takes no flags. This page groups the commands and gives the flags of those five in tables, read from the flag definitions in `cmd/sisf/`.
 
 Conventions of every command (`cmd/sisf/main.go`): exit 0 on success, 1 on a failure, 2 on a wrong invocation. A wrong invocation (an unknown command or flag, a missing argument, an option `init` refuses) prints `sisf <command>: message` and the command's usage line. A failure prints `sisf: CODE: message`, often followed by `next:` lines. A few invalid values are noticed only later and exit 1 with `INVALID_ARGUMENT:`, for example `sisf up --mode docker` on a Standalone install. Secrets are never taken from a flag value and never printed.
 
@@ -101,7 +101,7 @@ It takes no flags (`cmd/sisf/cmd_conformance.go`): one optional argument, the ma
 
 ## Run by the factory itself
 
-Listed by `sisf help` but started by `sisf up` or its Compose project, not by hand: `sisf state bootstrap`, `sisf trust install`, `sisf docker-filter` (also started by the operator for a [Standalone build sandbox](install.md#building-in-a-docker-sandbox), although its help says "never by hand"), `sisf sim github`, `sisf sim oidc`. Their flags follow.
+Listed by `sisf help` but started by `sisf up` or its Compose project, not by hand: `sisf state bootstrap`, `sisf trust install`, `sisf docker-filter` (also started by the operator for a [Standalone build sandbox](install.md#building-in-a-docker-sandbox)), `sisf sim github`, `sisf sim oidc`. Their flags follow.
 
 `sisf docker-filter --role runner|deploy --listen host:port --factory-id id --network name --image ref... [--socket path] [--sim-image unit=ref]...` (`cmd/sisf/cmd_install_docker_filter.go`). `--listen`, `--factory-id`, `--network` and at least one `--image` are required.
 

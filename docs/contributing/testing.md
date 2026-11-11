@@ -53,4 +53,4 @@ It needs a running Docker daemon reachable through a local socket, Go, and the p
 
 ## The smoke run
 
-`make smoke` is the real run against `bestagentkits/sisf-sandbox`. Its requirements and the cheaper modes that spend nothing (`SISF_SMOKE_SANDBOX_CHECK=1`, `SISF_SMOKE_UP_ONLY=1`) are described above the `smoke` target in the [Makefile](../../Makefile). It needs credentials and spends money, so CI never runs it.
+`make smoke` is the real run against `bestagentkits/sisf-sandbox`. Its requirements and the cheaper modes that spend nothing (`SISF_SMOKE_SANDBOX_CHECK=1`, `SISF_SMOKE_UP_ONLY=1`) are described above the `smoke` target in the [Makefile](../../Makefile). `SISF_SMOKE_REHEARSAL=1` runs the release rehearsals instead, with a scripted coder and a fake QA judge, so no model is paid for (`tests/smoke/release_rehearsal_test.go`). It needs credentials and spends money, so CI never runs it.

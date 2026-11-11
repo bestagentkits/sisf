@@ -85,7 +85,7 @@ Each zone opens the state store with its own role, and on PostgreSQL row policie
 - A trigger holds every update of a record by a zone role to one step of the lifecycle: an edge of the state machine, the version up by one (migration 7). It also holds a record's run, attempt, candidate, release and lease token to what the store's step sets, and a claim to a run the issue never had (migration 9; `pkg/state/sqlstore/record_step_trigger.go`). The idempotency key, a matching journal row and the expiry of a lease are not enforced by the database.
 - A failed evaluation (`qa_failed`) is written by the supervisor, which writes as the control zone; the agent zone's role cannot write it. Only the control zone blocks an issue whose run stopped in Claimed or Developing, or whose release was refused.
 - From migration 10 a trigger holds every lease write by a zone role to the lease API's shapes (`pkg/state/sqlstore/lease_step_trigger.go`), so a stolen zone credential cannot set an issue lease's token with plain SQL. It can still take over a lease by raising the token by one under a named holder, because the database does not judge expiry.
-- On SQLite (Standalone) there are no roles or triggers: every zone is a process of the same user, and these rules hold only in the store's code.
+- On SQLite (Standalone) there are no roles or row policies and these lifecycle triggers are not installed: the store checks the same rules on every step it writes (`pkg/state/sqlstore/migrations/sqlite/0007_record_step_trigger.sql`), and every zone is a process of the same user.
 
 ### Releases a supervisor no longer watches (TM-14, TM-15)
 
@@ -97,7 +97,7 @@ Public bug reports are published as GitHub issues under the factory's account (`
 
 ### Run records written by the agent zone (TM-12)
 
-When a run stops, or QA passes or holds it, the factory closes the budget reservation found from the run's ID; a reservation named in the agent zone's run record is not trusted, so a forged run record can block its own issue but cannot close another run's reservation. Build evidence is taken only from what the supervisor observes of the sandboxed build. A build driver running as the same operating-system user, as under `trusted_code_only`, could still tamper with what the supervisor observes through exit codes. The supervisor's reason for a held release is shown to the Owner only.
+When a run stops, or QA passes or holds it, the factory closes the budget reservation found from the run's ID; a reservation named in the agent zone's run record is not trusted, so a forged run record can block its own issue but cannot close another run's reservation. Build evidence is taken only from what the supervisor observes of the sandboxed build: the exit status of the test and build phases, and the nonce-tagged lines of the report phase (`cmd/supervisor/stages/image_builders.go`). The supervisor's reason for a held release is shown to the Owner only.
 
 ### The synthetic suite (TM-15)
 
