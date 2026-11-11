@@ -14,32 +14,41 @@ import (
 func TestProtectedPathNamesCIOwnershipPolicyAndMigrations(t *testing.T) {
 	t.Parallel()
 	protected := map[string]ProtectedKind{
-		".github/workflows/ci.yml":          ProtectedCI,
-		".github/actions/setup/action.yml":  ProtectedCI,
-		".github/dependabot.yml":            ProtectedCI,
-		".GitHub/Workflows/Release.YML":     ProtectedCI,
-		"CODEOWNERS":                        ProtectedOwnership,
-		".github/CODEOWNERS":                ProtectedOwnership,
-		"docs/CODEOWNERS":                   ProtectedOwnership,
-		".sisf/factory.yaml":                ProtectedPolicy,
-		".sisf/anything/else":               ProtectedPolicy,
-		"AGENTS.md":                         ProtectedPolicy,
-		"agents.md":                         ProtectedPolicy,
-		"REVIEW.md":                         ProtectedPolicy,
-		"DECISIONS.md":                      ProtectedPolicy,
-		"FEATURES.md":                       ProtectedPolicy,
-		"features.yaml":                     ProtectedPolicy,
-		"./AGENTS.md":                       ProtectedPolicy,
-		"migrations/0001_init.sql":          ProtectedMigration,
-		"pkg/state/migrations/0002.sql":     ProtectedMigration,
-		"app/../.github/workflows/push.yml": ProtectedCI,
+		".github/workflows/ci.yml":                   ProtectedCI,
+		".github/actions/setup/action.yml":           ProtectedCI,
+		".github/dependabot.yml":                     ProtectedCI,
+		".GitHub/Workflows/Release.YML":              ProtectedCI,
+		"CODEOWNERS":                                 ProtectedOwnership,
+		".github/CODEOWNERS":                         ProtectedOwnership,
+		"docs/CODEOWNERS":                            ProtectedOwnership,
+		".sisf/factory.yaml":                         ProtectedPolicy,
+		".sisf/anything/else":                        ProtectedPolicy,
+		"AGENTS.md":                                  ProtectedPolicy,
+		"agents.md":                                  ProtectedPolicy,
+		"REVIEW.md":                                  ProtectedPolicy,
+		"DECISIONS.md":                               ProtectedPolicy,
+		"FEATURES.md":                                ProtectedPolicy,
+		"features.yaml":                              ProtectedPolicy,
+		"./AGENTS.md":                                ProtectedPolicy,
+		"migrations/0001_init.sql":                   ProtectedMigration,
+		"pkg/state/migrations/0002.sql":              ProtectedMigration,
+		"pkg/state/sqlstore/migrations.go":           ProtectedMigration,
+		"pkg/state/sqlstore/row_policies.go":         ProtectedMigration,
+		"pkg/state/sqlstore/row_policy_migration.go": ProtectedMigration,
+		"pkg/state/sqlstore/zone_ownership.go":       ProtectedMigration,
+		"pkg/state/sqlstore/zone_privileges.go":      ProtectedMigration,
+		"pkg/state/sqlstore/zz_init_more_steps.go":   ProtectedMigration,
+		"Pkg/State/SQLStore/Migrations.go":           ProtectedMigration,
+		"app/../pkg/state/sqlstore/migrations.go":    ProtectedMigration,
+		"app/../.github/workflows/push.yml":          ProtectedCI,
 	}
 	for p, want := range protected {
 		if got, ok := ProtectedPath(p); !ok || got != want {
 			t.Errorf("%s: got %q, %v; want %q", p, got, ok, want)
 		}
 	}
-	for _, p := range []string{"app/main.go", "docs/AGENTS.md", "ui/github/page.html", "src/codeowners_test.go", "migrationsfoo/x", ""} {
+	for _, p := range []string{"app/main.go", "docs/AGENTS.md", "ui/github/page.html", "src/codeowners_test.go", "migrationsfoo/x", "",
+		"pkg/state/state.go", "pkg/state/sqlstorefoo/x.go", "internal/pkg/state/sqlstore.go"} {
 		if kind, ok := ProtectedPath(p); ok {
 			t.Errorf("%s is not protected, got %q", p, kind)
 		}
@@ -55,11 +64,13 @@ func TestTheHardGatesUseTheSamePredicateAsTheBuilder(t *testing.T) {
 		}
 	}
 	for p, failing := range map[string]qa.GateName{
-		".github/actions/build/action.yml": qa.GatePermissions,
-		"docs/CODEOWNERS":                  qa.GatePermissions,
-		".sisf/factory.yaml":               qa.GatePermissions,
-		"AGENTS.md":                        qa.GatePermissions,
-		"db/migrations/0003.sql":           qa.GateMigrations,
+		".github/actions/build/action.yml":     qa.GatePermissions,
+		"docs/CODEOWNERS":                      qa.GatePermissions,
+		".sisf/factory.yaml":                   qa.GatePermissions,
+		"AGENTS.md":                            qa.GatePermissions,
+		"db/migrations/0003.sql":               qa.GateMigrations,
+		"pkg/state/sqlstore/migrations.go":     qa.GateMigrations,
+		"pkg/state/sqlstore/zone_ownership.go": qa.GateMigrations,
 	} {
 		for _, name := range []qa.GateName{qa.GatePermissions, qa.GateMigrations} {
 			passed, _, err := gates[name](context.Background(), qa.Candidate{ChangedPaths: []string{"app/main.go", p}})
@@ -113,6 +124,8 @@ func TestTheBuilderRefusesAProtectedPathBeforeReadingOrPushingAnything(t *testin
 		"code ownership":                "--- /dev/null\n+++ b/CODEOWNERS\n@@ -0,0 +1 @@\n+* @me\n",
 		"the policy":                    "--- a/AGENTS.md\n+++ b/AGENTS.md\n@@ -1 +1 @@\n-a\n+b\n",
 		"a migration":                   "--- /dev/null\n+++ b/migrations/0009.sql\n@@ -0,0 +1 @@\n+drop table x;\n",
+		"a migration built in Go":       "--- a/pkg/state/sqlstore/migrations.go\n+++ b/pkg/state/sqlstore/migrations.go\n@@ -1 +1 @@\n-a\n+b\n",
+		"the zones' lifecycle steps":    "--- /dev/null\n+++ b/pkg/state/sqlstore/zz_steps.go\n@@ -0,0 +1 @@\n+package sqlstore\n",
 		"a rename away from a workflow": "--- a/.github/workflows/ci.yml\n+++ b/app/ci.yml\n@@ -1 +1 @@\n-a\n+b\n",
 		"one of several files": "--- a/app/main.go\n+++ b/app/main.go\n@@ -1 +1 @@\n-a\n+b\n" +
 			"--- /dev/null\n+++ b/.github/workflows/push.yml\n@@ -0,0 +1 @@\n+on: push\n",

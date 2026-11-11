@@ -12,10 +12,16 @@ import (
 const supervisorUnit = "supervisor"
 
 // DefaultProtectedPaths returns the trusted control surface of the factory
-// source: the supervisor, the signing keys, policy enforcement, the QA
-// baseline and the rollback rules. An entry ending in "/" covers a
-// directory; any other entry is one file. A candidate that changes any of
-// them is a governance change that needs a person, in a cycle of its own.
+// source: the supervisor, the signing keys, policy enforcement, the rules of
+// who may take which lifecycle step, the QA baseline, the rollback rules, the
+// installer and CI. An entry ending in "/" covers a directory; any other
+// entry is one file. A candidate that changes any of them is a governance
+// change that needs a person, in a cycle of its own.
+//
+// Directories are listed rather than files where code in any file of a Go
+// package can change what the package enforces: a new file in the state
+// store with an init function could widen a zone's steps or append a
+// migration as surely as an edit of the file that declares them.
 func DefaultProtectedPaths() []string {
 	return []string{
 		// The trusted release supervisor and how it is built and deployed.
@@ -25,10 +31,20 @@ func DefaultProtectedPaths() []string {
 		// Policy enforcement and the foundation files it reads.
 		"internal/policy/", "pkg/core/", "internal/egress/", "internal/dockerfilter/", ".sisf/",
 		"AGENTS.md", "REVIEW.md", "DECISIONS.md", "FEATURES.md", "features.yaml", "docs/adr/",
-		// The QA baseline and evaluator.
+		// Which zone may take which lifecycle step and write which document,
+		// and the schema migrations, some of whose PostgreSQL scripts are
+		// built from those rules in Go: every zone binary links the store
+		// and enforces them, and the database is migrated by it.
+		"pkg/state/",
+		// The QA baseline and evaluator, and the synthetic suite of the
+		// application that judges a release whose real traffic is too low.
 		"internal/qa/", "pkg/qa/",
+		"examples/hello-app/synthetic/", "examples/hello-app/cmd/hello-app-synthetic/",
 		// The rollback rules and the deployment contract they act through.
 		"pkg/deploy/", "adapters/deploy/",
+		// The installer, which creates the zone roles, keys and trust roots
+		// and builds every program, and the CI that runs on the repository.
+		"internal/install/", "cmd/sisf/", ".github/",
 	}
 }
 
