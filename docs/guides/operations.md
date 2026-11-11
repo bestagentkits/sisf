@@ -1,6 +1,6 @@
 # Operations
 
-How to run and inspect an installed factory. Behaviour is owned by the code; this page says where to look. Flags: `sisf help <command>`.
+How to run and inspect an installed factory. Behaviour is owned by the code; this page says where to look. Commands and flags: `sisf help <command>` and the [CLI reference](cli-reference.md). Procedures: [installing](install.md), [maintenance](maintenance.md) (upgrade, backup, restore), [policy, approvals and budget](policy-and-approvals.md), [Why is my issue stuck?](stuck-issues.md), [troubleshooting](troubleshooting.md).
 
 ## Lifecycle
 
@@ -18,7 +18,7 @@ All of these take `--dir`; the default is `$SISF_HOME`, else `~/.sisf/factory`. 
 
 - `sisf status` shows the overview. `sisf issues` lists tracked issues.
 - `sisf runs inspect <issue|run-id>` shows the record; `sisf runs explain <issue|run-id>` says why a run is stopped or blocked.
-- `sisf approvals list`, `sisf approvals get <id>` and `sisf approvals decide <id>` handle Owner approvals. A decision is bound to the approval's nonce, subject digest and policy revision.
+- `sisf approvals list` and `sisf approvals get <id>` show Owner approvals. A decision is bound to the approval's nonce, subject digest and policy revision, and is made on the dashboard at `/approvals/<id>`: `sisf approvals decide <id>` can only preview one with `--dry-run` and otherwise answers `STEP_UP_REQUIRED` ([deciding an approval](policy-and-approvals.md#deciding-an-approval)).
 - `sisf call <action>` calls any action over REST (the catalogue is in [`api/openapi.yaml`](../../api/openapi.yaml)). Add `--dry-run` to preview.
 
 Every surface runs through one action service and one action registry (`internal/actions`, registered by `internal/actions/actionsets`), so none holds extra power. The control server (`internal/control/surfaces.go`) mounts them all on one port:
@@ -64,7 +64,7 @@ People sign in to the dashboard with the providers the control process is given 
 | `SISF_CONTROL_SECRET_<NAME>` | a secret the `env` provider serves as `env:<NAME>`; only in `secrets/control/runtime.env` |
 | `SISF_TRUSTED_PROXIES` | networks the edge connects from; the public bug-report route limits clients by the address the edge forwards only from these (default loopback) |
 
-`sisf init` writes these: the non-secret settings into `factory.yaml` and from there into the Compose file or the Standalone unit, the client secrets and `EDGE_COUNTERS_TOKEN` into `secrets/control/runtime.env` only. In the simulation profile and a `--dev` install, sign-in is the fake identity provider of `sisf sim oidc` on `127.0.0.1:7468`, which the install starts itself and which also stands in for GitHub sign-in, with the subject `owner` as the Owner; in a `--dev` install a browser must first unlock sign-in with the secret each `sisf up` writes to `secrets/control/dev-sign-in` (see the [quickstart](quickstart.md#development-install)). A real install must name at least one provider and one Owner; `sisf init` refuses otherwise, and refuses the fake. `sisf doctor` checks the same: a provider and an Owner are configured, the external URL is sane, the fake is used only by the simulation (and, with a loud warning, a development install), and control reads the edge's counters with its own token and holds no edge admin token.
+`sisf init` writes these: the non-secret settings into `factory.yaml` and from there into the Compose file or the Standalone unit, the client secrets and `EDGE_COUNTERS_TOKEN` into `secrets/control/runtime.env` only. In the simulation profile and a `--dev` install, sign-in is the fake identity provider of `sisf sim oidc` on `127.0.0.1:7468`, which the install starts itself and which also stands in for GitHub sign-in, with the subject `owner` as the Owner; in a `--dev` install a browser must first unlock sign-in with the secret each `sisf up` writes to `secrets/control/dev-sign-in` (see [development install](install.md#development-install)). A real install must name at least one provider and one Owner; `sisf init` refuses otherwise, and refuses the fake. `sisf doctor` checks the same: a provider and an Owner are configured, the external URL is sane, the fake is used only by the simulation (and, with a loud warning, a development install), and control reads the edge's counters with its own token and holds no edge admin token.
 
 In Docker mode control reaches the supervisor's admin socket as `unix:/run/sisf/admin/supervisor.sock` on the `supervisor-admin` volume the two share; in Standalone it is `127.0.0.1:7464`.
 
@@ -91,7 +91,7 @@ Besides webhooks, the control process asks GitHub for its repository's changed i
 
 When `SISF_EDGE_COUNTERS_URL` is set, the control process reads the edge's counters every five minutes and runs the Decision Layer (`internal/decision`) under the policy in force. A recurring regression of an endpoint's 5xx rate becomes one GitHub issue for the Owner; the layer recommends and never changes anything itself. Proposals are remembered in the operational store, so a restart does not open a second issue for the same condition.
 
-Without a `decision.system_one` section in the approved `.sisf/factory.yaml`, the deterministic rules decide alone. With one, the layer also asks that System One backend the typed questions of `DECISIONS.md` about each proposal; its answer can only hold the proposal, make it more cautious or lower its priority, never raise it:
+Without a `decision.system_one` section in the approved `.sisf/factory.yaml` (the repository's copy, read at the policy commit the Owner approved, not the install's `<dir>/factory.yaml`; see [two files named factory.yaml](policy-and-approvals.md#two-files-named-factoryyaml)), the deterministic rules decide alone. With one, the layer also asks that System One backend the typed questions of `DECISIONS.md` about each proposal; its answer can only hold the proposal, make it more cautious or lower its priority, never raise it:
 
 ```yaml
 decision:
@@ -113,11 +113,11 @@ The schema is `schemas/factory.schema.json`; the checks are in `pkg/manifest/dec
 The control process opens two secret providers, and no other zone opens any (`cmd/factoryd/wiring/control_secret_providers.go`). `secrets.list_refs` lists their references, never values; a System One credential resolves through them.
 
 - `env:NAME` reads `SISF_CONTROL_SECRET_NAME` from the control zone's env file, `secrets/control/runtime.env`. Add the line there and restart; the variable is refused in every other zone's file, and nothing else in the environment is reachable through a reference.
-- `local:path/name` reads the encrypted store in `SISF_LOCAL_STORE_DIR` (`/var/lib/sisf/control/secrets` in the `control-data` volume, `<dir>/data/control/secrets` in Standalone). The store has no writing command yet, so use `env:` references for now.
+- `local:path/name` reads the encrypted store in `SISF_LOCAL_STORE_DIR` (`/var/lib/sisf/control/secrets` in the `control-data` volume, `<dir>/data/control/secrets` in Standalone). The store has no writing command yet, so use `env:` references for now. The `local:` references `sisf init` writes into `<dir>/factory.yaml`, each component's `credentials_ref` such as `local:control/credentials`, are a different thing: they name files below `<dir>/secrets` that the installer creates and checks (`internal/install/layout.go`), not entries of this store.
 
 ## Agents and builds
 
-Real coding and QA agents run only in Standalone mode under `trusted_code_only`; the flags and the refusal of `--agent-home` and `--qa-home` near the factory's protected paths are in the [quickstart](quickstart.md#real-agents-in-standalone). With `--exec local` candidate builds are held: the supervisor refuses to build an agent's code with the local backend. A Standalone install builds in a Docker sandbox the operator provides (`--exec docker` with the runner filter, sandbox network, egress proxy, runner image and a QA launcher); see the [quickstart](quickstart.md#building-in-a-docker-sandbox).
+Real coding and QA agents run only in Standalone mode under `trusted_code_only`; the flags and the refusal of `--agent-home` and `--qa-home` near the factory's protected paths are in [real agents in Standalone](install.md#real-agents-in-standalone). With `--exec local` candidate builds are held: the supervisor refuses to build an agent's code with the local backend. A Standalone install builds in a Docker sandbox the operator provides (`--exec docker` with the runner filter, sandbox network, egress proxy, runner image and a QA launcher); see [building in a Docker sandbox](install.md#building-in-a-docker-sandbox).
 
 ## Edge tokens
 
@@ -125,7 +125,7 @@ The edge (`cmd/edge`) reads two tokens from its environment. `EDGE_ADMIN_TOKEN` 
 
 ## Ports
 
-Host ports 7460-7469 on 127.0.0.1; the owner is `internal/install/options.go`.
+Host ports 7460-7469 on 127.0.0.1; the owner is `internal/install/options.go`. The ports are fixed, so one machine runs one factory: [one factory per machine](install.md#one-factory-per-machine).
 
 ## When something is wrong
 
