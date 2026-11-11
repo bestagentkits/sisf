@@ -250,6 +250,15 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 	return c, nil
 }
 
+// pruneReports removes stored bug reports past their retention. A prune
+// that lost a race with a report being saved is left to the next pass.
+func (c *Control) pruneReports(ctx context.Context) error {
+	if err := c.Server.PruneReports(ctx); err != nil && !core.HasCode(err, core.CodeConflict) {
+		return err
+	}
+	return nil
+}
+
 // installation is the factory's access to its repository, as the role
 // authority checks it: the GitHub App installation the manifest names or,
 // on an install that takes no webhooks, the access GitHub confirms the
@@ -289,7 +298,8 @@ func (c *Control) Run(ctx context.Context, ln net.Listener, interval time.Durati
 // parks the issues whose wait for an answer is over, polling GitHub first
 // when an answer may not be known yet, and blocks the issues whose run
 // stopped without a candidate; when it is configured,
-// the decision layer reads the edge's counters. Once per reconciliation
+// the decision layer reads the edge's counters, and the stored bug reports
+// past their retention are pruned, a bounded number per pass. Once per reconciliation
 // interval it asks GitHub for the issue changes no webhook delivered. Each part runs even
 // when another failed, except the parking: a pass whose drain of the inbox
 // failed or held a delivery back parks nothing, since the delivery may be
@@ -325,6 +335,7 @@ func (c *Control) Pass(ctx context.Context) error {
 		c.projectProgress(ctx),
 		c.projectLifecycle(ctx),
 		c.runDecisions(ctx),
+		c.pruneReports(ctx),
 		// Last, so a slow or failing GitHub delays nothing above; what it
 		// finds is drained by the next pass.
 		c.reconcileDue(ctx),

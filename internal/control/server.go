@@ -60,6 +60,10 @@ type Server struct {
 	health  *healthChecker
 	webhook *github.Receiver
 	report  http.Handler
+	// reports is the report store kept in the operational store, nil when
+	// the report route is off or names a store of its own.
+	reports *storedReports
+	clock   core.Clock
 	log     *slog.Logger
 	handler http.Handler
 }
@@ -103,9 +107,9 @@ func New(cfg Config, deps Deps) (*Server, error) {
 			return nil, err
 		}
 	}
-	s := &Server{cfg: cfg, health: health, webhook: receiver, log: deps.Logger}
+	s := &Server{cfg: cfg, health: health, webhook: receiver, clock: deps.Clock, log: deps.Logger}
 	if deps.Report != nil {
-		if s.report, err = deps.Report.handler(deps.Clock, deps.Store); err != nil {
+		if s.report, s.reports, err = deps.Report.handler(deps.Clock, deps.Store); err != nil {
 			return nil, err
 		}
 	}
@@ -113,6 +117,17 @@ func New(cfg Config, deps Deps) (*Server, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// PruneReports removes the stored bug reports past their retention, a
+// bounded number per call. The control zone's periodic pass calls it, so a
+// report does not outlive its retention when no new report arrives. It
+// does nothing when the report route is off or keeps reports elsewhere.
+func (s *Server) PruneReports(ctx context.Context) error {
+	if s == nil || s.reports == nil {
+		return nil
+	}
+	return s.reports.pruneLapsedReports(ctx, s.clock.Now())
 }
 
 // Handler returns the complete HTTP handler, security headers included.

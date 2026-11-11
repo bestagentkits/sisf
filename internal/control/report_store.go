@@ -30,9 +30,14 @@ const (
 	reportPrefix      = "r/"
 	reportIndexPrefix = "fp/"
 	reportCountKey    = "count"
-	// reportPruneBatch bounds how many lapsed reports one save removes, and
-	// so how many documents it reads to find them.
+	// reportPruneBatch bounds how many lapsed reports one save, or one
+	// round of the periodic prune, removes, and so how many documents it
+	// reads to find them.
 	reportPruneBatch = 16
+	// reportPruneRounds bounds the rounds of one periodic prune, so a pass
+	// removes at most reportPruneRounds*reportPruneBatch lapsed reports and
+	// the next pass goes on.
+	reportPruneRounds = 8
 	// reportSaveAttempts bounds the retries of a save that lost a race with
 	// another one.
 	reportSaveAttempts = 3
@@ -50,8 +55,13 @@ type storedReports struct {
 var _ report.Store = storedReports{}
 
 // Save implements report.Store. It first removes lapsed reports; then a
-// duplicate is counted against the stored report, and a new one is stored
-// unless the store is full, which refuses it with LIMIT_EXCEEDED.
+// duplicate is counted against the stored report, and a new one is stored.
+// When the store is full, a report of the oldest day stored makes room for
+// it: reports are kept by the UTC day they arrived, so which of that day's
+// goes is not ordered further. The report route's per-client and overall
+// rate limits bound how fast reports can push others out. Only a store
+// whose count says full while it lists no report refuses a new one, with
+// LIMIT_EXCEEDED.
 func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report, bool, error) {
 	if r.Fingerprint == "" || strings.ContainsAny(r.Fingerprint, "/") {
 		return report.Report{}, false, core.NewError(core.CodeInvalidArgument, "a report needs a fingerprint")
@@ -70,30 +80,35 @@ func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report
 				return err
 			}
 			found, ok, err := s.countDuplicate(ctx, tx, r)
-			switch {
-			case err != nil:
+			if err != nil {
 				return err
-			case ok:
+			}
+			if ok {
 				stored = found
-			case count.n >= s.capacity:
+				return s.putCountIf(ctx, tx, count, pruned)
+			}
+			room := count.n < s.capacity
+			if !room {
+				if room, err = s.dropOldest(ctx, tx, &count); err != nil {
+					return err
+				}
+			}
+			if !room {
 				// Only the new report is refused; the pruning commits.
 				full = true
-			default:
-				r.Count, r.LastSeenAt = 1, r.ReceivedAt
-				key := reportPrefix + r.ReceivedAt.UTC().Format(reportDayLayout) + "/" + r.Fingerprint
-				if err := putReport(ctx, tx, key, 0, r); err != nil {
-					return err
-				}
-				index := state.KVEntry{Namespace: ReportsNamespace, Key: reportIndexPrefix + r.Fingerprint, Value: []byte(key)}
-				if _, err := tx.PutKV(ctx, index); err != nil {
-					return err
-				}
-				count.n++
-				stored, created = r, true
+				return s.putCountIf(ctx, tx, count, pruned)
 			}
-			if !created && !pruned {
-				return nil
+			r.Count, r.LastSeenAt = 1, r.ReceivedAt
+			key := reportPrefix + r.ReceivedAt.UTC().Format(reportDayLayout) + "/" + r.Fingerprint
+			if err := putReport(ctx, tx, key, 0, r); err != nil {
+				return err
 			}
+			index := state.KVEntry{Namespace: ReportsNamespace, Key: reportIndexPrefix + r.Fingerprint, Value: []byte(key)}
+			if _, err := tx.PutKV(ctx, index); err != nil {
+				return err
+			}
+			count.n++
+			stored, created = r, true
 			return putCount(ctx, tx, count)
 		})
 		if !core.HasCode(err, core.CodeConflict) {
@@ -107,6 +122,44 @@ func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report
 		return report.Report{}, false, core.NewError(core.CodeLimitExceeded, "the report store is full")
 	}
 	return stored, created, nil
+}
+
+// dropOldest removes one report of the oldest day stored to make room and
+// reports whether it found one.
+func (s storedReports) dropOldest(ctx context.Context, tx state.Tx, count *reportCount) (bool, error) {
+	entries, err := tx.ListKV(ctx, ReportsNamespace, reportPrefix, 1)
+	if err != nil || len(entries) == 0 {
+		return false, err
+	}
+	if err := dropReport(ctx, tx, entries[0]); err != nil {
+		return false, err
+	}
+	count.n = max(count.n-1, 0)
+	return true, nil
+}
+
+// putCountIf stores count when changed says it changed.
+func (s storedReports) putCountIf(ctx context.Context, tx state.Tx, count reportCount, changed bool) error {
+	if !changed {
+		return nil
+	}
+	return putCount(ctx, tx, count)
+}
+
+// dropReport removes the stored report e and its fingerprint index.
+func dropReport(ctx context.Context, tx state.Tx, e state.KVEntry) error {
+	if err := tx.DeleteKV(ctx, ReportsNamespace, e.Key, e.Version); err != nil {
+		return err
+	}
+	fingerprint := e.Key[strings.LastIndex(e.Key, "/")+1:]
+	index, err := tx.GetKV(ctx, ReportsNamespace, reportIndexPrefix+fingerprint)
+	switch {
+	case err == nil:
+		return tx.DeleteKV(ctx, ReportsNamespace, index.Key, index.Version)
+	case core.HasCode(err, core.CodeNotFound):
+		return nil
+	}
+	return err
 }
 
 // countDuplicate counts r against the stored report with its fingerprint,
@@ -150,22 +203,34 @@ func (s storedReports) pruneLapsed(ctx context.Context, tx state.Tx, now time.Ti
 		if e.Key >= oldest {
 			break
 		}
-		if err := tx.DeleteKV(ctx, ReportsNamespace, e.Key, e.Version); err != nil {
-			return count, pruned, err
-		}
-		fingerprint := e.Key[strings.LastIndex(e.Key, "/")+1:]
-		index, err := tx.GetKV(ctx, ReportsNamespace, reportIndexPrefix+fingerprint)
-		switch {
-		case err == nil:
-			if err := tx.DeleteKV(ctx, ReportsNamespace, index.Key, index.Version); err != nil {
-				return count, pruned, err
-			}
-		case !core.HasCode(err, core.CodeNotFound):
+		if err := dropReport(ctx, tx, e); err != nil {
 			return count, pruned, err
 		}
 		count.n, pruned = max(count.n-1, 0), true
 	}
 	return count, pruned, nil
+}
+
+// pruneLapsedReports removes the reports past their retention at now, in
+// rounds of at most reportPruneBatch and at most reportPruneRounds of them.
+// It is what the control zone's periodic pass calls, so a report does not
+// outlive its retention when no new report arrives to prune it.
+func (s storedReports) pruneLapsedReports(ctx context.Context, now time.Time) error {
+	for range reportPruneRounds {
+		var pruned bool
+		err := s.store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+			count, removed, err := s.pruneLapsed(ctx, tx, now)
+			if err != nil || !removed {
+				return err
+			}
+			pruned = true
+			return putCount(ctx, tx, count)
+		})
+		if err != nil || !pruned {
+			return err
+		}
+	}
+	return nil
 }
 
 // reportCount is the stored number of reports and the version it was read at.

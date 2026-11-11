@@ -23,8 +23,10 @@ type ReportRoute struct {
 	Store    report.Store
 	Redactor telemetry.Redactor
 	// MaxStored and Retention bound the reports kept in the operational
-	// store: a full store refuses a new report, and a report is removed once
-	// its retention has passed since it was first received. Zero means
+	// store: a full store removes a report of the oldest day stored to make
+	// room for a new one, and a report is removed once its retention has
+	// passed since it was first received, by the next save or the next
+	// Server.PruneReports, whichever comes first. Zero means
 	// DefaultMaxStoredReports and the report retention of
 	// redact.DefaultRetention.
 	MaxStored int
@@ -35,23 +37,25 @@ type ReportRoute struct {
 }
 
 // handler builds the report handler with its client key, keeping reports
-// in operational when the route names no store of its own.
-func (r *ReportRoute) handler(clock core.Clock, operational state.Store) (http.Handler, error) {
+// in operational when the route names no store of its own; kept is that
+// store, nil when the route names its own.
+func (r *ReportRoute) handler(clock core.Clock, operational state.Store) (h http.Handler, kept *storedReports, err error) {
 	store := r.Store
 	if store == nil {
 		if r.MaxStored < 0 || r.Retention < 0 {
-			return nil, core.NewError(core.CodeInvalidArgument, "report limits must not be negative")
+			return nil, nil, core.NewError(core.CodeInvalidArgument, "report limits must not be negative")
 		}
-		kept := storedReports{store: operational, capacity: r.MaxStored, retention: r.Retention}
+		kept = &storedReports{store: operational, capacity: r.MaxStored, retention: r.Retention}
 		if kept.capacity == 0 {
 			kept.capacity = DefaultMaxStoredReports
 		}
 		if kept.retention == 0 {
 			kept.retention = redact.DefaultRetention()[redact.KindReport]
 		}
-		store = kept
+		store = *kept
 	}
-	return report.NewHandler(report.Config{Store: store, Redactor: r.Redactor, Clock: clock, ClientKey: ClientAddress(r.TrustedProxies)})
+	h, err = report.NewHandler(report.Config{Store: store, Redactor: r.Redactor, Clock: clock, ClientKey: ClientAddress(r.TrustedProxies)})
+	return h, kept, err
 }
 
 // ClientAddress returns what names the client of a request behind the
