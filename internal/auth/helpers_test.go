@@ -31,7 +31,8 @@ type env struct {
 	githubIssuer string
 }
 
-func newEnv(t *testing.T) *env {
+// newEnv builds the front door; tweak adjusts the service's configuration.
+func newEnv(t *testing.T, tweak ...func(e *env, cfg *auth.Config)) *env {
 	t.Helper()
 	e := &env{clock: sqlstoretest.NewClock(time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)), grants: rbac.NewGrants()}
 	e.fake = fakeoidc.NewTestServer(t, fakeoidc.WithClock(e.clock))
@@ -58,7 +59,11 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.svc, err = auth.New(auth.Config{Providers: []identity.Provider{google, github}, Clock: e.clock}); err != nil {
+	cfg := auth.Config{Providers: []identity.Provider{google, github}, Clock: e.clock}
+	for _, f := range tweak {
+		f(e, &cfg)
+	}
+	if e.svc, err = auth.New(cfg); err != nil {
 		t.Fatal(err)
 	}
 	e.authz, err = rbac.New(rbac.Config{Grants: e.grants, Sessions: e.svc, Clock: e.clock, DefaultRepo: "acme/app",

@@ -42,7 +42,7 @@ func (s *Service) Handler() http.Handler {
 }
 
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
-	authURL, binding, err := s.beginFlow(r.PathValue("provider"), LocalReturnPath(r.URL.Query().Get("return_to")), "", StepUpTarget{})
+	authURL, binding, err := s.beginFlow(r.PathValue("provider"), LocalReturnPath(r.URL.Query().Get("return_to")), s.clientKey(r), "", StepUpTarget{})
 	if err != nil {
 		writeError(w, err)
 		return
@@ -66,7 +66,7 @@ func (s *Service) handleStepUp(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	authURL, binding, err := s.beginFlow(r.PathValue("provider"), LocalReturnPath(r.URL.Query().Get("return_to")), ss.key, target)
+	authURL, binding, err := s.beginFlow(r.PathValue("provider"), LocalReturnPath(r.URL.Query().Get("return_to")), s.clientKey(r), ss.key, target)
 	if err != nil {
 		writeError(w, err)
 		return

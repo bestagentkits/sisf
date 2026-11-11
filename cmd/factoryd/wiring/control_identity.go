@@ -3,11 +3,13 @@ package wiring
 import (
 	"context"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/auth"
+	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/rbac"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
@@ -61,8 +63,9 @@ type signIn struct {
 // newSignIn builds the authentication service from cfg; a token may carry
 // only the scopes of registered actions. An OIDC provider is
 // discovered now, so a misconfigured issuer fails at start, not at the
-// first sign-in.
-func newSignIn(ctx context.Context, cfg IdentityConfig, scopes []string, clock core.Clock) (signIn, error) {
+// first sign-in. Sign-ins are limited per client address, named behind the
+// proxies in trusted, and the Owners' sessions are the last to be dropped.
+func newSignIn(ctx context.Context, cfg IdentityConfig, scopes []string, trusted []netip.Prefix, clock core.Clock) (signIn, error) {
 	client := &http.Client{Timeout: identityTimeout}
 	var out signIn
 	var providers []identity.Provider
@@ -93,7 +96,12 @@ func newSignIn(ctx context.Context, cfg IdentityConfig, scopes []string, clock c
 		out.formOrigins = append(out.formOrigins, origin(gh.AuthURL))
 	}
 	secure := strings.HasPrefix(cfg.ExternalURL, "https://")
-	svc, err := auth.New(auth.Config{Providers: providers, Clock: clock, SecureCookies: secure, AllowedScopes: scopes})
+	owners := map[string]bool{}
+	for _, owner := range cfg.Owners {
+		owners[auth.ActorID(owner)] = true
+	}
+	svc, err := auth.New(auth.Config{Providers: providers, Clock: clock, SecureCookies: secure, AllowedScopes: scopes,
+		HoldsRole: func(actorID string) bool { return owners[actorID] }, ClientKey: control.ClientAddress(trusted)})
 	if err != nil {
 		return out, err
 	}

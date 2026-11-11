@@ -72,22 +72,68 @@ func (s *Service) dropSessionLocked(ss *session) {
 	delete(s.byHandle, ss.handle)
 }
 
-// pruneSessionsLocked removes expired sessions and, at the cap, the ones
-// closest to expiry.
+// pruneSessionsLocked makes room for a new session. Anyone with an account
+// at a provider can sign in, so it removes expired sessions and then, while
+// all MaxSessions are taken, one of a person who holds no role
+// (Config.HoldsRole), from whoever holds the most: role-less sign-ins never
+// sign out a person who holds a role, and one account signing in again and
+// again loses its own sessions before anyone else's. Among the candidates
+// the session closest to expiry goes first. Last, it forgets the identity of every actor left with
+// no session and no token.
 func (s *Service) pruneSessionsLocked(now time.Time) {
+	perActor := map[string]int{}
 	for _, ss := range s.sessions {
 		if !now.Before(ss.expires) {
 			s.dropSessionLocked(ss)
+			continue
 		}
+		perActor[ss.actorID]++
 	}
+	holdsRole := func(actor string) bool { return s.cfg.HoldsRole != nil && s.cfg.HoldsRole(actor) }
 	for len(s.sessions) >= s.cfg.MaxSessions {
-		var oldest *session
-		for _, ss := range s.sessions {
-			if oldest == nil || ss.expires.Before(oldest.expires) {
-				oldest = ss
+		busiest := 0
+		for actor, n := range perActor {
+			if !holdsRole(actor) {
+				busiest = max(busiest, n)
 			}
 		}
-		s.dropSessionLocked(oldest)
+		s.dropFirstSessionLocked(perActor, func(ss *session) bool {
+			return busiest == 0 || !holdsRole(ss.actorID) && perActor[ss.actorID] == busiest
+		})
+	}
+	s.forgetIdleAccountsLocked()
+}
+
+// dropFirstSessionLocked drops the session closest to expiry among those
+// eligible picks, keeping perActor, the count of sessions by actor, current.
+func (s *Service) dropFirstSessionLocked(perActor map[string]int, eligible func(*session) bool) {
+	var victim *session
+	for _, ss := range s.sessions {
+		if eligible(ss) && (victim == nil || ss.expires.Before(victim.expires)) {
+			victim = ss
+		}
+	}
+	if victim == nil {
+		return
+	}
+	s.dropSessionLocked(victim)
+	perActor[victim.actorID]--
+}
+
+// forgetIdleAccountsLocked forgets the identity of each actor that holds no
+// session and no token; it is needed only while one of them lives.
+func (s *Service) forgetIdleAccountsLocked() {
+	live := make(map[string]bool, len(s.sessions)+len(s.tokens))
+	for _, ss := range s.sessions {
+		live[ss.actorID] = true
+	}
+	for _, t := range s.tokens {
+		live[t.info.ActorID] = true
+	}
+	for actorID := range s.accounts {
+		if !live[actorID] {
+			delete(s.accounts, actorID)
+		}
 	}
 }
 

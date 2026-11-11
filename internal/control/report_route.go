@@ -37,10 +37,6 @@ type ReportRoute struct {
 // handler builds the report handler with its client key, keeping reports
 // in operational when the route names no store of its own.
 func (r *ReportRoute) handler(clock core.Clock, operational state.Store) (http.Handler, error) {
-	trusted := r.TrustedProxies
-	if len(trusted) == 0 {
-		trusted = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
-	}
 	store := r.Store
 	if store == nil {
 		if r.MaxStored < 0 || r.Retention < 0 {
@@ -55,14 +51,19 @@ func (r *ReportRoute) handler(clock core.Clock, operational state.Store) (http.H
 		}
 		store = kept
 	}
-	return report.NewHandler(report.Config{Store: store, Redactor: r.Redactor, Clock: clock, ClientKey: forwardedClient(trusted)})
+	return report.NewHandler(report.Config{Store: store, Redactor: r.Redactor, Clock: clock, ClientKey: ClientAddress(r.TrustedProxies)})
 }
 
-// forwardedClient names the client of a request: the last address in
+// ClientAddress returns what names the client of a request behind the
+// proxies in trusted (empty means loopback): the last address in
 // X-Forwarded-For when the request came from a trusted proxy, which sets
 // that header itself and drops any value the client sent, and the remote
-// address otherwise.
-func forwardedClient(trusted []netip.Prefix) func(*http.Request) string {
+// address otherwise. Limits per client, such as those of the report route
+// and of sign-in, key on it.
+func ClientAddress(trusted []netip.Prefix) func(*http.Request) string {
+	if len(trusted) == 0 {
+		trusted = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+	}
 	return func(r *http.Request) string {
 		remote := remoteAddr(r)
 		addr, err := netip.ParseAddr(remote)

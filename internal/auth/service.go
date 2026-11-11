@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -22,7 +24,9 @@ const (
 	DefaultMaxSessions     = 10000
 	flowTTL                = 10 * time.Minute
 	maxFlows               = 1024
-	userActorPrefix        = "user:"
+	// maxFlowsPerSource bounds the sign-ins one network source has open.
+	maxFlowsPerSource = 16
+	userActorPrefix   = "user:"
 )
 
 // Config configures the authentication service.
@@ -40,8 +44,19 @@ type Config struct {
 	// SecureCookies adds the Secure attribute to every cookie. A request
 	// that arrived over TLS gets it regardless.
 	SecureCookies bool
-	// MaxSessions bounds memory; the sessions closest to expiry go first.
+	// MaxSessions bounds memory. At the bound a session of a person who
+	// holds no role goes first, from whoever holds the most sessions, the
+	// one closest to expiry first.
 	MaxSessions int
+	// HoldsRole reports whether an actor holds a role by a local grant, such
+	// as the Owner. It is read only to choose which session to drop when
+	// MaxSessions is reached, never to authorize, and must not block: it is
+	// called with the service's lock held. Nil means nobody does.
+	HoldsRole func(actorID string) bool
+	// ClientKey names the network source of a request, which bounds how
+	// many sign-ins one source may have open. Nil means the remote IP
+	// address.
+	ClientKey func(*http.Request) string
 }
 
 // Service authenticates callers and owns sessions, tokens and sign-in flows.
@@ -57,6 +72,7 @@ type Service struct {
 	tokens    map[string]*token   // by digest of the token
 	tokenByID map[string]*token
 	flows     map[string]*flow // by digest of the state
+	flowSeq   uint64
 	accounts  map[string]identity.Identity
 }
 
@@ -142,4 +158,17 @@ func (s *Service) Identity(actorID string) (identity.Identity, bool) {
 // freshStepUp reports whether at is a step-up recent enough at now.
 func (s *Service) freshStepUp(at, now time.Time) bool {
 	return !at.IsZero() && !at.After(now) && now.Sub(at) <= s.cfg.StepUpMaxAge
+}
+
+// clientKey names the network source of r: Config.ClientKey, or else the
+// remote IP address.
+func (s *Service) clientKey(r *http.Request) string {
+	if s.cfg.ClientKey != nil {
+		return s.cfg.ClientKey(r)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

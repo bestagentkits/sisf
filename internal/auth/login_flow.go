@@ -24,6 +24,10 @@ type flow struct {
 	returnTo string
 	started  time.Time
 	expires  time.Time
+	// source is the network source that started the flow (Config.ClientKey)
+	// and seq the order flows were started in.
+	source string
+	seq    uint64
 	// stepUpKey is the session being stepped up; empty for a sign-in.
 	stepUpKey string
 	// stepUpFor is what the step-up confirms.
@@ -38,9 +42,10 @@ type flowResult struct {
 	session *session
 }
 
-// beginFlow starts a sign-in, or a step-up of the session under stepUpKey
-// for target, and returns the provider URL and the flow cookie value.
-func (s *Service) beginFlow(providerName, returnTo, stepUpKey string, target StepUpTarget) (authURL, binding string, err error) {
+// beginFlow starts a sign-in from source, or a step-up of the session under
+// stepUpKey for target, and returns the provider URL and the flow cookie
+// value.
+func (s *Service) beginFlow(providerName, returnTo, source, stepUpKey string, target StepUpTarget) (authURL, binding string, err error) {
 	p, ok := s.providers[providerName]
 	if !ok {
 		return "", "", core.NewError(core.CodeNotFound, "no login provider is named "+providerName)
@@ -67,10 +72,12 @@ func (s *Service) beginFlow(providerName, returnTo, stepUpKey string, target Ste
 	}
 	now := s.cfg.Clock.Now()
 	f := &flow{provider: providerName, nonce: nonce, verifier: verifier, binding: digest(binding),
-		returnTo: returnTo, started: now, expires: now.Add(flowTTL), stepUpKey: stepUpKey, stepUpFor: target}
+		returnTo: returnTo, started: now, expires: now.Add(flowTTL), source: source, stepUpKey: stepUpKey, stepUpFor: target}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pruneFlowsLocked(now)
+	s.pruneFlowsLocked(now, source)
+	s.flowSeq++
+	f.seq = s.flowSeq
 	s.flows[digest(state)] = f
 	return authURL, binding, nil
 }
@@ -128,22 +135,65 @@ func (s *Service) completeFlow(ctx context.Context, providerName, state, code, b
 	return flowResult{returnTo: f.returnTo, cookie: cookie, session: ss}, nil
 }
 
-// pruneFlowsLocked drops expired flows and, at the cap, the oldest one.
-func (s *Service) pruneFlowsLocked(now time.Time) {
+// goesBefore reports whether f is dropped before other when room is needed:
+// a sign-in before a step-up, and the older of two of a kind.
+func (f *flow) goesBefore(other *flow) bool {
+	if signIn := f.stepUpKey == ""; signIn != (other.stepUpKey == "") {
+		return signIn
+	}
+	return f.seq < other.seq
+}
+
+// pruneFlowsLocked makes room for a flow from source. Anyone may start a
+// sign-in, so it drops expired flows, then the oldest flow of source while
+// source holds maxFlowsPerSource, and then, while all maxFlows are taken, a
+// sign-in of the source holding the most: a flood, from one address or
+// many, pushes out its own flows before a person's single one. A step-up,
+// which only a signed-in session can start, goes only when nothing but
+// step-ups is left.
+func (s *Service) pruneFlowsLocked(now time.Time, source string) {
+	perSource := map[string]int{}
 	for k, f := range s.flows {
 		if !now.Before(f.expires) {
 			delete(s.flows, k)
+			continue
+		}
+		if f.stepUpKey == "" {
+			perSource[f.source]++
 		}
 	}
+	for perSource[source] >= maxFlowsPerSource {
+		s.dropFlowLocked(perSource, func(f *flow) bool { return f.source == source })
+	}
 	for len(s.flows) >= maxFlows {
-		var oldestKey string
-		var oldest *flow
-		for k, f := range s.flows {
-			if oldest == nil || f.started.Before(oldest.started) {
-				oldestKey, oldest = k, f
-			}
+		busiest := 0
+		for _, n := range perSource {
+			busiest = max(busiest, n)
 		}
-		delete(s.flows, oldestKey)
+		s.dropFlowLocked(perSource, func(f *flow) bool { return busiest == 0 || perSource[f.source] == busiest })
+	}
+}
+
+// dropFlowLocked drops the first flow to go among those eligible picks: a
+// sign-in before a step-up, the oldest first. It keeps perSource, the count
+// of open sign-ins by source, current.
+func (s *Service) dropFlowLocked(perSource map[string]int, eligible func(*flow) bool) {
+	var key string
+	var victim *flow
+	for k, f := range s.flows {
+		if !eligible(f) {
+			continue
+		}
+		if victim == nil || f.goesBefore(victim) {
+			key, victim = k, f
+		}
+	}
+	if victim == nil {
+		return
+	}
+	delete(s.flows, key)
+	if victim.stepUpKey == "" {
+		perSource[victim.source]--
 	}
 }
 

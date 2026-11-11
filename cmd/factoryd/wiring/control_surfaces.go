@@ -66,7 +66,7 @@ func (c *Control) newSurfaces(ctx context.Context, sc SurfaceConfig, repo github
 	if err != nil {
 		return control.Surfaces{}, err
 	}
-	signIn, err := newSignIn(ctx, sc.Identity, oauthas.ScopesOf(specs), cfg.Clock)
+	signIn, err := newSignIn(ctx, sc.Identity, oauthas.ScopesOf(specs), cfg.TrustedProxies, cfg.Clock)
 	if err != nil {
 		return control.Surfaces{}, err
 	}
