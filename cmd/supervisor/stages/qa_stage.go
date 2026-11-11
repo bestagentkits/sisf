@@ -77,14 +77,11 @@ func (s *QAStage) Pass(ctx context.Context) QAPassResult {
 			res.Held = append(res.Held, record.IssueID)
 		}
 		res.Reasons[record.IssueID] = r.Reason
-		// The verdict is recorded; closing the reservation is a step of its
-		// own, so a budget failure never undoes a paid judgment.
-		if r.Verdict != VerdictFailed {
-			if err := s.closeRun(ctx, record.RunID); err != nil {
-				res.Errors = append(res.Errors, fmt.Errorf("%s: close the run's reservation: %w", record.IssueID, err))
-			}
-		}
 	}
+	// A passed or held verdict records that its run's reservation is due to
+	// close; closing it is a step of its own, so a budget failure never
+	// undoes a paid judgment, and one that fails is tried again next pass.
+	res.Errors = append(res.Errors, s.closeDueRuns(ctx)...)
 	return res
 }
 
@@ -181,6 +178,11 @@ func (s *QAStage) conclude(ctx context.Context, record core.StateRecord, lease s
 		note := s.noteOf(record, r)
 		if err := handoff.PutQANote(ctx, tx, note); err != nil {
 			return err
+		}
+		if r.Verdict != VerdictFailed {
+			if err := putCloseDue(ctx, tx, record.RunID); err != nil {
+				return err
+			}
 		}
 		if r.Verdict == VerdictHeld {
 			return handoff.PutQAHold(ctx, tx, holdOf(note, hold))
