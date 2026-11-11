@@ -17,6 +17,8 @@ type placedMount struct {
 	at     string // manifest path of the mount
 	volume string
 	dir    string // mount path as onDisk compares it
+	// written is the mount path cleaned, in the letters it is written in.
+	written string
 	// owner tells volumes with different owners apart: the owning zone, and
 	// for a shared volume also the unit that holds it.
 	owner string
@@ -37,7 +39,7 @@ func (c *checker) placedMounts() []placedMount {
 			}
 			placed = append(placed, placedMount{
 				unit: name, at: fmt.Sprintf("units.%s.mounts[%d]", name, i),
-				volume: mount.Volume, dir: onDisk(mount.Path), owner: owner,
+				volume: mount.Volume, dir: onDisk(mount.Path), written: path.Clean(mount.Path), owner: owner,
 			})
 		}
 	}
@@ -54,6 +56,8 @@ func (c *checker) placedMounts() []placedMount {
 //     release and the signing keys;
 //   - no two volumes with different owners share a directory, because one
 //     zone would then write the other's files;
+//   - every mount of one volume names one directory (see
+//     checkVolumeDirectories);
 //   - no mount climbs out of the factory root, because a directory above it
 //     holds every directory below it, the trust volume and the other zones'
 //     data included (see refuseClimbingMount).
@@ -70,6 +74,7 @@ func (c *checker) checkStandalonePaths() {
 		trust = c.m.Supervisor.TrustVolume
 	}
 	placed := c.placedMounts()
+	c.checkVolumeDirectories(placed)
 	var mounts []placedMount
 	for _, mount := range placed {
 		if climbs(mount.dir) {
@@ -98,6 +103,29 @@ func (c *checker) checkStandalonePaths() {
 					"unit %q mounts volume %q at a directory that is, holds or lies inside the directory of volume %q (%s), which has another owner; on one machine they are the same files, so one owner writes the other's data", later.unit, later.volume, earlier.volume, earlier.at)
 			}
 		}
+	}
+}
+
+// checkVolumeDirectories requires every mount of one volume to name one
+// directory. Two directories are two places on disk that the manifest calls
+// one volume, so the owner, holder and read-only mounts it declares for the
+// volume describe neither. Paths are compared as written, after cleaning:
+// two spellings that differ only by case are one directory where the file
+// system ignores case and two where it does not, so they are refused too.
+func (c *checker) checkVolumeDirectories(placed []placedMount) {
+	first := map[string]placedMount{}
+	for _, mount := range placed {
+		earlier, seen := first[mount.volume]
+		if !seen {
+			first[mount.volume] = mount
+			continue
+		}
+		if mount.written == earlier.written {
+			continue
+		}
+		c.addOnce(RuleVolumeDirectories, mount.at+".path",
+			fmt.Sprintf("mount volume %q at the directory %s names, written the same way", mount.volume, earlier.at),
+			"unit %q mounts volume %q at a directory other than the one %s names; on one machine a volume is one directory, so the two are different files and what the manifest declares of the volume holds for neither", mount.unit, mount.volume, earlier.at)
 	}
 }
 

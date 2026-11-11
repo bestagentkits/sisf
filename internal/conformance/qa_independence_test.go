@@ -134,7 +134,12 @@ func TestTheRunnerAndTheQARunnerShareNoWorkspace(t *testing.T) {
 		{"the runner mounts the QA workspace", docker,
 			func(m *manifest.Manifest) { m.Units[manifest.UnitRunner].Mounts[0].Volume = "qa-workspaces" }, "units.qa-runner.mounts[0]"},
 		{"the runner reads the QA workspace", standalone,
-			func(m *manifest.Manifest) { mount(m, manifest.UnitRunner, "qa-workspaces", true) }, "units.qa-runner.mounts[0]"},
+			func(m *manifest.Manifest) {
+				// At the qa-runner's directory: on one machine a volume is one directory.
+				editUnit(m, manifest.UnitRunner, func(u *manifest.Unit) {
+					u.Mounts = append(u.Mounts, manifest.Mount{Volume: "qa-workspaces", Path: "data/qa-workspaces", ReadOnly: true})
+				})
+			}, "units.qa-runner.mounts[0]"},
 		{"on one machine the QA workspace lies inside the coder's", standalone,
 			func(m *manifest.Manifest) { remount(m, manifest.UnitQARunner, "data/workspaces/qa") }, "units.qa-runner.mounts[0]"},
 		{"on one machine the coder's workspace lies inside the QA workspace", standalone,

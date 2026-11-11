@@ -86,6 +86,67 @@ func TestInStandaloneModeVolumesOfDifferentOwnersDoNotShareADirectory(t *testing
 	}
 }
 
+// In Standalone mode a volume is one directory on the machine. A volume
+// mounted at two directories is two places that the manifest calls one, so
+// what it says about the volume's owner and readers holds for neither.
+func TestInStandaloneModeAVolumeIsMountedAtOneDirectory(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		change func(m *manifest.Manifest)
+		path   string
+	}{
+		{"a second unit of the zone mounts the workspaces elsewhere", func(m *manifest.Manifest) {
+			editUnit(m, manifest.UnitDispatcher, func(u *manifest.Unit) {
+				u.Mounts = append(u.Mounts, manifest.Mount{Volume: "workspaces", Path: "data/dispatch"})
+			})
+		}, "units.runner.mounts[0].path"},
+		{"one unit mounts its volume twice", func(m *manifest.Manifest) {
+			editUnit(m, manifest.UnitApp, func(u *manifest.Unit) {
+				u.Mounts = append(u.Mounts, manifest.Mount{Volume: "app-data", Path: "/srv/app"})
+			})
+		}, "units.app.mounts[1].path"},
+		{"control reads the trust volume from another directory", func(m *manifest.Manifest) {
+			editUnit(m, manifest.UnitControl, func(u *manifest.Unit) {
+				u.Mounts = append(u.Mounts, manifest.Mount{Volume: "trust", Path: "data/control-trust", ReadOnly: true})
+			})
+		}, "units.supervisor.mounts[0].path"},
+		// A file system that tells case apart opens these as two directories.
+		{"a second mount spelled in other letters", func(m *manifest.Manifest) {
+			editUnit(m, manifest.UnitDispatcher, func(u *manifest.Unit) {
+				u.Mounts = append(u.Mounts, manifest.Mount{Volume: "workspaces", Path: "data/Workspaces"})
+			})
+		}, "units.runner.mounts[0].path"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := standalone(t)
+			tc.change(m)
+			// The finding stands at the later of the two mounts in unit order.
+			wantOnly(t, Check(m), RuleVolumeDirectories, tc.path)
+		})
+	}
+
+	// The same directory written another way is one directory.
+	m := standalone(t)
+	editUnit(m, manifest.UnitDispatcher, func(u *manifest.Unit) {
+		u.Mounts = append(u.Mounts, manifest.Mount{Volume: "workspaces", Path: "./data/app/../workspaces/"})
+	})
+	if report := Check(m); !report.Conformant() {
+		t.Fatalf("one directory written two ways is one directory, got %+v", report.Findings)
+	}
+
+	// In Docker mode each container sees the volume at a path of its own.
+	m = docker(t)
+	editUnit(m, manifest.UnitDispatcher, func(u *manifest.Unit) {
+		u.Mounts = append(u.Mounts, manifest.Mount{Volume: "workspaces", Path: "/dispatch"})
+	})
+	if report := Check(m); !report.Conformant() {
+		t.Fatalf("container paths of one volume may differ, got %+v", report.Findings)
+	}
+}
+
 func TestDirectoriesThatKeepTheOwnersApartAreAllowed(t *testing.T) {
 	t.Parallel()
 	allowed := map[string]func(m *manifest.Manifest){
