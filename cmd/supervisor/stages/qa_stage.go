@@ -111,9 +111,18 @@ func (s *QAStage) evaluate(ctx context.Context, record core.StateRecord) (QAResu
 	if c.IssueID != record.IssueID || c.Digest != record.CandidateDigest {
 		return s.conclude(ctx, record, lease, QAResult{Candidate: c, Verdict: VerdictFailed, Reason: "the stored candidate is not the one the issue's run submitted"})
 	}
-	if c.ChangedPaths, err = s.Tree.ChangedPaths(ctx, c.BaselineSHA, c.CommitSHA); err != nil {
+	listed, err := s.Tree.ChangedPaths(ctx, c.BaselineSHA, c.CommitSHA)
+	switch {
+	case core.HasCode(err, core.CodeLimitExceeded):
+		return s.conclude(ctx, record, lease, QAResult{Candidate: c, Verdict: VerdictFailed,
+			Reason: "GitHub lists only part of the files the candidate changes, so it cannot be shown to leave the foundation and policy files alone"})
+	case err != nil:
 		return QAResult{}, err
 	}
+	// The builder's list is every path of the patch; GitHub's adds what
+	// differs from the baseline besides. The gates, the release governance
+	// and the merge see both.
+	c.ChangedPaths = unionPaths(c.ChangedPaths, listed)
 	result, err := s.Evaluator.Run(ctx, c)
 	switch {
 	case core.HasCode(err, core.CodeUnavailable) || core.HasCode(err, core.CodeTimeout) || core.HasCode(err, core.CodeRateLimited):
@@ -224,3 +233,10 @@ func (s *QAStage) take(ctx context.Context, issue core.IssueRef) (state.Lease, e
 }
 
 func (s *QAStage) letGo(ctx context.Context, lease state.Lease) { letGo(ctx, s.State, lease) }
+
+// unionPaths is the sorted set of the paths of a and b.
+func unionPaths(a, b []string) []string {
+	out := slices.Concat(a, b)
+	slices.Sort(out)
+	return slices.Compact(out)
+}

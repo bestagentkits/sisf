@@ -15,7 +15,7 @@ import (
 // maxCommitFiles and maxFileBytes bound one commit made through the
 // simulation API, so a test cannot make the fake hold unbounded data.
 const (
-	maxCommitFiles = 64
+	maxCommitFiles = 1024 // more than GitHub's comparison lists, so a test can pass its limit
 	maxFileBytes   = 1 << 20
 	maxCommitBody  = 8 << 20
 )

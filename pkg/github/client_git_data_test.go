@@ -1,6 +1,7 @@
 package github_test
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"slices"
 	"testing"
@@ -113,5 +114,37 @@ func TestCommitToBranchWritesOnlyTheFactorysOwnBranches(t *testing.T) {
 	}
 	if head, _, _ := data.Branch(testRepo, "main"); head != base || data.Writes() != 0 {
 		t.Fatalf("main moved to %s after %d writes", head, data.Writes())
+	}
+}
+
+// GitHub's comparison lists at most CompareFileLimit files. A listing that
+// long may leave files out, so it is answered with LIMIT_EXCEEDED and a
+// caller that must see every changed path fails closed.
+func TestAComparisonAtGitHubsFileLimitIsReportedAsPossiblyIncomplete(t *testing.T) {
+	t.Parallel()
+	fake, data, client := gitDataClient(t)
+	base, err := fake.Commit(testRepo, map[string]string{"README.md": "hello\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.SetBranch(testRepo, "main", base); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []int{github.CompareFileLimit - 1, github.CompareFileLimit} {
+		head := core.CommitSHA(base)
+		for from := 0; from < n; from += 50 {
+			files := map[string][]byte{}
+			for i := from; i < min(from+50, n); i++ {
+				files[fmt.Sprintf("app/f%03d.txt", i)] = []byte("x\n")
+			}
+			if head, err = client.CommitToBranch(bg, repoRef, github.BranchCommit{Branch: fmt.Sprintf("sisf/f/run-%d", n), Base: head,
+				Message: "many files", Files: files}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		paths, err := client.ChangedPaths(bg, repoRef, core.CommitSHA(base), head)
+		if limited := core.HasCode(err, core.CodeLimitExceeded); limited != (n >= github.CompareFileLimit) || len(paths) != n {
+			t.Fatalf("%d changed files: %d listed, %v", n, len(paths), err)
+		}
 	}
 }

@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"net/http"
 	"regexp"
@@ -173,7 +174,9 @@ func (c *RESTClient) pointBranch(ctx context.Context, repo RepoRef, branch strin
 }
 
 // ChangedPaths lists the paths that differ between base and head, as the
-// compare API reports them, sorted.
+// compare API reports them, sorted. A listing that reaches
+// CompareFileLimit may be incomplete: it is returned with LIMIT_EXCEEDED,
+// so a caller that must see every path fails closed.
 func (c *RESTClient) ChangedPaths(ctx context.Context, repo RepoRef, base, head core.CommitSHA) ([]string, error) {
 	if err := validateRepo(repo); err != nil {
 		return nil, err
@@ -201,5 +204,12 @@ func (c *RESTClient) ChangedPaths(ctx context.Context, repo RepoRef, base, head 
 		paths = append(paths, f.Filename)
 	}
 	slices.Sort(paths)
+	if len(paths) >= CompareFileLimit {
+		return paths, core.NewError(core.CodeLimitExceeded, fmt.Sprintf("GitHub's comparison lists at most %d files, so the listing of %s may be incomplete", CompareFileLimit, head))
+	}
 	return paths, nil
 }
+
+// CompareFileLimit is the most files GitHub's comparison lists; a listing
+// that long may leave files out.
+const CompareFileLimit = 300
