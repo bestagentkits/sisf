@@ -21,7 +21,7 @@ Requirements for every install:
 - `sisf` built once and kept at a stable path: `make install` in the checkout installs it into `$(go env GOPATH)/bin`, stamped with its version, commit and build date (`Makefile`); `sisf version` prints them. A plain `go install ./cmd/sisf` also works but reports its version as `devel`. Do not run `sisf init` from `go run`: the service units name the running executable, so `init` skips them for such a build.
 - Docker mode, or a Standalone build sandbox: Docker with Compose.
 - Free ports 7460-7469 on 127.0.0.1 (`internal/install/options.go`).
-- A new or empty install directory, on a file system that supports `flock`: `init` refuses one that holds other files, and a Standalone `sisf up` holds a lock on `<dir>/run/sisf.lock` for as long as it runs, so a second `up` of the same install is refused (`internal/install/run_lock.go`).
+- A new or empty install directory, on a file system that supports `flock`: `init` refuses one that holds other files, and a Standalone `sisf up` holds a lock on `<dir>/run/sisf.lock` and passes it to every unit it starts, so the install counts as running while any unit lives, also after that `sisf up` was killed, and a second `up` of the same install is refused until `sisf stop --dir <dir>` has stopped what is left (`internal/install/run_lock.go`, [operations](operations.md#lifecycle)).
 
 ### One factory per machine
 
@@ -30,6 +30,8 @@ The ports are fixed, so one machine runs one factory. `init` does not check this
 - `sisf doctor` first checks that the factory answering on the ports is this install's; when another one answers, its `running` check fails, names that factory and skips the live checks (`internal/install/doctor_answering_factory.go`).
 - `sisf call`, `sisf login` and the commands built on `call` send nothing to a server that does not say it is the factory of the install in `--dir` or `$SISF_HOME` (`cmd/sisf/cmd_call_factory_identity.go`).
 - `sisf emergency-stop` sends a stop only to a supervisor that proves it serves this factory, and a supervisor refuses a stop for any factory but its own (`internal/supervisor/admin_emergency_stop.go`).
+
+In Standalone mode each factory unit may start only its own binary from the install's `bin/`: control and dispatcher `bin/factoryd`, edge `bin/sisf-edge`, runner `bin/sisf-runner`, qa-runner `bin/sisf-qa-runner`. The application unit may start the application launcher only without arguments, since the launcher runs the program its argument names. `sisf conformance check` refuses a manifest that does otherwise (`internal/conformance/rules_launchers.go`, `rules_standalone_executables.go`).
 
 Two Docker installs of repositories with the same name share a Compose project name (`sisf-<repository name>`). The second one's `up`, `stop`, `restart` and `down` refuse to touch a project another install made (`internal/install/docker_project_owner.go`); give the second install its own `--factory-id`.
 
@@ -156,7 +158,7 @@ The agents keep running as local processes under `trusted_code_only`; only the b
 - an internal Docker network for the runners (`docker network create --internal NET`);
 - an egress proxy on that network as its only way out, for example the edge's (`edge --egress-listen=egress:3128 --allow-non-loopback ...` in a container attached to `NET` with the alias `egress` and to an outbound network);
 - a runner image that holds the build command. The supervisor runs the command once per phase, each time in a fresh container, with the phase in `SISF_PHASE`: `test` (only the exit status is read; 0 means the tests passed), `build` (anything but exit 0 refuses the candidate) and `report`, which runs no code of the candidate. The report phase is told the candidate as `SISF_REPORT_COMMIT`, `SISF_REPORT_UNIT` and `SISF_REPORT_BRANCH`, and a nonce in `SISF_REPORT_NONCE`; it prints `sisf-report <nonce> <key>: <value>` lines for `image-digest`, `image`, `sbom` and `provenance`, each exactly once (`cmd/supervisor/stages/image_builders.go`; `tests/smoke/sandbox/build-candidate.sh` is an example). A build whose report names no SBOM and provenance is held before QA, and one whose tests did not pass fails the tests gate. Pin it by content, the way the docker backend runs it (`adapters/exec/docker/sandbox.go`): `name@sha256:<digest>` by a registry digest, or the full ID of an image built on this host, `sha256:<64 hex>` (what `docker image inspect --format '{{.Id}}'` prints, and how Docker mode pins the runner it builds itself). `init --runner-image` refuses a tag and a short ID (`internal/install/standalone_build_sandbox.go`);
-- the runner Docker request filter: `sisf docker-filter --role runner --listen 127.0.0.1:PORT --factory-id ID --network NET --image IMAGE --socket SOCKET`, started before `sisf up`;
+- the runner Docker request filter: `sisf docker-filter --role runner --listen 127.0.0.1:PORT --factory-id ID --network NET --image IMAGE --socket SOCKET`, started by you before `sisf up` (in Docker mode the Compose project starts both filter roles itself; `sisf help docker-filter` says which use is which);
 - a launcher that runs the QA agent in a sandbox and keeps its standard input and output.
 
 ```sh

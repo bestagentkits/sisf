@@ -17,7 +17,7 @@ Everything of a Standalone install lives below its install directory `<dir>` (`i
 | `data/control/` | the control zone's encrypted secret store and its key (`local:` references) | `local:` secrets |
 | `data/trust/` | the supervisor's delegated keys, last known good releases, the programs of released candidates (`programs/`) and the record of each slot's application process (`local-slots/`) | rollback targets |
 | `data/app/`, `data/artifacts/`, `data/workspaces/`, `data/qa-workspaces/` | application data, build artifacts, agent workspaces | application data |
-| `bin/`, `logs/`, `run/`, `service/` | built programs, logs, the pid file and the run lock `run/sisf.lock`, unit files | rebuilt or rewritten; the run lock file is never deleted, and the install directory must be on a file system that supports `flock` |
+| `bin/`, `logs/`, `run/`, `service/` | built programs, logs, the pid file, the run lock `run/sisf.lock` and the record of each running unit under `run/units/`, unit files | rebuilt or rewritten; the run lock file is never deleted, and the install directory must be on a file system that supports `flock` |
 
 A Docker install keeps `factory.yaml`, `budget-confirmation.json`, `source.json` (written by `init` in every mode), `secrets/`, `release/` and the rendered `compose.yaml` in `<dir>`, and its data in named volumes, each `<project>-<name>` where the project is `sisf-<repository name>` unless `--factory-id` said otherwise (`templates/compose/compose.yaml`): `state-data` (PostgreSQL), `control-data`, `trust`, `app-data`, `artifacts`, `workspaces`, `qa-workspaces`, and `supervisor-admin` (a socket only).
 
@@ -29,7 +29,7 @@ The commands below use `D` for the install directory; set it first, for example 
 
 Prerequisites: the factory is stopped, so no process writes the database while it is copied.
 
-1. Stop it: `sisf stop --dir "$D"`. In Standalone the command returns once the foreground `sisf up` has exited; `sisf up` running elsewhere (a terminal, a service) ends with it. A service manager set to restart it must be stopped instead (`systemctl --user stop ...`, `launchctl bootout ...`).
+1. Stop it: `sisf stop --dir "$D"`. In Standalone the command returns once the foreground `sisf up` has exited and no unit it started lives; `sisf up` running elsewhere (a terminal, a service) ends with it. If that `sisf up` was killed, its units still hold the install's run lock, and `sisf stop` stops them itself. A service manager set to restart it must be stopped instead (`systemctl --user stop ...`, `launchctl bootout ...`).
 2. Archive the whole directory, keeping permissions:
 
    ```sh
