@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -241,11 +242,27 @@ func TestAUnitThatOutlivesAKilledUpKeepsTheInstallRunningUntilStopped(t *testing
 	}
 	_ = up.Wait()
 
-	if running, err := in.Running(); err != nil || !running {
-		t.Fatalf("Running = %v %v while the unit of a killed up runs", running, err)
-	}
-	if _, err := in.acquireRunLock(); err == nil || !strings.Contains(err.Error(), "sisf stop") {
-		t.Fatalf("up = %v, want a refusal that says to run sisf stop first", err)
+	if runtime.GOOS == "linux" {
+		// Linux tells the unit to stop when its `sisf up` dies, so no unit
+		// is left behind and the install is no longer running.
+		for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+			if ok, err := in.alive(rec); err == nil && !ok {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the unit (process %d) outlived its killed up on Linux", rec.PID)
+			}
+		}
+		if running, err := in.Running(); err != nil || running {
+			t.Fatalf("Running = %v %v after the unit of a killed up stopped", running, err)
+		}
+	} else {
+		if running, err := in.Running(); err != nil || !running {
+			t.Fatalf("Running = %v %v while the unit of a killed up runs", running, err)
+		}
+		if _, err := in.acquireRunLock(); err == nil || !strings.Contains(err.Error(), "sisf stop") {
+			t.Fatalf("up = %v, want a refusal that says to run sisf stop first", err)
+		}
 	}
 	if err := in.Down(t.Context(), true); err != nil {
 		t.Fatal(err)
