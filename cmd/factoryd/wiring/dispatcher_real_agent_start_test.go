@@ -23,8 +23,9 @@ import (
 
 // A real coding agent works in a workspace the agent zone checks out at a
 // commit. The dispatcher must name that commit, the one the run's policy
-// is pinned to and the supervisor builds the patch on; a workspace without
-// one cannot be checked out, so the agent never starts and the issue stays
+// is pinned to, which is also the one the supervisor builds the patch on
+// while the policy in force does not change during the run; a workspace
+// without one cannot be checked out, so the agent never starts and the issue stays
 // Claimed. The scripted agent of the acceptance suite needs no checkout,
 // which is why only a real install showed it.
 func TestTheDispatcherStartsARealCodingAgentOnTheCommitItsPolicyPins(t *testing.T) {

@@ -111,9 +111,11 @@ func (d *Dispatcher) startAttempt(ctx context.Context, r *activeRun, run RunReco
 		Limits:         agent.Limits{Timeout: d.cfg.Limits.RunTimeout},
 		IdempotencyKey: fmt.Sprintf("%s/attempt/%d", run.RunID, attempt),
 	}
-	// The workspace starts at the commit the run's policy is pinned to,
-	// the commit the supervisor applies the patch to. A real agent's
-	// workspace is checked out at it and cannot be made without it.
+	// The workspace starts at the commit the run's policy is pinned to. The
+	// supervisor applies the patch to the commit of the policy in force when
+	// it builds, which is this one only while that policy does not change
+	// during the run. A real agent's workspace is checked out at it and
+	// cannot be made without it.
 	ws := agent.WorkspaceRef{ID: string(run.RunID), BaseSHA: run.Brief.Policy.PolicySHA}
 	ref, startErr := d.cfg.Agent.Start(ctx, task, ws, nil)
 	now := d.cfg.Clock.Now()
