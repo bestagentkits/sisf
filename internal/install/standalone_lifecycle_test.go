@@ -194,40 +194,85 @@ func TestAPIDFileOfAProcessThatIsGoneIsNotARunningFactory(t *testing.T) {
 // removed, and stop, down -v and a new up go ahead.
 func TestAPIDFileWhoseRunLockNobodyHoldsIsStaleEvenWhenItsPIDIsAlive(t *testing.T) {
 	t.Parallel()
-	for _, write := range []bool{false, true} {
-		signals := &fakeSignals{alive: map[int]bool{4242: true}}
-		in, _, out := newTestInstaller(t)
-		mustInit(t, in, manifest.ModeStandalone)
-		in.Signal = signals.send
-		if err := os.MkdirAll(in.Layout.Dir+"/run", 0o700); err != nil {
-			t.Fatal(err)
+	signals := &fakeSignals{alive: map[int]bool{4242: true}}
+	in, _, out := newTestInstaller(t)
+	mustInit(t, in, manifest.ModeStandalone)
+	in.Signal = signals.send
+	if err := os.MkdirAll(in.Layout.Dir+"/run", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The lock file an earlier `up` of this release left, unlocked.
+	if err := os.WriteFile(in.Layout.RunLock(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(in.Layout.PIDFile(), []byte("4242\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if running, err := in.Running(); err != nil || running {
+		t.Fatalf("Running = %v %v, want a stale pid file to be no running factory", running, err)
+	}
+	if _, err := os.Stat(in.Layout.PIDFile()); !os.IsNotExist(err) {
+		t.Error("the stale pid file was kept")
+	}
+	if !strings.Contains(out.String(), "stale pid file") {
+		t.Errorf("output %q does not say the pid file was stale", out.String())
+	}
+	if err := os.WriteFile(in.Layout.PIDFile(), []byte("4242\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Down(t.Context(), true); err != nil {
+		t.Fatalf("down -v with a stale pid file = %v", err)
+	}
+	if len(signals.sent) != 0 {
+		t.Fatalf("signals %v were sent to the process a stale pid file names", signals.sent)
+	}
+}
+
+// An install that no `up` with the run lock ever started has no lock file.
+// A live process its pid file names may then be a factory started by an
+// older sisf, or an unrelated process after a reboot: it is neither
+// signalled nor trusted, the data stays, and the operator is told how to
+// tell them apart. A pid file of a process that is gone is stale.
+func TestAPIDFileWithoutAnyRunLockFileIsNeitherSignalledNorTrusted(t *testing.T) {
+	t.Parallel()
+	signals := &fakeSignals{alive: map[int]bool{4242: true}}
+	in, _, _ := newTestInstaller(t)
+	mustInit(t, in, manifest.ModeStandalone)
+	in.Signal = signals.send
+	data := in.Layout.Data("state")
+	if err := os.MkdirAll(data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(in.Layout.Dir+"/run", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(in.Layout.PIDFile(), []byte("4242\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, run := range map[string]func() error{
+		"stop":    func() error { return in.Stop(t.Context()) },
+		"down -v": func() error { return in.Down(t.Context(), true) },
+		"up":      func() error { return in.Up(t.Context(), UpOptions{Init: initOptions(in, manifest.ModeStandalone)}) },
+	} {
+		if err := run(); !core.HasCode(err, core.CodeConflict) || !strings.Contains(err.Error(), "older sisf") {
+			t.Errorf("%s = %v, want CONFLICT saying it may be an older sisf", name, err)
 		}
-		if write { // a lock file left by an earlier `up`, unlocked
-			if err := os.WriteFile(in.Layout.RunLock(), nil, 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := os.WriteFile(in.Layout.PIDFile(), []byte("4242\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if running, err := in.Running(); err != nil || running {
-			t.Fatalf("Running = %v %v, want a stale pid file to be no running factory", running, err)
-		}
-		if _, err := os.Stat(in.Layout.PIDFile()); !os.IsNotExist(err) {
-			t.Error("the stale pid file was kept")
-		}
-		if !strings.Contains(out.String(), "stale pid file") {
-			t.Errorf("output %q does not say the pid file was stale", out.String())
-		}
-		if err := os.WriteFile(in.Layout.PIDFile(), []byte("4242\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := in.Down(t.Context(), true); err != nil {
-			t.Fatalf("down -v with a stale pid file = %v", err)
-		}
-		if len(signals.sent) != 0 {
-			t.Fatalf("signals %v were sent to the process a stale pid file names", signals.sent)
-		}
+	}
+	if len(signals.sent) != 0 {
+		t.Fatalf("signals %v were sent", signals.sent)
+	}
+	if _, err := os.Stat(data); err != nil {
+		t.Fatal("the data was removed")
+	}
+	if _, err := os.Stat(in.Layout.PIDFile()); err != nil {
+		t.Fatal("the pid file was removed")
+	}
+	signals.alive[4242] = false
+	if running, err := in.Running(); err != nil || running {
+		t.Fatalf("Running = %v %v once the process is gone", running, err)
+	}
+	if _, err := os.Stat(in.Layout.PIDFile()); !os.IsNotExist(err) {
+		t.Fatal("the pid file of a process that is gone was kept")
 	}
 }
 

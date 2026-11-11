@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // RunLock is the lock file of a Standalone install. The foreground `sisf up`
@@ -64,6 +66,12 @@ func (in *Installer) alreadyRunning() error {
 // process in the pid file, so that `sisf stop` can reach it even while it is
 // still building. The caller holds the lock until it returns.
 func (in *Installer) acquireRunLock() (*runLock, error) {
+	if !fileExists(in.Layout.RunLock()) {
+		// An `up` of an older sisf held no lock; it must not be run beside.
+		if err := in.refuseUnlockedLivePID(); err != nil {
+			return nil, err
+		}
+	}
 	f, err := in.lockRun()
 	if err != nil {
 		return nil, err
@@ -96,6 +104,9 @@ func (in *Installer) runLockHeld() (bool, error) {
 		if !fileExists(in.Layout.PIDFile()) {
 			return false, nil // never started here: nothing to lock or clean
 		}
+		if err := in.refuseUnlockedLivePID(); err != nil {
+			return false, err
+		}
 		// A pid file without a lock file is a leftover. The lock is taken
 		// before it is removed, as below, so an `up` starting right now
 		// keeps its own pid file.
@@ -113,6 +124,29 @@ func (in *Installer) runLockHeld() (bool, error) {
 	default:
 		return false, unavailablef(err, "cannot test the run lock %s", in.Layout.RunLock())
 	}
+}
+
+// refuseUnlockedLivePID handles a pid file next to which no lock file was
+// ever made: a `sisf up` of a release without the run lock may still run
+// from it, and so may an unrelated process that was given its pid after a
+// reboot. Neither may be signalled, nor may its data be removed, so the
+// operator is asked to tell them apart. A pid file of a process that is gone
+// is stale either way.
+func (in *Installer) refuseUnlockedLivePID() error {
+	pid := readPIDFile(in.Layout.PIDFile())
+	if pid == 0 {
+		return nil
+	}
+	// EPERM: the process exists but belongs to another user.
+	if err := in.signal(pid, 0); err != nil && !errors.Is(err, syscall.EPERM) {
+		return nil
+	}
+	return core.NewError(core.CodeConflict, sprintf(
+		"%s names process %d, which is alive, but this install has no run lock (%s): it may be a factory started by an older sisf, or an unrelated process that was given the pid after a reboot; nothing was signalled or removed",
+		in.Layout.PIDFile(), pid, in.Layout.RunLock()),
+		core.NextAction{Action: sprintf("ps -p %d -o command", pid), Description: "see what the process is"},
+		core.NextAction{Action: sprintf("kill %d", pid), Description: "if it is this install's `sisf up`, stop it, then start it again with this sisf"},
+		core.NextAction{Action: "rm " + in.Layout.PIDFile(), Description: "if it is not `sisf up`, remove the stale pid file"})
 }
 
 // removeStalePIDFile removes a pid file no running `up` owns, and says so.

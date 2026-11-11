@@ -95,7 +95,7 @@ func (in *Installer) instanceRunning(ctx context.Context, m *manifest.Manifest) 
 		pid, err := in.runningPID()
 		switch {
 		case err != nil:
-			return false, "its pid file cannot be read"
+			return false, "whether its `sisf up` runs cannot be told: " + err.Error()
 		case pid == 0:
 			return false, "no `sisf up` process of this install"
 		}
