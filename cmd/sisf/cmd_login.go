@@ -208,6 +208,9 @@ func runLogin(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := conn.verifyFactory(ctx, client); err != nil {
+		return err
+	}
 	var start struct {
 		DeviceCode string `json:"device_code"`
 		UserCode   string `json:"user_code"`

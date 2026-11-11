@@ -67,7 +67,7 @@ func (c *apiClient) do(ctx context.Context, method, path string, body io.Reader)
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return 0, nil, nil, core.NewError(core.CodeUnavailable, "the factory at "+c.base+" cannot be reached").WithCause(err)
+		return 0, nil, nil, notRunning(c.base, "", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
@@ -133,6 +133,9 @@ func callAction(ctx context.Context, env *Env, conn *connFlags, action string, i
 	}
 	client, _, err := conn.client(true)
 	if err != nil {
+		return err
+	}
+	if err := conn.verifyFactory(ctx, client); err != nil {
 		return err
 	}
 	body := map[string]any{"input": input}

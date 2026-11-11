@@ -264,3 +264,40 @@ func TestStoredLoginFileIsOwnerOnlyAndReplacedWhole(t *testing.T) {
 		t.Fatalf("stored login: %+v %v %v", got, ok, err)
 	}
 }
+
+// The default control URL is a fixed loopback port that another factory on
+// the same host may hold: with an install in the SISF home, a token or a
+// login request goes only to a server that names this install's factory.
+func TestATokenIsNeverSentToAnotherFactory(t *testing.T) {
+	isolate(t)
+	home := initSim(t, "standalone")
+	t.Setenv(homeEnv, home)
+	t.Setenv(tokenEnv, "token-of-this-install")
+	for factory, want := range map[string]int{"sisf-other": exitFailure, "": exitFailure, "sisf-hello-app": exitOK} {
+		f := newFakeFactory(t, http.StatusOK, `{"factory_id":"`+factory+`","output":{}}`)
+		status, _, stderr := runCLI(t, "", "status", "--url", f.srv.URL)
+		if status != want {
+			t.Errorf("factory %q: status %d, want %d (%s)", factory, status, want, stderr)
+		}
+		for _, s := range f.seen() {
+			if s.auth != "" && factory != "sisf-hello-app" {
+				t.Errorf("factory %q received the token at %s", factory, s.path)
+			}
+		}
+		if factory == "sisf-other" && !strings.Contains(stderr, "is factory sisf-other, not sisf-hello-app") {
+			t.Errorf("the refusal does not name both factories: %s", stderr)
+		}
+		if factory == "sisf-hello-app" {
+			continue
+		}
+		status, _, _ = runCLI(t, "", "login", "--url", f.srv.URL)
+		if status != exitFailure {
+			t.Errorf("factory %q: login status %d, want a refusal", factory, status)
+		}
+		for _, s := range f.seen() {
+			if s.path == deviceStartPath {
+				t.Errorf("a login request was sent to factory %q", factory)
+			}
+		}
+	}
+}
