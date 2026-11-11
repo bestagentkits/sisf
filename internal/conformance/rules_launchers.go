@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -15,20 +16,21 @@ import (
 // to lie outside the directories other units write.
 //
 // A unit compared by what it starts, the supervisor included, is refused
-// too when the first word of its command names a file with whitespace
-// around it: a file system may drop that whitespace and so run another
-// program than the one every rule compares, such as a launcher that is not
-// recognized by its padded name.
+// too when a word of its command names a file with whitespace around it:
+// a file system may drop that whitespace and so run another program than
+// the one every rule compares, such as a launcher, or the supervisor's
+// executable named in an argument, that is not recognized by its padded
+// name.
 func (c *checker) checkLaunchers() {
 	for _, name := range manifest.UnitNames() {
 		unit, ok := c.m.Units[name]
 		if !ok || len(unit.Command) == 0 || !c.comparedByExecutable(unit) {
 			continue
 		}
-		if paddedFileName(unit.Command[0]) {
+		if i := slices.IndexFunc(unit.Command, paddedFileName); i >= 0 {
 			c.add(RuleUnitThroughLauncher, "units."+string(name)+".command",
-				"name the program the unit starts without whitespace around its file name",
-				"unit %q starts %q, whose file name has whitespace around it; a file system may drop it and run another program than the one the rules compare", name, unit.Command[0])
+				"write every word of the command without whitespace around the file name it names",
+				"unit %q has %q in its command, a file name with whitespace around it; a file system may drop it and run another program than the one the rules compare", name, unit.Command[i])
 			continue
 		}
 		if name == manifest.UnitSupervisor || !throughLauncher(unit.Command) {

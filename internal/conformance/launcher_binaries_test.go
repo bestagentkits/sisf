@@ -32,8 +32,8 @@ func TestAUnitWithoutABinaryOfItsOwnStartsNoProgramOfTheInstall(t *testing.T) {
 }
 
 // A file system may drop the spaces around a file name, and a launcher
-// named with them is not recognized by its name: a command whose first
-// word names a file with whitespace around it is refused, in both modes.
+// named with them is not recognized by its name: a command any word of
+// which names a file with whitespace around it is refused, in both modes.
 func TestACommandNamingAFileWithSurroundingWhitespaceIsRefused(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -55,6 +55,16 @@ func TestACommandNamingAFileWithSurroundingWhitespaceIsRefused(t *testing.T) {
 	}
 	m := docker(t)
 	editUnit(m, manifest.UnitApp, func(u *manifest.Unit) { u.Image, u.Command = "", []string{"sh ", "-c", "serve"} })
+	wantOnly(t, Check(m), RuleUnitThroughLauncher, "units.app.command")
+
+	// Any word of the command, not only the first, may name a program.
+	m = docker(t)
+	editUnit(m, manifest.UnitApp, func(u *manifest.Unit) { u.Image, u.Command = "", []string{"tini", "--", "bin/sisf-supervisor "} })
+	if report := Check(m); report.Conformant() || !report.reportedAt(RuleUnitThroughLauncher, "units.app.command") {
+		t.Errorf("a padded later word: want %s, got %+v", RuleUnitThroughLauncher, report.Findings)
+	}
+	m = standalone(t)
+	editUnit(m, manifest.UnitApp, func(u *manifest.Unit) { u.Command = []string{"bin/hello-app", "--config", "data/app/config "} })
 	wantOnly(t, Check(m), RuleUnitThroughLauncher, "units.app.command")
 }
 
