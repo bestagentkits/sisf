@@ -15,6 +15,8 @@ func TestParseNeverQuotesAValueShapedLikeASecret(t *testing.T) {
 	valid := exampleYAML(t)
 	// Built at run time so no credential-shaped literal sits in the source.
 	token := "ghp_" + strings.Repeat("Ab1", 12)
+	gitlab := "glpat-" + strings.Repeat("xY9", 7)
+	awsKey := "ASIA" + strings.Repeat("Q7", 8)
 	cases := map[string]struct {
 		yaml   string
 		hidden []string
@@ -26,6 +28,12 @@ func TestParseNeverQuotesAValueShapedLikeASecret(t *testing.T) {
 		"a credentialed URL for a span": {strings.Replace(valid, "run_timeout: 30m", "run_timeout: https://ci:hunter22@example.test", 1),
 			[]string{"hunter22", "ci:"}},
 		"a token as a key": {strings.Replace(valid, "mode: docker", "mode: docker\n"+token+": 1", 1), []string{"ghp_", token}},
+		// Shapes the shared redaction helper does not know are withheld too.
+		"a GitLab token for a span": {strings.Replace(valid, "run_timeout: 30m", "run_timeout: "+gitlab, 1), []string{"glpat", gitlab}},
+		"a GitLab token as a key":   {strings.Replace(valid, "mode: docker", "mode: docker\n"+gitlab+": 1", 1), []string{"glpat", gitlab}},
+		"a cloud key as a key":      {strings.Replace(valid, "mode: docker", "mode: docker\n"+awsKey+": 1", 1), []string{awsKey}},
+		"a signed URL for a span": {strings.Replace(valid, "run_timeout: 30m", "run_timeout: https://cdn.test/f?sig=Zm9vYmFy", 1),
+			[]string{"Zm9vYmFy"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

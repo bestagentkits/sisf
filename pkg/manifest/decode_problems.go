@@ -23,18 +23,36 @@ var (
 	// urlWithUserInfo is a URL whose authority carries a user part, where a
 	// password or a token is written, as in a connection string.
 	urlWithUserInfo = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s/?#@]*@`)
+	// keyForm is the form of every key of the manifest; a key outside it is
+	// not a mistyped key name but something else pasted there.
+	keyForm = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 )
 
-// truncatedMark ends a value the decoder cut short in its message.
-const truncatedMark = "..."
+// maxQuotedValue is the longest value a problem quotes: the decoder itself
+// cuts a longer one to its first seven characters and truncatedMark. A
+// token or a signed URL is longer.
+const (
+	maxQuotedValue = 10
+	truncatedMark  = "..."
+)
 
 // quotable reports whether a value from the file may be quoted in a problem.
-// A value pasted in the wrong place may be a credential, so a value with the
-// shape of one, a token or a URL with a user part, is never quoted, and
-// neither is a value the decoder cut short: its first characters cannot be
-// judged and may be the start of a secret.
+// A value pasted in the wrong place may be a credential, so only a short
+// value without the shape of a secret (pkg/agent/redact's shapes, or a URL
+// with a user part) is quoted; a prefix the decoder cut short is not,
+// since it may be the start of a secret.
 func quotable(value string) bool {
-	return !strings.HasSuffix(value, truncatedMark) && redact.Text(value) == value && !urlWithUserInfo.MatchString(value)
+	return len(value) <= maxQuotedValue && !strings.HasSuffix(value, truncatedMark) && notSecretShaped(value)
+}
+
+// quotableKey reports whether an unknown key may be quoted: it has the form
+// of a manifest key and no secret shape.
+func quotableKey(key string) bool {
+	return keyForm.MatchString(key) && notSecretShaped(key)
+}
+
+func notSecretShaped(text string) bool {
+	return redact.Text(text) == text && !urlWithUserInfo.MatchString(text)
 }
 
 // yamlKinds names each kind of YAML value the way its author thinks of it.
@@ -71,7 +89,7 @@ func decodeProblems(data []byte, err error) string {
 // passed through unchanged rather than guessed at.
 func plainProblem(problem string) string {
 	if m := unknownKeyProblem.FindStringSubmatch(problem); m != nil {
-		if !quotable(m[2]) {
+		if !quotableKey(m[2]) {
 			return m[1] + "unknown key (its name is withheld: it has the shape of a secret)"
 		}
 		return m[1] + `unknown key "` + m[2] + `"`
