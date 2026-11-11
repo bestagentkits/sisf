@@ -124,7 +124,9 @@ func TestOneAddressCannotHoldTheStoreAgainstOthers(t *testing.T) {
 			}
 			db.Clock.Advance(time.Hour)
 		}
-		if code, _ := sendReportText(t, e, "Hostage more", "Body.", 1); code != http.StatusServiceUnavailable {
+		// It holds its share of waiting reports too, so it is refused as
+		// too many before the full store is looked at.
+		if code, _ := sendReportText(t, e, "Hostage more", "Body.", 1); code != http.StatusTooManyRequests {
 			t.Fatalf("the address holding the whole store sends more: %d, want it refused", code)
 		}
 		for client := 2; client <= 6; client++ {

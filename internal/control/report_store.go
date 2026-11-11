@@ -105,7 +105,9 @@ var _ report.Store = storedReports{}
 // Save implements report.Store. It first removes lapsed reports; then a
 // duplicate is counted against the stored report, published or not, and a
 // new one is stored to be published, its client kept only as a keyed hash
-// (clientHash). When the store is full, the oldest report GitHub refused
+// (clientHash). A client that already has maxWaitingPerClient reports
+// waiting is refused with RATE_LIMITED and a time to retry, read from its
+// list of waiting reports alone. When the store is full, the oldest report GitHub refused
 // for good makes room for it, and else the newest waiting report of the
 // client holding the most, as long as that client holds more than one and
 // more than the new report's client (dropFromBusiestClient). With no such
@@ -120,11 +122,12 @@ func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report
 		stored  report.Report
 		created bool
 		full    bool
+		backlog bool
 		err     error
 	)
 	for range reportSaveAttempts {
 		err = s.store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-			stored, created, full = report.Report{}, false, false
+			stored, created, full, backlog = report.Report{}, false, false, false
 			count, pruned, err := s.pruneLapsed(ctx, tx, r.ReceivedAt)
 			if err != nil {
 				return err
@@ -140,6 +143,16 @@ func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report
 			client, err := clientHash(ctx, tx, r.Client)
 			if err != nil {
 				return err
+			}
+			// A client holding its share of waiting reports is refused
+			// before any room is made, so it pushes out nobody's report.
+			held, err := waitingCount(ctx, tx, client)
+			if err != nil {
+				return err
+			}
+			if held >= maxWaitingPerClient {
+				backlog = true
+				return s.putCountIf(ctx, tx, count, pruned)
 			}
 			room := count.n < s.capacity
 			if !room {
@@ -180,6 +193,8 @@ func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report
 	switch {
 	case err != nil:
 		return report.Report{}, false, err
+	case backlog:
+		return report.Report{}, false, tooManyWaiting()
 	case full:
 		return report.Report{}, false, core.NewError(core.CodeLimitExceeded, "the report store is full")
 	}

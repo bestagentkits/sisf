@@ -9,7 +9,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
@@ -30,7 +32,36 @@ const (
 	reportClientPrefix = "c/"
 	// reportDroppedKey counts the waiting reports pushed out to make room.
 	reportDroppedKey = "dropped-count"
+	// maxWaitingPerClient bounds the reports one client may have waiting
+	// to be published. Reports are published in the order they were
+	// received, at most ReportDailyPublishBudget a day, so without it one
+	// address at its hourly limit would queue a day's sending, and weeks of
+	// publication, ahead of a person's report; with it a person's report
+	// waits behind at most this many of any one address.
+	maxWaitingPerClient = 10
+	// clientBacklogRetry is the Retry-After of a report refused because its
+	// client holds maxWaitingPerClient waiting reports: one of them leaves
+	// as it is published, about every half hour at the daily budget.
+	clientBacklogRetry = 30 * time.Minute
 )
+
+// tooManyWaiting refuses a report whose client already has
+// maxWaitingPerClient reports waiting, with a time to retry.
+func tooManyWaiting() error {
+	err := core.NewError(core.CodeRateLimited, "too many of this client's reports wait to be published; try again later")
+	err.Details = map[string]string{"retry_after_seconds": strconv.Itoa(int(clientBacklogRetry / time.Second))}
+	return err
+}
+
+// waitingCount is how many reports client has waiting, read from its list
+// of them alone; a report without a client counts none.
+func waitingCount(ctx context.Context, tx state.Tx, client string) (int, error) {
+	if client == "" {
+		return 0, nil
+	}
+	list, err := readClientReports(ctx, tx, client)
+	return len(list.keys), err
+}
 
 // clientHash returns the name the store keeps for the client key raw: an
 // HMAC under the install's secret, made on first use. An empty key names

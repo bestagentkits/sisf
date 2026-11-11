@@ -15,13 +15,14 @@ import (
 
 // A flood of reports cannot make the factory open more than its daily
 // budget of issues. Twenty-four addresses send as many reports as the
-// route takes in the first hour, then one of them goes on at its own limit
+// route takes in the first hour, then six of them go on at their own limit
 // every hour for a day, while the publisher runs every minute as the
 // control pass does. Within the day at most ReportDailyPublishBudget
 // issues are opened, oldest report first, and then publishing pauses with
-// the backlog shown. The store here holds 60 reports, so the flood fills it
-// within the day; a person's report from a new address is still accepted,
-// pushing out the newest report of the address that holds the most.
+// the backlog shown. The store here holds 60 reports and one address may
+// have ten waiting, so six addresses fill it within the day; a person's
+// report from a new address is still accepted, pushing out the newest
+// report of the address that holds the most.
 func TestAReportFloodOpensAtMostTheDailyBudgetInReceiptOrder(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
@@ -57,8 +58,10 @@ func TestAReportFloodOpensAtMostTheDailyBudgetInReceiptOrder(t *testing.T) {
 				}
 			}
 			if minute > 0 && minute%60 == 0 {
-				for n := range 5 {
-					send(1, minute+n)
+				for client := 1; client <= 6; client++ {
+					for n := range 5 {
+						send(client, minute+n)
+					}
 				}
 			}
 			if minute == 12*60+30 {

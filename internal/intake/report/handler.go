@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -134,6 +135,13 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	stored, created, err := h.cfg.Store.Save(r.Context(), Report{
 		ID: "report-" + fp[:16], Fingerprint: fp, Title: title, Body: body, ReceivedAt: now, Client: client,
 	})
+	if core.HasCode(err, core.CodeRateLimited) {
+		// The store holds as many of this client's reports as it lets one
+		// client have waiting.
+		w.Header().Set("Retry-After", storeRetryAfter(err))
+		reply(w, http.StatusTooManyRequests, "error", "too many of your reports wait to be published; try again later")
+		return
+	}
 	if err != nil {
 		h.cfg.Logger.Error("report could not be stored", "code", string(core.CodeOf(err)))
 		if core.HasCode(err, core.CodeLimitExceeded) {
@@ -232,6 +240,18 @@ func remoteIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// storeRetryAfter is the Retry-After of a report the store refused as
+// too many: the seconds the store's error names, or else fullStoreRetry.
+func storeRetryAfter(err error) string {
+	var typed *core.Error
+	if errors.As(err, &typed) {
+		if seconds, convErr := strconv.Atoi(typed.Details["retry_after_seconds"]); convErr == nil && seconds > 0 {
+			return strconv.Itoa(seconds)
+		}
+	}
+	return retryAfter(fullStoreRetry)
 }
 
 func retryAfter(d time.Duration) string {
