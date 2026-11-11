@@ -11,8 +11,8 @@ import (
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
-// The factory's status counts the reports waiting to be published and
-// those given up after GitHub refused them, so the operator sees reports
+// The factory's status counts the reports waiting to be published, those
+// given up after GitHub refused them and those pushed out of a full store, so the operator sees reports
 // that will never become issues. It reads the store's counters, not the
 // reports: a report given up is counted by the publisher as it moves it.
 func TestTheStatusCountsReportsWaitingAndGivenUp(t *testing.T) {
@@ -24,6 +24,7 @@ func TestTheStatusCountsReportsWaitingAndGivenUp(t *testing.T) {
 		for _, e := range []state.KVEntry{
 			{Namespace: control.ReportsNamespace, Key: "f/given-up", Value: []byte(`{}`)},
 			{Namespace: control.ReportsNamespace, Key: "failed-count", Value: []byte("1")},
+			{Namespace: control.ReportsNamespace, Key: "dropped-count", Value: []byte("4")},
 		} {
 			if _, err := tx.PutKV(ctx, e); err != nil {
 				return err
@@ -41,8 +42,9 @@ func TestTheStatusCountsReportsWaitingAndGivenUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	sync, err := f.Control.GitHubSync(ctx)
-	if err != nil || sync.ReportsWaiting != 1 || sync.ReportsFailed != 1 {
-		t.Fatalf("the status shows %d waiting and %d given up (%v), want 1 and 1", sync.ReportsWaiting, sync.ReportsFailed, err)
+	if err != nil || sync.ReportsWaiting != 1 || sync.ReportsFailed != 1 || sync.ReportsDropped != 4 {
+		t.Fatalf("the status shows %d waiting, %d given up and %d dropped (%v), want 1, 1 and 4",
+			sync.ReportsWaiting, sync.ReportsFailed, sync.ReportsDropped, err)
 	}
 	if !sync.ReportsPublishPausedUntil.IsZero() {
 		t.Fatalf("the status shows publishing paused until %s with the budget unspent", sync.ReportsPublishPausedUntil)

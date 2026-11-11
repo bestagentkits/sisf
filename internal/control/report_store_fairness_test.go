@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/control"
+	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
@@ -94,8 +96,12 @@ func TestAStoreOfOneReportPerAddressRefusesANewcomer(t *testing.T) {
 				t.Fatalf("report from %d: %d", client, code)
 			}
 		}
-		if code, _ := sendReportText(t, e, "One too many", "Body.", 6); code != http.StatusServiceUnavailable {
-			t.Fatalf("a newcomer into a store of one report per address: %d, want it refused", code)
+		req := httptest.NewRequest(http.MethodPost, report.Path, strings.NewReader(`{"title":"One too many","body":"Body."}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "198.51.100.7:4000"
+		if rec := e.do(req); rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+			t.Fatalf("a newcomer into a store of one report per address: %d, Retry-After %q; want it refused with a time to retry",
+				rec.Code, rec.Header().Get("Retry-After"))
 		}
 		if st := readPublication(t, e, db.Clock.Now()); st.Waiting != 5 || st.Dropped != 0 {
 			t.Fatalf("the status: %+v, want 5 waiting and none dropped", st)
