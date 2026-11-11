@@ -208,12 +208,24 @@ func TestServiceUnitsAreWrittenOnlyWhenTheyCanStartTheFactory(t *testing.T) {
 	}
 }
 
+// writeSourceCheckout makes dir look like a checkout of this project to
+// FindSource: its go.mod and the programs `sisf up` builds.
+func writeSourceCheckout(t *testing.T, dir string) {
+	t.Helper()
+	for _, p := range standalonePrograms {
+		if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(p.pkg)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(sourceModule+"\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFindSourceWalksUpToThisProjectsCheckout(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(sourceModule+"\n\ngo 1.25\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeSourceCheckout(t, root)
 	sub := filepath.Join(root, "cmd", "sisf")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -223,6 +235,32 @@ func TestFindSourceWalksUpToThisProjectsCheckout(t *testing.T) {
 	}
 	if got := FindSource(t.TempDir()); got != "" {
 		t.Fatalf("FindSource outside a checkout = %q", got)
+	}
+}
+
+// A go.mod naming this module is not a checkout by itself, such as a copy
+// left in a parent directory: `sisf up` could build nothing from it.
+func TestFindSourcePassesAStrayGoModOfThisModule(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeSourceCheckout(t, root)
+	stray := filepath.Join(root, "notes")
+	work := filepath.Join(stray, "work")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stray, "go.mod"), []byte(sourceModule+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := FindSource(work); got != root {
+		t.Fatalf("FindSource = %q, want the checkout %q past the stray go.mod", got, root)
+	}
+	alone := t.TempDir()
+	if err := os.WriteFile(filepath.Join(alone, "go.mod"), []byte(sourceModule+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := FindSource(alone); got != "" {
+		t.Fatalf("FindSource of a lone go.mod = %q, want none", got)
 	}
 }
 

@@ -86,21 +86,17 @@ func checkEmptyTarget(dir string) error {
 const sourceModule = "module github.com/bestagentkits/sisf"
 
 // FindSource returns the source checkout that holds start: start itself or
-// the nearest parent whose go.mod is this project's, or "" when there is
-// none. It lets `sisf init` and `sisf up` run from any directory of the
-// checkout.
+// the nearest parent that is a checkout of this project, or "" when there
+// is none. It lets `sisf init` and `sisf up` run from any directory of the
+// checkout; --source names a checkout explicitly.
 func FindSource(start string) string {
 	dir, err := filepath.Abs(start)
 	if err != nil {
 		return ""
 	}
 	for {
-		if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil {
-			for line := range strings.SplitSeq(string(data), "\n") {
-				if strings.TrimSpace(line) == sourceModule {
-					return dir
-				}
-			}
+		if isSourceCheckout(dir) {
+			return dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -108,6 +104,33 @@ func FindSource(start string) string {
 		}
 		dir = parent
 	}
+}
+
+// isSourceCheckout reports whether dir is a checkout `sisf up` can build
+// from: its go.mod declares this module and it holds the main package of
+// every program a Standalone install builds. A go.mod alone, such as a copy
+// left in a parent directory, is not one.
+func isSourceCheckout(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return false
+	}
+	declared := false
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if strings.TrimSpace(line) == sourceModule {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		return false
+	}
+	for _, p := range standalonePrograms {
+		if info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p.pkg))); err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	return true
 }
 
 // checkSource refuses an install whose source checkout cannot be built
