@@ -55,7 +55,20 @@ func (in *Installer) upStandalone(ctx context.Context, m *manifest.Manifest, rel
 			_ = c.Close() // logs only; the units have stopped by now
 		}
 	}()
+	in.say("factory %s is up: control http://%s, app via edge http://%s\n", m.FactoryID, addr(PortControl), addr(PortEdge))
+	return in.superviseUnits(ctx, lock, units, reload)
+}
+
+// superviseUnits runs the units until ctx ends. Every unit inherits the
+// open file that holds the run lock and is recorded with its start time, so
+// the install still counts as running, and its units can be found and
+// stopped, if this process ends without stopping them.
+func (in *Installer) superviseUnits(ctx context.Context, lock *runLock, units []unit, reload <-chan struct{}) error {
+	for i := range units {
+		units[i].cmd.ExtraFiles = []*os.File{lock.file} // descriptor RunLockFD
+	}
 	g := newGroup(in.Exec, in.Clock, units, in.say)
+	g.record = in.recordUnit
 	if reload != nil {
 		go func() {
 			for {
@@ -68,7 +81,6 @@ func (in *Installer) upStandalone(ctx context.Context, m *manifest.Manifest, rel
 			}
 		}()
 	}
-	in.say("factory %s is up: control http://%s, app via edge http://%s\n", m.FactoryID, addr(PortControl), addr(PortEdge))
 	return g.Run(ctx)
 }
 

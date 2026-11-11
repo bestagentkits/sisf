@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -243,6 +244,11 @@ func TestLifecycleCommandsSayWhatTheyDid(t *testing.T) {
 		stand := exec.Command("sleep", "60")
 		stand.ExtraFiles = []*os.File{lock}
 		err = stand.Start()
+		if err == nil {
+			// The holder records itself in the locked file, by pid and
+			// start time, as `sisf up` does.
+			err = recordRunLockOwner(lock, stand.Process.Pid)
+		}
 		_ = lock.Close() // the child alone holds the lock now
 		if err != nil {
 			t.Fatal(err)
@@ -291,4 +297,21 @@ func TestInitNamesTheSourceCheckoutItRecorded(t *testing.T) {
 			t.Errorf("init output does not contain %q:\n%s", want, stdout)
 		}
 	}
+}
+
+// recordRunLockOwner writes pid, with the time it started as ps prints it
+// in the C locale, into the run lock file as the `sisf up` that holds it.
+func recordRunLockOwner(lock *os.File, pid int) error {
+	ps := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
+	ps.Env = []string{"LC_ALL=C", "PATH=/usr/bin:/bin"}
+	start, err := ps.Output()
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(map[string]any{"role": "up", "pid": pid, "start": strings.Join(strings.Fields(string(start)), " ")})
+	if err != nil {
+		return err
+	}
+	_, err = lock.WriteAt(raw, 0)
+	return err
 }

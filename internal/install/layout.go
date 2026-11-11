@@ -90,6 +90,16 @@ func (l Layout) Logs() string { return filepath.Join(l.Dir, "logs") }
 // PIDFile names the foreground `sisf up` process of Standalone mode.
 func (l Layout) PIDFile() string { return filepath.Join(l.Dir, "run", "sisf.pid") }
 
+// RunGate is the lock file every attempt on the run lock is made under (see
+// Installer.withRunGate), so a run lock found held is held by a run, never by
+// another command that is only testing it.
+func (l Layout) RunGate() string { return filepath.Join(l.Dir, "run", "sisf.gate") }
+
+// UnitRecords is the directory where a running `sisf up` records the process
+// of each unit it started, so the units can be found and stopped after that
+// `sisf up` ended without stopping them.
+func (l Layout) UnitRecords() string { return filepath.Join(l.Dir, "run", "units") }
+
 // ServiceDir holds the launchd and systemd units, ready to copy.
 func (l Layout) ServiceDir() string { return filepath.Join(l.Dir, "service") }
 

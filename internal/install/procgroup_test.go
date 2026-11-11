@@ -194,3 +194,51 @@ func TestRestartStopsEveryUnitAndStartsThemAgain(t *testing.T) {
 		t.Fatalf("started %v, want each unit twice", e.startedNames())
 	}
 }
+
+// Each program is recorded as it starts and forgotten once it stopped; one
+// that cannot be recorded could not be found after `sisf up` ended, so it
+// is killed and counts as a program that failed to start.
+func TestEveryUnitIsRecordedWhileItRunsAndOneThatCannotBeIsKilled(t *testing.T) {
+	t.Parallel()
+	e, c := newFakeExec(), newStepClock()
+	g := testGroup(e, c, "control")
+	var mu sync.Mutex
+	recorded := map[string]int{}
+	g.record = func(name string, _ Process) (func(), error) {
+		mu.Lock()
+		defer mu.Unlock()
+		recorded[name]++
+		return func() { mu.Lock(); recorded[name]--; mu.Unlock() }, nil
+	}
+	stop := runGroup(t, g)
+	nextProc(t, e)
+	mu.Lock()
+	if recorded["control"] != 1 {
+		t.Errorf("control is recorded %d times while it runs", recorded["control"])
+	}
+	mu.Unlock()
+	if err := stop(); err != nil {
+		t.Fatal(err)
+	}
+	if recorded["control"] != 0 {
+		t.Errorf("the record of control was kept after it stopped (%d)", recorded["control"])
+	}
+
+	e, c = newFakeExec(), newStepClock()
+	g = testGroup(e, c, "control")
+	g.record = func(string, Process) (func(), error) { return nil, errors.New("disk full") }
+	done := make(chan error, 1)
+	go func() { done <- g.Run(t.Context()) }()
+	for range maxStartFailures - 1 {
+		c.waitArmed(t)
+		c.Advance(restartMax)
+	}
+	if err := <-done; err == nil {
+		t.Fatal("Run returned nil though control could never be recorded")
+	}
+	for _, p := range e.started {
+		if !p.killed {
+			t.Error("a program that could not be recorded was left running")
+		}
+	}
+}

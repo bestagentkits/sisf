@@ -274,6 +274,7 @@ func TestStandaloneUpRefusesASecondRunOfTheSameInstall(t *testing.T) {
 	in, exec, _ := newTestInstaller(t)
 	exec.answer = buildAnswers
 	in.Signal = func(int, syscall.Signal) error { return nil } // every pid is alive
+	in.ProcessStart = everyPIDStarted
 	mustInit(t, in, manifest.ModeStandalone)
 	holdRunLock(t, in, 4242, nil) // the first `up`, still building or running
 	if err := in.Up(t.Context(), UpOptions{Init: initOptions(in, manifest.ModeStandalone)}); err == nil {

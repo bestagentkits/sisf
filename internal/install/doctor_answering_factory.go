@@ -92,14 +92,20 @@ func (in *Installer) checkAnswering(ctx context.Context, c *collector, m *manife
 // its Compose project (Docker). why says what was found, for the report.
 func (in *Installer) instanceRunning(ctx context.Context, m *manifest.Manifest) (bool, string) {
 	if m.Mode == manifest.ModeStandalone {
-		pid, err := in.runningPID()
+		st, err := in.inspectRun()
 		switch {
 		case err != nil:
 			return false, "whether its `sisf up` runs cannot be told: " + err.Error()
-		case pid == 0:
-			return false, "no `sisf up` process of this install"
+		case st.owner.Role == roleUp:
+			return true, "process " + sprintf("%d", st.owner.PID)
+		case st.owner.Role == roleDown:
+			return false, sprintf("a `sisf down` (process %d) is removing its data", st.owner.PID)
+		case len(st.units) > 0:
+			return true, "its `sisf up` has ended, but its units still run (" + describeUnits(st.units) + "); stop them with `sisf stop --dir " + in.Layout.Dir + "`"
+		case st.held:
+			return false, "its run lock is held by no `sisf up` of this install and no unit it recorded; see `lsof " + in.Layout.RunLock() + "`"
 		}
-		return true, "process " + sprintf("%d", pid)
+		return false, "no `sisf up` process of this install"
 	}
 	out, err := in.Exec.Run(ctx, Cmd{Name: "docker", Args: in.composeArgs(m, "ps", "--format", "json")})
 	if err != nil {

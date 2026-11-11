@@ -31,9 +31,24 @@ func newTestInstaller(t *testing.T) (*Installer, *fakeExec, *bytes.Buffer) {
 	in := &Installer{
 		Layout: Layout{Dir: t.TempDir()}, Exec: exec, Clock: sqlstoretest.NewClock(fixedStart),
 		Out: out, SourceDir: source, Sisf: "/usr/local/bin/sisf",
-		LookPath: func(name string) (string, error) { return "/usr/local/go/bin/" + name, nil },
+		LookPath:     func(name string) (string, error) { return "/usr/local/go/bin/" + name, nil },
+		ProcessStart: onlyThisProcess,
 	}
 	return in, exec, out
+}
+
+// thisProcessStart is when the test's own process started, for the fake
+// process tables: asking ps would fork, and a process forked while another
+// test holds a run lock holds it too, for a moment.
+const thisProcessStart = "start of this test process"
+
+// onlyThisProcess is a process table in which the test's process alone
+// lives.
+func onlyThisProcess(pid int) (string, error) {
+	if pid == os.Getpid() {
+		return thisProcessStart, nil
+	}
+	return "", nil
 }
 
 // initOptions are options for a simulated install in the given mode, with

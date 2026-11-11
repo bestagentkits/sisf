@@ -15,18 +15,54 @@ import (
 
 // fakeSignals stands in for the operating system's process table: a process
 // is alive until it is sent SIGTERM, and every signal is recorded. A process
-// that ends drops the run lock it holds, as the kernel does.
+// that ends drops the run lock it holds, as the kernel does. A negative pid
+// names the process group the process of that pid leads. A live process
+// started at "start-<pid>" unless starts says otherwise.
 type fakeSignals struct {
 	mu         sync.Mutex
 	alive      map[int]bool
 	sent       []syscall.Signal
+	sentTo     []int
 	ignoreTerm bool
 	locks      map[int]*os.File
+	starts     map[int]string
+}
+
+// start answers when a fake process started, as Installer.ProcessStart.
+// The test's own process lives too: a `sisf down` it runs records it.
+func (f *fakeSignals) start(pid int) (string, error) {
+	if pid == os.Getpid() {
+		return thisProcessStart, nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.alive[pid] {
+		return "", nil
+	}
+	if s, ok := f.starts[pid]; ok {
+		return s, nil
+	}
+	return fakeStart(pid), nil
+}
+
+// fakeStart is the start time of a fake process.
+func fakeStart(pid int) string { return "start-" + strconv.Itoa(pid) }
+
+// everyPIDStarted makes every pid a live process that started at
+// fakeStart, and the test's own process itself.
+func everyPIDStarted(pid int) (string, error) {
+	if pid == os.Getpid() {
+		return thisProcessStart, nil
+	}
+	return fakeStart(pid), nil
 }
 
 func (f *fakeSignals) send(pid int, sig syscall.Signal) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if pid < 0 {
+		pid = -pid
+	}
 	if !f.alive[pid] {
 		return syscall.ESRCH
 	}
@@ -34,7 +70,8 @@ func (f *fakeSignals) send(pid int, sig syscall.Signal) error {
 		return nil
 	}
 	f.sent = append(f.sent, sig)
-	if sig == syscall.SIGTERM && !f.ignoreTerm {
+	f.sentTo = append(f.sentTo, pid)
+	if sig == syscall.SIGKILL || sig == syscall.SIGTERM && !f.ignoreTerm {
 		f.alive[pid] = false
 		if lock := f.locks[pid]; lock != nil {
 			_ = lock.Close()
@@ -44,8 +81,9 @@ func (f *fakeSignals) send(pid int, sig syscall.Signal) error {
 }
 
 // holdRunLock takes the run lock of the install as the `sisf up` process pid
-// would, through a file of its own, and records pid in the pid file. The
-// lock is dropped when the test ends or the fake process is stopped.
+// would, through a file of its own, and records pid and its start time in
+// the locked file and in the pid file. The lock is dropped when the test
+// ends or the fake process is stopped.
 func holdRunLock(t *testing.T, in *Installer, pid int, signals *fakeSignals) *os.File {
 	t.Helper()
 	if err := os.MkdirAll(in.Layout.Dir+"/run", 0o700); err != nil {
@@ -57,6 +95,9 @@ func holdRunLock(t *testing.T, in *Installer, pid int, signals *fakeSignals) *os
 	}
 	t.Cleanup(func() { _ = lock.Close() })
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOwner(lock, processRecord{Role: roleUp, PID: pid, Start: fakeStart(pid)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(in.Layout.PIDFile(), []byte(strconv.Itoa(pid)+"\n"), 0o600); err != nil {
@@ -80,9 +121,30 @@ func withPIDFile(t *testing.T, pid int, signals *fakeSignals) *Installer {
 	in, _, _ := newTestInstaller(t)
 	mustInit(t, in, manifest.ModeStandalone)
 	signals.alive = map[int]bool{pid: true}
-	in.Signal = signals.send
+	in.Signal, in.ProcessStart = signals.send, signals.start
+	autoAdvance(t, in)
 	holdRunLock(t, in, pid, signals)
 	return in
+}
+
+// autoAdvance gives the installer a clock that ends each wait it arms at
+// once. A process another test starts in parallel holds every open file for
+// a moment while it forks, the run lock too; a stop that sees it then waits
+// a poll and looks again, as it does on the wall clock.
+func autoAdvance(t *testing.T, in *Installer) {
+	t.Helper()
+	clock := newStepClock()
+	in.Clock = clock
+	go func() {
+		for {
+			select {
+			case <-clock.armed:
+				clock.Advance(stopPoll)
+			case <-t.Context().Done():
+				return
+			}
+		}
+	}()
 }
 
 func TestStopAsksTheRunningFactoryToStopAndWaitsForIt(t *testing.T) {
@@ -183,9 +245,9 @@ func TestAPIDFileOfAProcessThatIsGoneIsNotARunningFactory(t *testing.T) {
 	signals.alive[4242] = false
 	_ = signals.locks[4242].Close()
 	signals.mu.Unlock()
-	pid, err := in.runningPID()
-	if err != nil || pid != 0 {
-		t.Fatalf("runningPID = %d %v, want none", pid, err)
+	st, err := in.inspectRun()
+	if err != nil || st.running() {
+		t.Fatalf("inspectRun = %+v %v, want nothing running", st, err)
 	}
 }
 

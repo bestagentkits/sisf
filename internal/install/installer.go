@@ -38,8 +38,13 @@ type Installer struct {
 	Debug bool
 	// LookPath finds a program on PATH; nil means exec.LookPath.
 	LookPath func(name string) (string, error)
-	// Signal sends a signal to a process; nil means syscall.Kill.
+	// Signal sends a signal to a process, or to a process group for a
+	// negative pid; nil means syscall.Kill.
 	Signal func(pid int, sig syscall.Signal) error
+	// ProcessStart says when a process started, as ps prints it in the C
+	// locale, or "" when no such process lives; nil means ps. It tells a
+	// recorded process from another that was later given its pid.
+	ProcessStart func(pid int) (string, error)
 	// SupervisorStatus asks the supervisor on a loopback address for its
 	// status; nil means supervisor.FetchStatus.
 	SupervisorStatus func(ctx context.Context, addr string) (supervisor.Status, error)

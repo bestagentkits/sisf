@@ -127,7 +127,7 @@ func asThisInstall(in *Installer, status func(context.Context, string) (supervis
 func markRunning(t *testing.T, in *Installer) {
 	t.Helper()
 	heldRunLocks.Store(in.Layout.Dir, holdRunLock(t, in, 4242, nil))
-	in.Signal = func(int, syscall.Signal) error { return nil }
+	in.Signal, in.ProcessStart = func(int, syscall.Signal) error { return nil }, everyPIDStarted
 }
 
 // heldRunLocks are the run locks markRunning holds, by install directory.
@@ -139,7 +139,8 @@ func markStopped(in *Installer) {
 	if lock, ok := heldRunLocks.LoadAndDelete(in.Layout.Dir); ok {
 		_ = lock.(*os.File).Close()
 	}
-	in.Signal = (&fakeSignals{}).send
+	signals := &fakeSignals{}
+	in.Signal, in.ProcessStart = signals.send, signals.start
 }
 
 // builtStandalone returns an installer holding a Standalone install that was

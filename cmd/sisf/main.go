@@ -24,6 +24,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/bestagentkits/sisf/internal/install"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -399,6 +400,9 @@ func printError(w io.Writer, err error) {
 }
 
 func main() {
+	// `sisf up` starts `sisf sim ...` as units, which inherit its run lock;
+	// nothing this program starts may hold it.
+	install.KeepInheritedRunLockFromChildren()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	status := commands.run(ctx, &Env{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}, os.Args[1:])
 	stop()
