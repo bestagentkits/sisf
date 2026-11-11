@@ -63,7 +63,7 @@ func (h handlers) stop(ctx context.Context, req core.ActionRequest) (core.Action
 	if err != nil {
 		return core.ActionResult{}, err
 	}
-	stopReq := supervisor.EmergencyStopRequest{Actor: req.Actor.ID, Reason: strings.TrimSpace(in.Reason)}
+	stopReq := supervisor.EmergencyStopRequest{FactoryID: h.FactoryID, Actor: req.Actor.ID, Reason: strings.TrimSpace(in.Reason)}
 	if err := stopReq.Validate(); err != nil {
 		return core.ActionResult{}, err
 	}

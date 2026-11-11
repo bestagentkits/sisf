@@ -95,7 +95,9 @@ func TestTheStopIsCarriedOutByTheSupervisor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sup.stops) != 1 || sup.stops[0].Actor != "user:owner" || sup.stops[0].Reason != "bad deploy" {
+	// The stop names this factory, so the supervisor of another one on the
+	// same host refuses it.
+	if len(sup.stops) != 1 || sup.stops[0].Actor != "user:owner" || sup.stops[0].Reason != "bad deploy" || sup.stops[0].FactoryID != "acme-app" {
 		t.Fatalf("stops %+v", sup.stops)
 	}
 	var report supervisor.EmergencyStopReport

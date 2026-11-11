@@ -42,7 +42,7 @@ type OperatorReport struct {
 // route that was given could not be used, so the caller exits non-zero: a
 // partial stop must not look complete.
 func StopFromOperator(ctx context.Context, req OperatorRequest) (OperatorReport, error) {
-	stop := supervisor.EmergencyStopRequest{Actor: req.Actor, Reason: req.Reason}
+	stop := supervisor.EmergencyStopRequest{FactoryID: req.FactoryID, Actor: req.Actor, Reason: req.Reason}
 	if err := stop.Validate(); err != nil {
 		return OperatorReport{}, err
 	}

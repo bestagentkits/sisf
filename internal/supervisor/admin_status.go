@@ -92,7 +92,7 @@ func newAdminMux(status func() Status, opts Options) *http.ServeMux {
 		writeAdminJSON(w, http.StatusOK, st)
 	})
 	if opts.EmergencyStop != nil {
-		mux.Handle("POST "+EmergencyStopPath, emergencyStopHandler(opts.EmergencyStop))
+		mux.Handle("POST "+EmergencyStopPath, emergencyStopHandler(opts.EmergencyStop, func() core.FactoryID { return status().FactoryID }))
 	}
 	if opts.FreezeStatus != nil {
 		mux.Handle("GET "+EmergencyStopPath, freezeStatusHandler(opts.FreezeStatus))

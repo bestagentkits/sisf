@@ -52,7 +52,7 @@ func TestASupervisorGivenTheStoreServesTheEmergencyStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	report, err := client.EmergencyStop(ctx, supervisor.EmergencyStopRequest{Actor: "user:owner", Reason: "runaway spend"})
+	report, err := client.EmergencyStop(ctx, supervisor.EmergencyStopRequest{FactoryID: testFactory, Actor: "user:owner", Reason: "runaway spend"})
 	if err != nil || report.StopID == "" || !report.PublishingFrozen {
 		t.Fatalf("EmergencyStop = %+v, %v", report, err)
 	}
