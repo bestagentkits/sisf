@@ -102,8 +102,8 @@ func (s RunStop) refusal() string {
 	case core.CodeApprovalRequired:
 		return "it changes the factory's trusted control surface, or it is a unit the policy does not let the factory publish by itself, " +
 			"which only a person may publish"
-	case core.CodeSignatureInvalid, core.CodeTampered, core.CodeGuardFailed:
-		return "its QA receipt or its build did not verify as the candidate QA passed, signed by this factory"
+	case core.CodeSignatureInvalid, core.CodeTampered, core.CodeGuardFailed, core.CodePermissionDenied, core.CodeNotFound, core.CodeReplayed:
+		return "its QA receipt or its build did not verify as the candidate QA passed, signed by a key this factory trusts"
 	}
 	return "the request to release it did not hold together"
 }

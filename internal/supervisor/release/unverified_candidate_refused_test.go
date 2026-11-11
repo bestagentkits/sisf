@@ -128,3 +128,67 @@ func TestTheLKGBookCannotRecordAnUnverifiedRelease(t *testing.T) {
 		t.Fatalf("the LKG moved to %s", lkg.Digest)
 	}
 }
+
+// stoppingVerifier is a key trust read while the supervisor stops: the
+// context of the release ends during the check, which then fails.
+type stoppingVerifier struct{ stop context.CancelFunc }
+
+func (v stoppingVerifier) Verify(context.Context, []byte, core.Signature) error {
+	v.stop()
+	return core.NewError(core.CodeUnavailable, "the check was cut short")
+}
+
+// A release whose checks were cut short, because the supervisor stopped
+// while they ran, judged nothing: it is neither refused nor held, the
+// issue stays in ReleaseCandidate with no block, and the next attempt
+// releases it.
+func TestAReleaseWhoseChecksWereCutShortIsTriedAgainNotRefused(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	issue, run := issueRef(31), core.RunID("run-31")
+	w.seedReleaseCandidate(issue, run, firstBuild)
+	trusted := w.cfg.Verifier
+	ctx, stop := context.WithCancel(context.Background())
+	w.cfg.Verifier = stoppingVerifier{stop: stop}
+	out, err := w.pipeline().Release(ctx, w.request(issue, run, firstBuild))
+	if err == nil || out.Result != "" {
+		t.Fatalf("Release = %+v, %v; want no result and an error", out, err)
+	}
+	w.requireState(issue, core.StateReleaseCandidate)
+	if b, found := w.block(run); found {
+		t.Fatalf("a release that judged nothing blocked its issue: %+v", b)
+	}
+	if _, _, staged, _ := w.backend.snapshot(); len(staged) != 0 {
+		t.Fatalf("a release that judged nothing staged %v", staged)
+	}
+
+	w.cfg.Verifier = trusted
+	out, err = w.pipeline().Release(context.Background(), w.request(issue, run, firstBuild))
+	if err != nil || out.Result == ResultRefused || out.Result == ResultHeld {
+		t.Fatalf("the next attempt: %+v, %v", out, err)
+	}
+}
+
+// Only a refusal that judged the candidate or the request blocks the
+// issue; a failure to read what the checks need, or a context that ended,
+// does not.
+func TestOnlyAJudgedRefusalBlocksTheIssue(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for _, code := range []core.ErrorCode{core.CodeApprovalRequired, core.CodeExpired, core.CodeSignatureInvalid, core.CodeTampered,
+		core.CodeGuardFailed, core.CodeInvalidArgument, core.CodePermissionDenied, core.CodeNotFound, core.CodeReplayed} {
+		if !judgedRefusal(ctx, core.NewError(code, "judged")) {
+			t.Errorf("%s is not taken for a judgment", code)
+		}
+	}
+	for _, code := range []core.ErrorCode{core.CodeUnavailable, core.CodeTimeout, core.CodeInternal, core.CodeLeaseHeld, core.CodeConflict} {
+		if judgedRefusal(ctx, core.NewError(code, "not judged")) {
+			t.Errorf("%s is taken for a judgment", code)
+		}
+	}
+	stopped, cancel := context.WithCancel(ctx)
+	cancel()
+	if judgedRefusal(stopped, core.NewError(core.CodeSignatureInvalid, "cut short")) {
+		t.Error("a check cut short by its context is taken for a judgment")
+	}
+}

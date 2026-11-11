@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -96,8 +97,9 @@ func (p *Pipeline) drive(issue core.IssueRef) (done func(), ok bool) {
 // Outcome whose Result says whether the release was refused, held,
 // interrupted or could not be restored; a release that was rolled back
 // returns ResultBlocked and no error. An error with no Result means the
-// release did not begin: the issue is not this run's release candidate, or
-// is being released or recovered already.
+// release did not begin: the issue is not this run's release candidate,
+// is being released or recovered already, or what the refusal checks read
+// could not be read.
 //
 // Before the rollout starts nothing is deployed: a refusal blocks the
 // issue and a hold leaves it in ReleaseCandidate. Once the rollout started
@@ -130,8 +132,12 @@ func (p *Pipeline) Release(ctx context.Context, req Request) (Outcome, error) {
 		return out, core.NewError(core.CodeConflict, "the issue is not a release candidate of this run")
 	}
 	v, err := p.refusal(ctx, req, h.record)
-	if err != nil {
+	switch {
+	case err != nil && judgedRefusal(ctx, err):
 		return p.refuse(ctx, h, out, err)
+	case err != nil:
+		// Nothing was judged: the release did not begin and is tried again.
+		return out, fmt.Errorf("the release could not be judged yet, so it is tried again: %w", err)
 	}
 	r, err := p.preflight(ctx, h, v)
 	if err != nil {

@@ -70,6 +70,25 @@ func (p *Pipeline) refusal(ctx context.Context, req Request, record core.StateRe
 	return v, err
 }
 
+// judgedRefusal reports whether a refusal judged the candidate or the
+// request, so that trying again cannot change it: the candidate changes
+// the trusted surface, is a unit the factory may not publish, or its
+// receipt or build is expired, forged, unknown or not the one QA judged.
+// Any other failure, such as a store or key trust that could not be read
+// or a context that ended, judged nothing, and the release is tried again
+// on the next pass instead.
+func judgedRefusal(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	switch core.CodeOf(err) {
+	case core.CodeApprovalRequired, core.CodeExpired, core.CodeSignatureInvalid, core.CodeTampered, core.CodeGuardFailed,
+		core.CodeInvalidArgument, core.CodePermissionDenied, core.CodeNotFound, core.CodeReplayed:
+		return true
+	}
+	return false
+}
+
 // refuse blocks the issue whose release was refused, with the refusal's
 // code recorded as the cause's detail. Nothing was deployed. When the step
 // cannot be written the issue stays in ReleaseCandidate and the outcome
