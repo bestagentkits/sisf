@@ -11,6 +11,8 @@ An emergency stop freezes publishing, holds every issue so nothing is claimed, c
 
 `sisf emergency-stop` uses every route it is given and needs neither the control plane nor the dispatcher. It prints what each route did as JSON and exits 1 when a route it was given failed, so a partial stop never looks complete. Running it twice is safe: the second run reports the stop already in force.
 
+A stop freezes forward steps only. It never blocks a rollback: the supervisor still restores the last known good release of a release in Canary or Monitoring, also when another holder keeps the issue's lease. A release already verified, or one held after it was verified, is finished only after the stop is lifted, and its issue stays Verified until then; do not close it by hand ([a release that was not watched](operations.md#a-release-that-was-not-watched-to-its-end)).
+
 ### Standalone
 
 Prerequisites: a shell on the factory's host as the user who owns the install directory. Name the install and nothing else: the command reads the factory id from `<dir>/factory.yaml`, the state store from the control zone's secrets and uses the supervisor's admin address `127.0.0.1:7464` (`internal/install/emergency_stop_target.go`). Without `--dir` it uses `$SISF_HOME`, else `~/.sisf/factory`.
