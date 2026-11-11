@@ -74,6 +74,10 @@ func TestAnAliasThatCannotBeHonoredIsRefused(t *testing.T) {
 		"a kind label in capitals":   "KIND:bug",
 		"an agent label in capitals": "Agent:claude",
 		"a deployment in capitals":   "DEPLOYMENT:local",
+		// Letters whose case partner is another rune: the long s folds to
+		// s and the Kelvin sign to k.
+		"a status label with a long s": "\u017fisf:report",
+		"a kind label with a Kelvin k": "\u212aind:bug",
 	} {
 		_, err := intake.RulesFrom(withAlias(value))
 		wantCode(t, err, core.CodeInvalidArgument, name)
@@ -209,6 +213,9 @@ func TestLabelsAreReadWithoutRegardToCase(t *testing.T) {
 	got := intake.ReadLabels(named("SISF:READY", "Kind:Bug", "AGENT:claude", "Deployment:local"), intake.LabelRules{})
 	if !got.Ready || got.Kind != decision.KindBug || got.AgentPreference != "claude" || !got.AddressedTo("local") {
 		t.Fatalf("labels in other casings read as %+v", got)
+	}
+	if !intake.ReadLabels(named("\u017fisf:ready"), intake.LabelRules{}).Ready {
+		t.Fatal("the ready label with a long s, which folds to s, did not ask for intake")
 	}
 	if !intake.ReadLabels(named("AI-Handle"), rules).Ready {
 		t.Fatal("the alias in another casing did not ask for intake")

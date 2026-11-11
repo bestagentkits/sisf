@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/decision"
@@ -30,12 +31,19 @@ var reservedPrefixes = []string{"sisf:", "kind:", github.LabelAgentPrefix, githu
 func sameLabel(a, b string) bool { return strings.EqualFold(a, b) }
 
 // cutLabelPrefix returns what follows prefix in name, and whether name
-// starts with prefix under any casing.
+// starts with prefix under any casing. It compares rune by rune as
+// sameLabel does, so a letter whose case partner is encoded in more bytes,
+// such as the Kelvin sign for k, cannot pass for another family's name.
 func cutLabelPrefix(name, prefix string) (string, bool) {
-	if len(name) < len(prefix) || !strings.EqualFold(name[:len(prefix)], prefix) {
-		return "", false
+	rest := name
+	for _, want := range prefix {
+		got, size := utf8.DecodeRuneInString(rest)
+		if size == 0 || !strings.EqualFold(string(got), string(want)) {
+			return "", false
+		}
+		rest = rest[size:]
 	}
-	return name[len(prefix):], true
+	return rest, true
 }
 
 // HasLabel reports whether labels hold the label name, under any casing.
