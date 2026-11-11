@@ -159,11 +159,14 @@ func SameIdentity(a, b string) bool {
 	return strings.EqualFold(visibleIdentity(a), visibleIdentity(b))
 }
 
-// visibleIdentity is id as it reads: without characters that print nothing
-// and without surrounding white space.
+// visibleIdentity is id as it reads: without surrounding white space and
+// without characters that print nothing (format characters such as a
+// zero-width space or a byte order mark, variation selectors, fillers,
+// joiners and control characters).
 func visibleIdentity(id string) string {
 	return strings.TrimSpace(strings.Map(func(r rune) rune {
-		if unicode.Is(unicode.Cf, r) || (unicode.Is(unicode.Cc, r) && !unicode.IsSpace(r)) {
+		if unicode.In(r, unicode.Cf, unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point) ||
+			(unicode.Is(unicode.Cc, r) && !unicode.IsSpace(r)) {
 			return -1
 		}
 		return r
