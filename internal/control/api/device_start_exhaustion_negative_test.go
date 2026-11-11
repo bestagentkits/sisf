@@ -95,3 +95,21 @@ func TestAFloodDropsItsOwnLoginRequestsBeforeAPersons(t *testing.T) {
 		t.Fatalf("the approved request after a flood: %d, want its token collected", r.status)
 	}
 }
+
+// A flood from the address a person shares, as behind a proxy that forwards
+// no client address, reaches the person's waiting request only once it has
+// started as many as there are slots.
+func TestALoginFloodSharingThePersonsAddressTakesEverySlotToDropTheirRequest(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, sampleRegistry, keyedBySourceHeader)
+	cli := e.browser(t)
+	_, open := startFrom(t, cli, "192.0.2.10")
+	attacker := e.browser(t)
+	for range 200 {
+		startFrom(t, attacker, "192.0.2.10")
+	}
+	e.clock.Advance(time.Duration(open.Interval) * time.Second)
+	if r, p := cli.poll(t, open.DeviceCode); r.status != http.StatusAccepted || p.Status != "pending" {
+		t.Fatalf("a request after fewer starts than slots from its own address: %d %s, want it still pending", r.status, r.body)
+	}
+}

@@ -46,7 +46,7 @@ type Surfaces struct {
 	ExternalURL string
 	// Version is reported to MCP clients; empty means "dev".
 	Version string
-	// ClientKey names the network source of a request for the limits on
+	// ClientKey names the network source of a request for the bounds on
 	// open login requests; ClientAddress builds one. Nil means the remote IP
 	// address.
 	ClientKey func(*http.Request) string

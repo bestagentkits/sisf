@@ -21,9 +21,6 @@ const (
 	userCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 	userCodeLen      = 8
 	maxOpenGrants    = 256
-	// maxOpenGrantsPerSource bounds the login requests one network source
-	// has waiting for approval.
-	maxOpenGrantsPerSource = 8
 )
 
 // grant is one login request. The device code stays with the CLI that
@@ -110,11 +107,12 @@ func (s *deviceStore) purgeLocked(now time.Time) {
 }
 
 // start opens a login request from source and returns its device code.
-// Anyone may start one, so it first makes room: a source holding
-// maxOpenGrantsPerSource waiting requests loses its oldest, and while all
-// maxOpenGrants are taken, the oldest waiting request of the source holding
-// the most goes. A request being approved or approved and not yet collected
-// is never dropped; when nothing else is left, start is refused.
+// Anyone may start one, so while all maxOpenGrants are taken it drops the
+// oldest waiting request of the source holding the most: a flood from
+// another address, or from many, does not reach a person's request, and one
+// sharing the person's address takes as many starts as there are slots. A
+// request being approved, or approved and not yet collected, is never
+// dropped; when nothing else is left, start is refused.
 func (s *deviceStore) start(name string, scopes []string, source string) (deviceCode string, g grant, err error) {
 	raw := make([]byte, 32)
 	if _, rerr := rand.Read(raw); rerr != nil {
@@ -125,7 +123,7 @@ func (s *deviceStore) start(name string, scopes []string, source string) (device
 	defer s.mu.Unlock()
 	now := s.clock.Now()
 	s.purgeLocked(now)
-	if !s.makeRoomLocked(source) {
+	if !s.makeRoomLocked() {
 		return "", g, core.NewError(core.CodeRateLimited, "too many login requests are open; try again shortly")
 	}
 	var userCode string
@@ -152,18 +150,14 @@ func (s *deviceStore) start(name string, scopes []string, source string) (device
 // for one nor approved. Only such a request is dropped to make room.
 func (g *grant) waiting() bool { return !g.claimed && !g.approved }
 
-// makeRoomLocked drops waiting requests until source holds fewer than
-// maxOpenGrantsPerSource and fewer than maxOpenGrants are open, and reports
-// whether there is room.
-func (s *deviceStore) makeRoomLocked(source string) bool {
+// makeRoomLocked drops waiting requests until fewer than maxOpenGrants are
+// open, and reports whether there is room.
+func (s *deviceStore) makeRoomLocked() bool {
 	perSource := map[string]int{}
 	for _, g := range s.grants {
 		if g.waiting() {
 			perSource[g.source]++
 		}
-	}
-	for perSource[source] >= maxOpenGrantsPerSource {
-		s.dropOldestWaitingLocked(perSource, func(g *grant) bool { return g.source == source })
 	}
 	for len(s.grants) >= maxOpenGrants {
 		busiest := 0
