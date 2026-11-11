@@ -92,7 +92,7 @@ func TestABuildOfTheSupervisorIsNeverReleasedByThePipeline(t *testing.T) {
 // letter case of their paths, is one the factory publishes by itself.
 func TestACandidateChangingOnlyTheApplicationsInputsIsNotAGovernanceChange(t *testing.T) {
 	t.Parallel()
-	changed := []string{"examples/hello-app/main.go", "examples/hello-app/app_test.go", "build/hello-app.Dockerfile",
+	changed := []string{"examples/hello-app/main.go", "examples/hello-app/app_test.go",
 		"Examples/Hello-App/faults.go", "examples/hello-app/new_handler.go"}
 	if err := checkGovernance(DefaultProtectedPaths(), UnitInputs{}, testUnit, changed); err != nil {
 		t.Fatalf("a candidate of the application's inputs was refused: %v", err)

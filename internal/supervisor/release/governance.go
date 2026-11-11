@@ -28,22 +28,15 @@ const supervisorUnit = "supervisor"
 // migration as surely as an edit of the file that declares them.
 //
 // The Go part is not kept by hand: every directory of a package the trusted
-// binaries link (trustedGoPackageDirs, generated from their dependency
-// closure) is protected, whatever it is for. The entries below are the
-// rest: files that are not Go packages, and Go code that is trusted without
-// being linked into the supervisor (the installer, the CLI, the synthetic
-// suite).
+// binaries link (trustedGoPackageDirs, generated from the dependency
+// closure of the supervisor, the command line and the control unit) is
+// protected, whatever it is for. That covers the installer, sign-in, roles
+// and approvals, and the dashboard's templates and scripts, which show the
+// Owner what an approval is for. The entries below are the rest: files
+// that are not Go packages, and Go code that is trusted without being
+// linked into a trusted binary (the synthetic suite, the edge).
 func DefaultProtectedPaths() []string {
-	return slices.Concat(handKeptProtectedPaths(), identityAndAccessPaths(), trustedGoPackageDirs)
-}
-
-// identityAndAccessPaths are the Go packages that decide who is the Owner
-// and who may approve: sign-in, roles and the identities they name. A
-// factory that rewrote them could grant itself the approval a governance
-// change needs. The trusted binaries do not link them, so the generated
-// closure cannot find them; they are kept here by hand.
-func identityAndAccessPaths() []string {
-	return []string{"internal/auth/", "internal/rbac/", "internal/oauthas/", "pkg/identity/"}
+	return slices.Concat(handKeptProtectedPaths(), trustedGoPackageDirs)
 }
 
 // handKeptProtectedPaths are the protected paths the dependency closure of
@@ -73,9 +66,8 @@ func handKeptProtectedPaths() []string {
 		"examples/hello-app/synthetic/", "examples/hello-app/cmd/hello-app-synthetic/",
 		// The rollback rules and the deployment contract they act through.
 		"pkg/deploy/", "adapters/deploy/",
-		// The installer, which creates the zone roles, keys and trust roots
-		// and builds every program, and the CI that runs on the repository.
-		"internal/install/", "cmd/sisf/", ".github/",
+		// The CI that runs on the repository.
+		".github/",
 		// The edge, which decides which release receives traffic and is
 		// what a rollback switches, and how it is built.
 		"cmd/edge/", "build/edge.Dockerfile",

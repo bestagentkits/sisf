@@ -12,19 +12,19 @@ import (
 
 const dashboardBody = "The status page should say when it was checked.\n\n### Definition of Done\n- the status page names the factory as its checker\n"
 
-// The factory improves its own dashboard: the supervisor builds and
-// releases a new control unit, and when a later build of it breaks, rolls
-// it back to the last known good one and reports why on the issue. The
-// application keeps serving throughout and the supervisor is never
-// replaced.
+// The factory improves a page of its own control unit that the Owner
+// declared an input of control: the supervisor builds and releases a new
+// control unit, and when a later build of it breaks, rolls it back to the
+// last known good one and reports why on the issue. The application keeps
+// serving throughout and the supervisor is never replaced.
 func TestTheFactoryUpdatesItsDashboardAndRollsABrokenBuildBack(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f := harness.New(t, harness.Options{ReleaseUnits: []manifest.UnitName{manifest.UnitApp, manifest.UnitControl}})
+	f := harness.New(t, harness.Options{ReleaseUnits: []manifest.UnitName{manifest.UnitApp, manifest.UnitControl}, UnitInputs: controlSitePage})
 	installed := f.Trust.Installed["control"]
 
 	first := f.OpenIssue("maintainer", "MEMBER", "Say who checked the status", dashboardBody, github.LabelReady, github.LabelKindBug)
-	f.ScriptPatch(first, 0, dashboardDiff)
+	f.ScriptPatch(first, 0, sitePageDiff)
 	f.Cycle(4)
 	wantSurfaces(t, f, first, core.StateClosed)
 	good, found, err := f.Trust.LKG.Get(ctx, "control")
@@ -33,7 +33,7 @@ func TestTheFactoryUpdatesItsDashboardAndRollsABrokenBuildBack(t *testing.T) {
 	}
 
 	second := f.OpenIssue("maintainer", "MEMBER", "Reword the status page", dashboardBody, github.LabelReady, github.LabelKindBug)
-	f.ScriptPatch(second, 0, dashboardRewordDiff)
+	f.ScriptPatch(second, 0, sitePageRewordDiff)
 	f.Deploy.FaultNext("control")
 	f.Cycle(4)
 	wantSurfaces(t, f, second, core.StateBlocked)

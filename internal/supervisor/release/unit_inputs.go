@@ -20,33 +20,29 @@ import (
 // stay a second refusal on top: a path that is both an input and protected
 // is refused, whoever declared it an input.
 //
-// The inputs of a unit are built in (isAppInput, isControlInput) unless the
-// Owner declares them in the installed manifest's release.unit_inputs, which
-// replaces the built-in inputs of the units it names: a factory may work on
-// a repository whose application is not laid out like this one.
+// Only the application has built-in inputs (isAppInput); every other unit,
+// the control unit included, has none unless the Owner declares them in the
+// installed manifest's release.unit_inputs, which replaces the built-in
+// inputs of the units it names: a factory may work on a repository whose
+// application is not laid out like this one. The control unit's templates
+// and scripts are what the Owner reads before approving, so they are never
+// built in, and the trusted binaries' closure protects them (ui/).
+//
+// Files the Go toolchain reads are inputs of the application alone: any
+// other unit's code is linked by more than that unit (the installer and the
+// simulation link the control unit's packages), so one observed release of
+// it cannot vouch for them, declared or not.
 //
 // Paths are compared without regard to letter case, as governance compares
 // them, so a case-insensitive file system or checkout cannot route or admit
 // a path under another spelling.
 
-// Units whose inputs are built in. Any other unit has no input the factory
-// may change by itself unless the manifest declares some.
+// appUnit is the unit whose inputs are built in. controlUnit is named only
+// because its Go code is a common thing to declare by mistake.
 const (
 	appUnit     = "app"
 	controlUnit = "control"
 )
-
-// appUnitFiles are the built-in inputs of the application that are not Go
-// package directories: how its image is built.
-var appUnitFiles = []string{"build/hello-app.dockerfile"}
-
-// controlUnitDir holds the dashboard's templates and static assets, the
-// only built-in inputs of the control unit. The Go code of the control unit
-// is never one of its inputs: the installer and the simulation link the
-// control unit's Go packages, so one observed release of the control unit
-// cannot vouch for it. A template or a static asset is what a trial update
-// of a non-sensitive part such as a read-only dashboard page changes.
-const controlUnitDir = "ui/"
 
 // goToolchainExtensions are the extensions of files the Go toolchain
 // compiles, assembles or links when they sit in a package directory: none of
@@ -57,7 +53,9 @@ var goToolchainExtensions = []string{
 }
 
 // goToolchainFiles are the file names that change what the Go toolchain
-// builds wherever they are.
+// builds wherever they are. None is a built-in input, even in a directory
+// of the application: a module or workspace file there changes how the
+// application's packages resolve their dependencies.
 var goToolchainFiles = []string{"go.mod", "go.sum", "go.work", "go.work.sum"}
 
 // UnitInputs are the inputs of each unit: the built-in ones, and the
@@ -91,10 +89,10 @@ func NewUnitInputs(declared map[string][]string) (UnitInputs, error) {
 	return UnitInputs{declared: kept}, nil
 }
 
-// units returns the units that may have inputs: those with built-in inputs
-// and those the manifest declares, sorted.
+// units returns the units that may have inputs: the application and those
+// the manifest declares, sorted.
 func (u UnitInputs) units() []string {
-	units := []string{appUnit, controlUnit}
+	units := []string{appUnit}
 	for unit := range u.declared {
 		if !slices.Contains(units, unit) {
 			units = append(units, unit)
@@ -105,16 +103,14 @@ func (u UnitInputs) units() []string {
 }
 
 // consumes reports whether unit consumes the case-folded clean path. Files
-// the Go toolchain reads are never inputs of the control unit, declared or
+// the Go toolchain reads are inputs of the application alone, declared or
 // built in.
 func (u UnitInputs) consumes(unit, clean string) bool {
 	patterns, declared := u.declared[unit]
 	switch {
 	case !declared && unit == appUnit:
 		return isAppInput(clean)
-	case !declared && unit == controlUnit:
-		return isControlInput(clean)
-	case unit == controlUnit && goToolchainFile(clean):
+	case unit != appUnit && goToolchainFile(clean):
 		return false
 	}
 	return slices.ContainsFunc(patterns, func(p string) bool { return manifest.MatchUnitInput(p, clean) })
@@ -147,22 +143,15 @@ func (u UnitInputs) UnitOf(p string) (string, bool) {
 }
 
 // isAppInput reports whether the case-folded path is a file directly in a
-// directory of a package the application links, or how its image is built.
-// A subdirectory is another package, which the generated list names when
-// the application links it.
+// directory of a package the application links, other than a module or
+// workspace file. A subdirectory is another package, which the generated
+// list names when the application links it.
 func isAppInput(clean string) bool {
-	if slices.Contains(appUnitFiles, clean) {
-		return true
+	if slices.Contains(goToolchainFiles, path.Base(clean)) {
+		return false
 	}
 	dir := path.Dir(clean) + "/"
 	return slices.ContainsFunc(appUnitPackageDirs, func(d string) bool { return strings.ToLower(d) == dir })
-}
-
-// isControlInput reports whether the case-folded path is a template or a
-// static asset of the dashboard: below ui/ and not a file the Go toolchain
-// builds.
-func isControlInput(clean string) bool {
-	return strings.HasPrefix(clean, controlUnitDir) && !goToolchainFile(clean)
 }
 
 // goToolchainFile reports whether the case-folded path is a file the Go

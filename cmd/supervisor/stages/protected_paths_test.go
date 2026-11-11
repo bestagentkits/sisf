@@ -3,6 +3,7 @@ package stages
 import (
 	"context"
 	"errors"
+	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"testing"
 	"time"
 
@@ -153,9 +154,17 @@ func TestOnlyFaultsOfThePatchAreRefusals(t *testing.T) {
 		"unreadable":      {"not a diff", RefusalUnreadable},
 		"does not apply":  {"--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-z\n+b\n", RefusalDoesNotApply},
 		"missing in base": {"--- a/app/gone.go\n+++ b/app/gone.go\n@@ -1 +1 @@\n-z\n+b\n", RefusalDoesNotApply},
-		"spans two units": {"--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-a\n+b\n--- /dev/null\n+++ b/ui/x.html\n@@ -0,0 +1 @@\n+x\n", RefusalUnitSpan},
+		"spans two units": {"--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-a\n+b\n--- /dev/null\n+++ b/site/x.html\n@@ -0,0 +1 @@\n+x\n", RefusalUnitSpan},
 	} {
-		_, err := newTestBuilder(repo).Build(ctx, BuildRequest{RunID: "run-1", Attempt: 1, Base: baseSHA, Diff: c.diff})
+		// The control unit consumes the pages under site/, as an Owner may
+		// declare; no unit but the application has built-in inputs.
+		inputs, err := release.NewUnitInputs(map[string][]string{"control": {"site/*.html"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		builder := newTestBuilder(repo)
+		builder.Units = UnitRouter{Inputs: inputs}
+		_, err = builder.Build(ctx, BuildRequest{RunID: "run-1", Attempt: 1, Base: baseSHA, Diff: c.diff})
 		if r, ok := RefusalOf(err); !ok || r.Reason != c.want {
 			t.Errorf("%s: %v", name, err)
 		}

@@ -9,11 +9,13 @@ import (
 	"github.com/bestagentkits/sisf/pkg/github"
 )
 
-// A manifest whose release.units names the application alone lets the
-// factory publish nothing else: a change to its own dashboard, a build of
-// the control unit, is refused for a person to decide, nothing is deployed
-// and nothing reaches main; the issue is blocked for the refusal.
-func TestAUnitTheManifestDoesNotNameIsNotPublished(t *testing.T) {
+// The factory never publishes a change to its own dashboard: the page the
+// Owner reads is part of the trusted control surface, so the change is
+// refused for a person to decide, nothing is deployed and nothing reaches
+// main; the issue is blocked for the refusal. A unit release.units does not
+// name is refused the same way (unit_not_self_publishable_refused_test.go
+// in the release package).
+func TestAChangeToTheDashboardIsNotPublished(t *testing.T) {
 	t.Parallel()
 	f := harness.New(t, harness.Options{})
 	installed := f.Trust.Installed["control"]
@@ -21,8 +23,9 @@ func TestAUnitTheManifestDoesNotNameIsNotPublished(t *testing.T) {
 	f.ScriptPatch(number, 0, dashboardDiff)
 	f.Cycle(6)
 
-	if rec := wantRefusedAndBlocked(t, f, number, core.CodeApprovalRequired); !strings.Contains(rec.Reason, "release.units") {
-		t.Fatalf("the release was not refused by release.units: %+v", rec)
+	if rec := wantRefusedAndBlocked(t, f, number, core.CodeApprovalRequired); !strings.Contains(rec.Reason, "ui/dashboard/status.html") ||
+		!strings.Contains(rec.Reason, "trusted control surface") {
+		t.Fatalf("the release was not refused as a change of the trusted control surface: %+v", rec)
 	}
 	if staged := f.Deploy.Staged(); len(staged) != 0 {
 		t.Fatalf("the control unit was deployed: %+v", staged)

@@ -74,7 +74,7 @@ func TestAStoredListOfChangedPathsThatLeavesOneOutDoesNotDecideTheRelease(t *tes
 	t.Parallel()
 	f := harness.New(t, harness.Options{})
 	number := f.OpenIssue("maintainer", "MEMBER", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
-	f.ScriptPatch(number, 0, greetingAndConformanceDiff)
+	f.ScriptPatch(number, 0, greetingAndDocsDiff)
 	untilReleaseCandidate(t, f, number)
 	rewriteQAResult(t, f, number, func(r *stages.QAResult) {
 		r.Candidate.ChangedPaths = []string{"examples/hello-app/main.go"}
@@ -82,7 +82,7 @@ func TestAStoredListOfChangedPathsThatLeavesOneOutDoesNotDecideTheRelease(t *tes
 	f.Cycle(3)
 
 	rec := wantRefusedAndBlocked(t, f, number, core.CodeApprovalRequired)
-	if !strings.Contains(rec.Reason, "internal/conformance/zz.go") {
+	if !strings.Contains(rec.Reason, "docs/greeting.md") {
 		t.Fatalf("the refusal does not name the path GitHub lists: %+v", rec)
 	}
 	if staged := f.Deploy.Staged(); len(staged) != 0 {

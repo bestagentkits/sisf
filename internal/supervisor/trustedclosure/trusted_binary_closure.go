@@ -1,16 +1,16 @@
 // Package trustedclosure computes, from what the binaries of this module
 // link, two lists of repository directories:
 //   - The directories the trusted binaries link: the dependency closure of
-//     the release supervisor, which also runs the QA evaluator. Every one
-//     of them is part of the trusted control surface, so the release
-//     pipeline refuses a candidate that changes any of them as a governance
-//     change. The list is generated into the release package (go generate
+//     the release supervisor, which also runs the QA evaluator, of the
+//     command line and of the control unit. Every one of them is part of
+//     the trusted control surface, so the release pipeline refuses a
+//     candidate that changes any of them as a governance change. The list
+//     is generated into the release package (go generate
 //     ./internal/supervisor/release/).
 //   - The directories of the packages the application links: its inputs
 //     among the Go packages of this module. A candidate the factory
 //     publishes by itself as a release of the application may change only
-//     files directly in those directories (and the application's
-//     Dockerfile). The list is generated into the release package as well
+//     files directly in those directories. The list is generated into the release package as well
 //     (go generate ./internal/supervisor/release/).
 //
 // A test beside each generated list fails when that list is stale.
@@ -29,9 +29,14 @@ import (
 // Module is the import path of this module.
 const Module = "github.com/bestagentkits/sisf"
 
-// TrustedBinaries are the main packages whose closure is trusted. The QA
-// evaluator is part of the supervisor, not a binary of its own.
-var TrustedBinaries = []string{"./cmd/supervisor"}
+// TrustedBinaries are the main packages whose closure is trusted: the
+// supervisor, which also runs the QA evaluator; the command line, which
+// installs the factory, creates its keys and trust roots and builds every
+// program; and the control unit, which signs people in, shows the Owner
+// what an approval is for and takes the approval. The dashboard's
+// templates and scripts are part of what the control unit links, so what
+// the Owner is shown before approving is never published by the factory.
+var TrustedBinaries = []string{"./cmd/supervisor", "./cmd/sisf", "./cmd/factoryd"}
 
 // targets are the platforms the supervisor is built for: the Compose image
 // on Linux and the Standalone host on Linux or macOS, with and without cgo.

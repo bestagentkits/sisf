@@ -3,6 +3,7 @@ package release
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/bestagentkits/sisf/internal/supervisor/trustedclosure"
@@ -88,5 +89,33 @@ func TestAnOrdinaryApplicationChangeIsStillReleasedAndMerged(t *testing.T) {
 	out, err := w.pipeline().Release(context.Background(), req)
 	if err != nil || out.Result != ResultClosed || lander.lands.Load() != 1 {
 		t.Fatalf("Release = %+v, %v with %d merges; want closed and merged once", out, err, lander.lands.Load())
+	}
+}
+
+// The command line, the installer it runs and the control unit decide who
+// the Owner is, what the Owner approves and what is installed, so every
+// package they link is protected as well, generated from what they link:
+// a dashboard template is part of the trusted surface like the Go code that
+// serves it. The application's own package stays outside it.
+func TestEveryPackageTheCommandLineAndTheControlUnitLinkIsProtected(t *testing.T) {
+	t.Parallel()
+	for _, dir := range []string{"cmd/sisf/", "cmd/factoryd/", "internal/install/", "internal/control/", "internal/conformance/",
+		"internal/auth/", "internal/rbac/", "internal/oauthas/", "pkg/identity/", "internal/mcp/", "ui/"} {
+		if !slices.Contains(trustedGoPackageDirs, dir) {
+			t.Errorf("%s is linked by a trusted binary but missing from the generated list", dir)
+		}
+	}
+	for _, changed := range []string{"ui/templates/approve.html", "ui/static/stepup.js", "cmd/factoryd/main.go", "internal/control/x.go"} {
+		if err := checkGovernance(DefaultProtectedPaths(), UnitInputs{}, controlUnit, []string{changed}); !core.HasCode(err, core.CodeApprovalRequired) {
+			t.Errorf("%s: %v, want APPROVAL_REQUIRED", changed, err)
+		}
+	}
+	for _, dir := range trustedGoPackageDirs {
+		if strings.HasPrefix("examples/hello-app/", dir) {
+			t.Errorf("the generated list covers the application's own package with %s", dir)
+		}
+	}
+	if err := checkGovernance(DefaultProtectedPaths(), UnitInputs{}, appUnit, []string{"examples/hello-app/main.go"}); err != nil {
+		t.Errorf("a change of the application's own package was refused: %v", err)
 	}
 }

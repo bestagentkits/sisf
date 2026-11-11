@@ -18,10 +18,11 @@ const (
 	// manifest cannot widen what a candidate may change into the trusted
 	// control surface.
 	ConflictProtected UnitInputConflictKind = "protected"
-	// ConflictControlGoCode: a pattern of the control unit can match a file
-	// the Go toolchain reads, which the installer and the simulation link
-	// as well as the control unit.
-	ConflictControlGoCode UnitInputConflictKind = "control_go_code"
+	// ConflictGoCode: a pattern of a unit other than the application can
+	// match a file the Go toolchain reads. Such code is linked by more than
+	// the unit (the installer and the simulation link the control unit's
+	// packages), so one observed release of the unit cannot vouch for it.
+	ConflictGoCode UnitInputConflictKind = "go_code"
 	// ConflictOverlap: the pattern and an input of another unit can match
 	// the same path, so one release would vouch for another unit's input.
 	ConflictOverlap UnitInputConflictKind = "overlap"
@@ -38,8 +39,9 @@ type UnitInputConflict struct {
 }
 
 // UnitInputConflicts returns what is wrong with the unit input patterns a
-// manifest declares, judged against the protected paths, the Go code of the
-// control unit and the inputs of every other unit, declared or built in.
+// manifest declares, judged against the protected paths, the Go code of
+// every unit but the application and the inputs of every other unit,
+// declared or built in.
 // It reports what it can prove with a path both sides match; what it cannot
 // prove is still refused at release time, where a path two units consume,
 // or a protected path, needs the Owner's approval.
@@ -57,10 +59,10 @@ func UnitInputConflicts(declared map[string][]string, protected []string) []Unit
 				at.Kind, at.Reason = ConflictProtected, fmt.Sprintf("can match %s, which is protected; only the Owner changes it", entry)
 				found = append(found, at)
 			}
-			if unit == controlUnit {
+			if unit != appUnit {
 				if w, ok := goCodeMatch(p); ok {
-					at.Kind, at.Reason = ConflictControlGoCode, fmt.Sprintf("can match %s, a file the Go toolchain reads; "+
-						"the installer and the simulation link the control unit's Go code, so one observed release of control cannot vouch for it", w)
+					at.Kind, at.Reason = ConflictGoCode, fmt.Sprintf("can match %s, a file the Go toolchain reads; "+
+						"Go code and module files are inputs of the application alone, so one observed release of %s cannot vouch for them", w, unit)
 					found = append(found, at)
 				}
 			}
@@ -158,9 +160,6 @@ func (u UnitInputs) overlap(pattern, other string) (string, bool) {
 		for _, d := range appUnitPackageDirs {
 			candidates = append(candidates, overlay(pattern, strings.ToLower(d), fills)...)
 		}
-		candidates = append(candidates, appUnitFiles...)
-	case other == controlUnit:
-		candidates = append(candidates, overlay(pattern, controlUnitDir, fills)...)
 	}
 	for _, w := range candidates {
 		if consumed(w) {

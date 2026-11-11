@@ -62,37 +62,36 @@ func trackedFiles(t *testing.T) []string {
 func TestEveryPathOfTheRepositoryNeedsApprovalOrIsTheInputOfOneUnit(t *testing.T) {
 	t.Parallel()
 	byUnit := classifyTrackedFiles(t, DefaultUnitInputs())
-	if byUnit[appUnit] == 0 || byUnit[controlUnit] == 0 {
-		t.Fatalf("inputs per unit = %v, want some of both app and control", byUnit)
+	if byUnit[appUnit] == 0 || len(byUnit) != 1 {
+		t.Fatalf("inputs per unit = %v, want some of the application's and none of any other unit", byUnit)
 	}
 }
 
 // The same holds with inputs the manifest declares in place of the
-// built-in ones: here the application also consumes the operator guides,
-// and the control unit only its templates.
+// built-in ones: here the application also consumes its Dockerfile, and the
+// runner unit the operator guides.
 func TestEveryPathNeedsApprovalOrIsTheInputOfOneUnitWithDeclaredInputs(t *testing.T) {
 	t.Parallel()
-	inputs, err := NewUnitInputs(map[string][]string{
-		appUnit:     {"examples/hello-app/*", "build/hello-app.Dockerfile", "docs/guides/*.md"},
-		controlUnit: {"ui/templates/*.html"},
-	})
+	declared := map[string][]string{
+		appUnit:  {"examples/hello-app/*", "build/hello-app.Dockerfile"},
+		"runner": {"docs/guides/*.md"},
+	}
+	inputs, err := NewUnitInputs(declared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if conflicts := UnitInputConflicts(map[string][]string{
-		appUnit: {"examples/hello-app/*", "build/hello-app.Dockerfile", "docs/guides/*.md"}, controlUnit: {"ui/templates/*.html"},
-	}, DefaultProtectedPaths()); len(conflicts) != 0 {
+	if conflicts := UnitInputConflicts(declared, DefaultProtectedPaths()); len(conflicts) != 0 {
 		t.Fatalf("the declared inputs conflict: %+v", conflicts)
 	}
 	byUnit := classifyTrackedFiles(t, inputs)
-	if unit, ok := inputs.UnitOf("docs/guides/operations.md"); !ok || unit != appUnit {
-		t.Fatalf("a guide is the input of %q (%v), want app as declared", unit, ok)
+	if unit, ok := inputs.UnitOf("docs/guides/operations.md"); !ok || unit != "runner" {
+		t.Fatalf("a guide is the input of %q (%v), want runner as declared", unit, ok)
 	}
-	if _, ok := inputs.UnitOf("ui/static/style.css"); ok {
-		t.Fatal("a static asset is still an input of control once its inputs are declared without it")
+	if unit, ok := inputs.UnitOf("build/hello-app.Dockerfile"); !ok || unit != appUnit {
+		t.Fatalf("the declared Dockerfile is the input of %q (%v), want app", unit, ok)
 	}
-	if byUnit[appUnit] == 0 || byUnit[controlUnit] == 0 {
-		t.Fatalf("inputs per unit = %v, want some of both app and control", byUnit)
+	if byUnit[appUnit] == 0 || byUnit["runner"] == 0 {
+		t.Fatalf("inputs per unit = %v, want some of both app and runner", byUnit)
 	}
 }
 
@@ -139,6 +138,8 @@ func TestPathsNoObservedUnitConsumesNeedApproval(t *testing.T) {
 		"Makefile", "vendor/modules.txt", "cmd/factoryd/main.go", "docs/x.md", "tests/x_test.go", "go.mod",
 		"README.md", "examples/hello-app/synthetic/synthetic.go", "examples/hello-app/cmd/hello-app-synthetic/main.go",
 		"ui/ui.go", "ui/templates/x.go", "ui/static/x.s", "ui/static/x.syso", "ui/go.mod", "UI/Dashboard.GO",
+		"ui/templates/dash-approval.html", "ui/static/app.js", "UI/X.html", "build/hello-app.Dockerfile",
+		"examples/hello-app/go.mod", "examples/hello-app/go.sum", "examples/hello-app/go.work", "EXAMPLES/HELLO-APP/GO.WORK.SUM",
 	} {
 		if unit, ok := DefaultUnitInputs().UnitOf(p); ok {
 			t.Errorf("%s is an input of %s, want the input of no unit", p, unit)
@@ -151,21 +152,17 @@ func TestPathsNoObservedUnitConsumesNeedApproval(t *testing.T) {
 	}
 }
 
-// The inputs of each unit, in any letter case: the application's own
-// package directory and its Dockerfile, and the dashboard's templates and
-// static assets. A unit outside these has none.
+// The built-in inputs, in any letter case, are the files of the
+// application's own package directory other than module files. The
+// application's Dockerfile and the dashboard's templates and scripts are
+// not built in, and a unit other than the application has none.
 func TestTheInputsOfEachUnit(t *testing.T) {
 	t.Parallel()
 	for p, want := range map[string]string{
 		"examples/hello-app/main.go":     appUnit,
 		"examples/hello-app/new_file.go": appUnit,
-		"build/hello-app.Dockerfile":     appUnit,
-		"BUILD/Hello-App.dockerfile":     appUnit,
-		"ui/templates/dash-runs.html":    controlUnit,
-		"UI/x.html":                      controlUnit,
-		"ui/x.html":                      controlUnit,
-		"ui/static/app.css":              controlUnit,
-		"Ui/Static/New.JS":               controlUnit,
+		"EXAMPLES/Hello-App/Main.GO":     appUnit,
+		"examples/hello-app/README.md":   appUnit,
 	} {
 		if unit, ok := DefaultUnitInputs().UnitOf(p); !ok || unit != want {
 			t.Errorf("%s is an input of %q (%v), want %s", p, unit, ok, want)

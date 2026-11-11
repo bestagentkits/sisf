@@ -14,18 +14,19 @@ var unitInputRules = map[release.UnitInputConflictKind]struct {
 }{
 	release.ConflictProtected: {RuleUnitInputsProtected,
 		"narrow the pattern so it names no protected path; a protected path is changed only by the Owner"},
-	release.ConflictControlGoCode: {RuleUnitInputsControlGoCode,
-		"narrow the pattern to the dashboard's templates and static assets, such as ui/templates/*.html"},
+	release.ConflictGoCode: {RuleUnitInputsGoCode,
+		"narrow the pattern so it names no Go code or module file; only the application's inputs may be Go code"},
 	release.ConflictOverlap: {RuleUnitInputsOverlap,
 		"narrow one of the two units' patterns so that no path is the input of both"},
 }
 
 // checkUnitInputs refuses release.unit_inputs patterns the supervisor would
 // not trust: one that can match a protected path, which a manifest cannot
-// open to a candidate the factory publishes by itself; one of the control
-// unit that can match a file the Go toolchain reads, since the installer
-// and the simulation link that code too; and one that can match an input of
-// another unit, declared or built in. Each finding names a path the pattern
+// open to a candidate the factory publishes by itself, the dashboard's
+// templates and scripts under ui/ among them; one of a unit other than the
+// application that can match a file the Go toolchain reads, since more than
+// that unit links such code; and one that can match an input of another
+// unit, declared or built in. Each finding names a path the pattern
 // matches.
 func (c *checker) checkUnitInputs() {
 	declared := make(map[string][]string, len(c.m.Release.UnitInputs))

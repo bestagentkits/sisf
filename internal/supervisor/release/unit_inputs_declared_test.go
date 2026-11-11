@@ -18,15 +18,15 @@ func sandboxInputs(t *testing.T) UnitInputs {
 	return inputs
 }
 
-// Declared inputs replace the built-in inputs of their unit entirely; the
-// built-in inputs of a unit left out stay.
+// Declared inputs replace the built-in inputs of their unit entirely; no
+// other unit has built-in inputs, the dashboard's templates included.
 func TestDeclaredInputsReplaceTheBuiltInInputsOfTheirUnit(t *testing.T) {
 	t.Parallel()
 	inputs := sandboxInputs(t)
 	for p, want := range map[string]string{
 		"app.go":                     appUnit,
 		"RELEASE_REHEARSAL_FAULT.GO": appUnit,
-		"ui/templates/a.html":        controlUnit,
+		"ui/templates/a.html":        "",
 		"examples/hello-app/main.go": "",
 		"synthetic/main.go":          "",
 		"go.mod":                     "",
@@ -83,19 +83,34 @@ func TestAPathTwoUnitsConsumeIsRefused(t *testing.T) {
 	}
 }
 
-// Go code is never an input of the control unit, even when the manifest
-// declares it: the installer and the simulation link it too.
-func TestDeclaredGoCodeOfTheControlUnitIsNotAnInput(t *testing.T) {
+// Go code and module files are inputs of the application alone: declared
+// for any other unit they are not its inputs, since more than that unit
+// links them, and a candidate of that unit changing them is refused.
+func TestDeclaredGoCodeOfAUnitOtherThanTheApplicationIsNotAnInput(t *testing.T) {
 	t.Parallel()
-	inputs, err := NewUnitInputs(map[string][]string{controlUnit: {"ui/*"}})
+	for _, unit := range []string{controlUnit, "runner", "dispatcher"} {
+		inputs, err := NewUnitInputs(map[string][]string{unit: {"tools/*"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []string{"tools/zz.go", "tools/x.s", "tools/go.mod", "tools/go.sum", "tools/go.work", "tools/go.work.sum"} {
+			if of, ok := inputs.UnitOf(p); ok {
+				t.Errorf("%s is an input of %s", p, of)
+			}
+			if err := checkGovernance(DefaultProtectedPaths(), inputs, unit, []string{p}); !core.HasCode(err, core.CodeApprovalRequired) {
+				t.Errorf("a %s candidate changing %s = %v, want APPROVAL_REQUIRED", unit, p, err)
+			}
+		}
+		if of, ok := inputs.UnitOf("tools/page.html"); !ok || of != unit {
+			t.Errorf("tools/page.html is the input of %q (%v), want %s", of, ok, unit)
+		}
+	}
+	inputs, err := NewUnitInputs(map[string][]string{appUnit: {"tools/*"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := inputs.UnitOf("ui/zz.go"); ok {
-		t.Fatal("ui/zz.go is an input of control")
-	}
-	if unit, ok := inputs.UnitOf("ui/page.html"); !ok || unit != controlUnit {
-		t.Fatalf("ui/page.html is the input of %q (%v), want control", unit, ok)
+	if of, ok := inputs.UnitOf("tools/zz.go"); !ok || of != appUnit {
+		t.Errorf("declared Go code of the application is the input of %q (%v), want app", of, ok)
 	}
 }
 
@@ -122,16 +137,21 @@ func TestUnitInputConflictsAreProvedWithAPath(t *testing.T) {
 		{map[string][]string{appUnit: {"*.go"}, controlUnit: {"a*"}}, ConflictOverlap, "a.go"},
 		{map[string][]string{appUnit: {"examples/*/main.go"}}, "", ""},
 		{map[string][]string{appUnit: {"web/*"}}, "", ""},
-		{map[string][]string{appUnit: {"ui/*.html"}}, ConflictOverlap, "ui/x.html"},
-		{map[string][]string{appUnit: {"ui/*.go"}}, "", ""},
+		{map[string][]string{appUnit: {"tools/*"}}, "", ""},
+		{map[string][]string{appUnit: {"ui/*.html"}}, ConflictProtected, "ui/"},
+		{map[string][]string{appUnit: {"ui/*.go"}}, ConflictProtected, "ui/"},
 		{map[string][]string{controlUnit: {"examples/hello-app/*"}}, ConflictOverlap, "examples/hello-app/"},
 		{map[string][]string{appUnit: {"*.*"}}, ConflictProtected, "protected"},
 		{map[string][]string{appUnit: {"*/*.go"}}, ConflictProtected, ""},
-		{map[string][]string{controlUnit: {"ui/templates/*.html"}}, "", ""},
-		{map[string][]string{controlUnit: {"ui/*"}}, ConflictControlGoCode, ".go"},
-		{map[string][]string{controlUnit: {"ui/*.g?"}}, ConflictControlGoCode, "ui/x.go"},
-		{map[string][]string{controlUnit: {"ui/*.[gh]"}}, ConflictControlGoCode, "ui/x.h"},
-		{map[string][]string{controlUnit: {"ui/go.[ms]*"}}, ConflictControlGoCode, "go."},
+		{map[string][]string{controlUnit: {"ui/templates/*.html"}}, ConflictProtected, "ui/"},
+		{map[string][]string{controlUnit: {"ui/static/*.js"}}, ConflictProtected, "ui/"},
+		{map[string][]string{controlUnit: {"site/*.html"}}, "", ""},
+		{map[string][]string{controlUnit: {"ui/*"}}, ConflictGoCode, ".go"},
+		{map[string][]string{controlUnit: {"site/*.g?"}}, ConflictGoCode, "site/x.go"},
+		{map[string][]string{controlUnit: {"site/*.[gh]"}}, ConflictGoCode, "site/x.h"},
+		{map[string][]string{controlUnit: {"site/go.[ms]*"}}, ConflictGoCode, "go."},
+		{map[string][]string{"runner": {"tools/*"}}, ConflictGoCode, ".go"},
+		{map[string][]string{"dispatcher": {"tools/go.mod"}}, ConflictGoCode, "go.mod"},
 	} {
 		conflicts := UnitInputConflicts(c.declared, DefaultProtectedPaths())
 		if c.kind == "" {

@@ -1,7 +1,6 @@
 package acceptance
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -11,16 +10,16 @@ import (
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
-// greetingAndConformanceDiff changes the application's greeting and adds a
-// file to a package the installer links, which the application does not.
-const greetingAndConformanceDiff = greetingDiff + `--- /dev/null
-+++ b/internal/conformance/zz.go
+// greetingAndDocsDiff changes the application's greeting and adds a
+// document, which the application does not consume.
+const greetingAndDocsDiff = greetingDiff + `--- /dev/null
++++ b/docs/greeting.md
 @@ -0,0 +1 @@
-+package conformance
++# The greeting
 `
 
-// dashboardTemplateDiff adds a dashboard template, a static input of the
-// control unit.
+// dashboardTemplateDiff adds a dashboard template, part of the trusted
+// control surface.
 const dashboardTemplateDiff = `--- /dev/null
 +++ b/ui/templates/dash-checked.html
 @@ -0,0 +1 @@
@@ -50,11 +49,11 @@ func TestAnApplicationCandidateThatChangesAPathTheApplicationDoesNotConsumeIsRef
 	t.Parallel()
 	f := harness.New(t, harness.Options{})
 	number := f.OpenIssue("maintainer", "MEMBER", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
-	f.ScriptPatch(number, 0, greetingAndConformanceDiff)
+	f.ScriptPatch(number, 0, greetingAndDocsDiff)
 	f.Cycle(6)
 
 	rec := wantRefusedAndBlocked(t, f, number, core.CodeApprovalRequired)
-	if !strings.Contains(rec.Reason, "internal/conformance/zz.go") || !strings.Contains(rec.Reason, "Owner's approval") {
+	if !strings.Contains(rec.Reason, "docs/greeting.md") || !strings.Contains(rec.Reason, "Owner's approval") {
 		t.Fatalf("the refusal does not name the path that needs the Owner: %+v", rec)
 	}
 	if staged := f.Deploy.Staged(); len(staged) != 0 {
@@ -78,27 +77,25 @@ func TestAnApplicationCandidateOfItsOwnInputsIsReleasedAndMerged(t *testing.T) {
 	}
 }
 
-// A new dashboard template is an input of the control unit: with control in
-// release.units it is released, observed and verified as the control unit.
-func TestADashboardTemplateIsReleasedAsTheControlUnit(t *testing.T) {
+// A dashboard template is never an input of the control unit: the
+// templates show the Owner what an approval is for, so even with control
+// in release.units a new one is refused for the Owner, and nothing is
+// deployed or merged.
+func TestADashboardTemplateIsRefusedEvenWhenControlIsAReleaseUnit(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
 	f := harness.New(t, harness.Options{ReleaseUnits: []manifest.UnitName{manifest.UnitApp, manifest.UnitControl}})
-	installed := f.Trust.Installed["control"]
 	number := f.OpenIssue("maintainer", "MEMBER", "Say who checked the status", dashboardBody, github.LabelReady, github.LabelKindBug)
 	f.ScriptPatch(number, 0, dashboardTemplateDiff)
-	f.Cycle(4)
+	f.Cycle(6)
 
-	wantSurfaces(t, f, number, core.StateClosed)
-	good, found, err := f.Trust.LKG.Get(ctx, "control")
-	if err != nil || !found || good.Digest == installed || core.Digest(good.Digest) != f.Record(number).CandidateDigest {
-		t.Fatalf("the control unit built from the template is not the last known good: %+v, %v", good, err)
+	rec := wantRefusedAndBlocked(t, f, number, core.CodeApprovalRequired)
+	if !strings.Contains(rec.Reason, "ui/templates/dash-checked.html") {
+		t.Fatalf("the refusal does not name the template: %+v", rec)
 	}
-	for _, rev := range f.Deploy.Staged() {
-		if rev.Unit != "control" {
-			t.Fatalf("a unit other than control was deployed: %+v", rev)
-		}
+	if staged := f.Deploy.Staged(); len(staged) != 0 {
+		t.Fatalf("the control unit was deployed: %+v", staged)
 	}
+	wantNotMerged(t, f)
 }
 
 // Without control in release.units the same template is refused for a

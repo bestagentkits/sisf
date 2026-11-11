@@ -14,7 +14,9 @@ func TestARefusedUnitInputPatternNamesAPathItMatches(t *testing.T) {
 		"testdata/reject-release-unit-inputs-protected-go-mod.yaml":               {`"go.mod"`, "go.mod", "protected"},
 		"testdata/reject-release-unit-inputs-protected-supervisor.yaml":           {`"cmd/supervisor/*"`, "cmd/supervisor/", "protected"},
 		"testdata/reject-release-unit-inputs-protected-workflows.yaml":            {`".github/workflows/*"`, ".github/", "protected"},
-		"testdata/reject-release-unit-inputs-control-go-code.yaml":                {`"ui/*"`, ".go", "installer"},
+		"testdata/reject-release-unit-inputs-go-code.yaml":                        {`"tools/runner/*"`, ".go", "application alone"},
+		"testdata/reject-release-unit-inputs-dashboard-templates.yaml":            {`"ui/templates/*.html"`, "ui/", "protected"},
+		"testdata/reject-release-unit-inputs-dashboard-static.yaml":               {`"ui/static/*.js"`, "ui/", "protected"},
 		"testdata/reject-release-unit-inputs-overlap.yaml":                        {"web/", "consumes as well"},
 	} {
 		report, err := CheckFile(fixture)

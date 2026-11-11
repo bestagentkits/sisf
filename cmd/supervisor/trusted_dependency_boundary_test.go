@@ -7,12 +7,13 @@ import (
 	"github.com/bestagentkits/sisf/internal/supervisor/trustedclosure"
 )
 
-// The supervisor is the trust root: everything it links is protected from
-// self-publication, so it must not link the control unit, whose dashboard
-// is the part of Zone 3 the factory is meant to update by itself.
+// The supervisor is the trust root and holds the release keys, so it must
+// not link the control unit, whose code faces people and the network
+// (sign-in, the dashboard, MCP): a defect there never runs inside the
+// supervisor. Both are protected from self-publication all the same.
 func TestTheSupervisorLinksNoPartOfTheControlUnit(t *testing.T) {
 	t.Parallel()
-	packages, err := trustedclosure.Packages("../..")
+	packages, err := trustedclosure.Closure("../..", "./cmd/supervisor")
 	if err != nil {
 		t.Fatal(err)
 	}

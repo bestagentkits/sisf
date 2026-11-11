@@ -11,16 +11,20 @@ import (
 // case; a path that is the input of no unit decides nothing.
 func TestTheUnitOfAChangeIsTheUnitWhoseInputsItChanges(t *testing.T) {
 	t.Parallel()
-	router := DefaultUnitRouter()
+	inputs, err := release.NewUnitInputs(map[string][]string{"control": {"site/*.html"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := UnitRouter{Inputs: inputs}
 	for want, paths := range map[string][]string{
 		"app":     {"examples/hello-app/main.go", "docs/x.md"},
-		"control": {"UI/x.html", "Makefile"},
+		"control": {"SITE/x.html", "Makefile"},
 	} {
 		if unit, err := router.UnitOf(paths); err != nil || unit != want {
 			t.Errorf("%v routes to %q (%v), want %s", paths, unit, err, want)
 		}
 	}
-	for _, paths := range [][]string{{"ui/templates/a.html", "examples/hello-app/main.go"}, {"Examples/Hello-App/x.go", "ui/static/a.css"}} {
+	for _, paths := range [][]string{{"site/a.html", "examples/hello-app/main.go"}, {"Examples/Hello-App/x.go", "Site/A.HTML"}} {
 		if unit, err := router.UnitOf(paths); !core.HasCode(err, core.CodeInvalidArgument) {
 			t.Errorf("%v routes to %q (%v), want refused as spanning two units", paths, unit, err)
 		}
@@ -32,7 +36,7 @@ func TestTheUnitOfAChangeIsTheUnitWhoseInputsItChanges(t *testing.T) {
 // nothing in it is an input of the unit it is built as.
 func TestAChangeOfNoUnitsInputsIsBuiltForTheOwnerToJudge(t *testing.T) {
 	t.Parallel()
-	for _, p := range []string{"cmd/factoryd/main.go", "ui/ui.go", "internal/conformance/x.go", "README.md"} {
+	for _, p := range []string{"cmd/factoryd/main.go", "ui/ui.go", "ui/templates/a.html", "ui/static/a.css", "internal/conformance/x.go", "README.md"} {
 		if unit, err := DefaultUnitRouter().UnitOf([]string{p}); err != nil || unit != judgedOnlyUnit {
 			t.Errorf("%s routes to %q (%v), want %s", p, unit, err, judgedOnlyUnit)
 		}
@@ -43,12 +47,13 @@ func TestAChangeOfNoUnitsInputsIsBuiltForTheOwnerToJudge(t *testing.T) {
 }
 
 // The router routes by the inputs the release judges by: with the
-// application's inputs declared as the Go files at the repository root, a
-// change of app.go is a build of the application, and a change of the
-// replaced built-in directory is the input of no unit.
+// application's inputs declared as the Go files at the repository root and
+// the control unit's as the pages under site/, a change of app.go is a
+// build of the application, and a change of the replaced built-in
+// directory is the input of no unit.
 func TestTheRouterFollowsDeclaredInputs(t *testing.T) {
 	t.Parallel()
-	inputs, err := release.NewUnitInputs(map[string][]string{"app": {"*.go"}})
+	inputs, err := release.NewUnitInputs(map[string][]string{"app": {"*.go"}, "control": {"site/*.html"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,8 +61,8 @@ func TestTheRouterFollowsDeclaredInputs(t *testing.T) {
 	if unit, err := router.UnitOf([]string{"app.go", "release_rehearsal_fault.go"}); err != nil || unit != "app" {
 		t.Fatalf("the sandbox's candidate routes to %q (%v), want app", unit, err)
 	}
-	if unit, err := router.UnitOf([]string{"app.go", "ui/templates/a.html"}); !core.HasCode(err, core.CodeInvalidArgument) {
-		t.Fatalf("a change of app.go and a template routes to %q (%v), want refused as spanning two units", unit, err)
+	if unit, err := router.UnitOf([]string{"app.go", "site/a.html"}); !core.HasCode(err, core.CodeInvalidArgument) {
+		t.Fatalf("a change of app.go and a page of control routes to %q (%v), want refused as spanning two units", unit, err)
 	}
 	if _, ok := inputs.UnitOf("examples/hello-app/main.go"); ok {
 		t.Fatal("the replaced built-in directory is still an input")

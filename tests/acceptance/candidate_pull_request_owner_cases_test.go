@@ -48,11 +48,11 @@ func TestACandidateThatChangesAFoundationFileIsLeftForTheOwner(t *testing.T) {
 // candidate, judged against the same approved policy, is merged too.
 func TestTwoVerifiedCandidatesAreBothMerged(t *testing.T) {
 	t.Parallel()
-	f := harness.New(t, harness.Options{ReleaseUnits: []manifest.UnitName{manifest.UnitApp, manifest.UnitControl}})
+	f := harness.New(t, harness.Options{ReleaseUnits: []manifest.UnitName{manifest.UnitApp, manifest.UnitControl}, UnitInputs: controlSitePage})
 	greeting := f.OpenIssue("maintainer", "MEMBER", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
 	f.ScriptPatch(greeting, 0, greetingDiff)
 	dashboard := f.OpenIssue("maintainer", "MEMBER", "Say when the status was checked", bugBody, github.LabelReady, github.LabelKindBug)
-	f.ScriptPatch(dashboard, 0, dashboardDiff)
+	f.ScriptPatch(dashboard, 0, sitePageDiff)
 	for range 10 {
 		if f.Cycle(1); f.Record(greeting).State == core.StateClosed && f.Record(dashboard).State == core.StateClosed {
 			break
@@ -65,7 +65,7 @@ func TestTwoVerifiedCandidatesAreBothMerged(t *testing.T) {
 		}
 	}
 	_, files, _ := f.GitData.Branch(f.Repo, "main")
-	if f.GitData.Merges() != 2 || files["examples/hello-app/main.go"] != greetedMain || !strings.Contains(files["ui/dashboard/status.html"], "Last checked by the factory") {
+	if f.GitData.Merges() != 2 || files["examples/hello-app/main.go"] != greetedMain || !strings.Contains(files["site/status.html"], "Last checked by the factory") {
 		t.Fatalf("main after %d merges: %v", f.GitData.Merges(), files)
 	}
 }
