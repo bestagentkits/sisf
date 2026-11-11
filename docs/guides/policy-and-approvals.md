@@ -10,7 +10,7 @@ The policy is the set of foundation files of the repository the factory serves, 
 - `FEATURES.md` or `features.yaml`;
 - `.sisf/factory.yaml`.
 
-All must exist at that commit and agree with each other, or the answer is `POLICY_HOLD`. Commits made later, merged or not, are not policy until the Owner approves one of them. An agent may propose a change to these files as a pull request; it cannot put one in force.
+All must exist at that commit and agree with each other, or the answer is `POLICY_HOLD`; `DECISIONS.md`, for example, must state the schema version of its typed questions (`internal/policy/snapshot.go`). There is no starter template yet. This repository's own `AGENTS.md`, `REVIEW.md`, `DECISIONS.md` and `FEATURES.md`, with an install's `factory.yaml` as `.sisf/factory.yaml`, form a policy that was observed to be accepted; the quickstart uses them, and they are a starting point for your own. Commits made later, merged or not, are not policy until the Owner approves one of them. An agent may propose a change to these files as a pull request; it cannot put one in force.
 
 Until the first revision is approved, nothing moves: the control zone holds intake and the agent zone claims nothing (`cmd/factoryd/wiring/control_policy.go`). Approving the first revision is therefore part of [getting a first issue through](quickstart.md#4-run-a-first-issue).
 
@@ -60,7 +60,7 @@ policy revision <sha> is in force (content sha256:<digest>)
 
 Verify: running the same command again prints the same line; the control zone takes in issues from its next pass. A failure names the cause, for example `POLICY_HOLD: AGENTS.md could not be read at <sha>` when a file is missing at that commit or GitHub cannot be reached.
 
-Undo: a revision in force can only be replaced by another approved one (below). To start over on a test install, `sisf down -v` removes the state, including the policy record.
+Undo: a revision in force can only be replaced by another approved one (below). To start over on a test install, remove the state, which holds the policy record: `sisf down -v` while the factory runs, or delete `<dir>/data` once a Standalone factory is stopped.
 
 ## Changing the policy
 

@@ -14,7 +14,7 @@ Owner: `cmd/sisf/cmd_install*.go`, `internal/install`. Procedures: [installing](
 | `sisf up [--dir path] [init flags]` | Builds the programs or images from the source checkout, signs the release manifest, checks isolation, prepares the state store and starts every unit. Creates the install first when the directory holds none. Standalone stays in the foreground; Docker starts one Compose project and returns. |
 | `sisf stop [--dir path]` | Stops the factory and keeps everything (`docker compose stop` in Docker mode). |
 | `sisf restart [--dir path]` | Restarts every unit (Standalone: the same as sending SIGHUP to `sisf up`). |
-| `sisf down [--dir path] [-v]` | Stops the factory; Docker mode also removes the project's containers and networks. `-v` (or `--volumes`) also removes the data: the state volume in Docker mode, `<dir>/data` in Standalone. Secrets and `factory.yaml` are never removed. |
+| `sisf down [--dir path] [-v]` | Stops the factory; Docker mode also removes the project's containers and networks. `-v` (or `--volumes`) also removes the data: the project's volumes in Docker mode (`docker compose down --volumes`), `<dir>/data` in Standalone. Secrets and `factory.yaml` are never removed. On a Standalone install that is not running, `stop`, `down` and `down -v` answer `NOT_FOUND` and change nothing. |
 | `sisf doctor [--dir path]` | Checks the install end to end and changes nothing. Prints one `OK`, `WARN` or `FAIL` line per check and exits 1 on any failure. |
 
 `--dir` defaults to `$SISF_HOME`, else `~/.sisf/factory`.
@@ -38,7 +38,7 @@ Flags of `init`, which `up` also accepts (`cmd/sisf/cmd_install_flags.go`):
 
 Sign-in flags (`cmd/sisf/cmd_install_flags_identity.go`): `--external-url`, `--owner issuer#subject` (repeatable), `--oidc-issuer`, `--oidc-client-id`, `--oidc-client-secret-file` or `--oidc-client-secret-env`, `--github-login-client-id` with `--github-login-client-secret-file` or `--github-login-client-secret-env`, `--github-login-url`, `--github-login-api-url`, `--dev`, `--github-credential gh-cli`.
 
-Agent and build flags, Standalone only (`cmd/sisf/cmd_install_flags_agents.go`): `--coder-agent fake|claude|codex`, `--coder-model`, `--agent-home`, `--workspace-source`, `--qa-judge agent`, `--qa-agent claude|codex|pi`, `--qa-model`, `--qa-home`, `--qa-agent-binary`, `--build-command`, `--exec local|docker`, and for a Docker build sandbox `--exec-docker-endpoint`, `--exec-docker-network`, `--egress-proxy`, `--runner-image`. See [real agents](install.md#real-agents-in-standalone).
+Agent and build flags (`cmd/sisf/cmd_install_flags_agents.go`): `--coder-agent fake|claude|codex` (a real agent runs only in Standalone mode), `--coder-model`, `--workspace-source`, `--qa-judge agent`, `--qa-agent claude|codex|pi`, `--qa-model`, `--qa-agent-binary` (needed by Docker mode and by a Standalone build sandbox), `--build-command`, `--exec local|docker`; Standalone only: `--agent-home`, `--qa-home`, and for a Docker build sandbox `--exec-docker-endpoint`, `--exec-docker-network`, `--egress-proxy`, `--runner-image`. See [real agents](install.md#real-agents-in-standalone).
 
 ## Inspecting and operating a running factory
 

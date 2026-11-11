@@ -48,14 +48,14 @@ Expected: `emergency stop lifted`. Lifting when no stop is in force answers `NOT
 
 ### Docker Compose
 
-In Docker mode the host has no route to either one by default: the state store is on the project's internal `factory` network, and the supervisor's admin socket is a Unix socket on the `<project>-supervisor-admin` volume (`templates/compose/compose.yaml`). Use the supervisor route through the control plane instead. It is the `factory.emergency_stop` action: Owner only, no approval and no step-up (`internal/actions/operationsactions`), served by every surface:
+In Docker mode the host has no route to either one by default: the state store is on the project's internal `factory` network, and the supervisor's admin socket is a Unix socket on the `<project>-supervisor-admin` volume (`templates/compose/compose.yaml`). Use the supervisor route through the control plane instead. It is the `factory.emergency_stop` action: Owner only, no approval and no step-up (`internal/actions/operationsactions`), served by every surface; `tests/acceptance/step_up_and_write_limits_test.go` drives it as a signed-in Owner over REST with no approval and checks that the supervisor recorded each stop:
 
 ```sh
 sisf login                                  # once, as the Owner
 sisf call factory.emergency_stop --input '{"reason":"<why>"}'
 ```
 
-or the Emergency stop form on the dashboard overview (`/`), where the approval id field may be left empty. The answer is the supervisor's report (`stop_id`, `publishing_frozen`, `claims_held`, `runs_cancelled`, `secrets_revoked`). This route needs control and the supervisor running.
+or the Emergency stop form on the dashboard overview (`/`). The form's text says it asks for an approval, but the action needs none: leave the approval id field empty (`internal/control/web/actions_post.go` passes an empty id through). The answer is the supervisor's report (`stop_id`, `publishing_frozen`, `claims_held`, `runs_cancelled`, `secrets_revoked`). This route needs control and the supervisor running.
 
 If control does not answer, stop the whole project: `sisf stop --dir <dir>` (`docker compose stop`). That halts every unit, including Zone 1, and records no stop: the next `sisf up` or `sisf restart` resumes work as before.
 
