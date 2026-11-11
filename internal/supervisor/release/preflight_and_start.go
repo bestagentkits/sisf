@@ -6,6 +6,7 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 	"github.com/bestagentkits/sisf/pkg/deploy"
+	"github.com/bestagentkits/sisf/pkg/qa"
 )
 
 // rollout is one release in flight.
@@ -27,6 +28,8 @@ type rollout struct {
 	observed   deploy.Observed
 	// feature and summary go into the changelog and the catalog.
 	feature, summary string
+	// candidate is the candidate as QA judged it, which the release lands.
+	candidate qa.Candidate
 }
 
 // preflight proves there is a way back and a way to observe before anything

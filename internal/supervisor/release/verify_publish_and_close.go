@@ -13,7 +13,8 @@ import (
 // is read from the running system once more after the window: only the
 // release itself, healthy, is verified. The verified release then becomes
 // the LKG, the changelog and the catalog are published by the Publisher
-// identity, and the issue closes. A step that cannot be taken leaves the
+// identity, the change is landed on the default branch (see Lander), and
+// the issue closes. A step that cannot be taken leaves the
 // issue where it is, and the outcome says so.
 func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
 	out := Outcome{Release: r.rev.Digest, Windows: r.windows, State: r.h.record.State}
@@ -65,11 +66,12 @@ func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
 		return held(err)
 	}
 	out.PublicationRef = ref
-	err = p.step(ctx, r.h, stepSpec{
-		event: core.EventIssueClosed, reason: "verified, recorded as the LKG, changelog and catalog published",
-		evidence: []string{"observed:" + string(observed.Digest), ref},
-	})
+	landing, err := p.land(ctx, LandRequest{IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Release: r.rev.Digest,
+		Candidate: r.candidate, Receipt: r.v.receipt})
 	if err != nil {
+		return held(err)
+	}
+	if err := p.closeLanded(ctx, r.h, landing, []string{"observed:" + string(observed.Digest), ref}); err != nil {
 		return held(err)
 	}
 	out.Result, out.State = ResultClosed, r.h.record.State

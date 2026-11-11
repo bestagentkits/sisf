@@ -125,10 +125,16 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
+	// Only the supervisor builds a merger: it lands a candidate on the
+	// default branch after its release is verified.
+	merger, err := github.NewMerger(client)
+	if err != nil {
+		return nil, err
+	}
 	spend := budget.NewGate(budget.Config{Clock: d.clock})
 	return stages.New(stages.Config{
 		FactoryID: m.FactoryID, Repo: repo, State: d.stop.store, SameRouteAcknowledged: m.ModelRoutes.SameModelRoute,
-		GitHub: client, Judge: judge, QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
+		GitHub: client, Merger: merger, Judge: judge, QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
 		QASigner: keys.QA, ArtifactSigner: keys.Artifact, Verifier: keys.Verifier, ApprovalVerifier: approvalVerifier,
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
 		BuildRetry: stages.BuildRetry{HoldAfter: l.buildOutageLimit}, Budget: spend,

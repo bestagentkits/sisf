@@ -80,6 +80,9 @@ type Config struct {
 	Freeze   FreezeCheck
 	// Publisher writes the changelog and the catalog before an issue closes.
 	Publisher Publisher
+	// Lander is optional; with it a verified release's change is landed on
+	// the default branch before the issue closes.
+	Lander Lander
 	// Synthetic is optional; without it a low-traffic release holds.
 	Synthetic SyntheticSuite
 	// Approvals and Policy are optional; without them OwnerRollback is

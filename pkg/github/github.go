@@ -137,6 +137,7 @@ type Comment struct {
 type PullRequest struct {
 	Repo              RepoRef           `json:"repo"`
 	Number            int               `json:"number"`
+	URL               string            `json:"url,omitempty"`
 	Title             string            `json:"title"`
 	Body              string            `json:"body"`
 	State             IssueState        `json:"state"`

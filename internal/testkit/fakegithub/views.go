@@ -2,6 +2,7 @@ package fakegithub
 
 import (
 	"slices"
+	"strconv"
 	"time"
 )
 
@@ -28,9 +29,10 @@ func pullJSON(r *repo, is *issue) jPull {
 	base := repoJSON(r.owner, r.name)
 	return jPull{
 		Number: is.number, Title: is.title, Body: is.body, State: is.state, Draft: is.pr.draft, Merged: is.pr.merged,
-		Head: jBranch{Ref: is.pr.headRef, SHA: is.pr.headSHA, Repo: &head},
-		Base: jBranch{Ref: is.pr.baseRef, SHA: is.pr.baseSHA, Repo: &base},
-		User: is.author.json(), AuthorAssociation: is.author.assoc(), CreatedAt: is.created, UpdatedAt: is.updated,
+		HTMLURL: "https://github.com/" + r.owner + "/" + r.name + "/pull/" + strconv.Itoa(is.number),
+		Head:    jBranch{Ref: is.pr.headRef, SHA: is.pr.headSHA, Repo: &head},
+		Base:    jBranch{Ref: is.pr.baseRef, SHA: is.pr.baseSHA, Repo: &base},
+		User:    is.author.json(), AuthorAssociation: is.author.assoc(), CreatedAt: is.created, UpdatedAt: is.updated,
 	}
 }
 

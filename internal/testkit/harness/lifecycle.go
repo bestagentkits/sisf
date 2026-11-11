@@ -77,8 +77,10 @@ func (f *Factory) startLifecycle(client *github.RESTClient) {
 		judge, err = f.opts.QAJudge(stages.CandidateMaterials{State: f.ControlStore, Tree: stages.Tree{GitHub: client, Repo: repo}})
 		must(f.t, err)
 	}
+	merger, err := github.NewMerger(client)
+	must(f.t, err)
 	f.Stages, err = stages.New(stages.Config{
-		FactoryID: m.FactoryID, Repo: repo, State: f.ControlStore, GitHub: client, Judge: judge,
+		FactoryID: m.FactoryID, Repo: repo, State: f.ControlStore, GitHub: client, Judge: judge, Merger: merger,
 		QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
 		QASigner: f.Trust.QA, ArtifactSigner: f.Trust.Artifact, Verifier: f.Trust.Verifier, ApprovalVerifier: f.Trust.Verifier,
 		Redactor: redact.New(redact.Config{}), MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: clock,

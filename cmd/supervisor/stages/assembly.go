@@ -2,6 +2,8 @@ package stages
 
 import (
 	"context"
+	"slices"
+	"time"
 
 	"github.com/bestagentkits/sisf/internal/catalog"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
@@ -24,6 +26,12 @@ type GitHub interface {
 	CommitToBranch(ctx context.Context, repo github.RepoRef, bc github.BranchCommit) (core.CommitSHA, error)
 	CommitExists(ctx context.Context, repo github.RepoRef, commit core.CommitSHA) error
 	CreatePullRequest(ctx context.Context, repo github.RepoRef, pr github.NewPullRequest) (github.PullRequest, error)
+	// The candidates' pull requests: found by branch, titled from the issue
+	// and noted when their release is rolled back.
+	FindPullRequests(ctx context.Context, repo github.RepoRef, branch string) ([]github.PullRequest, error)
+	GetIssue(ctx context.Context, ref core.IssueRef) (github.Issue, error)
+	ListComments(ctx context.Context, ref core.IssueRef, since time.Time) ([]github.Comment, error)
+	CreateComment(ctx context.Context, ref core.IssueRef, body string) (github.Comment, error)
 }
 
 // Config wires the supervisor's lifecycle stages. Keys are given only as
@@ -57,6 +65,10 @@ type Config struct {
 	// BuildRetry bounds the retries of a build that met outages;
 	// DefaultBuildRetry where zero.
 	BuildRetry BuildRetry
+	// Merger merges a verified candidate's pull request. With it every
+	// candidate QA passes gets a pull request, merged once its release is
+	// verified; nil opens none and merges nothing.
+	Merger Merger
 	// Budget closes the reservation of a run QA passed or held; nil leaves
 	// it held until the dispatcher stops the run.
 	Budget dispatcher.ReservationCloser
@@ -69,10 +81,12 @@ type Config struct {
 
 // Stages are the build, evaluation and release stages of one factory.
 type Stages struct {
-	Build    *BuildStage
-	QA       *QAStage
-	Release  *ReleaseStage
-	Pipeline *release.Pipeline
+	Build   *BuildStage
+	QA      *QAStage
+	Release *ReleaseStage
+	// CandidatePRs is nil when the stages were built without a merger.
+	CandidatePRs *CandidatePRs
+	Pipeline     *release.Pipeline
 }
 
 // New builds the stages.
@@ -97,8 +111,15 @@ func New(cfg Config) (*Stages, error) {
 	if err != nil {
 		return nil, err
 	}
+	var prs *CandidatePRs
+	if cfg.Merger != nil {
+		prs = &CandidatePRs{Repo: cfg.Repo, Base: cfg.BaseBranch, State: cfg.State, GitHub: cfg.GitHub, Merger: cfg.Merger, Policy: refs, Clock: cfg.Clock}
+	}
 	rc := cfg.Release
 	rc.FactoryID, rc.State, rc.Verifier, rc.Publisher, rc.Clock = cfg.FactoryID, cfg.State, cfg.Verifier, publisher, cfg.Clock
+	if prs != nil {
+		rc.Lander = prs
+	}
 	if rc.Policy == nil {
 		rc.Policy = func(ctx context.Context) (core.CommitSHA, error) {
 			r, err := refs(ctx)
@@ -127,7 +148,8 @@ func New(cfg Config) (*Stages, error) {
 		return nil, err
 	}
 	return &Stages{
-		Pipeline: pipeline,
+		Pipeline:     pipeline,
+		CandidatePRs: prs,
 		Build: &BuildStage{
 			Owner: "supervisor-builder", State: cfg.State, QAPolicy: refs, CodingPolicy: stepPolicy(loader, core.StepCoding), Clock: cfg.Clock,
 			Retry:   cfg.BuildRetry,
@@ -143,22 +165,26 @@ func New(cfg Config) (*Stages, error) {
 
 // PassResult is what one round of the stages did.
 type PassResult struct {
-	Build   BuildPassResult
-	QA      QAPassResult
-	Release ReleasePassResult
+	Build        BuildPassResult
+	QA           QAPassResult
+	CandidatePRs CandidatePRPassResult
+	Release      ReleasePassResult
 }
 
 // Errors joins what each stage reported.
 func (r PassResult) Errors() []error {
-	return append(append(append([]error(nil), r.Build.Errors...), r.QA.Errors...), r.Release.Errors...)
+	return slices.Concat(r.Build.Errors, r.QA.Errors, r.CandidatePRs.Errors, r.Release.Errors)
 }
 
 // Pass runs one round of the stages in lifecycle order, so a patch can be
-// built, judged and released in the same round.
+// built, judged, proposed as a pull request and released in the same round.
 func (s *Stages) Pass(ctx context.Context) PassResult {
 	var r PassResult
 	r.Build = s.Build.Pass(ctx)
 	r.QA = s.QA.Pass(ctx)
+	if s.CandidatePRs != nil {
+		r.CandidatePRs = s.CandidatePRs.Pass(ctx)
+	}
 	r.Release = s.Release.Pass(ctx)
 	return r
 }

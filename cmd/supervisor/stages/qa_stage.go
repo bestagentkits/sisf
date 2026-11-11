@@ -132,8 +132,8 @@ func (s *QAStage) evaluate(ctx context.Context, record core.StateRecord) (QAResu
 // conclude writes the verdict and its step in one transaction. A failure
 // with no attempt left is held: the lifecycle has no edge from QAEvaluation
 // but back to development, and the run may not start another attempt. A
-// held verdict writes no step; its hold is recorded and queued for the
-// issue in the same transaction, so the Owner learns of it.
+// held verdict writes no step; its hold is recorded in the same
+// transaction. Every verdict leaves a note the issue's progress shows.
 func (s *QAStage) conclude(ctx context.Context, record core.StateRecord, lease state.Lease, r QAResult) (QAResult, error) {
 	r.At = s.Clock.Now().UTC()
 	hold := handoff.QAHoldOwnerApproval
@@ -168,8 +168,12 @@ func (s *QAStage) conclude(ctx context.Context, record core.StateRecord, lease s
 		if err := put(ctx, tx, QAResultKey(record.RunID, record.Attempt), r); err != nil {
 			return err
 		}
+		note := s.noteOf(record, r)
+		if err := handoff.PutQANote(ctx, tx, note); err != nil {
+			return err
+		}
 		if r.Verdict == VerdictHeld {
-			return handoff.PutQAHold(ctx, tx, s.holdOf(record, r, hold))
+			return handoff.PutQAHold(ctx, tx, holdOf(note, hold))
 		}
 		if err := statemachine.New(s.Clock, guards).Check(ctx, t); err != nil {
 			return err
@@ -180,18 +184,26 @@ func (s *QAStage) conclude(ctx context.Context, record core.StateRecord, lease s
 	return r, err
 }
 
-// holdOf is the Owner's view of a held verdict: gates and numbers only.
-func (s *QAStage) holdOf(record core.StateRecord, r QAResult, cause handoff.QAHoldCause) handoff.QAHold {
-	h := handoff.QAHold{
-		IssueID: record.IssueID, RunID: record.RunID, Attempt: record.Attempt, MaxAttempts: s.MaxAttempts, Cause: cause,
-		Built: r.Candidate.Digest != "", Receipt: !r.Receipt.Signature.IsZero(), Score: r.Receipt.Score, PassScore: s.PassScore, HeldAt: r.At,
+// noteOf is the issue's view of a verdict: gates and numbers only.
+func (s *QAStage) noteOf(record core.StateRecord, r QAResult) handoff.QANote {
+	n := handoff.QANote{
+		IssueID: record.IssueID, RunID: record.RunID, Attempt: record.Attempt, MaxAttempts: s.MaxAttempts, Verdict: r.Verdict,
+		Built: r.Candidate.Digest != "", Receipt: !r.Receipt.Signature.IsZero(), Score: r.Receipt.Score, PassScore: s.PassScore, At: r.At,
 	}
 	for _, c := range r.Receipt.Checks {
 		if c.Kind == core.CheckHardGate && !c.Passed {
-			h.FailedGates = append(h.FailedGates, c.Name)
+			n.FailedGates = append(n.FailedGates, c.Name)
 		}
 	}
-	return h
+	return n
+}
+
+// holdOf is the Owner's view of a held verdict.
+func holdOf(n handoff.QANote, cause handoff.QAHoldCause) handoff.QAHold {
+	return handoff.QAHold{
+		IssueID: n.IssueID, RunID: n.RunID, Attempt: n.Attempt, MaxAttempts: n.MaxAttempts, Cause: cause,
+		Built: n.Built, Receipt: n.Receipt, FailedGates: n.FailedGates, Score: n.Score, PassScore: n.PassScore, HeldAt: n.At,
+	}
 }
 
 // proof is the receipt next to the policy, baseline and suite in force now.

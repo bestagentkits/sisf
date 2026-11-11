@@ -93,7 +93,7 @@ func (p *Pipeline) Release(ctx context.Context, req Request) (Outcome, error) {
 		_ = p.audit(ctx, h, "release.preflight", core.OutcomeDenied, map[string]string{"code": string(core.CodeOf(err))})
 		return stop(ResultHeld, err)
 	}
-	r.feature, r.summary = req.Feature, req.Summary
+	r.feature, r.summary, r.candidate = req.Feature, req.Summary, req.Candidate
 	if err := p.start(ctx, r); err != nil {
 		out.State = h.record.State
 		return stop(ResultHeld, err)

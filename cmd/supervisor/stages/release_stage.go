@@ -35,7 +35,8 @@ type ReleasePassResult struct {
 	Errors   []error
 }
 
-// Pass releases the candidates waiting in ReleaseCandidate.
+// Pass releases the candidates waiting in ReleaseCandidate, then finishes
+// the verified ones whose landing is pending.
 func (s *ReleaseStage) Pass(ctx context.Context) ReleasePassResult {
 	res := ReleasePassResult{Outcomes: map[core.IssueRef]release.Outcome{}}
 	type job struct {
@@ -79,6 +80,7 @@ func (s *ReleaseStage) Pass(ctx context.Context) ReleasePassResult {
 		}
 		res.Outcomes[j.record.IssueID] = out
 	}
+	s.resumeVerified(ctx, &res)
 	return res
 }
 
