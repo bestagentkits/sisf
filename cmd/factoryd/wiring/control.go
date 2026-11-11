@@ -17,7 +17,6 @@ import (
 	"github.com/bestagentkits/sisf/internal/auth"
 	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/intake"
-	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/internal/policy"
 	"github.com/bestagentkits/sisf/internal/rbac"
 	"github.com/bestagentkits/sisf/internal/redact"
@@ -132,9 +131,6 @@ type retryAt struct {
 	failures int
 }
 
-// reportCapacity bounds the bug reports the control zone keeps in memory.
-const reportCapacity = 1000
-
 // NewControl builds the control zone. Nothing runs until Run or Pass.
 func NewControl(cfg ControlConfig) (*Control, error) {
 	switch {
@@ -241,9 +237,10 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 		FactoryID: m.FactoryID, ListenAddr: cfg.ListenAddr, AllowNonLoopback: cfg.AllowNonLoopback,
 		Webhook: webhook, NoWebhooks: settings.NoWebhooks,
 	}, control.Deps{Store: cfg.Store, Probes: cfg.Probes, Clock: cfg.Clock, Logger: cfg.Logger, Surfaces: surfaces,
-		Report: &control.ReportRoute{
-			Store: report.NewMemoryStore(reportCapacity), Redactor: redact.New(redact.Config{}), TrustedProxies: cfg.TrustedProxies,
-		}}); err != nil {
+		// Reports are kept in the control zone's store, bounded by
+		// control.DefaultMaxStoredReports and the report retention.
+		Report: &control.ReportRoute{Redactor: redact.New(redact.Config{}), TrustedProxies: cfg.TrustedProxies},
+	}); err != nil {
 		return nil, err
 	}
 	return c, nil

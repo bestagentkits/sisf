@@ -105,7 +105,7 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	}
 	s := &Server{cfg: cfg, health: health, webhook: receiver, log: deps.Logger}
 	if deps.Report != nil {
-		if s.report, err = deps.Report.handler(deps.Clock); err != nil {
+		if s.report, err = deps.Report.handler(deps.Clock, deps.Store); err != nil {
 			return nil, err
 		}
 	}
