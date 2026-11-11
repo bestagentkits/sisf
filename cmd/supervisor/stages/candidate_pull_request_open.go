@@ -153,10 +153,18 @@ func (c *CandidatePRs) notOpened(self account, run core.RunID, pr github.PullReq
 		return fmt.Sprintf("its author `%s` is not the factory's configured account `%s`", pr.Author.Login, self.Login)
 	case pr.BaseRef != c.Base:
 		return "it does not target " + c.Base
-	case !strings.Contains(pr.Body, candidateMarker(run)):
+	case !strings.Contains(pr.Body, candidateMarker(run)) && !openedByEarlierBuild(run, pr.Body):
 		return "it does not carry this run's marker"
 	}
 	return ""
+}
+
+// openedByEarlierBuild reports whether body is the one a build before the
+// run's marker existed wrote for run: it carries no marker of any run and
+// opens by naming this one. Only with the factory's own account as the
+// author does that make the pull request the factory's.
+func openedByEarlierBuild(run core.RunID, body string) bool {
+	return !strings.Contains(body, "<!-- sisf:candidate ") && strings.HasPrefix(body, "Candidate of run `"+string(run)+"` for #")
 }
 
 // noLogin is why an install that names the factory's account by an ID

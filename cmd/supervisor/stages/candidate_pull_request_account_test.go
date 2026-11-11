@@ -159,3 +159,37 @@ func TestAPermanentRefusalToNameTheFactorysAccountLeavesTheCandidate(t *testing.
 		}
 	})
 }
+
+// A pull request the factory opened with an earlier build, which wrote no
+// marker but named the run, is still the factory's own and is merged; one
+// someone else opened with the same text is not.
+func TestAPullRequestOfAnEarlierBuildIsAdoptedByItsAuthorAndRun(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		ctx := context.Background()
+		earlier := func(w *landingWorld) string {
+			return "Candidate of run `" + string(w.req.RunID) + "` for #1, built and judged by the factory.\n\nRefs #1\n\n" +
+				"The factory merges this pull request itself, at exactly this commit, once the release built from it is verified in production.\n"
+		}
+		t.Run("opened by the factory", func(t *testing.T) {
+			w := landingFactory(t, db, "earlier build")
+			if _, err := w.fake.OpenPullRequest(landingRepo, w.fake.Bot(), fakegithub.PullSpec{
+				Title: "Greet", Body: earlier(w), HeadRef: w.branch, BaseRef: "main"}); err != nil {
+				t.Fatal(err)
+			}
+			if landing, err := w.prs.Land(ctx, w.req); err != nil || !landing.Merged || w.data.Merges() != 1 {
+				t.Fatalf("Land = %+v, %v after %d merges", landing, err, w.data.Merges())
+			}
+		})
+		t.Run("copied by someone else", func(t *testing.T) {
+			w := landingFactory(t, db, "earlier copied")
+			if _, err := w.fake.OpenPullRequest(landingRepo, w.fake.Person("outsider", "NONE"), fakegithub.PullSpec{
+				Title: "Greet", Body: earlier(w), HeadRef: w.branch, BaseRef: "main"}); err != nil {
+				t.Fatal(err)
+			}
+			if landing, err := w.prs.Land(ctx, w.req); err != nil || landing.Merged || w.data.Merges() != 0 {
+				t.Fatalf("Land = %+v, %v after %d merges", landing, err, w.data.Merges())
+			}
+		})
+	})
+}
