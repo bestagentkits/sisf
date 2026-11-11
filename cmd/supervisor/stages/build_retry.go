@@ -122,7 +122,12 @@ func (s *BuildStage) recordOutage(ctx context.Context, j buildJob, cause error, 
 		next.Failures++
 		next.LastCode, next.UpdatedAt = core.CodeOf(cause), now
 		next.NextTryAt = now.Add(r.backoff(next.Failures))
-		if r.held(next) && !cur.Held {
+		next.Reason = ""
+		if policySuperseded(cause) {
+			// Trying again changes nothing until the Owner acts.
+			next.Reason = handoff.HeldPolicySuperseded
+		}
+		if (r.held(next) || next.Reason != "") && !cur.Held {
 			next.Held, next.HeldAt, next.Reminders = true, now, 0
 			next.Holds++
 			if err := enqueueHeldNotice(ctx, tx, next.BuildOutage); err != nil {
@@ -160,7 +165,7 @@ func (s *BuildStage) remind(ctx context.Context, j buildJob, r BuildRetry, now t
 // hold, or the reminder numbered o.Reminders when it is not zero.
 func enqueueHeldNotice(ctx context.Context, tx state.Tx, o BuildOutage) error {
 	raw, err := json.Marshal(handoff.BuildHeldNotice{IssueID: o.IssueID, RunID: o.RunID, Attempt: o.Attempt,
-		Failures: o.Failures, LastCode: o.LastCode, Holds: o.Holds, Reminder: o.Reminders, HeldAt: o.HeldAt})
+		Failures: o.Failures, LastCode: o.LastCode, Reason: o.Reason, Holds: o.Holds, Reminder: o.Reminders, HeldAt: o.HeldAt})
 	if err != nil {
 		return core.NewError(core.CodeInternal, "a held build notice cannot be encoded").WithCause(err)
 	}

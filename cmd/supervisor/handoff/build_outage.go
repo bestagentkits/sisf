@@ -28,6 +28,9 @@ type BuildOutage struct {
 	// LastCode is the code of the last failure; the message is not kept.
 	LastCode  core.ErrorCode `json:"last_code"`
 	NextTryAt time.Time      `json:"next_try_at"`
+	// Reason is why the build was held when it was not a run of outages:
+	// HeldPolicySuperseded; "" otherwise.
+	Reason string `json:"reason,omitempty"`
 	// Held is set once the failures reach the supervisor's limit; Holds
 	// counts how often that happened.
 	Held  bool `json:"held"`
@@ -42,6 +45,10 @@ type BuildOutage struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// HeldPolicySuperseded is the reason of a build held because the policy in
+// force is no longer the one its run was coded against.
+const HeldPolicySuperseded = "policy_superseded"
+
 // BuildHeldNotice is the payload of a TopicBuildHeld message.
 type BuildHeldNotice struct {
 	IssueID  core.IssueRef  `json:"issue_id"`
@@ -49,6 +56,7 @@ type BuildHeldNotice struct {
 	Attempt  int            `json:"attempt"`
 	Failures int            `json:"failures"`
 	LastCode core.ErrorCode `json:"last_code"`
+	Reason   string         `json:"reason,omitempty"`
 	Holds    int            `json:"holds"`
 	// Reminder numbers a reminder that the build is still held, from 1;
 	// zero on the notice of the hold itself. HeldAt is when it was held.

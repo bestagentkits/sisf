@@ -146,6 +146,9 @@ func (s *BuildStage) build(ctx context.Context, j buildJob) (failed bool, err er
 	if err != nil {
 		return false, err
 	}
+	if err := s.runPolicyInForce(ctx, record, patch, qaRefs); err != nil {
+		return false, err
+	}
 	coding, err := s.CodingPolicy(ctx)
 	if err != nil {
 		return false, err
