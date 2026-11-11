@@ -63,9 +63,14 @@ var launchers = []string{"sh", "bash", "dash", "zsh", "ash", "ksh", "csh", "tcsh
 func executableName(file string) string { return path.Base(path.Clean(file)) }
 
 // throughLauncher reports whether a command starts through a shell or
-// another launcher.
+// another launcher. Letter case is folded in every mode: a file system that
+// ignores case runs /bin/sh for /bin/SH.
 func throughLauncher(command []string) bool {
-	return len(command) > 0 && slices.Contains(launchers, executableName(command[0]))
+	if len(command) == 0 {
+		return false
+	}
+	name := foldCase(executableName(command[0]))
+	return slices.ContainsFunc(launchers, func(l string) bool { return foldCase(l) == name })
 }
 
 // comparedByExecutable reports whether what a unit starts identifies its

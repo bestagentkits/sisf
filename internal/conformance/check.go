@@ -92,6 +92,7 @@ func checkWith(m *manifest.Manifest, backends []kit.Declaration) Report {
 	c.checkBudget()
 	c.checkRelease()
 	c.checkModelRoutes()
+	c.checkStandaloneBinaries()
 	c.noteEgressRisks()
 
 	report := Report{Findings: c.findings, TrustedCodeOnly: c.trustedCodeOnly, SameModelRoute: c.sameModelRoute, Risks: c.risks}

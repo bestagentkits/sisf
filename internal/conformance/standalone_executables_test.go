@@ -240,12 +240,12 @@ func TestInStandaloneModeNoUnitStartsABinaryFromAnotherUnitsDirectory(t *testing
 		t.Fatalf("arguments outside other units' directories must be allowed, got %+v", report.Findings)
 	}
 
-	// A unit may start a binary from a directory only it mounts.
+	// A binary from a directory only the unit mounts is no other unit's to
+	// rewrite, so the directory rules pass it; it is still not a factory
+	// binary from bin/, which is all a Standalone unit may start.
 	m = standalone(t)
 	editUnit(m, manifest.UnitRunner, func(u *manifest.Unit) { u.Command = []string{"data/workspaces/tool"} })
-	if report := Check(m); !report.Conformant() {
-		t.Fatalf("a unit's own directory is its own to run from, got %+v", report.Findings)
-	}
+	wantOnly(t, Check(m), RuleUnitThroughLauncher, "units.runner.command")
 
 	// In Docker mode a command is a path inside the unit's own container.
 	m = docker(t)

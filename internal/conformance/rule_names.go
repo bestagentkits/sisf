@@ -18,7 +18,9 @@ const (
 	// RuleUnitNotPinned: a unit that runs an artifact does not pin its digest.
 	RuleUnitNotPinned Rule = "unit.digest_not_pinned"
 	// RuleUnitThroughLauncher: a unit identified by what it starts starts
-	// through a shell or another launcher, which hides what runs.
+	// through a shell or another launcher, which hides what runs, or, in
+	// Standalone mode, starts anything but a factory binary from the
+	// install's bin/ directory, such as an interpreter.
 	RuleUnitThroughLauncher Rule = "unit.command_through_launcher"
 	// RuleNetworkMissing: one of the four network segments is not declared.
 	RuleNetworkMissing Rule = "network.missing"
