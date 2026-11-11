@@ -61,6 +61,24 @@ type ReleaseHolds interface {
 	ReleaseHold(ctx context.Context, run core.RunID, attempt int) (ReleaseHold, error)
 }
 
+// RunStop is why the control zone blocked an issue whose run stopped
+// without a candidate, as runs.explain cites it.
+type RunStop struct {
+	Cause string `json:"cause"`
+	// Summary says why the issue is blocked and WayOut how the Owner gets
+	// it going again; both are the sentences the progress comment shows.
+	Summary string    `json:"summary"`
+	WayOut  string    `json:"way_out"`
+	Ref     string    `json:"ref"`
+	At      time.Time `json:"at"`
+}
+
+// RunStops reads why the control zone blocked the issue of a run,
+// NOT_FOUND when it did not block it for that run.
+type RunStops interface {
+	RunStop(ctx context.Context, run core.RunID) (RunStop, error)
+}
+
 // QAHolds reads the hold of one evaluator attempt of a run, NOT_FOUND when
 // QA did not hold it.
 type QAHolds interface {
@@ -68,7 +86,7 @@ type QAHolds interface {
 }
 
 // Deps is what the actions read from. Every field but Clock, GitHub,
-// QAHolds, CandidatePRs and ReleaseHolds is required.
+// QAHolds, CandidatePRs, ReleaseHolds and RunStops is required.
 type Deps struct {
 	FactoryID core.FactoryID
 	Records   Records
@@ -86,6 +104,9 @@ type Deps struct {
 	// ReleaseHolds reads the supervisor's held and refused releases; nil
 	// leaves them out.
 	ReleaseHolds ReleaseHolds
+	// RunStops reads why an issue was blocked when its run stopped; nil
+	// leaves it out.
+	RunStops RunStops
 }
 
 // New returns the actions of this package over deps.

@@ -240,6 +240,13 @@ func (c *Control) progressFacts(ctx context.Context, r core.StateRecord) (progre
 				return err
 			}
 		}
+		if r.State == core.StateBlocked {
+			if stop, err := handoff.ReadRunStop(ctx, tx, r.RunID); err == nil && stop.IssueID == r.IssueID {
+				f.stop = &stop
+			} else if err != nil && !core.HasCode(err, core.CodeNotFound) {
+				return err
+			}
+		}
 		if pr, err := handoff.ReadCandidatePR(ctx, tx, r.RunID); err == nil {
 			f.pr = &pr
 		} else if !core.HasCode(err, core.CodeNotFound) {

@@ -218,3 +218,20 @@ func TestARetryAfterARollbackNeedsNoScopeProof(t *testing.T) {
 		t.Fatalf("an authorized retry after a rollback was refused: %v", err)
 	}
 }
+
+// A run that stopped without a candidate worked on a scope that was
+// approved and still is, so its retry needs the authorization alone; a
+// cause the lifecycle does not know lifts nothing.
+func TestARunThatStoppedIsRetriedWithoutAScopeProof(t *testing.T) {
+	stopped := func(cause BlockCause) error {
+		return checkRetryProof(retryDecided(allowed()), func(p *RetryProof) {
+			p.Cause, p.Approval, p.Delegation = cause, nil, nil
+		})
+	}
+	if err := stopped(BlockRunExhausted); err != nil {
+		t.Errorf("an authorized retry of an exhausted run was refused: %v", err)
+	}
+	requireGuardFailed(t, "an unknown cause", stopped("run_abandoned"), GuardRetry)
+	denied := checkRetryProof(retryDecided(core.AuthzDecision{Effect: core.EffectDeny}), func(p *RetryProof) { p.Cause = BlockRunExhausted })
+	requireGuardFailed(t, "an exhausted run retried without authorization", denied, GuardRetry)
+}

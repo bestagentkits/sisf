@@ -8,8 +8,9 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// BlockCause says why an issue is in Blocked. The lifecycle has two ways in:
-// a scope the Owner did not approve, and a release that was rolled back.
+// BlockCause says why an issue is in Blocked. The lifecycle has three ways
+// in: a scope the Owner did not approve, a release that was rolled back,
+// and a run that stopped without a candidate.
 type BlockCause string
 
 const (
@@ -22,11 +23,18 @@ const (
 	// BlockRolledBack means a release of the issue was rolled back and its
 	// recovery was reported.
 	BlockRolledBack BlockCause = "rolled_back"
+	// BlockRunExhausted means the run of the issue used every coding
+	// attempt it was allowed without producing a candidate.
+	BlockRunExhausted BlockCause = "run_exhausted"
 )
 
 // Valid reports whether c is a known cause.
 func (c BlockCause) Valid() bool {
-	return c == BlockApprovalDenied || c == BlockApprovalExpired || c == BlockRolledBack
+	switch c {
+	case BlockApprovalDenied, BlockApprovalExpired, BlockRolledBack, BlockRunExhausted:
+		return true
+	}
+	return false
 }
 
 // NeedsScopeProof reports whether the block came from an approval that was
@@ -65,7 +73,9 @@ type RetryProof struct {
 	// because its approval was denied or expired: an approval the Owner gave
 	// after the block, or the policy's answer that the scope now lies within
 	// the delegation. One of them is required for such an issue, each one
-	// presented must hold, and neither is needed after a rollback.
+	// presented must hold, and neither is needed after a rollback or for a
+	// run that used its attempts: the scope of such an issue was approved
+	// and still is.
 	Approval   *ApprovalProof
 	Delegation *DelegationProof
 }

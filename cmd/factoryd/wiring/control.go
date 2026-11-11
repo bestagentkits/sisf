@@ -287,7 +287,8 @@ func (c *Control) Run(ctx context.Context, ln net.Listener, interval time.Durati
 // the references of a newly approved policy, hands the stored webhook
 // deliveries and the decided approvals to intake, performs the effects intake queued on GitHub and
 // parks the issues whose wait for an answer is over, polling GitHub first
-// when an answer may not be known yet; when it is configured,
+// when an answer may not be known yet, and blocks the issues whose run
+// stopped without a candidate; when it is configured,
 // the decision layer reads the edge's counters. Once per reconciliation
 // interval it asks GitHub for the issue changes no webhook delivered. Each part runs even
 // when another failed, except the parking: a pass whose drain of the inbox
@@ -317,6 +318,8 @@ func (c *Control) Pass(ctx context.Context) error {
 		decided,
 		delivered,
 		expired,
+		// Before the progress, which then shows the block and why.
+		c.blockStoppedRuns(ctx),
 		// The progress first: an issue is closed on GitHub only after its
 		// progress comment says how it ended.
 		c.projectProgress(ctx),

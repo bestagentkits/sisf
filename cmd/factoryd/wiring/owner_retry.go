@@ -2,11 +2,13 @@ package wiring
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/intake"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
+	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
@@ -29,9 +31,14 @@ import (
 // lets the release start over, and the supervisor releases the candidate
 // again in its next round. A refused release is never started over.
 //
+// An issue the control zone blocked because its run stopped without a
+// candidate (handoff.RunStop) returns to Ready on the Owner's retry, where
+// a new run claims it: its scope was approved and still is, so the retry
+// needs no further proof than that the Owner asked.
+//
 // Any other block is judged by the lifecycle's retry guard, with intake's
-// rule in front of it; no other cause of a block has a retry rule yet, so
-// such a retry is refused.
+// rule in front of it; a block whose cause has no retry rule, such as a
+// release that was rolled back, is refused.
 func (c *Control) Retry(ctx context.Context, issue core.IssueRef, actor core.Actor) (intake.Result, error) {
 	if result, held, err := c.resumeHeldBuild(ctx, issue, actor); held {
 		return result, err
@@ -66,7 +73,9 @@ func (c *Control) Retry(ctx context.Context, issue core.IssueRef, actor core.Act
 }
 
 // guardedRetry puts a retry of a block intake does not own before the
-// lifecycle machine, with intake's retry guard in front of the rest.
+// lifecycle machine, with intake's retry guard in front of the rest. An
+// issue can be blocked and retried more than once, so the version it is
+// retried at tells the retries apart.
 func (c *Control) guardedRetry(ctx context.Context, issue core.IssueRef, actor core.Actor) error {
 	var record core.StateRecord
 	err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
@@ -79,16 +88,60 @@ func (c *Control) guardedRetry(ctx context.Context, issue core.IssueRef, actor c
 	}
 	step := core.Transition{
 		IssueID: issue, From: record.State, To: core.StateReady, Event: core.EventRetryAuthorized,
-		ExpectedVersion: record.Version, IdempotencyKey: "retry/" + issue.String(), Attempt: record.Attempt,
+		ExpectedVersion: record.Version, IdempotencyKey: fmt.Sprintf("retry/%s/%d", issue, record.Version), Attempt: record.Attempt,
 		RunID: record.RunID, ActorID: actor.ID, Reason: "the Owner asked for a retry",
 	}
-	machine := statemachine.New(c.cfg.Clock, statemachine.Guards{Retry: c.Intake.RetryGuard(nil)})
+	machine := statemachine.New(c.cfg.Clock, statemachine.Guards{Retry: c.Intake.RetryGuard(c.stoppedRunRetry(actor))})
 	if err := machine.Check(ctx, step); err != nil {
 		return err
 	}
-	return c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+	err = c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		_, err := tx.Transition(ctx, step)
 		return err
+	})
+	if err != nil {
+		return err
+	}
+	// The issue is Ready again; the next claim sets its lifecycle label,
+	// and until then it must not read as blocked.
+	unblock := editIntent{remove: []string{github.LabelBlocked}}
+	if err := c.editIssue(ctx, issue, unblock, func(ctx context.Context) error {
+		err := c.cfg.GitHub.RemoveLabel(ctx, issue, github.LabelBlocked)
+		if core.HasCode(err, core.CodeNotFound) {
+			return nil
+		}
+		return err
+	}); err != nil {
+		c.log.Warn("the blocked label of a retried issue could not be removed; the next claim replaces it",
+			"issue", issue.String(), "code", string(core.CodeOf(err)))
+	}
+	return nil
+}
+
+// stoppedRunRetry is the retry guard of an issue the control zone blocked
+// because its run stopped. Why and when it was blocked are read from the
+// record written with the block, for the run the step names; an issue
+// blocked for any other reason has no such record of its current run, and
+// the guard then proves nothing. Only the Owner is allowed.
+func (c *Control) stoppedRunRetry(actor core.Actor) statemachine.RetryGuard {
+	return statemachine.RetryGuardFunc(func(ctx context.Context, t core.Transition) (statemachine.RetryProof, error) {
+		var stop handoff.RunStop
+		err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
+			var err error
+			stop, err = handoff.ReadRunStop(ctx, tx, t.RunID)
+			return err
+		})
+		switch {
+		case core.HasCode(err, core.CodeNotFound) || (err == nil && stop.IssueID != t.IssueID):
+			return statemachine.RetryProof{}, nil
+		case err != nil:
+			return statemachine.RetryProof{}, err
+		}
+		decision := core.AuthzDecision{Effect: core.EffectAllow, Reason: "the Owner asked for the retry"}
+		if !actor.HasRole(core.RoleOwner) {
+			decision = core.AuthzDecision{Effect: core.EffectDeny, Reason: "only the Owner retries a blocked issue"}
+		}
+		return statemachine.RetryProof{IssueID: stop.IssueID, Cause: stop.Cause, BlockedAt: stop.BlockedAt, Actor: actor, Decision: decision}, nil
 	})
 }
 

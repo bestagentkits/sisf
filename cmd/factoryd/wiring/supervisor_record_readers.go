@@ -49,6 +49,24 @@ func (s storeReleaseHolds) ReleaseHold(ctx context.Context, run core.RunID, atte
 		Ref: handoff.BuildNamespace + ":" + handoff.ReleaseHoldKey(run, attempt), At: h.HeldAt}, nil
 }
 
+// storeRunStops reads why the control zone blocked an issue whose run
+// stopped, for runs.explain.
+type storeRunStops struct{ store state.Store }
+
+func (s storeRunStops) RunStop(ctx context.Context, run core.RunID) (runactions.RunStop, error) {
+	var stop handoff.RunStop
+	err := s.store.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		var err error
+		stop, err = handoff.ReadRunStop(ctx, tx, run)
+		return err
+	})
+	if err != nil {
+		return runactions.RunStop{}, err
+	}
+	return runactions.RunStop{Cause: string(stop.Cause), Summary: stop.Summary(), WayOut: stop.WayOut(),
+		Ref: handoff.BuildNamespace + ":" + handoff.RunStopKey(run), At: stop.BlockedAt}, nil
+}
+
 // storeCandidatePRs reads the candidates' pull requests for runs.inspect
 // and runs.explain.
 type storeCandidatePRs struct{ store state.Store }

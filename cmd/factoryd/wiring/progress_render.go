@@ -24,6 +24,9 @@ type progressFacts struct {
 	// ReleaseCandidate; its Summary is the only part shown.
 	release  *handoff.ReleaseHold
 	restored core.ReleaseDigest
+	// stop is why the control zone blocked the issue when its run stopped
+	// without a candidate; its Summary and WayOut are the parts shown.
+	stop *handoff.RunStop
 }
 
 // maxShownFailures bounds the failed coding attempts the comment lists;
@@ -77,6 +80,9 @@ func renderProgress(f progressFacts) string {
 	}
 	if f.restored != "" && core.Digest(f.restored).Validate() == nil {
 		line("**Rolled back** to the last known good release `%s`; the factory will not merge this candidate.", f.restored)
+	}
+	if f.stop != nil {
+		line("**Blocked:** %s %s", f.stop.Summary(), f.stop.WayOut())
 	}
 	if f.pr != nil {
 		if text := landingText(*f.pr); text != "" {

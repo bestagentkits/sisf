@@ -68,7 +68,7 @@ var zoneEvents = map[core.Zone]map[core.Event]bool{
 // "claim/<run>" and the start of development "develop/<run>"; the submission
 // of a candidate has its prefix reserved here.
 // None of them meets a key of the control zone, whose intake keys its steps
-// "intake/<issue>/<event>" and an authorized retry "retry/<issue>".
+// "intake/<issue>/<event>" and an authorized retry "retry/<issue>/<version>".
 //
 // The control zone, which keeps the lifecycle, is not listed and may write
 // any key; a zone that is listed may write only the steps it lists.

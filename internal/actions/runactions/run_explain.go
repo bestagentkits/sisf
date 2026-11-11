@@ -102,6 +102,10 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 	if err != nil {
 		return Explanation{}, err
 	}
+	stopped, err := h.runStop(ctx, r)
+	if err != nil {
+		return Explanation{}, err
+	}
 	about := map[string]string{"issue": issue}
 	inspect := core.NextAction{Action: ActionRunsInspect, Description: "read the full records", Params: about}
 	switch {
@@ -109,6 +113,12 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 		out.Stopped, out.Cause = true, CauseBlocked
 		out.Reason = "The issue is blocked; it moves on only through a safe, authorized retry."
 		out.NextActions = []core.NextAction{{Action: "approvals.list", Description: "see the approvals of this issue", Params: about}, inspect}
+		if stopped != nil {
+			out.Reason = stopped.Summary + " The issue is blocked. " + stopped.WayOut
+			out.Evidence = append(out.Evidence, Evidence{Kind: "run_stop", Ref: stopped.Ref, At: stopped.At,
+				Summary: "blocked with cause " + stopped.Cause})
+			out.NextActions = []core.NextAction{inspect}
+		}
 	case r.State == core.StateRolledBack:
 		out.Stopped, out.Cause = true, CauseRolledBack
 		out.Reason = "The release was rolled back; the issue is blocked once the recovery report is recorded."
@@ -137,7 +147,8 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 		out.NextActions = []core.NextAction{inspect}
 	case exhausted:
 		out.Stopped, out.Cause = true, CauseAttemptsExhausted
-		out.Reason = fmt.Sprintf("The run used all %d attempts it was allowed; nothing more is started for it.", t.Run.Attempt)
+		out.Reason = fmt.Sprintf("The run used all %d attempts it was allowed%s; nothing more is started for it, and the control zone blocks the issue in its next pass.",
+			t.Run.Attempt, lastFailure(*t.Run))
 		out.NextActions = []core.NextAction{inspect}
 	case r.State == core.StateVerified || r.State == core.StateClosed:
 		out.Cause, out.Reason = CauseFinished, "The issue's run finished: the deployed version met its definition of done."
@@ -164,6 +175,32 @@ func (h handlers) qaHold(ctx context.Context, r core.StateRecord) (*QAHold, erro
 		return nil, err
 	}
 	return &hold, nil
+}
+
+// lastFailure names the code the run's last failed attempt ended with, as
+// a clause of a sentence; "" when the run recorded no failure.
+func lastFailure(run dispatcher.RunRecord) string {
+	if len(run.Failures) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", and the last one failed with %s", run.Failures[len(run.Failures)-1].Code)
+}
+
+// runStop reads why the control zone blocked a Blocked issue when its run
+// stopped, nil when it was blocked for another reason or no reader is
+// wired.
+func (h handlers) runStop(ctx context.Context, r core.StateRecord) (*RunStop, error) {
+	if h.RunStops == nil || r.State != core.StateBlocked || r.RunID == "" {
+		return nil, nil
+	}
+	stop, err := h.RunStops.RunStop(ctx, r.RunID)
+	switch {
+	case core.HasCode(err, core.CodeNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, err
+	}
+	return &stop, nil
 }
 
 // releaseHold reads the held or refused release of an issue in

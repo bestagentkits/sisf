@@ -86,6 +86,9 @@ func TestExplainSaysWhyARunIsStoppedWithEvidence(t *testing.T) {
 		for _, e := range got.Evidence {
 			all.WriteString(e.Summary + "\n")
 		}
+		if tc.cause == runactions.CauseAttemptsExhausted && !strings.Contains(got.Reason, string(core.CodeTimeout)) {
+			t.Errorf("%s: the reason does not name the code of the last failure: %q", tc.in, got.Reason)
+		}
 		if !strings.Contains(all.String(), tc.mention) {
 			t.Errorf("%s: evidence %q does not mention %q", tc.in, all.String(), tc.mention)
 		}
