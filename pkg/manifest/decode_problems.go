@@ -17,13 +17,17 @@ import (
 
 // The decoder reports a rejected key or value in terms of the Go types it was
 // filling. These match its two such forms so they can be said in terms of the
-// file instead.
+// file instead. A value or key may span lines, as a block scalar does, so the
+// patterns let . match a line break.
 var (
-	unknownKeyProblem = regexp.MustCompile(`^(line \d+: )field (.+) not found in type \S+$`)
-	wrongKindProblem  = regexp.MustCompile("^(line \\d+: )cannot unmarshal !!(\\w+)(?: `(.*)`)? into .+$")
+	unknownKeyProblem = regexp.MustCompile(`(?s)^(line \d+: )field (.+) not found in type \S+$`)
+	wrongKindProblem  = regexp.MustCompile("(?s)^(line \\d+: )cannot unmarshal !!(\\w+)(?: `(.*)`)? into .+$")
 	// repeatedKeyProblem is a key given twice in one mapping; the decoder
 	// quotes the key as Go does.
-	repeatedKeyProblem = regexp.MustCompile(`^(line \d+: )mapping key (".*") already defined at line (\d+)$`)
+	repeatedKeyProblem = regexp.MustCompile(`(?s)^(line \d+: )mapping key (".*") already defined at line (\d+)$`)
+	// problemLine is the line a decoder message opens with, kept when the
+	// rest of a message of no known form is withheld.
+	problemLine = regexp.MustCompile(`^line \d+: `)
 	// urlWithUserInfo is a URL whose authority carries a user part, where a
 	// password or a token is written, as in a connection string.
 	urlWithUserInfo = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s/?#@]*@`)
@@ -98,8 +102,9 @@ func decodeProblems(data []byte, err error) string {
 	return strings.Join(problems, "; ")
 }
 
-// plainProblem rewrites one decoder message; a form it does not recognize is
-// passed through unchanged rather than guessed at.
+// plainProblem rewrites one decoder message. A message of no form it
+// recognizes may quote a value it could not classify, so only its line is
+// kept and the rest is withheld.
 func plainProblem(problem string) string {
 	if m := unknownKeyProblem.FindStringSubmatch(problem); m != nil {
 		if !quotableKey(m[2]) {
@@ -127,7 +132,7 @@ func plainProblem(problem string) string {
 		}
 		return m[1] + `key "` + key + `" is repeated; it was first given at line ` + m[3]
 	}
-	return problem
+	return problemLine.FindString(problem) + "a value does not fit here (" + withheldValue + ")"
 }
 
 // textUnmarshaler is the interface of the manifest's own text forms, such as

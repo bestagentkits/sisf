@@ -101,3 +101,48 @@ func TestParseQuotesOnlyPlainValuesAndKeys(t *testing.T) {
 		})
 	}
 }
+
+// A value written over several lines, a block scalar, in a field of the
+// wrong kind is withheld like any other value that is not plainly safe:
+// the decoder's message carries the line break, which no rewrite may let
+// through unchanged. The fixtures are built at run time and obviously fake.
+func TestParseWithholdsAMultiLineValue(t *testing.T) {
+	t.Parallel()
+	valid := exampleYAML(t)
+	// block replaces the port with a block scalar of style holding lines,
+	// indented under the port's own key.
+	block := func(style string, lines ...string) string {
+		at := strings.Index(valid, "port: 7461")
+		indent := strings.Repeat(" ", at-strings.LastIndex(valid[:at], "\n")-1+2)
+		return valid[:at] + "port: " + style + "\n" + indent + strings.Join(lines, "\n"+indent) + valid[at+len("port: 7461"):]
+	}
+	cases := map[string]struct {
+		yaml   string
+		hidden []string
+	}{
+		"a short block for a number":  {block("|", "Zq", "7L"), []string{"Zq", "7L"}},
+		"a long block for a number":   {block("|", "hunter"+"22", "ghp_"+strings.Repeat("Ab1", 12)), []string{"hunter", "ghp_"}},
+		"a folded block for a number": {block(">", "Zq", "", "7L"), []string{"Zq", "7L"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := manifest.Parse([]byte(tc.yaml))
+			if err == nil {
+				t.Fatal("Parse accepted the input")
+			}
+			message := err.Error()
+			for _, secret := range tc.hidden {
+				if strings.Contains(message, secret) {
+					t.Errorf("error %q quotes %q of a multi-line value", message, secret)
+				}
+			}
+			if !strings.Contains(message, "line ") || !strings.Contains(message, withheld) {
+				t.Errorf("error %q must name the line and say the value is withheld", message)
+			}
+		})
+	}
+}
+
+// withheld is what a problem says in place of a value it does not quote.
+const withheld = "withheld"
