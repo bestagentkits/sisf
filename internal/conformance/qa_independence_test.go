@@ -81,10 +81,54 @@ func TestQARunsOnAnotherProviderOrModelThanTheCodingAgent(t *testing.T) {
 		}
 	}
 
+	// The planning step writes candidates too, migrations and large
+	// refactors among them, so QA does not share its model either.
+	large := core.ModelRoute{Provider: "anthropic", Model: "large", Effort: "medium"}
+	planning := []struct {
+		name   string
+		change func(r *manifest.ModelRoutes)
+		path   string
+	}{
+		{"QA on the planning route", func(r *manifest.ModelRoutes) {
+			r.Routes[core.StepPlanning], r.Routes[core.StepQA] = large, large
+		}, "model_routes.routes.qa"},
+		{"the planning step escalates onto the QA model", func(r *manifest.ModelRoutes) {
+			r.Routes[core.StepPlanning] = large
+			r.Escalation = map[core.StepKind][]core.ModelRoute{core.StepPlanning: {r.Routes[core.StepQA]}}
+		}, "model_routes.escalation.planning[0]"},
+		{"QA escalates onto the planning model", func(r *manifest.ModelRoutes) {
+			r.Routes[core.StepPlanning] = large
+			r.Escalation = map[core.StepKind][]core.ModelRoute{core.StepQA: {large}}
+		}, "model_routes.escalation.qa[0]"},
+	}
+	for _, tc := range planning {
+		for mode, valid := range bothModes {
+			m := valid(t)
+			tc.change(&m.ModelRoutes)
+			report := Check(m)
+			wantOnly(t, report, RuleQASameModelRoute, tc.path)
+			if len(report.Findings) != 1 {
+				t.Errorf("%s/%s: one shared route is one finding, got %+v", tc.name, mode, report.Findings)
+			}
+			m.ModelRoutes.SameModelRoute = true
+			if report := Check(m); !report.Conformant() || !report.SameModelRoute {
+				t.Errorf("%s/%s: the acknowledgement covers the planning route too, got %+v", tc.name, mode, report)
+			}
+		}
+	}
+
+	// Steps that write nothing may share QA's model.
+	m := docker(t)
+	m.ModelRoutes.Routes[core.StepIntake] = m.ModelRoutes.Routes[core.StepQA]
+	m.ModelRoutes.Routes[core.StepReadOnly] = m.ModelRoutes.Routes[core.StepQA]
+	if report := Check(m); !report.Conformant() || report.SameModelRoute {
+		t.Errorf("intake and read-only helpers write no candidate, got %+v", report)
+	}
+
 	// Another model of the same provider, or the same model name at another
 	// provider, is another route.
 	for _, other := range []core.ModelRoute{{Provider: "anthropic", Model: "large"}, {Provider: "openai", Model: "mid"}} {
-		m := docker(t)
+		m = docker(t)
 		m.ModelRoutes.Routes[core.StepCoding], m.ModelRoutes.Routes[core.StepQA] = coding, other
 		if report := Check(m); !report.Conformant() || report.SameModelRoute {
 			t.Errorf("QA on %s differs from coding on %s, got %+v", other, coding, report)

@@ -44,11 +44,16 @@ func sameModel(a, b core.ModelRoute) bool {
 	return same(a.Provider, b.Provider) && same(a.Model, b.Model)
 }
 
+// authorSteps are the kinds of step that write a candidate QA judges: the
+// coding step, and the planning step, which covers migrations and large
+// refactors. Intake and read-only helpers write none.
+var authorSteps = []core.StepKind{core.StepCoding, core.StepPlanning}
+
 // checkQARoutes requires a model route for the coding step and for the QA
 // step, and requires that no route QA can run on, escalations included, is
-// the provider and model of a route the coding agent can run on. A
-// deployment with a single route says so with model_routes.same_model_route;
-// the acknowledgement adds no independence, it records that the assurance is
+// the provider and model of a route an author step can run on. A deployment
+// with a single route says so with model_routes.same_model_route; the
+// acknowledgement adds no independence, it records that the assurance is
 // reduced.
 func (c *checker) checkQARoutes() {
 	routes := c.m.ModelRoutes.Routes
@@ -67,10 +72,14 @@ func (c *checker) checkQARoutes() {
 	if missing {
 		return
 	}
-	const fix = "route the qa step to another provider or model than every coding route, or set model_routes.same_model_route: true to state that this deployment has a single model route"
+	const fix = "route the qa step to another provider or model than every coding and planning route, or set model_routes.same_model_route: true to state that this deployment has a single model route"
+	var authors []modelChoice
+	for _, kind := range authorSteps {
+		authors = append(authors, c.modelChoices(kind)...)
+	}
 	for j, judge := range c.modelChoices(core.StepQA) {
-		for i, coder := range c.modelChoices(core.StepCoding) {
-			if !sameModel(judge.route, coder.route) {
+		for _, coder := range authors {
+			if coder.route.IsZero() || !sameModel(judge.route, coder.route) {
 				continue
 			}
 			if c.m.ModelRoutes.SameModelRoute {
@@ -80,11 +89,11 @@ func (c *checker) checkQARoutes() {
 			// The finding stands at the route that was added to the pair of
 			// starting routes: an escalation step when one is involved.
 			at, other := judge.path, coder.path
-			if j == 0 && i > 0 {
+			if j == 0 && strings.HasPrefix(coder.path, "model_routes.escalation.") {
 				at, other = coder.path, judge.path
 			}
 			c.addOnce(RuleQASameModelRoute, at, fix,
-				"the route at %s is the provider and model of the route at %s, so QA and the coding agent share the same blind spots; with model_routes.same_model_route the manifest is accepted at reduced assurance: every QA receipt records it and policy may require the Owner's approval in place of self-publishing", at, other)
+				"the route at %s is the provider and model of the route at %s, so QA and the agent that writes the candidate share the same blind spots; with model_routes.same_model_route the manifest is accepted at reduced assurance: every QA receipt records it and policy may require the Owner's approval in place of self-publishing", at, other)
 		}
 	}
 }

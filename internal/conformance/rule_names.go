@@ -109,8 +109,8 @@ const (
 
 	// RuleQARouteMissing: the coding step or the QA step has no model route.
 	RuleQARouteMissing Rule = "qa.model_route_missing"
-	// RuleQASameModelRoute: QA runs on the provider and model of the coding
-	// agent and the Owner has not acknowledged it.
+	// RuleQASameModelRoute: QA runs on the provider and model of a coding or
+	// planning route and the Owner has not acknowledged it.
 	RuleQASameModelRoute Rule = "qa.same_model_route"
 	// RuleQASharedWorkspace: the runner and the qa-runner mount one volume.
 	RuleQASharedWorkspace Rule = "qa.shared_workspace"
