@@ -130,6 +130,13 @@ func (s *BuildStage) recordOutage(ctx context.Context, j buildJob, cause error, 
 		if (r.held(next) || next.Reason != "") && !cur.Held {
 			next.Held, next.HeldAt, next.Reminders = true, now, 0
 			next.Holds++
+			if next.Reason == handoff.HeldPolicySuperseded {
+				// The run is over: its patch is never built, and the
+				// control zone blocks the issue. Its reservation is closed.
+				if err := putCloseDue(ctx, tx, j.record.RunID); err != nil {
+					return err
+				}
+			}
 			if err := enqueueHeldNotice(ctx, tx, next.BuildOutage); err != nil {
 				return err
 			}

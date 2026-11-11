@@ -46,7 +46,8 @@ type BuildOutage struct {
 }
 
 // HeldPolicySuperseded is the reason of a build held because the policy in
-// force is no longer the one its run was coded against.
+// force is no longer the one its run was coded against. Such a hold is
+// never resumed: the control zone blocks the issue and removes it.
 const HeldPolicySuperseded = "policy_superseded"
 
 // BuildHeldNotice is the payload of a TopicBuildHeld message.

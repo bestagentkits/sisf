@@ -22,8 +22,9 @@ import (
 // to a tree its coder never saw and judged by rules it was not written to.
 // It is neither built nor judged on the new policy, and so never released
 // on it: the build is held at once, spends no attempt, and the Owner is
-// told on the issue. Putting the run's policy back in force and retrying
-// builds it on the policy it was written under.
+// told on the issue. The run is over then: its reservation is closed, the
+// control zone blocks the issue, and the Owner's retry has a new run code
+// it under the policy in force.
 //
 // The revision is read from the scope intake approved, in the control
 // zone, and the patch must name the same: the policy its run's brief was

@@ -60,7 +60,7 @@ func heldBuildComment(n handoff.BuildHeldNotice) string {
 			"(GitHub, Docker or the configuration), so the supervisor stopped trying it. No attempt was spent.\n\n", n.Attempt, n.RunID, n.Failures)
 	}
 	if n.Reason == handoff.HeldPolicySuperseded {
-		fmt.Fprintf(&b, "- To build it on the policy it was written under, put that policy back in force, then: "+
+		fmt.Fprintf(&b, "- The issue is blocked. To have it coded again under the policy in force: "+
 			"`factoryd issue retry --issue %s`, as the Owner.", n.IssueID)
 		return b.String()
 	}

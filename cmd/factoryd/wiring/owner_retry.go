@@ -3,6 +3,7 @@ package wiring
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/intake"
@@ -24,22 +25,31 @@ import (
 // unless someone asked for a retry.
 //
 // An issue in Developing whose candidate build the supervisor held after
-// repeated outages is not Blocked: the lifecycle has no step from
-// Developing to Blocked. The Owner's retry of such an issue resumes the
-// build instead, and the supervisor tries it again at once. Likewise an
+// repeated outages is not Blocked: its patch is good and only waits for
+// the outage to end. The Owner's retry of such an issue resumes the build
+// instead, and the supervisor tries it again at once. Likewise an
 // issue in ReleaseCandidate whose release the supervisor held: the retry
 // lets the release start over, and the supervisor releases the candidate
 // again in its next round. A refused release is never started over.
 //
 // An issue the control zone blocked because its run stopped without a
 // candidate (handoff.RunStop) returns to Ready on the Owner's retry, where
-// a new run claims it: its scope was approved and still is, so the retry
-// needs no further proof than that the Owner asked.
+// a new run claims it. After a run that used its attempts the scope was
+// approved and still is, so the retry needs no further proof than that the
+// Owner asked. After a run whose policy was superseded the scope is judged
+// under the policy in force first, by intake: it is pinned to that policy
+// when it lies inside the delegation or the Owner approved it under that
+// policy since, and otherwise the Owner is asked, as for a scope that was
+// not approved. A run that stopped and is not blocked yet is blocked first,
+// so the retry need not wait for the next pass.
 //
 // Any other block is judged by the lifecycle's retry guard, with intake's
 // rule in front of it; a block whose cause has no retry rule, such as a
 // release that was rolled back, is refused.
 func (c *Control) Retry(ctx context.Context, issue core.IssueRef, actor core.Actor) (intake.Result, error) {
+	if _, err := c.blockStoppedRun(ctx, issue); err != nil && !core.HasCode(err, core.CodeLeaseHeld) && !core.HasCode(err, core.CodeNotFound) {
+		return intake.Result{Issue: issue}, err
+	}
 	if result, held, err := c.resumeHeldBuild(ctx, issue, actor); held {
 		return result, err
 	}
@@ -50,16 +60,28 @@ func (c *Control) Retry(ctx context.Context, issue core.IssueRef, actor core.Act
 	if !actor.HasRole(core.RoleOwner) {
 		decision = core.AuthzDecision{Effect: core.EffectDeny, Reason: "only the Owner retries a blocked issue"}
 	}
-	result, err := c.Intake.Retry(ctx, intake.RetryRequest{Issue: issue, Actor: actor, Decision: decision})
+	retry := intake.RetryRequest{Issue: issue, Actor: actor, Decision: decision}
+	ask := c.Intake.RequestRetryApproval
+	superseded, blockedAt, err := c.supersededAt(ctx, issue)
+	if err != nil {
+		return intake.Result{Issue: issue}, err
+	}
+	var result intake.Result
+	if superseded {
+		ask = c.Intake.RequestSupersededScopeApproval
+		result, err = c.Intake.RetryUnderPolicyInForce(ctx, retry, blockedAt)
+	} else {
+		result, err = c.Intake.Retry(ctx, retry)
+	}
 	switch {
 	case err == nil:
 		return result, nil
-	case core.HasCode(err, core.CodeNotFound):
+	case core.HasCode(err, core.CodeNotFound) && !superseded:
 		return result, c.guardedRetry(ctx, issue, actor)
 	case !core.HasCode(err, core.CodeGuardFailed) || decision.Effect != core.EffectAllow:
 		return result, err
 	}
-	request, askErr := c.Intake.RequestRetryApproval(ctx, issue)
+	request, askErr := ask(ctx, issue)
 	switch {
 	case core.HasCode(askErr, core.CodeConflict):
 		// The scope needs no approval; the refusal had another cause.
@@ -116,6 +138,26 @@ func (c *Control) guardedRetry(ctx context.Context, issue core.IssueRef, actor c
 			"issue", issue.String(), "code", string(core.CodeOf(err)))
 	}
 	return nil
+}
+
+// supersededAt reports whether issue is blocked because the policy its run
+// was coded under was superseded, and when it was blocked, from the record
+// written with the block for the run the issue's record names.
+func (c *Control) supersededAt(ctx context.Context, issue core.IssueRef) (bool, time.Time, error) {
+	var stop handoff.RunStop
+	err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		record, err := tx.GetRecord(ctx, issue)
+		if err != nil || record.State != core.StateBlocked || record.RunID == "" {
+			return err
+		}
+		stop, err = handoff.ReadRunStop(ctx, tx, record.RunID)
+		return err
+	})
+	if core.HasCode(err, core.CodeNotFound) {
+		return false, time.Time{}, nil
+	}
+	superseded := err == nil && stop.IssueID == issue && stop.Cause == statemachine.BlockPolicySuperseded
+	return superseded, stop.BlockedAt, err
 }
 
 // stoppedRunRetry is the retry guard of an issue the control zone blocked
@@ -180,7 +222,9 @@ func (c *Control) resumeHeldBuild(ctx context.Context, issue core.IssueRef, acto
 			return nil
 		}
 		outage, _, err := handoff.ReadBuildOutage(ctx, tx, record.RunID, record.Attempt)
-		if err != nil || !outage.Held {
+		if err != nil || !outage.Held || outage.Reason == handoff.HeldPolicySuperseded {
+			// A build held over a superseded policy is never resumed: its
+			// issue is blocked instead.
 			return nil
 		}
 		held = true

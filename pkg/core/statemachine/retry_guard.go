@@ -26,22 +26,29 @@ const (
 	// BlockRunExhausted means the run of the issue used every coding
 	// attempt it was allowed without producing a candidate.
 	BlockRunExhausted BlockCause = "run_exhausted"
+	// BlockPolicySuperseded means the run of the issue was coded under a
+	// policy that was replaced before its patch was built, so the patch is
+	// never built, judged or released.
+	BlockPolicySuperseded BlockCause = "policy_superseded"
 )
 
 // Valid reports whether c is a known cause.
 func (c BlockCause) Valid() bool {
 	switch c {
-	case BlockApprovalDenied, BlockApprovalExpired, BlockRolledBack, BlockRunExhausted:
+	case BlockApprovalDenied, BlockApprovalExpired, BlockRolledBack, BlockRunExhausted, BlockPolicySuperseded:
 		return true
 	}
 	return false
 }
 
-// NeedsScopeProof reports whether the block came from an approval that was
-// not given. Such an issue never had a scope it may be worked on, so a retry
-// has to bring one.
+// NeedsScopeProof reports whether a retry has to prove the scope anew. An
+// issue blocked over an approval that was not given never had a scope it
+// may be worked on. One whose policy was superseded had its scope permitted
+// or approved under a policy that is no longer in force, and a permission
+// is bound to the policy it was given under. Either way the retry has to
+// bring the proof, under the policy in force.
 func (c BlockCause) NeedsScopeProof() bool {
-	return c == BlockApprovalDenied || c == BlockApprovalExpired
+	return c == BlockApprovalDenied || c == BlockApprovalExpired || c == BlockPolicySuperseded
 }
 
 // RetryProof is what is known about one request to retry a blocked issue.
@@ -70,9 +77,10 @@ type RetryProof struct {
 	// issue. Only an outright allow counts.
 	Decision core.AuthzDecision
 	// Approval and Delegation prove the scope of an issue that was blocked
-	// because its approval was denied or expired: an approval the Owner gave
-	// after the block, or the policy's answer that the scope now lies within
-	// the delegation. One of them is required for such an issue, each one
+	// because its approval was denied or expired, or because the policy it
+	// was permitted under was superseded: an approval the Owner gave after
+	// the block, or the policy's answer that the scope now lies within the
+	// delegation. One of them is required for such an issue, each one
 	// presented must hold, and neither is needed after a rollback or for a
 	// run that used its attempts: the scope of such an issue was approved
 	// and still is.
@@ -105,7 +113,7 @@ func (f RetryGuardFunc) RetryProof(ctx context.Context, t core.Transition) (Retr
 // that actor and this issue, the actor to be a person or a service that is
 // allowed outright, and the cause of the block to be known. A decision that
 // still needs an approval or a step-up is not an authorization. An issue
-// blocked over its approval also needs the scope proof.
+// whose cause needs it (NeedsScopeProof) also needs the scope proof.
 func checkRetry(t core.Transition, p RetryProof, now time.Time) error {
 	switch {
 	case strings.TrimSpace(t.ActorID) == "":
@@ -135,8 +143,9 @@ func checkRetry(t core.Transition, p RetryProof, now time.Time) error {
 	return checkRetriedScope(t, p, now)
 }
 
-// checkRetriedScope requires, for an issue blocked over its approval, an
-// approval decided after the block or proof of delegation. Whatever is
+// checkRetriedScope requires, for an issue blocked over its approval or
+// over a superseded policy, an approval decided after the block or proof of
+// delegation. Whatever is
 // presented must hold by the rule of its own guard, and a delegation alone
 // lifts a denied approval only for another scope or policy revision.
 func checkRetriedScope(t core.Transition, p RetryProof, now time.Time) error {

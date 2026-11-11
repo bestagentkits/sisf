@@ -68,12 +68,18 @@ func (s RunStop) Summary() string {
 	case statemachine.BlockRunExhausted:
 		return fmt.Sprintf("Run %s used all %d coding attempts it was allowed without a candidate; the last one failed with %s.",
 			s.RunID, s.Attempts, code)
+	case statemachine.BlockPolicySuperseded:
+		return fmt.Sprintf("Run %s was coded under a policy that is no longer in force, so its patch is not built, judged or released.", s.RunID)
 	}
 	return fmt.Sprintf("Run %s stopped without a candidate.", s.RunID)
 }
 
 // WayOut says how the Owner gets the issue going again.
 func (s RunStop) WayOut() string {
+	if s.Cause == statemachine.BlockPolicySuperseded {
+		return fmt.Sprintf("As the Owner on the factory's host, run `factoryd issue retry --issue %s`: the scope is judged under "+
+			"the policy in force and, once it is permitted or approved under it, the issue returns to Ready and a new run codes it under that policy.", s.IssueID)
+	}
 	return fmt.Sprintf("Remove the cause, then, as the Owner on the factory's host, run `factoryd issue retry --issue %s`: "+
 		"the issue returns to Ready and a new run claims it.", s.IssueID)
 }

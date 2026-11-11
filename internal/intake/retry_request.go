@@ -29,6 +29,34 @@ const maxRetryRequests = 20
 // scope that now lies inside what agents may do on their own is CONFLICT:
 // its retry needs no approval.
 func (s *Service) RequestRetryApproval(ctx context.Context, issue core.IssueRef) (approvals.Request, error) {
+	return s.requestRetryApproval(ctx, issue, func(snap snapshot) error {
+		switch {
+		case !snap.exists || snap.doc.Denial == nil || snap.record.State != core.StateBlocked:
+			return core.NewError(core.CodeNotFound, "intake did not block this issue for want of an approval")
+		case snap.sow == nil:
+			return core.NewError(core.CodeInternal, "the issue was blocked for want of an approval but has no stored scope")
+		}
+		return nil
+	})
+}
+
+// RequestSupersededScopeApproval asks the Owner to approve, under the
+// policy in force, the scope of an issue that was blocked because the
+// policy it was approved under was superseded. It is what the retry surface
+// calls when RetryUnderPolicyInForce is refused for want of an approval,
+// and it follows the rules of RequestRetryApproval.
+func (s *Service) RequestSupersededScopeApproval(ctx context.Context, issue core.IssueRef) (approvals.Request, error) {
+	return s.requestRetryApproval(ctx, issue, func(snap snapshot) error {
+		if !supersededScope(snap) {
+			return core.NewError(core.CodeNotFound, "the issue is not blocked with a scope that was approved under an earlier policy")
+		}
+		return nil
+	})
+}
+
+// requestRetryApproval files the request once blocked accepts the issue as
+// one whose retry may need the Owner again.
+func (s *Service) requestRetryApproval(ctx context.Context, issue core.IssueRef, blocked func(snapshot) error) (approvals.Request, error) {
 	if err := issue.Validate(); err != nil {
 		return approvals.Request{}, err
 	}
@@ -36,11 +64,8 @@ func (s *Service) RequestRetryApproval(ctx context.Context, issue core.IssueRef)
 	if err != nil {
 		return approvals.Request{}, err
 	}
-	switch {
-	case !snap.exists || snap.doc.Denial == nil || snap.record.State != core.StateBlocked:
-		return approvals.Request{}, core.NewError(core.CodeNotFound, "intake did not block this issue for want of an approval")
-	case snap.sow == nil:
-		return approvals.Request{}, core.NewError(core.CodeInternal, "the issue was blocked for want of an approval but has no stored scope")
+	if err := blocked(snap); err != nil {
+		return approvals.Request{}, err
 	}
 	in, skipped, err := s.gather(ctx, issue, true)
 	if err != nil {

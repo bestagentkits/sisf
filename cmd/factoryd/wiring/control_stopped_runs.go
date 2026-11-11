@@ -31,6 +31,11 @@ const (
 // and spends nothing, and only its attempt count and the code of its last
 // failure are kept, never its text.
 //
+// A run also stopped when the supervisor held its build because the policy
+// in force is no longer the one the run was coded under: such a patch is
+// never built, and waiting changes nothing. The hold is the supervisor's
+// own record, and it ends with the block.
+//
 // The step is written under the issue lease, which the dispatcher gave up
 // when it stopped the run, with the record of why (handoff.RunStop) in the
 // same transaction. An issue whose lease is still held is left for the
@@ -94,6 +99,11 @@ func (c *Control) blockStoppedRun(ctx context.Context, issue core.IssueRef) (*ha
 		if err := handoff.PutRunStop(ctx, tx, stop); err != nil {
 			return err
 		}
+		if stop.Cause == statemachine.BlockPolicySuperseded {
+			if err := endHeldBuild(ctx, tx, record); err != nil {
+				return err
+			}
+		}
 		if err := keepProgress(ctx, tx, issue); err != nil {
 			return err
 		}
@@ -118,6 +128,16 @@ func stoppedRun(ctx context.Context, tx state.Tx, record core.StateRecord, now t
 		return handoff.RunStop{}, false, nil
 	}
 	stop := handoff.RunStop{IssueID: record.IssueID, RunID: record.RunID, Attempt: record.Attempt, BlockedAt: now}
+	if record.State == core.StateDeveloping {
+		outage, _, err := handoff.ReadBuildOutage(ctx, tx, record.RunID, record.Attempt)
+		switch {
+		case err == nil && outage.Held && outage.Reason == handoff.HeldPolicySuperseded:
+			stop.Cause = statemachine.BlockPolicySuperseded
+			return stop, true, nil
+		case err != nil && !core.HasCode(err, core.CodeNotFound):
+			return stop, false, err
+		}
+	}
 	entry, err := tx.GetKV(ctx, handoff.Namespace, "run/"+string(record.RunID))
 	if core.HasCode(err, core.CodeNotFound) {
 		return stop, false, nil
@@ -138,6 +158,17 @@ func stoppedRun(ctx context.Context, tx state.Tx, record core.StateRecord, now t
 		stop.LastCode = run.Failures[n-1].Code
 	}
 	return stop, true, nil
+}
+
+// endHeldBuild removes the hold of the build of record's attempt, and its
+// entry in the listing of held builds: the issue is blocked now and no
+// build of that run waits for the Owner any more.
+func endHeldBuild(ctx context.Context, tx state.Tx, record core.StateRecord) error {
+	_, version, err := handoff.ReadBuildOutage(ctx, tx, record.RunID, record.Attempt)
+	if err != nil {
+		return err
+	}
+	return handoff.DeleteBuildOutage(ctx, tx, record.RunID, record.Attempt, version)
 }
 
 // keepProgress makes sure issue has a progress entry, so its progress

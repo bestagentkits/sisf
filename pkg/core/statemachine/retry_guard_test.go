@@ -235,3 +235,24 @@ func TestARunThatStoppedIsRetriedWithoutAScopeProof(t *testing.T) {
 	denied := checkRetryProof(retryDecided(core.AuthzDecision{Effect: core.EffectDeny}), func(p *RetryProof) { p.Cause = BlockRunExhausted })
 	requireGuardFailed(t, "an exhausted run retried without authorization", denied, GuardRetry)
 }
+
+// A scope is permitted or approved under one policy. After that policy was
+// superseded under a run, the retry has to prove the scope under the policy
+// in force: being allowed to retry is not enough.
+func TestARetryAfterASupersededPolicyNeedsTheScopeProvedAgain(t *testing.T) {
+	superseded := func(mutate func(*RetryProof)) error {
+		return checkRetryProof(retryDecided(allowed()), func(p *RetryProof) {
+			p.Cause, p.BlockedAt, p.Approval, p.Delegation = BlockPolicySuperseded, testNow.Add(-time.Hour), nil, nil
+			mutate(p)
+		})
+	}
+	requireGuardFailed(t, "no scope proof", superseded(func(*RetryProof) {}), GuardRetry)
+	if !BlockPolicySuperseded.Valid() || !BlockPolicySuperseded.NeedsScopeProof() || BlockRunExhausted.NeedsScopeProof() {
+		t.Fatal("a superseded policy needs the scope proved again, and an exhausted run does not")
+	}
+	request := retryRequest()
+	delegation := validDelegation(request)
+	if err := superseded(func(p *RetryProof) { p.Delegation = &delegation }); err != nil {
+		t.Errorf("a scope inside the delegation of the policy in force was refused: %v", err)
+	}
+}
