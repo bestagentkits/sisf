@@ -39,8 +39,8 @@ func fencedOff(err error) bool {
 // step looks at one run and the agent working on it, and acts: it starts an
 // attempt that has not started, collects the artifacts of one that
 // succeeded, and counts one that failed, ran out of time, or that the
-// backend lost or could not be reached about for a lease lifetime, as a
-// failed attempt.
+// backend lost, or could not be reached or kept failing about for a lease
+// lifetime, as a failed attempt.
 func (d *Dispatcher) step(ctx context.Context, r *activeRun, res *TickResult) error {
 	var (
 		record  core.StateRecord
@@ -68,30 +68,42 @@ func (d *Dispatcher) step(ctx context.Context, r *activeRun, res *TickResult) er
 		return d.startAttempt(ctx, r, run, version, res)
 	}
 	status, err := d.cfg.Agent.Status(ctx, *run.Agent)
-	unreachable := core.HasCode(err, core.CodeUnavailable)
-	if !unreachable {
+	if err != nil && ctx.Err() != nil {
+		// The tick was cancelled, as on shutdown: that costs no attempt.
+		return err
+	}
+	failing := err != nil && !core.HasCode(err, core.CodeNotFound)
+	if !failing {
 		r.unreachableSince = time.Time{}
 	}
+	// statusErr is a status error to report once the lease is renewed: one
+	// other than UNAVAILABLE, which is an expected outage.
+	var statusErr error
 	switch {
 	case core.HasCode(err, core.CodeNotFound):
 		// The backend answered and no longer knows the run: it is lost.
 		return d.failAttempt(ctx, r, run, version, core.CodeNotFound, "the agent run was lost: "+err.Error(), res)
-	case unreachable:
-		// The backend could not answer. A short outage of a remote backend
-		// must not cost the run an attempt, so the run is watched on within
-		// the lease, which keeps being renewed, and counted as lost only
-		// once the backend stayed unreachable for a whole lease lifetime.
-		// The run timeout still applies below.
+	case failing:
+		// The backend could not answer, or answered with an error of its
+		// own. A short outage or fault of a remote backend must not cost
+		// the run an attempt, so the run is watched on within the lease,
+		// which keeps being renewed, and counted as lost only once the
+		// backend kept failing for a whole lease lifetime. The run timeout
+		// still applies below.
 		now := d.cfg.Clock.Now()
 		if r.unreachableSince.IsZero() {
 			r.unreachableSince = now
 		}
 		if since := now.Sub(r.unreachableSince); since >= d.cfg.LeaseTTL {
-			return d.failAttempt(ctx, r, run, version, core.CodeUnavailable,
-				fmt.Sprintf("the agent run was lost: the backend stayed unreachable for %s: %s", since, err.Error()), res)
+			detail := fmt.Sprintf("the agent run was lost: the backend's status calls kept failing for %s: %s", since, err.Error())
+			if core.HasCode(err, core.CodeUnavailable) {
+				detail = fmt.Sprintf("the agent run was lost: the backend stayed unreachable for %s: %s", since, err.Error())
+			}
+			return d.failAttempt(ctx, r, run, version, core.CodeOf(err), detail, res)
 		}
-	case err != nil:
-		return err
+		if !core.HasCode(err, core.CodeUnavailable) {
+			statusErr = err
+		}
 	case status.Phase == agent.PhaseSucceeded:
 		return d.succeed(ctx, r, run, version, res)
 	case status.Phase == agent.PhaseFailed || status.Phase == agent.PhaseCancelled:
@@ -101,15 +113,19 @@ func (d *Dispatcher) step(ctx context.Context, r *activeRun, res *TickResult) er
 		// Still working within its time: renew the lease, which also proves
 		// this instance still holds the run.
 		lease, _, err := d.fenced(ctx, r.issue, r.run, r.lease, version, func(context.Context, state.Tx, core.StateRecord, *RunRecord) error { return nil })
-		if err == nil {
-			r.lease = lease
+		if err != nil {
+			return err
 		}
-		return err
+		r.lease = lease
+		return statusErr
 	}
 	// The cancel is best effort: the attempt is over either way, and a run
 	// that ignores it is no longer watched or paid for by this attempt.
 	cancelErr := d.cfg.Agent.Cancel(ctx, *run.Agent)
 	detail := fmt.Sprintf("the attempt ran past the run timeout of %s", d.cfg.Limits.RunTimeout)
+	if failing {
+		detail += "; the backend's last status call failed: " + err.Error()
+	}
 	if cancelErr != nil {
 		detail += "; cancelling it failed: " + cancelErr.Error()
 	}

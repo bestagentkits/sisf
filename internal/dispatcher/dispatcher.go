@@ -35,8 +35,8 @@ type activeRun struct {
 	run   core.RunID
 	lease state.Lease
 	// unreachableSince is when the agent backend began answering the
-	// current attempt's status calls with UNAVAILABLE; zero while it
-	// answers. It lives only in this instance: a successor that takes the
+	// current attempt's status calls with an error other than NOT_FOUND,
+	// UNAVAILABLE or a fault of its own; zero while it answers. It lives only in this instance: a successor that takes the
 	// run over starts its own count, still bounded by the run timeout.
 	unreachableSince time.Time
 }
