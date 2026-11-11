@@ -26,6 +26,10 @@ var credentials = map[string][]string{
 	"pi":     nil,
 }
 
+// operatorIdentity names the operator's OS account. It is passed only to
+// an agent that runs with the operator's own HOME.
+var operatorIdentity = []string{"USER"}
+
 // refusedPrefixes start the names of the factory's own variables: its
 // configuration and secrets, the edge's and the Docker client's.
 var refusedPrefixes = []string{"SISF_", "EDGE_", "DOCKER_"}
@@ -49,6 +53,11 @@ type Spec struct {
 	// Home is the agent's absolute HOME: a private one, or the operator's
 	// own where CheckOperatorHome allowed it.
 	Home string
+	// OperatorHome says Home is the operator's own. The agent then also
+	// gets USER: a tool that keeps its login in the operating system's
+	// keychain, as claude does on macOS, looks it up under that name and
+	// finds no login without it.
+	OperatorHome bool
 	// TempDir is the agent's absolute TMPDIR, always private; Home/tmp
 	// when empty.
 	TempDir string
@@ -86,6 +95,9 @@ func Build(s Spec) ([]string, error) {
 		path = DefaultPath
 	}
 	env := []string{"PATH=" + path, "HOME=" + s.Home, "TMPDIR=" + tmp}
+	if s.OperatorHome {
+		vars = append(vars, operatorIdentity...)
+	}
 	for _, n := range append(vars, s.Extra...) {
 		if err := Allowed(n, s.Forbidden...); err != nil {
 			return nil, err

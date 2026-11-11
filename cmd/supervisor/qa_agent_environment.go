@@ -53,7 +53,7 @@ func (q *qaFlags) paths(d judgeDeps, exec string) (root, home, tmp string, err e
 // The supervisor's own secrets are never among them.
 func (q *qaFlags) environment(d judgeDeps, home, tmp string) ([]string, error) {
 	return agentenv.Build(agentenv.Spec{
-		Agent: q.agent, Home: home, TempDir: tmp, Extra: agentenv.Names(q.env), LookupEnv: d.lookupEnv,
+		Agent: q.agent, Home: home, OperatorHome: q.home != "", TempDir: tmp, Extra: agentenv.Names(q.env), LookupEnv: d.lookupEnv,
 		Forbidden: []string{runcontrol.EnvToken, envGitHubToken, envEdgeAdminToken, d.dsnEnv, d.rootKeyEnv},
 	})
 }
