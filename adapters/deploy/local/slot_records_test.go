@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -212,5 +213,81 @@ func TestTheStateDirectoryMustBeAbsolute(t *testing.T) {
 	starter, ports := newFakeStarter(t)
 	if _, err := local.New(local.Config{Factory: factory, Ports: ports, Starter: starter, Edge: brokenEdge{}, StateDir: "slots"}); err == nil {
 		t.Fatal("a relative state directory was accepted")
+	}
+}
+
+// execBackedStarter starts the fake world's application for the readiness
+// probes and, beside it, a real process through the ExecStarter: a
+// launcher that execs the program, as the installed launcher does. The
+// backend records the real process.
+type execBackedStarter struct {
+	local.Starter
+	real local.ExecStarter
+}
+
+type execBackedProcess struct {
+	local.Process
+	real local.Process
+}
+
+func (p execBackedProcess) PID() int {
+	return p.real.(interface{ PID() int }).PID()
+}
+
+func (s execBackedStarter) Start(ctx context.Context, spec local.StartSpec) (local.Process, error) {
+	fake, err := s.Starter.Start(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	real, err := s.real.Start(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	return execBackedProcess{Process: fake, real: real}, nil
+}
+
+// alive reports whether pid names a process.
+func alive(pid int) bool {
+	p, err := os.FindProcess(pid)
+	return err == nil && p.Signal(syscall.Signal(0)) == nil
+}
+
+// A process the ExecStarter started through a launcher that execs the
+// release's program is still found and stopped by a restarted backend:
+// the exec changes the command line, not the identity recorded.
+func TestARestartedBackendStopsAProcessItsLauncherExecedInto(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "slots")
+	launcher := filepath.Join(t.TempDir(), "launcher")
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexec /bin/sleep 300\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	real := local.ExecStarter{AddrEnv: "LISTEN", Env: []string{"PATH=/usr/bin:/bin"},
+		Command: func(string) (string, []string, error) { return launcher, nil, nil }}
+	w := newWorld(t, worldOptions{cfg: func(c *local.Config) {
+		c.StateDir = dir
+		c.Starter = execBackedStarter{Starter: c.Starter, real: real}
+	}})
+	w.stage(digestA)
+	rec, ok := readSlotRecord(t, filepath.Join(dir, "blue.json"))
+	if !ok || rec.PID <= 1 {
+		t.Fatalf("the started process was not recorded: %+v", rec)
+	}
+	t.Cleanup(func() {
+		if p, err := os.FindProcess(rec.PID); err == nil {
+			_ = p.Kill()
+		}
+	})
+	// Let the launcher become the program before the restart.
+	time.Sleep(200 * time.Millisecond)
+	if err := restarted(t, dir).StopStale(context.Background()); err != nil {
+		t.Fatalf("StopStale: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for alive(rec.PID) {
+		if time.Now().After(deadline) {
+			t.Fatalf("process %d still runs after the restarted backend stopped it", rec.PID)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }

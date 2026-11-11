@@ -32,8 +32,11 @@ type identifiedProcess interface {
 }
 
 // slotRecord is what the backend keeps on disk about the process of one
-// slot. Start and Command identify the process beyond its pid, which the
-// system may give to another process once this one has gone.
+// slot. Start, the time the process started, identifies it beyond its pid,
+// which the system may give to another process once this one has gone; it
+// survives the exec by which a launcher becomes the release's program.
+// Command is the command line when the record was written, kept for the
+// log only: a launcher that execs changes it.
 type slotRecord struct {
 	Slot    string             `json:"slot"`
 	Port    int                `json:"port"`
@@ -125,9 +128,9 @@ func (b *Backend) forgetSlot(s *slot) {
 // StopStale stops the processes an earlier backend recorded in the state
 // directory and this one does not run: those a supervisor started before
 // it stopped, which still hold the slots' ports. A recorded process is
-// signalled only while its pid still names the process recorded, started
-// at the same time with the same command line; otherwise its pid belongs
-// to something else now and the record is dropped without a signal. A
+// signalled only while its pid still names the process recorded, one that
+// started at the recorded time; otherwise its pid belongs to something
+// else now and the record is dropped without a signal. A
 // process is asked to leave with SIGTERM and killed when it has not after
 // a grace period. Without a state directory there is nothing to stop.
 func (b *Backend) StopStale(ctx context.Context) error {
@@ -156,7 +159,7 @@ func (b *Backend) stopStaleSlot(ctx context.Context, s *slot) error {
 		return err
 	}
 	var rec slotRecord
-	if json.Unmarshal(raw, &rec) != nil || rec.PID <= 1 || rec.Slot != s.name || rec.Start == "" || rec.Command == "" {
+	if json.Unmarshal(raw, &rec) != nil || rec.PID <= 1 || rec.Slot != s.name || rec.Start == "" {
 		b.cfg.Logger.Warn("a slot record that does not hold together is dropped without a signal", "slot", s.name)
 		return os.Remove(path)
 	}
@@ -173,17 +176,21 @@ func (b *Backend) stopStaleSlot(ctx context.Context, s *slot) error {
 		b.cfg.Logger.Info("a recorded process is gone; its record is dropped", "slot", s.name, "pid", rec.PID)
 		return os.Remove(path)
 	}
-	b.cfg.Logger.Warn("stopping a process an earlier supervisor started", "slot", s.name, "pid", rec.PID, "release", string(rec.Digest))
+	b.cfg.Logger.Warn("stopping a process an earlier supervisor started", "slot", s.name, "pid", rec.PID, "release", string(rec.Digest),
+		"command", rec.Command)
 	if err := stopRecorded(ctx, rec, b.cfg.Clock); err != nil {
 		return err
 	}
 	return os.Remove(path)
 }
 
-// sameProcess reports whether rec's pid still names the process recorded.
+// sameProcess reports whether rec's pid still names the process recorded:
+// a live process that started at the recorded time. A process that has
+// exited but not been reaped is reported by ps as defunct and is taken as
+// gone.
 func sameProcess(ctx context.Context, rec slotRecord) bool {
 	start, command, err := processIdentity(ctx, rec.PID)
-	return err == nil && start == rec.Start && command == rec.Command
+	return err == nil && start == rec.Start && !strings.Contains(command, "<defunct>")
 }
 
 // stopRecorded sends SIGTERM to the recorded process, waits for it to
