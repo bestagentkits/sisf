@@ -20,8 +20,8 @@ import (
 // control pass does. Within the day at most ReportDailyPublishBudget
 // issues are opened, oldest report first, and then publishing pauses with
 // the backlog shown. The store here holds 60 reports, so the flood fills it
-// within the day and a person's report is refused while it is full; once
-// publishing resumes and frees room, the person's report is accepted.
+// within the day; a person's report from a new address is still accepted,
+// pushing out the newest report of the address that holds the most.
 func TestAReportFloodOpensAtMostTheDailyBudgetInReceiptOrder(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
@@ -62,8 +62,11 @@ func TestAReportFloodOpensAtMostTheDailyBudgetInReceiptOrder(t *testing.T) {
 				}
 			}
 			if minute == 12*60+30 {
-				if code := person(); code != http.StatusServiceUnavailable {
-					t.Fatalf("a person's report while the flood fills the store: %d, want it refused until there is room", code)
+				if st := readPublication(t, e, db.Clock.Now()); st.Waiting != capacity {
+					t.Fatalf("the store holds %d reports at noon, want the flood to have filled it", st.Waiting)
+				}
+				if code := person(); code != http.StatusAccepted {
+					t.Fatalf("a person's report into the store the flood filled: %d, want it accepted", code)
 				}
 			}
 			publish(t, p)
@@ -85,17 +88,14 @@ func TestAReportFloodOpensAtMostTheDailyBudgetInReceiptOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if st.Waiting != capacity || len(accepted)-len(issues) != capacity || st.PausedUntil.IsZero() || !st.PausedUntil.After(db.Clock.Now()) {
-			t.Fatalf("the status after a day of flooding: %+v, want a full store of %d waiting and publishing paused", st, capacity)
+		if want := len(accepted) + 1 - len(issues) - capacity; st.Waiting != capacity || st.Dropped != want ||
+			st.PausedUntil.IsZero() || !st.PausedUntil.After(db.Clock.Now()) {
+			t.Fatalf("the status after a day of flooding: %+v, want a full store of %d waiting, %d dropped and publishing paused", st, capacity, want)
 		}
-		// Once the oldest publication is a day old, publishing goes on, and
-		// the room it frees takes the person's report.
+		// Once the oldest publication is a day old, publishing goes on.
 		db.Clock.Advance(st.PausedUntil.Sub(db.Clock.Now()))
 		if res := publish(t, p); res.Published == 0 {
 			t.Fatalf("publishing did not resume once the budget freed: %+v", res)
-		}
-		if code := person(); code != http.StatusAccepted {
-			t.Fatalf("a person's report once publishing freed room: %d, want it accepted", code)
 		}
 	})
 }

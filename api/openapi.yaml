@@ -838,6 +838,9 @@ paths:
                           report_publish_error:
                             description: Why the last publication of bug reports failed.
                             type: string
+                          reports_dropped:
+                            description: Waiting bug reports pushed out of a full report store to make room for another client's report.
+                            type: integer
                           reports_failed:
                             description: Bug reports given up after GitHub refused their issue; they are never published.
                             type: integer

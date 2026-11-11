@@ -113,7 +113,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := h.cfg.Clock.Now()
-	if ok, wait := h.limiter.take(h.cfg.ClientKey(r), now); !ok {
+	client := h.cfg.ClientKey(r)
+	if ok, wait := h.limiter.take(client, now); !ok {
 		w.Header().Set("Retry-After", retryAfter(wait))
 		reply(w, http.StatusTooManyRequests, "error", "too many reports; try again later")
 		return
@@ -131,7 +132,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	title, body := h.cfg.Redactor.Redact(visibleTitle), h.cfg.Redactor.Redact(visibleBody)
 	fp := fingerprint(title, body)
 	stored, created, err := h.cfg.Store.Save(r.Context(), Report{
-		ID: "report-" + fp[:16], Fingerprint: fp, Title: title, Body: body, ReceivedAt: now,
+		ID: "report-" + fp[:16], Fingerprint: fp, Title: title, Body: body, ReceivedAt: now, Client: client,
 	})
 	if err != nil {
 		h.cfg.Logger.Error("report could not be stored", "code", string(core.CodeOf(err)))

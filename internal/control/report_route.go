@@ -23,10 +23,12 @@ type ReportRoute struct {
 	Store    report.Store
 	Redactor telemetry.Redactor
 	// MaxStored and Retention bound the reports kept in the operational
-	// store: a full store removes the oldest report GitHub refused for good
-	// to make room for a new one, or else refuses the new one, and a report
-	// is removed once its retention has
-	// passed since it was first received, by the next save or the next
+	// store. A full store makes room for a new report by removing the
+	// oldest report GitHub refused for good, or else the newest waiting
+	// report of the client holding the most, when that client holds more
+	// than one and more than the new report's client; otherwise it refuses
+	// the new one. A report is removed once its retention has passed since
+	// it was first received, by the next save or the next
 	// Server.PruneReports, whichever comes first. Zero means
 	// DefaultMaxStoredReports and the report retention of
 	// redact.DefaultRetention.

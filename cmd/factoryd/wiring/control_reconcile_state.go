@@ -183,6 +183,7 @@ func (c *Control) GitHubSync(ctx context.Context) (runactions.GitHubSync, error)
 		}
 		out.ReportsWaiting, out.ReportsFailed, out.ReportPublishError = published.Waiting, published.Failed, published.LastError
 		out.ReportsPublishPausedUntil = published.PausedUntil
+		out.ReportsDropped = published.Dropped
 	}
 	return out, nil
 }

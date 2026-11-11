@@ -502,9 +502,9 @@ func TestPublishingNeedsTheFactorysLogin(t *testing.T) {
 	})
 }
 
-// A full store makes room for a new report only by removing one GitHub
-// refused for good, the oldest first; a report waiting to be published is
-// never removed.
+// A full store whose waiting reports each came from another address makes
+// room for a new report only by removing one GitHub refused for good, the
+// oldest first; such a waiting report is never removed.
 func TestAFullStoreMakesRoomOnlyFromReportsGivenUp(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {

@@ -104,11 +104,14 @@ var _ report.Store = storedReports{}
 
 // Save implements report.Store. It first removes lapsed reports; then a
 // duplicate is counted against the stored report, published or not, and a
-// new one is stored to be published. When the store is full, the oldest
-// report GitHub refused for good makes room for it; a report accepted and
-// still waiting to be published is never removed, so with none refused the
-// new report is refused with LIMIT_EXCEEDED until reports are published or
-// lapse.
+// new one is stored to be published, its client kept only as a keyed hash
+// (clientHash). When the store is full, the oldest report GitHub refused
+// for good makes room for it, and else the newest waiting report of the
+// client holding the most, as long as that client holds more than one and
+// more than the new report's client (dropFromBusiestClient). With no such
+// client, as when every waiting report came from another address, the new
+// report is refused with LIMIT_EXCEEDED until reports are published or
+// lapse. A report whose publication is under way is never removed.
 func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report, bool, error) {
 	if r.Fingerprint == "" || strings.ContainsAny(r.Fingerprint, "/") {
 		return report.Report{}, false, core.NewError(core.CodeInvalidArgument, "a report needs a fingerprint")
@@ -134,9 +137,18 @@ func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report
 				stored = found
 				return s.putCountIf(ctx, tx, count, pruned)
 			}
+			client, err := clientHash(ctx, tx, r.Client)
+			if err != nil {
+				return err
+			}
 			room := count.n < s.capacity
 			if !room {
 				if room, err = s.dropOldest(ctx, tx, &count); err != nil {
+					return err
+				}
+			}
+			if !room {
+				if room, err = s.dropFromBusiestClient(ctx, tx, client, &count); err != nil {
 					return err
 				}
 			}
@@ -145,9 +157,12 @@ func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report
 				full = true
 				return s.putCountIf(ctx, tx, count, pruned)
 			}
-			r.Count, r.LastSeenAt = 1, r.ReceivedAt
+			r.Count, r.LastSeenAt, r.Client = 1, r.ReceivedAt, client
 			key := reportKey(reportPrefix, r.ReceivedAt, r.Fingerprint)
 			if err := putStored(ctx, tx, key, 0, storedReport{Report: r}); err != nil {
+				return err
+			}
+			if err := addWaiting(ctx, tx, client, key); err != nil {
 				return err
 			}
 			index := state.KVEntry{Namespace: ReportsNamespace, Key: reportIndexPrefix + r.Fingerprint, Value: []byte(key)}
@@ -269,6 +284,11 @@ func (s storedReports) pruneLapsed(ctx context.Context, tx state.Tx, now time.Ti
 		for _, e := range entries {
 			if e.Key >= prefix+day {
 				break
+			}
+			if prefix == reportPrefix {
+				if err := forgetWaitingEntry(ctx, tx, e); err != nil {
+					return count, pruned, err
+				}
 			}
 			if err := dropReport(ctx, tx, e); err != nil {
 				return count, pruned, err

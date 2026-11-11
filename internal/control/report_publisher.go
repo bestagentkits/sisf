@@ -332,6 +332,9 @@ func (p ReportPublisher) markPublished(ctx context.Context, key string, r stored
 			if err := tx.DeleteKV(ctx, ReportsNamespace, key, current.Version); err != nil {
 				return err
 			}
+			if err := forgetWaiting(ctx, tx, r.Client, key); err != nil {
+				return err
+			}
 			count.n = max(count.n-1, 0)
 			if err := putCount(ctx, tx, count); err != nil {
 				return err
@@ -373,6 +376,11 @@ func (p ReportPublisher) reject(ctx context.Context, key string, code core.Error
 		if err := addFailed(ctx, tx, 1); err != nil {
 			return err
 		}
+		// A report given up no longer waits, so its client is forgotten.
+		if err := forgetWaiting(ctx, tx, stored.Client, key); err != nil {
+			return err
+		}
+		stored.Client = ""
 		failedKey := reportFailedPrefix + strings.TrimPrefix(key, reportPrefix)
 		stored.Publish.FailedCode = code
 		if !readable {

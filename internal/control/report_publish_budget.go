@@ -89,6 +89,9 @@ type ReportPublication struct {
 	// given up after GitHub refused them, which will never be published.
 	Waiting int
 	Failed  int
+	// Dropped counts the waiting reports pushed out of a full store to
+	// make room for another client's report.
+	Dropped int
 	// PausedUntil is when publishing goes on while the daily budget of
 	// report issues is spent; zero while it is not.
 	PausedUntil time.Time
@@ -109,7 +112,11 @@ func ReadReportPublication(ctx context.Context, store state.Store, now time.Time
 		if err != nil {
 			return err
 		}
-		out.Waiting, out.Failed = max(stored.n-failed.n, 0), failed.n
+		dropped, err := readCounter(ctx, tx, reportDroppedKey)
+		if err != nil {
+			return err
+		}
+		out.Waiting, out.Failed, out.Dropped = max(stored.n-failed.n, 0), failed.n, dropped.n
 		budget, err := readPublishBudget(ctx, tx, now)
 		if err != nil {
 			return err
