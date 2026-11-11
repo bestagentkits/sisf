@@ -167,7 +167,8 @@ const (
 	// not publish by itself.
 	RuleReleaseUnit Rule = "release.unit_not_self_publishable"
 	// RuleBudgetAlert: the budget is unlimited and the Owner has neither set
-	// an alert threshold nor chosen to have none.
+	// an alert threshold nor chosen to have none, or an alert threshold is
+	// set and declined at once.
 	RuleBudgetAlert Rule = "budget.alert_undecided"
 	// RuleModelRoutesEmpty: no kind of step has a model route.
 	RuleModelRoutesEmpty Rule = "model_routes.empty"
