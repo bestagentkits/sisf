@@ -246,3 +246,26 @@ func TestDefaultLimitsArePerHour(t *testing.T) {
 		t.Fatalf("a report an hour after the window began: %d", rec.Code)
 	}
 }
+
+// Invisible characters are dropped before the text is redacted and
+// fingerprinted: a secret split by a zero-width space, a soft hyphen or a
+// byte order mark is stored redacted, the same report with or without
+// them is one report, and a text of nothing but them is blank.
+func TestInvisibleCharactersAreDroppedBeforeRedaction(t *testing.T) {
+	t.Parallel()
+	h, store, _ := newHandler(t, nil)
+	secret := "gh" + "p_" + strings.Repeat("A1b2", 9)
+	split := strings.Join(strings.Split(secret, ""), "\u200b\u00ad\ufeff")
+	first := post(h, "198.51.100.1", jsonType, `{"title":"Login\u200b fails","body":"token `+split+`"}`)
+	again := post(h, "198.51.100.2", jsonType, `{"title":"Login fails","body":"token `+secret+`"}`)
+	if first.Code != http.StatusAccepted || again.Code != http.StatusOK {
+		t.Fatalf("first %d %s, again %d %s; want one report counted twice", first.Code, first.Body, again.Code, again.Body)
+	}
+	got := store.All()
+	if len(got) != 1 || strings.Contains(got[0].Body, secret) || strings.ContainsAny(got[0].Title+got[0].Body, "\u200b\u00ad\ufeff") {
+		t.Fatalf("stored = %+v", got)
+	}
+	if rec := post(h, "198.51.100.3", jsonType, `{"title":"\u200b\ufeff","body":"b"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a title of invisible characters only: %d, want refused", rec.Code)
+	}
+}

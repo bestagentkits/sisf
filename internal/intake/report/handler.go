@@ -3,8 +3,8 @@
 // limits how often each client and everyone together may report, how large
 // a report may be, and stores a report seen again only once.
 //
-// A report is data. Its text is redacted, normalized for deduplication and
-// stored; nothing in it is interpreted, obeyed or echoed back, and storing
+// A report is data. Its invisible characters are dropped, then its text is
+// redacted, normalized for deduplication and stored; nothing in it is interpreted, obeyed or echoed back, and storing
 // it grants nothing to anyone.
 //
 // The handler is not mounted here: the wiring of the control zone mounts it
@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/telemetry"
@@ -122,7 +123,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, status, "error", message)
 		return
 	}
-	title, body := h.cfg.Redactor.Redact(in.Title), h.cfg.Redactor.Redact(in.Body)
+	visibleTitle, visibleBody := Visible(in.Title), Visible(in.Body)
+	if strings.TrimSpace(visibleTitle) == "" || strings.TrimSpace(visibleBody) == "" {
+		reply(w, http.StatusBadRequest, "error", "a report needs a title of at most 200 characters and a body, as printable text")
+		return
+	}
+	title, body := h.cfg.Redactor.Redact(visibleTitle), h.cfg.Redactor.Redact(visibleBody)
 	fp := fingerprint(title, body)
 	stored, created, err := h.cfg.Store.Save(r.Context(), Report{
 		ID: "report-" + fp[:16], Fingerprint: fp, Title: title, Body: body, ReceivedAt: now,
@@ -141,6 +147,25 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, http.StatusAccepted, "accepted", stored.ID)
+}
+
+// Visible drops from text the control characters other than line breaks
+// and tabs, and every format character (Unicode category Cf, which holds
+// the zero-width space, the soft hyphen and the byte order mark). Such a
+// character shows nothing, so it could split a secret to slip it past
+// redaction and then be dropped where the text is shown, joining the
+// secret again: the text is made visible before it is redacted and
+// fingerprinted, and so stored and published as a reader sees it.
+func Visible(text string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return r
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			return -1
+		}
+		return r
+	}, text)
 }
 
 // fingerprint hashes the content without regard to letter case or spacing.

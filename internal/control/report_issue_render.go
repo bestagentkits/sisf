@@ -78,9 +78,10 @@ func fenced(text string) string {
 }
 
 // reportIssueTitle is the title of the issue for r: a fixed prefix and the
-// report's title on one line, defused and bounded.
-func reportIssueTitle(r report.Report) string {
-	title := strings.Join(strings.Fields(defuse(r.Title, false)), " ")
+// report's title on one line, defused, redacted once more by redact and
+// bounded.
+func reportIssueTitle(r report.Report, redact func(string) string) string {
+	title := strings.Join(strings.Fields(redact(defuse(r.Title, false))), " ")
 	if title == "" {
 		title = "(no title)"
 	}
@@ -91,10 +92,12 @@ func reportIssueTitle(r report.Report) string {
 // that names the report, says under a fixed header where the text came from
 // and that nothing checked it, and gives the text defused in fenced blocks,
 // with only when it was received and the report's ID: nothing about who
-// sent it.
-func reportIssueBody(r report.Report) string {
-	title := defuse(r.Title, false)
-	body := cut(defuse(r.Body, true), maxReportIssueBodyRunes, "\n[cut to "+fmt.Sprint(maxReportIssueBodyRunes)+" characters]")
+// sent it. The text is redacted by redact once more after it was defused,
+// before it is cut, so no secret is shown whole or in part that defusing
+// joined.
+func reportIssueBody(r report.Report, redact func(string) string) string {
+	title := redact(defuse(r.Title, false))
+	body := cut(redact(defuse(r.Body, true)), maxReportIssueBodyRunes, "\n[cut to "+fmt.Sprint(maxReportIssueBodyRunes)+" characters]")
 	var b strings.Builder
 	b.WriteString(report.IssueMarker(r.ID) + "\n")
 	b.WriteString("### Unverified report from the public report endpoint\n\n")

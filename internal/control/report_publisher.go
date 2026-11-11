@@ -213,10 +213,14 @@ func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (p
 	}); err != nil {
 		return false, false, nil, err
 	}
+	// The text is made visible and redacted again, as the route does, in
+	// case it was stored by an older route, and redacted once more after
+	// it is defused for GitHub.
 	shown := stored.Report
-	shown.Title, shown.Body = p.Redactor.Redact(shown.Title), p.Redactor.Redact(shown.Body)
+	shown.Title = p.Redactor.Redact(report.Visible(shown.Title))
+	shown.Body = p.Redactor.Redact(report.Visible(shown.Body))
 	issue, err := p.Issues.CreateIssue(ctx, p.Repo, github.NewIssue{
-		Title: reportIssueTitle(shown), Body: reportIssueBody(shown), Labels: []string{report.IssueLabel}})
+		Title: reportIssueTitle(shown, p.Redactor.Redact), Body: reportIssueBody(shown, p.Redactor.Redact), Labels: []string{report.IssueLabel}})
 	switch {
 	case refusesReport(err):
 		return false, false, err, nil
