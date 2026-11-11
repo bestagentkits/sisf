@@ -225,8 +225,9 @@ egress:
     - dl-cdn.alpinelinux.org
 
 # The model of each kind of step. The names are placeholders for the tiers a
-# deployment configures. QA runs on another provider or model than coding; a
-# deployment with a single route states same_model_route: true instead.
+# deployment configures. QA runs on another provider or model than every
+# coding and planning route; a deployment with a single route states
+# same_model_route: true instead.
 model_routes:
   routes:
     intake:

@@ -9,7 +9,7 @@ Status meanings: **present** means the file exists in this branch and its packag
 | ID | Test file | Status |
 |---|---|---|
 | SISF-01 | `internal/install/fresh_install_single_factory_test.go` (Standalone) and `internal/install/docker_lifecycle_test.go` (`TestFreshDockerInstallIsOneComposeProjectOfOneFactory`, Compose) | present (both modes against fakes of `go` and `docker`) |
-| SISF-02 | `tests/acceptance/issue_full_lifecycle_test.go` (with `tests/acceptance/candidate_pull_request_landing_test.go` and `candidate_pull_request_owner_cases_test.go` for the candidate's pull request, its merge after verification and the cases left for the Owner, `cmd/supervisor/stages/candidate_landing_github_answers_test.go` for a lost merge answer, a retried or refused merge, a refused pull request, one GitHub refuses to show and one the factory did not open, `tests/acceptance/changed_paths_listed_in_part_test.go` for a comparison GitHub may list only in part, `cmd/supervisor/stages/candidate_pull_request_account_test.go` for telling the factory's own pull request by its login, `tests/acceptance/qa_hold_visibility_and_spend_test.go` for the one progress comment, and `cmd/factoryd/wiring/progress_close_gate_test.go` for the issue closing only after that comment shows the end) | present |
+| SISF-02 | `tests/acceptance/issue_full_lifecycle_test.go` (with `tests/acceptance/candidate_pull_request_landing_test.go` and `candidate_pull_request_owner_cases_test.go` for the candidate's pull request, its merge after verification and the cases left for the Owner, `cmd/supervisor/stages/candidate_landing_github_answers_test.go` for a lost merge answer, a retried or refused merge, a refused pull request, one GitHub refuses to show and one the factory did not open, `tests/acceptance/changed_paths_listed_in_part_test.go` for a comparison GitHub may list only in part, `cmd/supervisor/stages/candidate_pull_request_account_test.go` for telling the factory's own pull request by its login and adopting one an earlier build opened without the run's marker, `internal/supervisor/release/landing_due_cleared_test.go` for the record of a due landing being deleted when the issue closes, `cmd/factoryd/wiring/progress_restore_test.go` for the progress comment of a rolled-back run, `tests/acceptance/qa_hold_visibility_and_spend_test.go` for the one progress comment, and `cmd/factoryd/wiring/progress_close_gate_test.go` for the issue closing only after that comment shows the end) | present |
 | SISF-03 | `internal/intake/unauthorized_and_new_feature_test.go` | present |
 | SISF-04 | `tests/acceptance/duplicate_reordered_webhooks_test.go` (with `cmd/factoryd/wiring/control_reconcile_test.go` for reconciliation) | present |
 | SISF-05 | `internal/dispatcher/worker_crash_fencing_test.go` | present |
@@ -17,17 +17,17 @@ Status meanings: **present** means the file exists in this branch and its packag
 | SISF-07 | `internal/qa/hard_gate_overrides_score_test.go` | present |
 | SISF-08 | `internal/supervisor/release/publish_observed_revision_test.go` | present |
 | SISF-09 | `internal/supervisor/release/auto_rollback_restores_lkg_test.go` | present |
-| SISF-10 | `tests/acceptance/factory_self_update_zone3_test.go` | present |
+| SISF-10 | `tests/acceptance/factory_self_update_zone3_test.go` (with `tests/acceptance/release_units_owner_choice_test.go` and `cmd/supervisor/self_publishable_units_test.go` for `release.units`, `tests/acceptance/store_rules_need_governance_test.go` and `internal/supervisor/release/governance_change_refused_test.go` for the trusted control surface) | present |
 | SISF-11 | `internal/policy/unapproved_policy_change_ignored_test.go` | present |
 | SISF-12 | `internal/auth/sso_oauth_negative_test.go` | present (against fakes, not real Google SSO) |
 | SISF-13 | `tests/acceptance/five_surface_parity_test.go` (with `cross_surface_approval_test.go` and `step_up_and_write_limits_test.go`) | present (CLI, REST, MCP, WebMCP tool path and dashboard forms against the wired control server and fake identity provider) |
-| SISF-14 | `internal/budget/budget_modes_test.go` (with `internal/budget/budget_status_test.go` `TestUnverifiedUsageAndAMissingHardCapAreShown` for a provider without a hard cap) | present |
+| SISF-14 | `internal/budget/budget_modes_test.go` (with `internal/budget/budget_status_test.go` `TestUnverifiedUsageAndAMissingHardCapAreShown` for a provider without a hard cap; `internal/budget/run_reservation_id_test.go`, `cmd/factoryd/wiring/control_stopped_run_reservation_test.go` and `cmd/supervisor/stages/run_close_own_reservation_test.go` for closing a run's reservation by its ID, never the one its run record names; `cmd/supervisor/stages/run_close_retry_test.go` and `cmd/supervisor/stages/run_close_due_bound_test.go` for retrying a failed close and abandoning one that can never succeed) | present |
 | SISF-15 | `tests/acceptance/two_factories_same_upstream_test.go` | present |
 | SISF-16 | `internal/conformance/backend_capability_matrix_test.go` | present |
 | SISF-17 | `internal/decision/no_benefit_signal_ignored_test.go` | present |
 | SISF-18 | `internal/agentrun/fresh_agent_context_rebuild_test.go` | present |
 | SISF-19 | `tests/acceptance/prompt_injection_containment_test.go` | present |
-| SISF-20 | `internal/supervisor/release/hold_without_metrics_or_rollback_test.go` | present |
+| SISF-20 | `internal/supervisor/release/hold_without_metrics_or_rollback_test.go` (with `tests/acceptance/release_hold_visibility_test.go` for how a held release shows and how the Owner lets it go ahead, `internal/supervisor/release/low_traffic_synthetic_hold_test.go` and `cmd/supervisor/synthetic_program_test.go` for the synthetic suite) | present |
 
 ## A Standalone release runs the candidate's own program (ADR 0022)
 
@@ -39,6 +39,32 @@ Status meanings: **present** means the file exists in this branch and its packag
 | Stored programs that are neither the last known good release nor in flight are removed | `cmd/supervisor/program_retention_test.go` | present |
 | The launcher starts the program it is given; `sisf up` keeps a promotion whose program is in the store | `internal/install/standalone_promoted_program_test.go` | present |
 | The smoke run's build command exports the one program its digest names | `tests/smoke/build_candidate_script_unit_test.go` (build tag `smoke`; needs a local `go` and `git`) | present |
+
+## Every release ends in a state the Owner can act on (ADR 0023)
+
+| Behaviour | Test file | Status |
+|---|---|---|
+| A refused release blocks its issue until the Owner retries it; only a refusal that judged the candidate blocks it | `tests/acceptance/release_hold_visibility_test.go`, `internal/supervisor/release/unverified_candidate_refused_test.go` | present |
+| Only the control zone takes the new step, on SQLite and PostgreSQL, and migration 10 upgrades a store with records in every state | `pkg/state/sqlstore/release_refusal_step_test.go` | present |
+| A zone role cannot forge a lease token with plain SQL (PostgreSQL) | `pkg/state/sqlstore/lease_step_trigger_test.go` | present |
+| A record's run, attempt, candidate, release and lease token change only as the step sets them (PostgreSQL) | `pkg/state/sqlstore/record_step_columns_test.go` | present |
+| An unwatched release is restored to the LKG and its issue blocked, at startup and through the supervisor's own pass | `internal/supervisor/release/release_recovery_test.go`, `tests/acceptance/release_recovery_after_restart_test.go` | present |
+| The Owner's retry returns a refused, interrupted, unjudged or rolled-back release to Ready | `pkg/core/statemachine/retry_guard_test.go`, `tests/acceptance/exhausted_run_blocked_test.go` | present |
+| A run that used its attempts, or whose policy was superseded, blocks its issue | `tests/acceptance/exhausted_run_blocked_test.go`, `tests/acceptance/policy_superseded_mid_run_test.go` | present |
+| A process an earlier supervisor left is stopped by pid and start time before the LKG starts | `adapters/deploy/local/slot_records_test.go`, `cmd/supervisor/lkg_adoption_test.go` | present |
+| A held build is listed and its Owner reminded | `tests/acceptance/held_build_listing_test.go`, `tests/acceptance/held_build_reminder_test.go` | present |
+| A sandboxed build that reports no SBOM or provenance is held before QA | `tests/acceptance/candidate_build_without_supply_chain_refs_test.go` | present |
+
+## Public bug reports
+
+| Behaviour | Test file | Status |
+|---|---|---|
+| Reports are kept in the control store across a restart, bounded, and pruned after their retention | `internal/control/report_store_test.go` | present |
+| A stored report becomes one issue labelled `sisf:report`, its text inert; a refused report is given up after a few tries and an outage counts against none; a full store makes room only from reports given up | `internal/control/report_publisher_test.go` | present |
+| Reports are published one batch a minute, and never by an install that names the factory by its ID only | `cmd/factoryd/wiring/control_report_publish_test.go`, `cmd/factoryd/wiring/control_report_publish_id_only_test.go` | present |
+| `factory.status` counts reports waiting and given up | `cmd/factoryd/wiring/control_report_status_test.go` | present |
+| A report issue is never taken up alone, and when asked for it is the request of someone without access | `internal/intake/report_issue_requester_test.go` | present |
+| Floods of sign-ins, device logins and client registrations, one request per source, are refused rather than evicting a person's | `internal/auth/sign_in_exhaustion_negative_test.go`, `internal/control/api/device_start_exhaustion_negative_test.go`, `internal/oauthas/client_registration_exhaustion_negative_test.go` | present |
 
 ## Additional security requirements (brief §7)
 
@@ -56,7 +82,8 @@ Status meanings: **present** means the file exists in this branch and its packag
 ## Not covered by unit-level proof yet
 
 - End-to-end lifecycle on Compose and Standalone: `tests/e2e/` behind the `e2e` build tag, run by `make e2e` (not in CI). Every scenario signs the Owner in at the fake identity provider; there is no Owner token. Each mode also runs a surfaces scenario (`tests/e2e/surfaces_front_door_scenario_test.go`): sign-in, REST with a personal access token, an MCP read with an OAuth PKCE token, `/webmcp/actions.json`, and a dashboard approval after a targeted step-up. The surfaces are reached at control's external URL, not through the edge. One local `make e2e` run passed in both modes; that is a single run, not a CI gate.
-- Real smoke run: `tests/smoke/` behind the `smoke` tag (`make smoke`, `SISF_SMOKE_REPO=bestagentkits/sisf-sandbox` only, never in CI). It is unattended: it installs with `sisf init --dev`, real Claude and Codex agents and `--exec local`, and approves the CLI sign-in itself. Only its command construction and redaction are unit-tested; the paid run has not been run.
+- Real smoke run: `tests/smoke/` behind the `smoke` tag (`make smoke`, `SISF_SMOKE_REPO=bestagentkits/sisf-sandbox` only, never in CI). It is unattended: it installs with `sisf init --dev`, a real Claude coder and a Codex QA judge run through a container launcher, and a Docker build sandbox (`--exec docker`), and approves the CLI sign-in itself (`tests/smoke/factory_command_lines_test.go`). Only its command construction and redaction are unit-tested; a paid run has not passed end to end on this tip.
+- `tests/e2e/compose_self_update_zone3_test.go` expects a change to the factory's own control unit to be refused; it has not been run in Docker since that expectation changed.
 - Release rehearsals: the same run with `SISF_SMOKE_REHEARSAL=1`, a scripted coder and a fake QA judge, so no model is paid for; the build sandbox, the release pipeline with its default windows, the local deploy backend and GitHub are real. Good candidate (`tests/smoke/deployed_candidate_test.go`, `lifecycle_run_test.go`): its changed page is served through the edge under its own digest while its pull request is open, the issue closes, the pull request merges, and the promoted program still serves after `sisf restart` and after `sisf down` and `sisf up`. Bad candidate (`SISF_SMOKE_REHEARSAL_CANDIDATE=bad`, `tests/smoke/release_rollback_rehearsal_test.go`): it passes the fake judge, fails the synthetic suite, is rolled back to the last known good release, its pull request stays unmerged and the issue ends Blocked with the reason. Each passed once locally on darwin/arm64; that is a single run each, not a CI gate. The rollback restored the installed release; a rollback to an earlier promoted program is covered only by `cmd/supervisor/local_programs_test.go`.
 - The Decision Layer runs in the control process when `SISF_EDGE_COUNTERS_URL` is set, reading with the edge's read-only counters token (`cmd/factoryd/wiring/decision_layer_test.go` covers rules only, the System One section and the interval). SISF-17 and requirement 4 cover its negative rules. It has not been proven against a live edge.
 - Remote MCP and WebMCP are tested in process and by the e2e surfaces scenario, always against the fake identity provider; no real provider has been tried.
