@@ -9,8 +9,8 @@ import (
 
 // A change to the factory's own control plane follows the governed path:
 // built, judged with a signed receipt and handed to the release pipeline,
-// which holds it because the control unit's last known good release is not
-// one it can observe; nothing of the factory is replaced and the
+// which refuses it because the install's release.units names the
+// application alone; nothing of the factory is replaced and the
 // application keeps serving. A change to the trusted QA baseline is refused
 // as a governance change, whatever QA said, and nothing is deployed.
 func TestComposeGovernsChangesToTheFactoryItself(t *testing.T) {
@@ -27,7 +27,7 @@ func TestComposeGovernsChangesToTheFactoryItself(t *testing.T) {
 	if !strings.Contains(strings.Join(journey, ">"), "Developing>QAEvaluation>ReleaseCandidate") {
 		t.Fatalf("the dashboard change went %v", journey)
 	}
-	if rec.Result != "held" {
+	if rec.Result != "refused" || !strings.HasPrefix(rec.Reason, "APPROVAL_REQUIRED") || !strings.Contains(rec.Reason, "release.units") {
 		t.Fatalf("the release of the control unit ended %+v", rec)
 	}
 	if deployed := d.deployed(t, "control", true); len(deployed) != 0 {
