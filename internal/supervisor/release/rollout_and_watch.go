@@ -38,8 +38,9 @@ func (p *Pipeline) roll(ctx context.Context, r *rollout) (string, error) {
 }
 
 // takeAllTraffic proves the release serves all traffic: the revision read
-// from the running system is the release, healthy, and its metrics can be
-// read. Only then is the rollout written as healthy.
+// from the running system, in an observation made since the rollout
+// started, is the release, healthy, and its metrics can be read. Only then
+// is the rollout written as healthy.
 func (p *Pipeline) takeAllTraffic(ctx context.Context, r *rollout) (string, error) {
 	observed, err := p.cfg.Backend.ObservedRevision(ctx, r.unit)
 	if err != nil {
@@ -49,6 +50,10 @@ func (p *Pipeline) takeAllTraffic(ctx context.Context, r *rollout) (string, erro
 	if !observed.Matches(r.rev) {
 		return "the revision observed running is not the release, or it is not healthy", nil
 	}
+	started := rolloutStartedAt(r.h.record)
+	if observed.ObservedAt.Before(started) {
+		return "the running system answered with an observation made before the rollout, so the release cannot be observed", nil
+	}
 	metrics, err := p.cfg.Backend.Measure(ctx, r.rev, p.cfg.Monitor.Window)
 	if err != nil {
 		return "the release cannot be measured once it took all traffic", nil
@@ -56,6 +61,7 @@ func (p *Pipeline) takeAllTraffic(ctx context.Context, r *rollout) (string, erro
 	proof := statemachine.CanaryProof{
 		IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Released: r.rev.Digest, Observed: observed.Digest,
 		MetricsAvailable: true, Healthy: metrics.Healthy && metrics.CriticalErrors == 0, ObservedAt: observed.ObservedAt,
+		RolloutStartedAt: started,
 	}
 	if !proof.Healthy {
 		return "critical health: the release failed its health check once it took all traffic", nil
@@ -67,6 +73,17 @@ func (p *Pipeline) takeAllTraffic(ctx context.Context, r *rollout) (string, erro
 			return proof, nil
 		})},
 	})
+}
+
+// rolloutStartedAt is when the store wrote the start of the rollout the
+// record is in: the record's own stamp, written with the step into Canary,
+// which no later write changes while the record stays there. A record in
+// any other state yields no instant, and the canary guard refuses it.
+func rolloutStartedAt(record core.StateRecord) time.Time {
+	if record.State != core.StateCanary {
+		return time.Time{}
+	}
+	return record.UpdatedAt
 }
 
 // watch observes the release window by window at one traffic share. It

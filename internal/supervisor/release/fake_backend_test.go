@@ -56,6 +56,9 @@ type fakeBackend struct {
 	// runningInstead, when set, is what the running system reports whatever
 	// the calls answered.
 	runningInstead core.ReleaseDigest
+	// observedAt, when set, is the instant every observation is dated with,
+	// as a backend that answers from a stale cache would date it.
+	observedAt time.Time
 
 	capsErr, observeErr, stageErr, rollbackErr error
 	measureErr                                 map[core.ReleaseDigest]error
@@ -153,7 +156,11 @@ func (b *fakeBackend) ObservedRevision(_ context.Context, unit string) (deploy.O
 	if b.runningInstead != "" {
 		running = b.runningInstead
 	}
-	return deploy.Observed{Unit: unit, Digest: running, Healthy: !b.unhealthy[running], ObservedAt: b.clock.Now()}, nil
+	at := b.clock.Now()
+	if !b.observedAt.IsZero() {
+		at = b.observedAt
+	}
+	return deploy.Observed{Unit: unit, Digest: running, Healthy: !b.unhealthy[running], ObservedAt: at}, nil
 }
 
 func (b *fakeBackend) Rollback(_ context.Context, to deploy.Revision) error {

@@ -59,8 +59,8 @@ func checkRollout(t core.Transition, p RolloutProof) error {
 
 // checkCanary requires the observation to be of the issue, the run and the
 // release of the transition, read with its metrics, of the released digest
-// running and healthy, and dated no later than now. Missing metrics mean
-// hold.
+// running and healthy, and dated within the rollout: no earlier than its
+// start and no later than now. Missing metrics mean hold.
 func checkCanary(t core.Transition, p CanaryProof, now time.Time) error {
 	switch {
 	case t.RunID == "" || t.ReleaseDigest == "":
@@ -79,6 +79,10 @@ func checkCanary(t core.Transition, p CanaryProof, now time.Time) error {
 		return refuse(GuardCanaryHealth, t, "the observation is not dated")
 	case p.ObservedAt.After(now):
 		return refuse(GuardCanaryHealth, t, "the observation is dated after the current instant")
+	case p.RolloutStartedAt.IsZero() || p.RolloutStartedAt.After(now):
+		return refuse(GuardCanaryHealth, t, "it is not known when the rollout started")
+	case p.ObservedAt.Before(p.RolloutStartedAt):
+		return refuse(GuardCanaryHealth, t, "the observation was made before the rollout started and says nothing about it")
 	}
 	if !p.Healthy {
 		refusal := refuse(GuardCanaryHealth, t, "the rolled-out revision is not healthy")

@@ -39,6 +39,7 @@ func validCanary() CanaryProof {
 		MetricsAvailable: true,
 		Healthy:          true,
 		ObservedAt:       testNow.Add(-time.Minute),
+		RolloutStartedAt: testNow.Add(-10 * time.Minute),
 	}
 }
 

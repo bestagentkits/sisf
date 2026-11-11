@@ -74,6 +74,11 @@ type CanaryProof struct {
 	// threshold. ObservedAt must not lie after the current instant.
 	Healthy    bool
 	ObservedAt time.Time
+	// RolloutStartedAt is when the store wrote the start of this rollout,
+	// taken from the record, never from the backend. ObservedAt must not lie
+	// before it: an observation made before the rollout, such as one of an
+	// earlier release of the same digest, says nothing about this one.
+	RolloutStartedAt time.Time
 }
 
 // CanaryGuard proves that a rollout went well: the released revision was
