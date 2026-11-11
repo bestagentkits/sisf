@@ -74,8 +74,12 @@ func checkEmptyTarget(dir string) error {
 		return nil
 	}
 	shown := others[:min(len(others), 3)]
-	return invalidf("the install directory %s already holds %d other entries (%s); choose a new or empty directory with --dir",
-		dir, len(others), strings.Join(shown, ", "))
+	noun := "entries"
+	if len(others) == 1 {
+		noun = "entry"
+	}
+	return invalidf("the install directory %s already holds %d other %s (%s); choose a new or empty directory with --dir",
+		dir, len(others), noun, strings.Join(shown, ", "))
 }
 
 // sourceModule is the module of the checkout `sisf up` builds from.

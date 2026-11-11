@@ -9,7 +9,7 @@ Real messages of `sisf`, `sisf doctor` and `factoryd`, what causes them and what
 | Message | Cause | Fix |
 |---|---|---|
 | `the value of SISF_STATE_DSN has a character an env file cannot carry safely` | the install directory's path has a character the env files cannot carry (`internal/install/secrets.go`; a Standalone install accepts single spaces); the message names the derived variable, not the path | use a plain path; a failed `init` leaves nothing behind |
-| `sisf init: the install directory <dir> already holds N other entries (...); choose a new or empty directory with --dir` (observed, exit 2) | `init` in a directory that holds other files | choose a new or empty directory |
+| `sisf init: the install directory <dir> already holds N other entries (...); choose a new or empty directory with --dir`, or `1 other entry` (observed, exit 2) | `init` in a directory that holds other files | choose a new or empty directory |
 | ``sisf init: no source checkout of sisf was found: run sisf from the checkout, or pass --source with its path; every `sisf up` builds the factory from it`` (observed, exit 2) | `init` ran outside a checkout of this repository | run it from the checkout, or pass `--source` |
 | `sisf init: a real install acts for a GitHub App and cannot start without it; pass --github-installation-id N (...) and --github-app-login LOGIN (...)` (observed, exit 2) | a real install without its GitHub App installation and account | pass both flags ([create the install](install.md#4-create-the-install)) |
 | `sisf: ALREADY_EXISTS: an install already exists in <dir>` (observed) | `init` on an existing install; nothing was changed | `sisf up --dir <dir>` starts it; to start over, `sisf down -v` and delete `<dir>` |

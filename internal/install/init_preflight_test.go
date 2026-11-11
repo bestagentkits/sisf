@@ -225,3 +225,20 @@ func TestFindSourceWalksUpToThisProjectsCheckout(t *testing.T) {
 		t.Fatalf("FindSource outside a checkout = %q", got)
 	}
 }
+
+func TestInitNamesTheEntriesOfADirectoryThatIsNotEmpty(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, tc := range []struct{ name, want string }{
+		{"notes.txt", "already holds 1 other entry (notes.txt)"},
+		{"todo.txt", "already holds 2 other entries (notes.txt, todo.txt)"},
+	} {
+		if err := os.WriteFile(filepath.Join(dir, tc.name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := checkEmptyTarget(dir)
+		if !core.HasCode(err, core.CodeInvalidArgument) || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("checkEmptyTarget = %v, want %q", err, tc.want)
+		}
+	}
+}
