@@ -76,6 +76,12 @@ func handKeptProtectedPaths() []string {
 		// The installer, which creates the zone roles, keys and trust roots
 		// and builds every program, and the CI that runs on the repository.
 		"internal/install/", "cmd/sisf/", ".github/",
+		// The edge, which decides which release receives traffic and is
+		// what a rollback switches, and how it is built.
+		"cmd/edge/", "build/edge.Dockerfile",
+		// The module's dependencies: a changed version changes what every
+		// trusted binary links without touching one of its directories.
+		"go.mod", "go.sum",
 	}
 }
 
