@@ -59,7 +59,35 @@ func writeManifest(path string, m *manifest.Manifest) error {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return unavailablef(err, "cannot read %s", path)
 	}
+	old, err := os.ReadFile(path)
+	switch {
+	case err == nil && bytes.Equal(old, buf.Bytes()):
+		return nil
+	case err == nil && m.Mode == manifest.ModeDocker:
+		// The containers mount this one file, and a mount follows the file
+		// it was made from, not the name: a manifest renamed into place
+		// would leave every running container reading the old one.
+		return rewriteMountedFile(path, buf.Bytes())
+	}
 	return replaceFile(path, buf.Bytes(), mode)
+}
+
+// rewriteMountedFile writes data into the file path already names and syncs
+// it. It is not atomic: a crash can leave a cut manifest, which does not
+// parse and is written again by the next "sisf up".
+func rewriteMountedFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return unavailablef(err, "cannot write %s", path)
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if err = errors.Join(err, f.Close()); err != nil {
+		return unavailablef(err, "cannot write %s", path)
+	}
+	return nil
 }
 
 // replaceFile writes data to path with mode as a whole: to a new file

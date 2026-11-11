@@ -70,3 +70,41 @@ func TestTheManifestIsReplacedWholeNeverRewrittenInPlace(t *testing.T) {
 		}
 	}
 }
+
+// The containers of a Docker install mount the manifest as one file, and a
+// mount follows the file, not its name: a changed manifest must reach the
+// file a running container already holds, and an unchanged one must leave
+// that file alone.
+func TestADockerManifestIsWrittenIntoTheFileItsContainersMount(t *testing.T) {
+	t.Parallel()
+	o, err := testOptions(manifest.ModeDocker).normalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "factory.yaml")
+	if err := writeManifest(path, buildManifest(o)); err != nil {
+		t.Fatal(err)
+	}
+	mounted := filepath.Join(t.TempDir(), "mounted")
+	if err := os.Link(path, mounted); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManifest(path, buildManifest(o)); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := os.Stat(path); err != nil || !os.SameFile(before, after) || !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("an unchanged manifest was written again: %v", err)
+	}
+	changed := buildManifest(o)
+	changed.FactoryID = "changed"
+	if err := writeManifest(path, changed); err != nil {
+		t.Fatal(err)
+	}
+	if back, err := manifest.ParseFile(mounted); err != nil || back.FactoryID != "changed" {
+		t.Fatalf("the mounted file reads back as %v, %v; want the changed manifest", back, err)
+	}
+}
