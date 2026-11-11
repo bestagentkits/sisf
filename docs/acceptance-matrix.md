@@ -60,7 +60,7 @@ Status meanings: **present** means the file exists in this branch and its packag
 | A candidate that builds the serving program is refused, not held | `internal/supervisor/release/same_program_as_serving_refused_test.go` | present |
 | An emergency stop leaves releases in flight to the supervisor's recovery | `internal/supervisor/killswitch/release_in_flight_not_held_test.go` | present |
 | Label names are read without regard to case | `internal/intake/labels_test.go` (`TestLabelsAreReadWithoutRegardToCase`), `pkg/github/github_test.go` (`TestHasLabelIgnoresCase`) | present |
-| The edge and the module's dependencies are protected `internal/supervisor/release/edge_and_dependencies_protected_test.go` (`TestTheEdgeAndTheModulesDependenciesAreProtected`) | present |
+| The edge and the module's dependencies are protected | `internal/supervisor/release/edge_and_dependencies_protected_test.go` (`TestTheEdgeAndTheModulesDependenciesAreProtected`) | present |
 | A held build is listed and its Owner reminded | `tests/acceptance/held_build_listing_test.go`, `tests/acceptance/held_build_reminder_test.go` | present |
 | A sandboxed build that reports no SBOM or provenance is held before QA | `tests/acceptance/candidate_build_without_supply_chain_refs_test.go` | present |
 
