@@ -69,3 +69,12 @@ func (l Layout) installed() (bool, error) {
 
 // LoadManifest reads the install's manifest.
 func (l Layout) LoadManifest() (*manifest.Manifest, error) { return manifest.ParseFile(l.Config()) }
+
+// SaveManifest writes m as the install's manifest, in the form sisf init
+// writes it. A manifest that departs from the schema is not written.
+func (l Layout) SaveManifest(m *manifest.Manifest) error {
+	if found := manifest.Validate(m); len(found) != 0 {
+		return invalidf("the manifest is not valid: %s", found[0])
+	}
+	return writeManifest(l.Config(), m)
+}
