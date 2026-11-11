@@ -116,7 +116,7 @@ func TestClosingARunsReservation(t *testing.T) {
 						Mode: core.BudgetCapped, Amount: amount, Status: c.status, IdempotencyKey: "claim/run-1", CreatedAt: f.clock.Now()}); err != nil {
 						return err
 					}
-					return dispatcher.CloseRunReservation(ctx, gate, tx, "res-1", dispatcher.RunSpend{ReportedCost: c.reported, Unpriced: c.unpriced})
+					return dispatcher.CloseReservationOfRun(ctx, gate, tx, "run-1", "res-1", dispatcher.RunSpend{ReportedCost: c.reported, Unpriced: c.unpriced})
 				})
 				if err != nil {
 					t.Fatal(err)

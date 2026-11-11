@@ -23,7 +23,7 @@ const (
 	// for evaluation and no agent works on it.
 	RunSucceeded RunStatus = "succeeded"
 	// RunExhausted means the run used every attempt it was allowed; its
-	// reservation was closed (see CloseRunReservation) and nothing more is
+	// reservation was closed (see CloseReservationOfRun) and nothing more is
 	// started for it.
 	RunExhausted RunStatus = "exhausted"
 )

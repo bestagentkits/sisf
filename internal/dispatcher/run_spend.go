@@ -71,7 +71,7 @@ type ReservationCloser interface {
 	Release(ctx context.Context, ledger core.BudgetLedger, reservationID string) error
 }
 
-// CloseRunReservation ends the reservation of a run that will start no
+// CloseReservationOfRun ends the reservation of a run that will start no
 // more coding attempts. The usage already booked stays in the ledger. When
 // some of the run's work reported no cost, the Owner's estimate stands for
 // it: the part of the reserved amount the reported cost does not cover is
@@ -80,31 +80,17 @@ type ReservationCloser interface {
 // own close. Otherwise the reservation is released. A reservation that is
 // no longer held or suspended is left as it is.
 //
-// It does not check whose reservation it closes; CloseReservationOfRun does,
-// and is what a caller holding the run's ID uses.
-func CloseRunReservation(ctx context.Context, gate ReservationCloser, ledger core.BudgetLedger, reservationID string, spend RunSpend) error {
-	return closeReservation(ctx, gate, ledger, "", reservationID, spend)
-}
-
-// CloseReservationOfRun is CloseRunReservation for the reservation a
-// record of run names. The record may be the agent zone's, which can be
-// rewritten there, so a reservation that belongs to another run is refused
-// with TAMPERED and left as it is.
+// A reservation that belongs to another run than run is refused with
+// TAMPERED and left as it is.
 func CloseReservationOfRun(ctx context.Context, gate ReservationCloser, ledger core.BudgetLedger, run core.RunID, reservationID string, spend RunSpend) error {
 	if run == "" {
 		return core.NewError(core.CodeInvalidArgument, "closing a reservation needs the run it belongs to")
 	}
-	return closeReservation(ctx, gate, ledger, run, reservationID, spend)
-}
-
-// closeReservation closes reservationID, refusing one that is not run's
-// when run is set.
-func closeReservation(ctx context.Context, gate ReservationCloser, ledger core.BudgetLedger, run core.RunID, reservationID string, spend RunSpend) error {
 	r, err := ledger.GetReservation(ctx, reservationID)
 	if err != nil {
 		return err
 	}
-	if run != "" && r.RunID != run {
+	if r.RunID != run {
 		return core.NewError(core.CodeTampered, "reservation "+reservationID+" belongs to another run than "+string(run))
 	}
 	if r.Status != core.ReservationHeld && r.Status != core.ReservationSuspended {

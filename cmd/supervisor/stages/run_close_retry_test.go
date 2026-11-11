@@ -48,7 +48,7 @@ func TestAFailedCloseOfARunsReservationIsTriedAgainUntilItSucceeds(t *testing.T)
 		var reservation core.Reservation
 		if err := agentZone.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 			var err error
-			reservation, err = gate.Reserve(ctx, tx, core.ReservationRequest{FactoryID: sqlstoretest.Factory, IssueID: issue, RunID: run, IdempotencyKey: "claim-7"})
+			reservation, err = gate.Reserve(ctx, tx, core.ReservationRequest{FactoryID: sqlstoretest.Factory, IssueID: issue, RunID: run, IdempotencyKey: dispatcher.ClaimIdempotencyKey(run)})
 			if err != nil {
 				return err
 			}

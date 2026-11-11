@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
+	"github.com/bestagentkits/sisf/internal/budget"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
@@ -81,7 +82,9 @@ func (s *QAStage) closeDueRuns(ctx context.Context) []error {
 }
 
 // closeRun closes the reservation of a run that QA passed or held: either
-// way it starts no more coding attempts. What its coding attempts and its
+// way it starts no more coding attempts. The reservation is the one the
+// run's claim made, derived from the run's ID; the one the dispatcher's
+// record names is not trusted, as the agent zone can rewrite the record. What its coding attempts and its
 // judgments reported is counted together. The run's close-due record, at
 // version due, is deleted with it.
 func (s *QAStage) closeRun(ctx context.Context, run core.RunID, due int64) error {
@@ -94,8 +97,8 @@ func (s *QAStage) closeRun(ctx context.Context, run core.RunID, due int64) error
 			return err
 		}
 		var record dispatcher.RunRecord
-		if json.Unmarshal(entry.Value, &record) != nil || record.RunID != run || record.ReservationID == "" {
-			return core.NewError(core.CodeTampered, "the dispatcher's record of run "+string(run)+" names no reservation")
+		if json.Unmarshal(entry.Value, &record) != nil || record.RunID != run {
+			return core.NewError(core.CodeTampered, "the dispatcher's record of run "+string(run)+" is not a record of that run")
 		}
 		judged, err := judgeSpend(ctx, tx, run)
 		if err != nil {
@@ -105,7 +108,7 @@ func (s *QAStage) closeRun(ctx context.Context, run core.RunID, due int64) error
 			ReportedCost: record.Spend.ReportedCost + judged.ReportedCost,
 			Unpriced:     record.Spend.Unpriced || judged.Unpriced,
 		}
-		if err := dispatcher.CloseRunReservation(ctx, s.Budget, tx, record.ReservationID, spend); err != nil {
+		if err := dispatcher.CloseReservationOfRun(ctx, s.Budget, tx, run, budget.RunReservationID(run), spend); err != nil {
 			return err
 		}
 		return tx.DeleteKV(ctx, Namespace, closeDuePrefix+string(run), due)
