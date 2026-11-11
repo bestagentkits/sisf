@@ -1,10 +1,13 @@
 package install
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -82,5 +85,31 @@ func TestAnUnreadableBootIDIsAnError(t *testing.T) {
 	}
 	if got, err := procStartIn(root, 4242); err == nil {
 		t.Fatalf("procStartIn without a boot id = %q, want an error", got)
+	}
+}
+
+// A process whose /proc entry may not be read, as for another user's
+// process under hidepid, is not one of this install's, which run as the
+// user who started them: it is gone to the caller, not an error that
+// fails up and down.
+func TestAProcEntryThatMayNotBeReadIsAnotherUsersProcess(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every /proc entry")
+	}
+	root := procTree(t, bootSample, 4242, "987654")
+	if err := os.Chmod(filepath.Join(root, "4242", "stat"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := procStartIn(root, 4242); err != nil || got != "" {
+		t.Fatalf("procStartIn of an unreadable entry = %q, %v; want gone", got, err)
+	}
+	for _, errno := range []syscall.Errno{syscall.EACCES, syscall.EPERM, syscall.ENOENT, syscall.ESRCH} {
+		if !procEntryGone(&fs.PathError{Op: "open", Path: "/proc/4242/stat", Err: errno}) {
+			t.Errorf("%v: not taken for a process that is not this install's", errno)
+		}
+	}
+	if procEntryGone(&fs.PathError{Op: "read", Path: "/proc/4242/stat", Err: syscall.EIO}) || procEntryGone(errors.New("other")) {
+		t.Error("an input/output error was taken for a gone process")
 	}
 }

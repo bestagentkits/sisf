@@ -42,7 +42,11 @@ func procStartIn(proc string, pid int) (string, error) {
 }
 
 // procEntryGone reports whether err, from reading a process's /proc
-// entry, says no process has that pid.
+// entry, says no process of this install's user has that pid: the entry
+// does not exist, or it may not be read, as for another user's process
+// under hidepid. The install's units run as the user who started them, so
+// such a process is not one of them.
 func procEntryGone(err error) bool {
-	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH)
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH) ||
+		errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
 }
