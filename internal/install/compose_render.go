@@ -51,6 +51,9 @@ type ComposeData struct {
 	// identities joined by commas.
 	Identity Identity
 	Owners   string
+	// ReconcileInterval is control's interval of reconciliation with
+	// GitHub, empty for its default.
+	ReconcileInterval string
 	// SupervisorAdmin is the supervisor's admin socket, in
 	// SupervisorAdminDir, the one volume the supervisor and control share.
 	SupervisorAdmin, SupervisorAdminDir string
@@ -87,7 +90,7 @@ func newComposeData(l Layout, o Options, images Images, bootstrap []string, host
 		BootstrapCommand: string(cmd), PostgresImage: PostgresImage,
 		AppDigest: string(app), AppContainer: deployedContainer(o.FactoryID, "app", app),
 		Host: host, Lifecycle: lifecycleChoice(o, manifest.ModeDocker),
-		Identity: o.Identity, Owners: strings.Join(o.Identity.Owners, ","),
+		Identity: o.Identity, Owners: strings.Join(o.Identity.Owners, ","), ReconcileInterval: reconcileString(o.ReconcileInterval),
 		SupervisorAdmin: supervisorAdminSocket, SupervisorAdminDir: supervisorAdminDir,
 		PortEdge: PortEdge, PortApp: PortApp, PortControl: PortControl, PortSupervisor: PortSupervisor,
 		PortDispatcher: PortDispatcher, PortFakeGitHub: PortFakeGitHub, PortPostgres: PortPostgres,

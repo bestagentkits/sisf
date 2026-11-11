@@ -99,7 +99,12 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if l.deploy == "local" {
 		l.adopter = &lkgAdopter{factory: m.FactoryID, backend: backend, lkg: book, signer: keys.Artifact, image: "local/" + string(m.FactoryID) + "/" + adoptedUnit}
 	}
-	gate, err := prgate.New(prgate.Config{Visibility: prgate.Visibility(l.visibility), AgentLogins: []string{settings.Self.Login}, Audit: log, Clock: d.clock})
+	// An install on the operator's gh login names no bot account of its own.
+	var agentLogins []string
+	if settings.Self.Login != "" {
+		agentLogins = []string{settings.Self.Login}
+	}
+	gate, err := prgate.New(prgate.Config{Visibility: prgate.Visibility(l.visibility), AgentLogins: agentLogins, Audit: log, Clock: d.clock})
 	if err != nil {
 		return nil, err
 	}

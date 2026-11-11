@@ -33,7 +33,10 @@ e2e:
 # QA agent run in containers the run provides), and TMPDIR outside $$HOME.
 # It runs the real release defaults, so it is slow. The build sandbox alone,
 # which spends nothing, is checked by SISF_SMOKE_SANDBOX_CHECK=1 with
-# -run TestBuildSandboxSelfCheck.
+# -run TestBuildSandboxSelfCheck. SISF_SMOKE_UP_ONLY=1 runs the install
+# alone, which spends nothing: preflight, build, sandbox, init, up, doctor
+# and the operator's sign-in, then teardown; no policy is approved, no issue
+# opened and no agent given a task.
 smoke:
 	go test -tags smoke ./tests/smoke/... -count=1 -v -timeout 150m
 

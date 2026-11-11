@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -86,6 +87,10 @@ type Options struct {
 	GitHubCredential string
 	// Debug publishes the state store on 127.0.0.1:7469 (Docker mode only).
 	Debug bool
+	// ReconcileInterval is how often control reconciles with GitHub; zero
+	// keeps control's default. A development install on the operator's gh
+	// login takes no webhooks and learns of issues only this way.
+	ReconcileInterval time.Duration
 }
 
 // normalize validates the options and fills the defaults.
@@ -140,6 +145,9 @@ func (o Options) normalize() (Options, error) {
 		return o, err
 	}
 	if err := o.BuildSandbox.normalize(o); err != nil {
+		return o, err
+	}
+	if err := checkReconcileInterval(o.ReconcileInterval); err != nil {
 		return o, err
 	}
 	if err := o.Budget.Validate(); err != nil {

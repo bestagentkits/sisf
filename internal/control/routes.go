@@ -25,14 +25,16 @@ const webhookPath = "/webhooks/github"
 // the Owner on the factory's own network. The caller owns the slice.
 func PublicPaths() []string { return []string{webhookPath, report.Path} }
 
-// routes builds the route table. /healthz, the webhook route and the report
-// route are open: the webhook route proves itself with its signature and the
+// routes builds the route table. /healthz, the webhook route (absent from a
+// server built without webhooks) and the report route are open: the webhook route proves itself with its signature and the
 // report route is rate limited. Every other route belongs to a surface, and
 // every surface authenticates its caller through the authentication service.
 func (s *Server) routes(surfaces Surfaces, clock core.Clock) (http.Handler, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
-	mux.Handle(webhookPath, s.webhook)
+	if s.webhook != nil {
+		mux.Handle(webhookPath, s.webhook)
+	}
 	if s.report != nil {
 		mux.Handle(report.Path, s.report)
 	}

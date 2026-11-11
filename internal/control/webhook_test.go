@@ -10,6 +10,7 @@ import (
 	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
+	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
 
 func TestVerifiedWebhookIsInTheInboxBeforeItIsAcknowledged(t *testing.T) {
@@ -226,6 +227,29 @@ func TestCommentsAreProjectedEditedAndRemoved(t *testing.T) {
 		}
 		if got := detail().Comments; len(got) != 20 {
 			t.Errorf("%d comments kept, want the newest 20", len(got))
+		}
+	})
+}
+
+// A server built without webhooks, for an install with no GitHub App
+// installation, has no webhook route: a signed delivery is not found and
+// nothing reaches the inbox. It still refuses to be told of an installation.
+func TestServerWithoutWebhooksHasNoWebhookRoute(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e := newEnv(t, db, func(c *control.Config) {
+			c.NoWebhooks, c.Webhook = true, github.ReceiverConfig{}
+		})
+		if rec := e.deliver(t, issueEvent{delivery: "d-1", action: "opened", number: 5, title: "x"}); rec.Code != http.StatusNotFound {
+			t.Fatalf("a delivery answered %d, want 404: %s", rec.Code, rec.Body.String())
+		}
+		if n := len(e.pendingDeliveries(t)); n != 0 {
+			t.Fatalf("%d inbox entries, want none", n)
+		}
+		cfg := e.cfg
+		cfg.Webhook.InstallationID = installationID
+		if _, err := control.New(cfg, e.deps); !core.HasCode(err, core.CodeInvalidArgument) {
+			t.Fatalf("no webhooks with an installation: %v, want INVALID_ARGUMENT", err)
 		}
 	})
 }

@@ -45,6 +45,7 @@ func TestTheRunsInitLineUsesTheTypedFlagsOfADevelopmentInstall(t *testing.T) {
 		"--exec": "docker", "--exec-docker-endpoint": c.sandbox.endpoint, "--exec-docker-network": c.sandbox.network,
 		"--egress-proxy": egressProxyURL, "--runner-image": c.sandbox.runnerImage,
 		"--qa-agent-binary": c.sandbox.qaLauncher, "--build-command": sandboxBuildCommand,
+		"--github-reconcile-interval": reconcileInterval,
 	} {
 		if got, ok := flagValue(args, flag); !ok || got != want {
 			t.Errorf("%s = %q (%v), want %q", flag, got, ok, want)

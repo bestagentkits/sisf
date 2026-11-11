@@ -24,7 +24,12 @@ import (
 // to GitHub, so it runs only under the smoke tag (`make smoke`), only with
 // SISF_SMOKE_REPO=bestagentkits/sisf-sandbox, and only after a preflight
 // that changes nothing. The report is written whatever the outcome.
+//
+// With SISF_SMOKE_UP_ONLY=1 the run spends nothing: it stops once the
+// factory is up, doctor passes and the operator is signed in, before any
+// policy is approved, any issue is opened or any agent is given a task.
 func TestRealLifecycleSmoke(t *testing.T) {
+	upOnly := os.Getenv(upOnlyEnv) == "1"
 	// The temporary directory is created first so that it is removed last,
 	// after the teardown and the report have read the install's logs.
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -41,11 +46,18 @@ func TestRealLifecycleSmoke(t *testing.T) {
 		switch {
 		case t.Failed():
 			rep.Outcome = "FAIL during " + stage
-			rep.Evidence = append(rep.Evidence, logTails(upLog, home)...)
+			evidence := failureEvidence(upLog, home, scrub)
+			for _, e := range evidence {
+				t.Log(e)
+			}
+			rep.Evidence = append(rep.Evidence, evidence...)
 		default:
 			rep.Outcome = "PASS"
 		}
-		path := filepath.Join(repoRoot(), reportRelPath)
+		if upOnly {
+			rep.Outcome += " (up only: nothing was spent)"
+		}
+		path := filepath.Join(repoRoot(), reportPath(upOnly))
 		if err := writeReport(path, rep, scrub); err != nil {
 			t.Errorf("the report could not be written to %s: %v", path, err)
 			return
@@ -114,7 +126,13 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	if out, err := r.run(ctx, 2*time.Minute, env, bins.sisf, "doctor", "--dir", home); err != nil {
 		r.fatalf("sisf doctor on the running factory: %v", err)
 	} else {
+		r.logf("sisf doctor:\n%s", out)
 		rep.check("sisf doctor", statusPass, scrub.clean(lastLines(out, 5)))
+	}
+	if upOnly {
+		upOnlySignIn(ctx, r, bins.sisf, home)
+		rep.phase("install, up, doctor and sign-in", started)
+		return
 	}
 	approvePolicy(ctx, r, home)
 	obs, err := newFactoryObserver(r, bins.sisf, home)
@@ -142,6 +160,26 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	stage, started = "assertions", time.Now()
 	assertOutcome(ctx, r, obs, facts.login, issue, number, rep.Started)
 	rep.phase("assertions", started)
+}
+
+// upOnlyEnv names the switch of the run that spends nothing.
+const upOnlyEnv = "SISF_SMOKE_UP_ONLY"
+
+// upOnlySignIn signs the operator in and proves the sign-in is good for the
+// surfaces with a read that starts nothing: the budget. It is the last step
+// of the run that spends nothing.
+func upOnlySignIn(ctx context.Context, r *commandRunner, sisf, home string) {
+	r.t.Helper()
+	obs, err := newFactoryObserver(r, sisf, home)
+	if err != nil {
+		r.fatalf("%v", err)
+	}
+	signInOperator(ctx, r, sisf, home, obs.env)
+	b, err := obs.budget(ctx)
+	if err != nil {
+		r.fatalf("budget.get as the signed-in operator: %v", err)
+	}
+	r.report.check("operator signed in", statusPass, "budget.get answered: "+b.summary())
 }
 
 // approvePolicy puts the sandbox's current head in force as the policy,

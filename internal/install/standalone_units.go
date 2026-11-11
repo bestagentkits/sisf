@@ -135,6 +135,7 @@ func (in *Installer) standaloneControlEnv(o Options) []string {
 		wiring.EnvSupervisorAdminAddr+"="+addr(PortSupervisor),
 		wiring.EnvEdgeCountersURL+"=http://"+addr(PortEdgeAdmin),
 		wiring.EnvLocalStoreDir+"="+in.Layout.Data("control", "secrets"))
+	env = append(env, o.reconcileEnv()...)
 	docs := filepath.Join(in.SourceDir, "docs")
 	if info, err := os.Stat(docs); err == nil && info.IsDir() && pathPattern.MatchString(docs) {
 		env = append(env, wiring.EnvDocsDir+"="+docs)

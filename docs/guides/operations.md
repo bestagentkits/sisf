@@ -63,7 +63,7 @@ An action that needs step-up (deciding an approval, a rollback, a budget change)
 
 ## Reconciliation with GitHub
 
-Besides webhooks, the control process asks GitHub for its repository's changed issues every `SISF_GITHUB_RECONCILE_INTERVAL` (10s to 1h, default `1m`; at most `SISF_GITHUB_RECONCILE_MAX_PAGES` pages of 100 issues, default 10) and hands any change no webhook delivered to intake through the same inbox, so a lost delivery is picked up within one interval, while a failed or slow poll (bounded at 30s) is retried an interval later without holding back webhooks or approvals (`cmd/factoryd/wiring/control_reconcile.go`).
+Besides webhooks, the control process asks GitHub for its repository's changed issues every `SISF_GITHUB_RECONCILE_INTERVAL` (10s to 1h, default `1m`; at most `SISF_GITHUB_RECONCILE_MAX_PAGES` pages of 100 issues, default 10) and hands any change no webhook delivered to intake through the same inbox, so a lost delivery is picked up within one interval (`sisf init --github-reconcile-interval` records the interval in `factory.yaml`, from where it reaches the control unit in both modes), while a failed or slow poll (bounded at 30s) is retried an interval later without holding back webhooks or approvals (`cmd/factoryd/wiring/control_reconcile.go`).
 
 ## State and budget
 

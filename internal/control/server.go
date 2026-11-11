@@ -25,6 +25,10 @@ type Config struct {
 	// Webhook configures the GitHub receiver behind the webhook route. Its
 	// Clock defaults to the server's clock.
 	Webhook github.ReceiverConfig
+	// NoWebhooks builds the server without a webhook route, for an install
+	// with no GitHub App installation whose deliveries could be checked. It
+	// excludes a Webhook configuration naming an installation.
+	NoWebhooks bool
 	// ProbeTimeout bounds one zone health probe. Zero means DefaultProbeTimeout.
 	ProbeTimeout time.Duration
 }
@@ -90,9 +94,14 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	if cfg.Webhook.Clock == nil {
 		cfg.Webhook.Clock = deps.Clock
 	}
-	receiver, err := github.NewReceiver(cfg.Webhook, newInboxSink(deps.Store, deps.Logger))
-	if err != nil {
-		return nil, err
+	var receiver *github.Receiver
+	switch {
+	case cfg.NoWebhooks && cfg.Webhook.InstallationID != 0:
+		return nil, core.NewError(core.CodeInvalidArgument, "a control server without webhooks cannot also accept an installation's deliveries")
+	case !cfg.NoWebhooks:
+		if receiver, err = github.NewReceiver(cfg.Webhook, newInboxSink(deps.Store, deps.Logger)); err != nil {
+			return nil, err
+		}
 	}
 	s := &Server{cfg: cfg, health: health, webhook: receiver, log: deps.Logger}
 	if deps.Report != nil {

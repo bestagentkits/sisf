@@ -22,6 +22,11 @@ const (
 	extAppLogin       = "github_app_login"
 	extAppID          = "github_app_id"
 	profileSim        = "sim"
+	// extDev and extGitHubAuthVia are written by the installer: a
+	// development install, and where its GitHub token comes from.
+	extDev           = "dev"
+	extGitHubAuthVia = "github_auth_via"
+	githubAuthGHCLI  = "gh-cli"
 )
 
 // SimulationProfile reports whether m declares the trusted simulation
@@ -34,12 +39,28 @@ type GitHubSettings struct {
 	APIURL         string
 	InstallationID int64
 	Self           github.Identity
+	// NoWebhooks marks an install with no GitHub App installation: a
+	// development install acting with the operator's own gh login, on
+	// loopback, where GitHub cannot deliver a webhook. It accepts no
+	// delivery at all and learns of issues only by reconciliation; its repository
+	// access is what the token itself is granted.
+	NoWebhooks bool
+}
+
+// operatorTokenOnly reports whether m is a development install that acts
+// with the operator's gh login and names no GitHub App installation.
+func operatorTokenOnly(m *manifest.Manifest) bool {
+	dev, _ := m.Extensions[extDev].(bool)
+	_, named := m.Extensions[extInstallationID]
+	return dev && m.Extensions[extGitHubAuthVia] == githubAuthGHCLI && !named
 }
 
 // GitHubSettingsOf reads the GitHub settings of an install. The simulation
 // profile defaults them to the fake GitHub's; a real install must state
 // them, because accepting a webhook of any installation or mistaking a
-// person for the factory's own account would let anyone drive it.
+// person for the factory's own account would let anyone drive it. The one
+// exception is a development install on the operator's gh login, which
+// has no installation to state: it takes no webhook at all.
 func GitHubSettingsOf(m *manifest.Manifest) (GitHubSettings, error) {
 	s := GitHubSettings{APIURL: github.DefaultBaseURL}
 	if url, ok := m.Extensions[extGitHubAPIURL].(string); ok && url != "" {
@@ -66,6 +87,10 @@ func GitHubSettingsOf(m *manifest.Manifest) (GitHubSettings, error) {
 			return s, core.NewError(core.CodeInvalidArgument, "extensions."+extAppID+" must be a positive number")
 		}
 		s.Self.ID = id
+	}
+	if !sim && operatorTokenOnly(m) {
+		s.NoWebhooks = true
+		return s, nil
 	}
 	switch {
 	case s.InstallationID == 0:

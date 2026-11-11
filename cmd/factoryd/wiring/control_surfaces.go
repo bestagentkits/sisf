@@ -18,6 +18,7 @@ import (
 	"github.com/bestagentkits/sisf/internal/oauthas"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
+	"github.com/bestagentkits/sisf/pkg/identity"
 	"github.com/bestagentkits/sisf/pkg/secrets"
 	"github.com/bestagentkits/sisf/pkg/telemetry"
 )
@@ -59,7 +60,7 @@ func publisherActor() core.Actor {
 
 // newSurfaces builds the one action registry and service and every surface
 // over them.
-func (c *Control) newSurfaces(ctx context.Context, sc SurfaceConfig, repo github.RepoRef, installation int64) (control.Surfaces, error) {
+func (c *Control) newSurfaces(ctx context.Context, sc SurfaceConfig, repo github.RepoRef, installation identity.Installation) (control.Surfaces, error) {
 	cfg := c.cfg
 	specs, err := actionsets.Specs()
 	if err != nil {

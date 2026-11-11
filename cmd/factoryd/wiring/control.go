@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/netip"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/bestagentkits/sisf/pkg/approvals"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
+	"github.com/bestagentkits/sisf/pkg/identity"
 	"github.com/bestagentkits/sisf/pkg/manifest"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
 )
@@ -109,7 +111,8 @@ type Control struct {
 	projected map[core.IssueRef]int64
 	// decisions runs the decision layer; nil when it is not configured.
 	decisions *decisionRunner
-	// reconcile polls GitHub for the changes no webhook delivered.
+	// reconcile polls GitHub for the changes no webhook delivered; on an
+	// install that takes no webhooks it is how issues arrive at all.
 	reconcile *reconciler
 }
 
@@ -190,21 +193,38 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 			store: cfg.Store, clock: cfg.Clock, log: cfg.Logger}
 	}
 	if cfg.Surfaces == nil {
+		if settings.NoWebhooks {
+			// The Owner's command-line use runs no passes; without the
+			// token's confirmed access there is no installation to stamp
+			// a reconciled change with.
+			c.reconcile = nil
+		}
 		return c, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), identityTimeout)
 	defer cancel()
-	surfaces, err := c.newSurfaces(ctx, *cfg.Surfaces, repo, settings.InstallationID)
+	installation, err := c.installation(ctx, settings, cfg.Surfaces.GitHubToken, repo)
+	if err != nil {
+		return nil, err
+	}
+	// On an install that takes no webhooks the confirmed access stands for
+	// the installation, so reconciled changes carry it as a delivery would.
+	c.reconcile.installation = installation.ID
+	surfaces, err := c.newSurfaces(ctx, *cfg.Surfaces, repo, installation)
 	if err != nil {
 		return nil, err
 	}
 	webhookSecret := cfg.WebhookSecret
+	webhook := github.ReceiverConfig{
+		Secrets:        func() []core.SecretValue { return []core.SecretValue{webhookSecret} },
+		InstallationID: settings.InstallationID, Repos: []github.RepoRef{repo}, Self: settings.Self,
+	}
+	if settings.NoWebhooks {
+		webhook = github.ReceiverConfig{}
+	}
 	if c.Server, err = control.New(control.Config{
 		FactoryID: m.FactoryID, ListenAddr: cfg.ListenAddr, AllowNonLoopback: cfg.AllowNonLoopback,
-		Webhook: github.ReceiverConfig{
-			Secrets:        func() []core.SecretValue { return []core.SecretValue{webhookSecret} },
-			InstallationID: settings.InstallationID, Repos: []github.RepoRef{repo}, Self: settings.Self,
-		},
+		Webhook: webhook, NoWebhooks: settings.NoWebhooks,
 	}, control.Deps{Store: cfg.Store, Probes: cfg.Probes, Clock: cfg.Clock, Logger: cfg.Logger, Surfaces: surfaces,
 		Report: &control.ReportRoute{
 			Store: report.NewMemoryStore(reportCapacity), Redactor: redact.New(redact.Config{}), TrustedProxies: cfg.TrustedProxies,
@@ -212,6 +232,17 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+// installation is the factory's access to its repository, as the role
+// authority checks it: the GitHub App installation the manifest names or,
+// on an install that takes no webhooks, the access GitHub confirms the
+// control zone's own token has.
+func (c *Control) installation(ctx context.Context, s GitHubSettings, token core.SecretValue, repo github.RepoRef) (identity.Installation, error) {
+	if !s.NoWebhooks {
+		return identity.Installation{ID: s.InstallationID, Owner: repo.Owner, Repo: repo.Name}, nil
+	}
+	return operatorTokenAccess(ctx, s.APIURL, token, repo, &http.Client{Timeout: identityTimeout})
 }
 
 // Run serves the control zone on ln and runs a pass every interval until

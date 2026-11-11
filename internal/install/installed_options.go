@@ -14,6 +14,7 @@ func (in *Installer) installedOptions(m *manifest.Manifest) (Options, error) {
 		Identity: identityOf(m),
 	}
 	o.GitHubAPIURL, _ = m.Extensions["github_api_url"].(string)
+	o.ReconcileInterval = reconcileIntervalOf(m)
 	o.lifecycleExtensions(m)
 	rec, ok, err := readBudgetConfirmation(in.Layout.BudgetConfirmation())
 	if err != nil {

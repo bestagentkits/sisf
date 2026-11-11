@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/bestagentkits/sisf/internal/install"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -23,6 +24,7 @@ var envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 type installFlags struct {
 	dir, mode, profile, repo, factoryID, source string
 	githubTokenEnv, githubAPIURL                string
+	reconcileInterval                           string
 	debug                                       bool
 	confirmUnlimited, noAlert                   bool
 	alertThreshold, budgetCap, runEstimate      string
@@ -40,6 +42,7 @@ func bindInstallFlags(fs *flag.FlagSet, f *installFlags) {
 	fs.StringVar(&f.source, "source", "", "source checkout to build from (default: the current directory)")
 	fs.StringVar(&f.githubTokenEnv, "github-token-env", "", "name of the environment variable holding the GitHub token")
 	fs.StringVar(&f.githubAPIURL, "github-api-url", "", "GitHub API root (https, or http on loopback)")
+	fs.StringVar(&f.reconcileInterval, "github-reconcile-interval", "", "how often control asks GitHub for changed issues, 10s to 1h (default 1m)")
 	fs.BoolVar(&f.debug, "debug", false, "docker mode: publish the state store on 127.0.0.1:7469")
 	fs.BoolVar(&f.confirmUnlimited, "confirm-unlimited", false, "confirm the unlimited budget")
 	fs.StringVar(&f.budgetCap, "budget-cap", "", "confirm a capped budget of this amount instead of the unlimited one")
@@ -96,6 +99,13 @@ func (f installFlags) options(dir string, getenv func(string) string) (install.O
 	o := install.Options{
 		Dir: dir, Mode: manifest.Mode(f.mode), Sim: f.profile == "sim", FactoryID: core.FactoryID(f.factoryID),
 		GitHubAPIURL: f.githubAPIURL, Debug: f.debug, Dev: f.identity.dev, GitHubCredential: f.identity.githubCredential,
+	}
+	if f.reconcileInterval != "" {
+		d, err := time.ParseDuration(f.reconcileInterval)
+		if err != nil || d <= 0 {
+			return o, usagef("--github-reconcile-interval %q must be a duration such as 15s", f.reconcileInterval)
+		}
+		o.ReconcileInterval = d
 	}
 	if f.profile != "" && f.profile != "sim" {
 		return o, usagef("--profile must be \"sim\" or empty")

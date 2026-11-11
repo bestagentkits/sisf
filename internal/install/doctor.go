@@ -104,6 +104,7 @@ func (in *Installer) Doctor(ctx context.Context) (Report, error) {
 	}
 	in.checkBudget(&c, m)
 	in.checkZones(ctx, &c, m)
+	checkGitHubEvents(&c, m)
 	in.checkGitHub(ctx, &c, m)
 	in.checkState(ctx, &c, m)
 	in.checkRollback(ctx, &c, m)

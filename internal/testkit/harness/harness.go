@@ -91,6 +91,10 @@ type Options struct {
 	// in place of the scripted one, from the materials the supervisor
 	// gathers of each candidate.
 	QAJudge func(materials agentjudge.MaterialsSource) (qa.Judge, error)
+	// OperatorToken makes the factory a development install that acts with
+	// the operator's own gh login: it names no GitHub App installation,
+	// takes no webhooks and learns of issues only by reconciliation.
+	OperatorToken bool
 }
 
 // Factory is one factory running in the test process.
@@ -168,6 +172,9 @@ func New(t testing.TB, opts Options) *Factory {
 		host = newHost(t)
 	}
 	f.host, f.GitHub, f.GitData = host, host.GitHub, host.GitData
+	if opts.OperatorToken {
+		m.Extensions = map[string]any{"profile": "default", "dev": true, "github_auth_via": "gh-cli", "github_api_url": host.URL}
+	}
 	if err := f.GitHub.AddRepo(f.Repo); err != nil {
 		t.Fatal(err)
 	}

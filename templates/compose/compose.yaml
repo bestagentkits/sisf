@@ -215,6 +215,9 @@ services:
       SISF_LISTEN: "0.0.0.0:{{ .PortControl }}"
       SISF_LISTEN_ALLOW_NON_LOOPBACK: "true"
       SISF_GITHUB_API_URL: "{{ .GitHubAPIURL }}"
+{{- if .ReconcileInterval }}
+      SISF_GITHUB_RECONCILE_INTERVAL: "{{ .ReconcileInterval }}"
+{{- end }}
       # /healthz of Zone 1 through the edge, and of Zone 2, for the zone report.
       SISF_APP_HEALTH_URL: "http://edge:{{ .PortEdge }}/healthz"
       SISF_DISPATCHER_HEALTH_URL: "http://dispatcher:{{ .PortDispatcher }}/healthz"

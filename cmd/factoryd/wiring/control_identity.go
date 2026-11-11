@@ -118,7 +118,7 @@ func origin(raw string) string {
 // newAuthorizer builds the role authority: local grants (the Owner) plus
 // each person's GitHub permission on the factory's repository, read with
 // the control zone's own GitHub token, never with the person's.
-func newAuthorizer(cfg IdentityConfig, signIn *auth.Service, repo github.RepoRef, installation int64, githubToken core.SecretValue,
+func newAuthorizer(cfg IdentityConfig, signIn *auth.Service, repo github.RepoRef, installation identity.Installation, githubToken core.SecretValue,
 	clock core.Clock) (*rbac.Authorizer, error) {
 	grants := rbac.NewGrants()
 	for _, owner := range cfg.Owners {
@@ -127,7 +127,7 @@ func newAuthorizer(cfg IdentityConfig, signIn *auth.Service, repo github.RepoRef
 		}
 	}
 	rc := rbac.Config{Grants: grants, Sessions: signIn, Clock: clock, DefaultRepo: repo.Owner + "/" + repo.Name,
-		Installations: staticInstallation{identity.Installation{ID: installation, Owner: repo.Owner, Repo: repo.Name}}}
+		Installations: staticInstallation{installation}}
 	if cfg.GitHub != nil && !githubToken.IsZero() {
 		api := cfg.GitHub.APIURL
 		if api == "" {

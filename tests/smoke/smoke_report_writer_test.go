@@ -11,8 +11,20 @@ import (
 	"time"
 )
 
-// reportRelPath is where the run's report goes, relative to the repository root.
-const reportRelPath = "plans/261110-1325-sisf-p0-p3-implementation/reports/real-smoke-run-report.md"
+// reportRelPath is where the run's report goes, relative to the repository
+// root; the run that spends nothing writes upOnlyReportRelPath instead, so
+// it never overwrites the report of a real run.
+const (
+	reportRelPath       = "plans/261110-1325-sisf-p0-p3-implementation/reports/real-smoke-run-report.md"
+	upOnlyReportRelPath = "plans/261110-1325-sisf-p0-p3-implementation/reports/real-smoke-up-only-report.md"
+)
+
+func reportPath(upOnly bool) string {
+	if upOnly {
+		return upOnlyReportRelPath
+	}
+	return reportRelPath
+}
 
 // Check statuses of the report.
 const (

@@ -106,8 +106,9 @@ func choicesFrom(getenv func(string) string, workspaceSource string) runChoices 
 // the operator's own home, where its login is; candidates built in the
 // run's Docker build sandbox, and codex judging through the launcher that
 // runs it in a container, as the supervisor requires under --exec docker;
-// and the real release defaults, since short canary windows are the
-// simulation's only. The install directory lies outside the operator's
+// the real release defaults, since short canary windows are the
+// simulation's only; and a short reconciliation interval, since GitHub
+// reaches this loopback install by no webhook. The install directory lies outside the operator's
 // home, which the installer requires before it lets an agent use that home.
 func initArgs(dir string, c runChoices) []string {
 	return []string{
@@ -120,8 +121,14 @@ func initArgs(dir string, c runChoices) []string {
 		"--exec", "docker", "--exec-docker-endpoint", c.sandbox.endpoint, "--exec-docker-network", c.sandbox.network,
 		"--egress-proxy", c.sandbox.egressProxy, "--runner-image", c.sandbox.runnerImage,
 		"--qa-agent-binary", c.sandbox.qaLauncher, "--build-command", c.buildCommand,
+		"--github-reconcile-interval", reconcileInterval,
 	}
 }
+
+// reconcileInterval is how often the factory asks GitHub for changed
+// issues. The development install takes no webhooks, so this is how it
+// learns of the run's issue; control's default of a minute would idle.
+const reconcileInterval = "15s"
 
 // probeSandbox stands in for the sandbox in the flag probe, which runs
 // before anything is provisioned; --help parses the values and uses none.

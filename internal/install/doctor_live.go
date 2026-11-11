@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -240,4 +241,23 @@ func (in *Installer) supervisorStatus(ctx context.Context, m *manifest.Manifest)
 	}
 	var status supervisor.Status
 	return status, json.Unmarshal(out, &status)
+}
+
+// checkGitHubEvents reads the GitHub settings as control and the
+// supervisor read them at start, so a manifest they would refuse fails
+// here rather than as units that exit and restart.
+func checkGitHubEvents(c *collector, m *manifest.Manifest) {
+	s, err := wiring.GitHubSettingsOf(m)
+	switch {
+	case err != nil:
+		c.fail("github events", "control and the supervisor refuse to start: %v", err)
+	case s.NoWebhooks:
+		every := reconcileIntervalOf(m)
+		if every == 0 {
+			every = wiring.DefaultReconcileInterval
+		}
+		c.warn("github events", "no GitHub App installation: the factory acts as your gh login, takes no webhooks and learns of issues only by reconciling with GitHub every %s; this is the lower-assurance development setup", every)
+	default:
+		c.ok("github events", "webhooks of installation %d are accepted", s.InstallationID)
+	}
 }

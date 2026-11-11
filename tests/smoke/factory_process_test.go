@@ -170,6 +170,18 @@ func tailFile(path string, n int) string {
 	return lastLines(string(raw), n)
 }
 
+// failureEvidence is the end of `sisf up`'s output and of every unit log,
+// passed through the scrubber, so that a run that failed can be diagnosed
+// from its output and its report alone after the temporary directory is
+// gone.
+func failureEvidence(upLog, home string, scrub *secretScrubber) []string {
+	tails := logTails(upLog, home)
+	for i, tail := range tails {
+		tails[i] = scrub.clean(tail)
+	}
+	return tails
+}
+
 // logTails collects the end of `sisf up`'s output and of every unit log,
 // as evidence of a failure. The caller redacts it.
 func logTails(upLog, home string) []string {
