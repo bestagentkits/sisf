@@ -45,9 +45,11 @@ const (
 // The same transaction closes the run's budget reservation: a blocked run
 // spends nothing more and its build never runs, so nothing else would, and
 // a reservation left held counts against the budget cap for ever. The
-// dispatcher's record names the reservation and may have been rewritten in
-// the agent zone, so the close checks the reservation is the run's own; one
-// that is not, or does not exist, is left as it is and the block goes on.
+// reservation closed is the one derived from the run named by the
+// lifecycle record, with or without the dispatcher's record of the run,
+// which the agent zone owns and may have rewritten or never written; a
+// reservation that record names other than the run's own is left as it is
+// and the block goes on.
 func (c *Control) blockStoppedRuns(ctx context.Context) error {
 	var held []core.StateRecord
 	err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
@@ -127,7 +129,7 @@ func (c *Control) blockStoppedRun(ctx context.Context, issue core.IssueRef) (*bl
 				return err
 			}
 		}
-		refused, err := c.closeStoppedReservation(ctx, tx, run)
+		refused, err := c.closeStoppedReservation(ctx, tx, record.RunID, run)
 		if err != nil {
 			return err
 		}
@@ -197,25 +199,30 @@ func runRecordOf(ctx context.Context, tx state.Tx, record core.StateRecord) (*di
 	return &run, nil
 }
 
-// closeStoppedReservation closes the reservation of a run whose issue is
-// being blocked. The reservation is the one the run's claim made, derived
-// from the run's ID: the record may be the agent zone's, so the one it
-// names is not trusted. A record naming another one is returned as
+// closeStoppedReservation closes the reservation of runID, the run of the
+// lifecycle record whose issue is being blocked. The reservation is the one
+// the run's claim made, derived from that run's ID, never the one the
+// dispatcher's record names: that record is the agent zone's, so it is not
+// trusted, and it may be missing or name another run. It is settled with
+// the spend the dispatcher's record of runID shows, when there is one, and
+// with none otherwise. A record naming another reservation is returned as
 // refused, and so is a missing reservation the record claims; the block
 // still goes on. Any other failure fails the block, which the next pass
 // retries.
-func (c *Control) closeStoppedReservation(ctx context.Context, tx state.Tx, run *dispatcher.RunRecord) (refused error, err error) {
-	if run == nil {
-		return nil, nil
+func (c *Control) closeStoppedReservation(ctx context.Context, tx state.Tx, runID core.RunID, run *dispatcher.RunRecord) (refused error, err error) {
+	own := budget.RunReservationID(runID)
+	var spend dispatcher.RunSpend
+	claimed := ""
+	if run != nil && run.RunID == runID {
+		spend, claimed = run.Spend, run.ReservationID
 	}
-	own := budget.RunReservationID(run.RunID)
-	if run.ReservationID != "" && run.ReservationID != own {
-		refused = core.NewError(core.CodeTampered, "the record of run "+string(run.RunID)+" names reservation "+run.ReservationID+", not its own "+own)
+	if claimed != "" && claimed != own {
+		refused = core.NewError(core.CodeTampered, "the record of run "+string(runID)+" names reservation "+claimed+", not its own "+own)
 	}
-	err = dispatcher.CloseReservationOfRun(ctx, c.budget, tx, run.RunID, own, run.Spend)
+	err = dispatcher.CloseReservationOfRun(ctx, c.budget, tx, runID, own, spend)
 	switch {
 	case core.HasCode(err, core.CodeNotFound):
-		if refused == nil && run.ReservationID != "" {
+		if refused == nil && claimed != "" {
 			refused = err
 		}
 		return refused, nil

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -113,5 +114,78 @@ func TestARunRecordCannotCloseAnotherRunsReservation(t *testing.T) {
 	}
 	if got := f.Record(number).State; got != core.StateBlocked {
 		t.Fatalf("the issue of a run marked exhausted is %s, want Blocked", got)
+	}
+}
+
+// holdSuperseded holds the build of run as the supervisor does when the
+// policy in force changed under it.
+func holdSuperseded(t *testing.T, f *harness.Factory, run dispatcher.RunRecord, attempt int) {
+	t.Helper()
+	err := f.ControlStore.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
+		_, err := handoff.PutBuildOutage(ctx, tx, handoff.BuildOutage{RunID: run.RunID, IssueID: run.Issue, Attempt: attempt,
+			Reason: handoff.HeldPolicySuperseded, Held: true, Holds: 1, HeldAt: f.Clock.Now(), UpdatedAt: f.Clock.Now()}, 0)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("hold the build of run %s: %v", run.RunID, err)
+	}
+}
+
+// The block of a run whose policy was superseded closes the run's own
+// reservation, derived from the run's ID on the lifecycle record, whether
+// or not the dispatcher's record of the run is there and names that run:
+// the record is the agent zone's and cannot keep the reservation held.
+func TestASupersededRunsReservationClosesWithoutItsRunRecord(t *testing.T) {
+	t.Parallel()
+	// rewrite replaces the stored record of run, as the agent zone, which
+	// owns it, could; it may not delete it, and a record it cannot read is
+	// taken for none, as a missing one is.
+	rewrite := func(t *testing.T, f *harness.Factory, run dispatcher.RunRecord, value []byte) {
+		t.Helper()
+		err := f.AgentStore.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
+			entry, err := tx.GetKV(ctx, "dispatcher", "run/"+string(run.RunID))
+			if err != nil {
+				return err
+			}
+			entry.Value = value
+			_, err = tx.PutKV(ctx, entry)
+			return err
+		})
+		if err != nil {
+			t.Fatalf("rewrite the record of run %s: %v", run.RunID, err)
+		}
+	}
+	encoded := func(t *testing.T, run dispatcher.RunRecord) []byte {
+		raw, err := json.Marshal(run)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	for name, value := range map[string]func(t *testing.T, run dispatcher.RunRecord) []byte{
+		"the run record cannot be read": func(*testing.T, dispatcher.RunRecord) []byte { return []byte("not a run record") },
+		"the run record names another run": func(t *testing.T, run dispatcher.RunRecord) []byte {
+			run.RunID = "run-elsewhere"
+			return encoded(t, run)
+		},
+		"the run record names another issue": func(t *testing.T, run dispatcher.RunRecord) []byte {
+			run.Issue.Number += 1000
+			return encoded(t, run)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := harness.New(t, harness.Options{})
+			number, run := codedRun(t, f, "Greet the world")
+			holdSuperseded(t, f, run, f.Record(number).Attempt)
+			rewrite(t, f, run, value(t, run))
+			f.Pass()
+			if got := f.Record(number).State; got != core.StateBlocked {
+				t.Fatalf("the issue of a superseded run is %s, want Blocked", got)
+			}
+			if r := reservationOf(t, f, run.ReservationID); r.Status == core.ReservationHeld || r.Status == core.ReservationSuspended {
+				t.Fatalf("the reservation of the blocked run is still %s", r.Status)
+			}
+		})
 	}
 }
