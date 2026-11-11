@@ -28,8 +28,16 @@ import (
 // With SISF_SMOKE_UP_ONLY=1 the run spends nothing: it stops once the
 // factory is up, doctor passes and the operator is signed in, before any
 // policy is approved, any issue is opened or any agent is given a task.
+//
+// With SISF_SMOKE_REHEARSAL=1 the run spends nothing either but goes the
+// whole way: a scripted coder and a fake QA judge take one issue through
+// the real build sandbox, release, merge and close (release_rehearsal_test.go).
 func TestRealLifecycleSmoke(t *testing.T) {
-	upOnly := os.Getenv(upOnlyEnv) == "1"
+	mode, err := runModeFrom(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upOnly := mode == modeUpOnly
 	// The temporary directory is created first so that it is removed last,
 	// after the teardown and the report have read the install's logs.
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -37,7 +45,7 @@ func TestRealLifecycleSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	home, upLog := filepath.Join(root, "factory"), filepath.Join(root, "up.log")
-	rep := &smokeReport{Started: time.Now(), Repo: os.Getenv(repoEnv)}
+	rep := &smokeReport{Title: mode.title(), Started: time.Now(), Repo: os.Getenv(repoEnv)}
 	scrub := newSecretScrubber(os.Environ())
 	// The operator's home names the person; the report is public.
 	if h, err := os.UserHomeDir(); err == nil && filepath.IsAbs(h) && h != "/" {
@@ -58,10 +66,13 @@ func TestRealLifecycleSmoke(t *testing.T) {
 		default:
 			rep.Outcome = "PASS"
 		}
-		if upOnly {
+		switch mode {
+		case modeUpOnly:
 			rep.Outcome += " (up only: nothing was spent)"
+		case modeRehearsal:
+			rep.Outcome += " (release rehearsal: no model ran, nothing was spent)"
 		}
-		path := filepath.Join(repoRoot(), reportPath(upOnly))
+		path := filepath.Join(repoRoot(), reportPath(mode))
 		if err := writeReport(path, rep, scrub); err != nil {
 			t.Errorf("the report could not be written to %s: %v", path, err)
 			return
@@ -74,19 +85,24 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	if err := checkSandboxRepo(os.Getenv(repoEnv)); err != nil {
 		r.fatalf("%v", err)
 	}
-	facts := preflight(ctx, r)
+	facts := preflight(ctx, r, mode)
 	if !upOnly {
 		requireIdleSandbox(ctx, r)
 	}
 	choices := choicesFrom(os.Getenv, filepath.Join(root, "sandbox"))
-	requireOutsideHome(r, home, choices.operatorHome)
+	if mode != modeRehearsal {
+		requireOutsideHome(r, home, choices.operatorHome)
+	}
 	bins := buildBinaries(ctx, r, filepath.Join(root, "bin"))
 	probeFlags(ctx, r, flagProbes(bins, home, repoRoot(), choices))
 	// The coding agent's workspaces are checked out from a local clone of
 	// the private sandbox, made with the operator's gh login; no credential
-	// is written into the install.
-	if _, err := r.run(ctx, 5*time.Minute, nil, "gh", "repo", "clone", sandboxRepo, choices.workspaceSource); err != nil {
-		r.fatalf("clone the sandbox for the coding agent's workspaces: %v", err)
+	// is written into the install. The scripted coder of the rehearsal
+	// needs none.
+	if mode != modeRehearsal {
+		if _, err := r.run(ctx, 5*time.Minute, nil, "gh", "repo", "clone", sandboxRepo, choices.workspaceSource); err != nil {
+			r.fatalf("clone the sandbox for the coding agent's workspaces: %v", err)
+		}
 	}
 	rep.phase("preflight and build", started)
 
@@ -94,19 +110,32 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	// sandbox's head stops the run before the factory starts.
 	stage, started = "build sandbox", time.Now()
 	sb := newBuildSandbox(r, root)
-	sb.provision(ctx, r, "https://github.com/"+sandboxRepo+".git", codexVersion(ctx, r))
+	sb.fakeQA = mode == modeRehearsal
+	codex := ""
+	if !sb.fakeQA {
+		codex = codexVersion(ctx, r)
+	}
+	sb.provision(ctx, r, "https://github.com/"+sandboxRepo+".git", codex)
 	sb.checkIsolation(ctx, r)
 	choices.sandbox = sb.choice()
 	rep.phase("build sandbox", started)
 
 	stage, started = "install", time.Now()
 	env := sisfEnv("SISF_HOME=" + home)
-	out, err := r.run(ctx, 2*time.Minute, env, bins.sisf, initArgs(home, choices)...)
+	initLine := initArgs(home, choices)
+	reh := newRehearsal(time.Now())
+	if mode == modeRehearsal {
+		initLine = rehearsalInitArgs(home, choices)
+	}
+	out, err := r.run(ctx, 2*time.Minute, env, bins.sisf, initLine...)
 	seedInstallSecrets(r, home)
 	if err != nil {
 		r.fatalf("sisf init: %v", err)
 	}
 	r.logf("sisf init:\n%s", out)
+	if mode == modeRehearsal {
+		reh.writePatch(r, home)
+	}
 	factoryID := installedFactoryID(r, home)
 	sb.startFilter(ctx, r, bins.sisf, factoryID, filepath.Join(root, "docker-filter.log"))
 	head, err := defaultBranchRevision(ctx, r)
@@ -150,7 +179,11 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	rep.phase("install, up, doctor and policy", started)
 
 	stage, started = "run", time.Now()
-	number, url, err := openIssue(ctx, r)
+	title, body := issueTitle, issueBody
+	if mode == modeRehearsal {
+		title, body = reh.issueTitle(), reh.issueBody()
+	}
+	number, url, err := openIssue(ctx, r, title, body)
 	if err != nil {
 		r.fatalf("open the issue: %v", err)
 	}
@@ -165,7 +198,11 @@ func TestRealLifecycleSmoke(t *testing.T) {
 
 	// The checks run even after a failed run: their evidence goes in the report.
 	stage, started = "assertions", time.Now()
-	assertOutcome(ctx, r, obs, facts.login, issue, number, rep.Started)
+	var rehearsed *rehearsal
+	if mode == modeRehearsal {
+		rehearsed = &reh
+	}
+	assertOutcome(ctx, r, obs, facts.login, issue, number, rep.Started, rehearsed)
 	rep.phase("assertions", started)
 }
 

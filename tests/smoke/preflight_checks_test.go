@@ -24,7 +24,7 @@ type preflightFacts struct {
 
 // preflight checks every precondition and changes nothing: not GitHub, not
 // the machine. Any failure ends the run before a side effect.
-func preflight(ctx context.Context, r *commandRunner) preflightFacts {
+func preflight(ctx context.Context, r *commandRunner, mode runMode) preflightFacts {
 	r.t.Helper()
 	const limit = time.Minute
 	var facts preflightFacts
@@ -80,7 +80,13 @@ func preflight(ctx context.Context, r *commandRunner) preflightFacts {
 	// The login is personal data: the log and the report name a placeholder.
 	r.scrub.addPersonal(facts.login, "<gh-login>")
 
-	for _, tool := range [][]string{{"gh", "--version"}, {"claude", "--version"}, {"codex", "--version"}, {"docker", "version", "--format", "{{.Server.Version}}"}, {"go", "version"}, {"git", "rev-parse", "HEAD"}} {
+	tools := [][]string{{"gh", "--version"}, {"claude", "--version"}, {"codex", "--version"}, {"docker", "version", "--format", "{{.Server.Version}}"}, {"go", "version"}, {"git", "rev-parse", "HEAD"}}
+	if mode == modeRehearsal {
+		// The rehearsal starts neither; it does not need them installed.
+		tools = slices.DeleteFunc(tools, func(t []string) bool { return t[0] == "claude" || t[0] == "codex" })
+		r.report.Versions = append(r.report.Versions, namedValue{Name: "claude, codex", Value: "not used: the release rehearsal runs a scripted coder and a fake QA judge"})
+	}
+	for _, tool := range tools {
 		out, err := r.run(ctx, limit, nil, tool[0], tool[1:]...)
 		if err != nil {
 			r.fatalf("preflight: `%s` failed: %v", strings.Join(tool, " "), err)

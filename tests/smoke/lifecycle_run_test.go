@@ -90,8 +90,10 @@ func waitForClose(ctx context.Context, r *commandRunner, o *factoryObserver, pro
 }
 
 // assertOutcome checks what the plan requires of a finished run and
-// records each result, pass or fail, in the report.
-func assertOutcome(ctx context.Context, r *commandRunner, o *factoryObserver, login, issue string, number int, start time.Time) {
+// records each result, pass or fail, in the report. A rehearsal, when
+// given, is checked for its note instead of the paid run's route, and for
+// running no paid model instead of a non-empty usage ledger.
+func assertOutcome(ctx context.Context, r *commandRunner, o *factoryObserver, login, issue string, number int, start time.Time, reh *rehearsal) {
 	rep := r.report
 	journal, err := o.journal(ctx, issue)
 	if err != nil {
@@ -142,7 +144,12 @@ func assertOutcome(ctx context.Context, r *commandRunner, o *factoryObserver, lo
 	// was merged.
 	landed, landEvidence := false, "no merged pull request"
 	if merged.MergeCommit != "" {
-		ok, evidence, err := changeOnDefaultBranch(ctx, r, merged.MergeCommit, versionRoute)
+		ok, evidence, err := false, "", error(nil)
+		if reh != nil {
+			ok, evidence, err = noteOnDefaultBranch(ctx, r, merged.MergeCommit, reh.note)
+		} else {
+			ok, evidence, err = changeOnDefaultBranch(ctx, r, merged.MergeCommit, versionRoute)
+		}
 		landed, landEvidence = ok && err == nil, fmt.Sprintf("%s, error %v", evidence, err)
 	}
 	result(r, "requested change merged on the default branch", landed, landEvidence)
@@ -170,7 +177,12 @@ func assertOutcome(ctx context.Context, r *commandRunner, o *factoryObserver, lo
 	if err != nil {
 		rep.Cost = fmt.Sprintf("budget.get failed: %v", err)
 	}
-	result(r, "usage ledger non-empty", err == nil && b.spent() > 0, rep.Cost)
+	if reh == nil {
+		result(r, "usage ledger non-empty", err == nil && b.spent() > 0, rep.Cost)
+	} else {
+		paid, evidence := paidAgentConfigured(o.home)
+		result(r, "no paid model configured", !paid, evidence)
+	}
 	if err == nil && b.Output.Mode != "capped" {
 		rep.deviate("the budget mode is %q, not capped", b.Output.Mode)
 	}

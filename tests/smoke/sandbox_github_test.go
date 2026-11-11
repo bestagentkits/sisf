@@ -21,8 +21,8 @@ const ghLimit = time.Minute
 const sandboxURL = "https://github.com/" + sandboxRepo + "/"
 
 // openIssue opens the run's one issue and returns its number and URL.
-func openIssue(ctx context.Context, r *commandRunner) (int, string, error) {
-	args := []string{"issue", "create", "--repo", sandboxRepo, "--title", issueTitle, "--body", issueBody}
+func openIssue(ctx context.Context, r *commandRunner, title, body string) (int, string, error) {
+	args := []string{"issue", "create", "--repo", sandboxRepo, "--title", title, "--body", body}
 	for _, l := range issueLabels {
 		args = append(args, "--label", l)
 	}

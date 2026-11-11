@@ -54,6 +54,9 @@ type buildSandbox struct {
 	socket      string // the Docker daemon's socket, for the filter
 	dockerHost  string
 	docker      string // absolute path of the docker CLI
+	// fakeQA writes the release rehearsal's fake QA launcher in place of
+	// the one that runs codex, and builds no codex image.
+	fakeQA bool
 }
 
 // newBuildSandbox names the run's sandbox and picks its loopback ports.
@@ -110,7 +113,8 @@ func (s *buildSandbox) dockerEndpoint(ctx context.Context, r *commandRunner) {
 }
 
 // provision builds the images and starts the networks, the registry, the
-// egress proxy and the git mirror. origin is what the mirror follows.
+// egress proxy and the git mirror. origin is what the mirror follows;
+// codexVersion is not used when the sandbox has the fake QA launcher.
 func (s *buildSandbox) provision(ctx context.Context, r *commandRunner, origin, codexVersion string) {
 	r.t.Helper()
 	s.dockerEndpoint(ctx, r)
@@ -140,9 +144,12 @@ func (s *buildSandbox) provision(ctx context.Context, r *commandRunner, origin, 
 	if s.runnerImage == "" {
 		r.fatalf("build sandbox: the runner image has no digest from the registry")
 	}
-	s.edgeImage, s.qaImage = s.name+"-edge:run", s.name+"-qa-codex:run"
+	s.edgeImage = s.name + "-edge:run"
 	d(provisionLimit, "build", "-q", "-f", filepath.Join(repoRoot(), "build", "edge.Dockerfile"), "-t", s.edgeImage, repoRoot())
-	d(provisionLimit, "build", "-q", "-f", filepath.Join(dir, "qa-codex.Dockerfile"), "--build-arg", "CODEX_VERSION="+codexVersion, "-t", s.qaImage, dir)
+	if !s.fakeQA {
+		s.qaImage = s.name + "-qa-codex:run"
+		d(provisionLimit, "build", "-q", "-f", filepath.Join(dir, "qa-codex.Dockerfile"), "--build-arg", "CODEX_VERSION="+codexVersion, "-t", s.qaImage, dir)
+	}
 
 	hardened := []string{"--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
 	d(time.Minute, append(append([]string{"create", "--name", s.name + "-egress", "--network", s.outNetwork}, hardened...),
@@ -154,6 +161,10 @@ func (s *buildSandbox) provision(ctx context.Context, r *commandRunner, origin, 
 	d(time.Minute, append(append([]string{"run", "-d", "--name", s.name + "-git", "--network", s.network, "--network-alias", "git-mirror",
 		"--user", "65534:65534", "-e", "GIT_CONFIG_COUNT=1", "-e", "GIT_CONFIG_KEY_0=safe.directory", "-e", "GIT_CONFIG_VALUE_0=*",
 		"-v", s.mirror + ":/srv/git:ro"}, hardened...), s.runnerImage, "git", "daemon", "--base-path=/srv/git", "--export-all", "--reuseaddr", "/srv/git")...)
+	if s.fakeQA {
+		writeFakeQALauncher(r, s.launcher)
+		return
+	}
 	s.writeLauncher(r)
 }
 

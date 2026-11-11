@@ -160,6 +160,7 @@ func flagProbes(bins binaries, dir, source string, c runChoices) []flagProbe {
 	}
 	return []flagProbe{
 		{"sisf init", bins.sisf, initArgs(dir, c)},
+		{"sisf init of the release rehearsal", bins.sisf, rehearsalInitArgs(dir, c)},
 		{"sisf up", bins.sisf, upArgs(dir, source)},
 		{"sisf down", bins.sisf, downArgs(dir)},
 	}

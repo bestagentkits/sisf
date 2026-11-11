@@ -3,6 +3,7 @@
 package smoke
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,9 +20,12 @@ const (
 	upOnlyReportRelPath = "plans/261110-1325-sisf-p0-p3-implementation/reports/real-smoke-up-only-report.md"
 )
 
-func reportPath(upOnly bool) string {
-	if upOnly {
+func reportPath(mode runMode) string {
+	switch mode {
+	case modeUpOnly:
 		return upOnlyReportRelPath
+	case modeRehearsal:
+		return rehearsalReportRelPath
 	}
 	return reportRelPath
 }
@@ -54,6 +58,8 @@ type stateVisit struct {
 // smokeReport is everything the run learned. It is written once, in a
 // cleanup, whatever the outcome.
 type smokeReport struct {
+	// Title says which run this is; the paid run's when empty.
+	Title             string
 	Started, Finished time.Time
 	Outcome           string
 	Repo              string
@@ -125,8 +131,8 @@ func (r *smokeReport) markdown(loc *time.Location) string {
 			fmt.Fprintf(&b, "- %s\n", it)
 		}
 	}
-	fmt.Fprintf(&b, "# Real smoke run report\n\n- Date: %s\n- Finished: %s\n- Outcome: **%s**\n- Repository: %s\n",
-		at(r.Started), at(r.Finished), r.Outcome, r.Repo)
+	fmt.Fprintf(&b, "# %s\n\n- Date: %s\n- Finished: %s\n- Outcome: **%s**\n- Repository: %s\n",
+		cmp.Or(r.Title, modePaid.title()), at(r.Started), at(r.Finished), r.Outcome, r.Repo)
 	b.WriteString("\n## Tool versions\n\n| Tool | Version |\n|---|---|\n")
 	for _, v := range r.Versions {
 		fmt.Fprintf(&b, "| %s | %s |\n", cell(v.Name), cell(v.Value))
