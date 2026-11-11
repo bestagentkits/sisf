@@ -44,3 +44,23 @@ func TestLeftoverCandidateBranchesAreReported(t *testing.T) {
 		t.Fatalf("leftoverCandidateBranches = %q", got)
 	}
 }
+
+// Once a release is verified the factory opens a pull request that records
+// it in the changelog, for the Owner to merge. The run closes the one of
+// its own runs, so the next run starts from an idle sandbox, and touches no
+// other pull request.
+func TestTheRunClosesOnlyTheReleaseRecordOfItsOwnRun(t *testing.T) {
+	t.Parallel()
+	pulls := `[{"number":11,"headRefName":"sisf/release/run-a"},{"number":12,"headRefName":"sisf/release/run-b"},` +
+		`{"number":13,"headRefName":"sisf/sisf-sandbox/run-a-1"},{"number":14,"headRefName":"feature/run-a"}]`
+	got, err := releaseRecordPulls(pulls, []string{"run-a"})
+	if err != nil || len(got) != 1 || got[0] != 11 {
+		t.Fatalf("release record pull requests of run-a: %v, %v", got, err)
+	}
+	if got, err := releaseRecordPulls(pulls, nil); err != nil || len(got) != 0 {
+		t.Fatalf("with no run: %v, %v", got, err)
+	}
+	if _, err := releaseRecordPulls(`{`, []string{"run-a"}); err == nil {
+		t.Fatal("unreadable JSON was accepted")
+	}
+}

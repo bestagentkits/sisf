@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -104,4 +106,64 @@ func openFactoryWork(issuesJSON, pullsJSON string) string {
 		found = append(found, fmt.Sprintf("pull request #%d", pr.Number))
 	}
 	return strings.Join(found, "; ")
+}
+
+// releaseRecordBranchPrefix starts the branch of the pull request the
+// factory opens to record a verified release in the changelog:
+// sisf/release/<run>.
+const releaseRecordBranchPrefix = "sisf/release/"
+
+// releaseRecordPulls picks, from the JSON of `gh pr list` with number and
+// headRefName, the open pull requests recording a release of one of runs.
+func releaseRecordPulls(pullsJSON string, runs []string) ([]int, error) {
+	var pulls []struct {
+		Number      int
+		HeadRefName string
+	}
+	if err := json.Unmarshal([]byte(pullsJSON), &pulls); err != nil {
+		return nil, err
+	}
+	var found []int
+	for _, pr := range pulls {
+		if run, ok := strings.CutPrefix(pr.HeadRefName, releaseRecordBranchPrefix); ok && slices.Contains(runs, run) {
+			found = append(found, pr.Number)
+		}
+	}
+	return found, nil
+}
+
+// closeReleaseRecords closes the pull requests that record the run's
+// verified releases, which the factory leaves open for the Owner, so the
+// sandbox is idle for the next run. Their branches stay, like the
+// candidates'. Only pull requests of this run's own release branches are
+// touched.
+func closeReleaseRecords(ctx context.Context, r *commandRunner, runs []string) {
+	r.t.Helper()
+	const check = "release record pull request closed"
+	out, err := r.run(ctx, ghLimit, nil, "gh", "pr", "list", "--repo", sandboxRepo, "--state", "open",
+		"--json", "number,headRefName", "--limit", "1000")
+	if err != nil {
+		r.report.check(check, statusFail, "the open pull requests cannot be listed: "+err.Error())
+		return
+	}
+	numbers, err := releaseRecordPulls(out, runs)
+	if err != nil {
+		r.report.check(check, statusFail, "the open pull requests cannot be read: "+err.Error())
+		return
+	}
+	if len(numbers) == 0 {
+		r.report.check(check, statusInfo, "the run left no release record open")
+		return
+	}
+	var closed []string
+	for _, n := range numbers {
+		_, err := r.run(ctx, ghLimit, nil, "gh", "pr", "close", strconv.Itoa(n), "--repo", sandboxRepo,
+			"--comment", "Closed by the smoke run so the sandbox keeps no open factory work; the branch is kept.")
+		if err != nil {
+			r.report.check(check, statusFail, fmt.Sprintf("pull request #%d cannot be closed: %v", n, err))
+			return
+		}
+		closed = append(closed, fmt.Sprintf("#%d", n))
+	}
+	r.report.check(check, statusInfo, "the factory's changelog pull request, left for the Owner, was closed with its branch kept: "+strings.Join(closed, ", "))
 }

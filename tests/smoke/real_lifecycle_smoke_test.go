@@ -203,6 +203,7 @@ func TestRealLifecycleSmoke(t *testing.T) {
 		rehearsed = &reh
 	}
 	assertOutcome(ctx, r, obs, facts.login, issue, number, rep.Started, rehearsed)
+	closeReleaseRecords(ctx, r, rep.RunIDs)
 	rep.phase("assertions", started)
 }
 
