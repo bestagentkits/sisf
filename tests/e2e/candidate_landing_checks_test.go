@@ -17,7 +17,8 @@ func (s simGitHub) mergedCandidates(t *testing.T, number int) map[int]string {
 	var pulls []struct {
 		Number int
 		Body   string
-		Merged bool
+		// MergedAt tells a merged one: GitHub's list has no merged field.
+		MergedAt *string `json:"merged_at"`
 		Head   struct{ Ref, SHA string }
 		Base   struct{ Ref string }
 	}
@@ -27,7 +28,7 @@ func (s simGitHub) mergedCandidates(t *testing.T, number int) map[int]string {
 	}
 	merged := map[int]string{}
 	for _, pr := range pulls {
-		if pr.Merged && pr.Base.Ref == "main" && strings.HasPrefix(pr.Head.Ref, "sisf/") && strings.Contains(pr.Body, fmt.Sprintf("Refs #%d\n", number)) {
+		if pr.MergedAt != nil && pr.Base.Ref == "main" && strings.HasPrefix(pr.Head.Ref, "sisf/") && strings.Contains(pr.Body, fmt.Sprintf("Refs #%d\n", number)) {
 			merged[pr.Number] = pr.Head.SHA
 		}
 	}
