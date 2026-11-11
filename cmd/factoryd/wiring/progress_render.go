@@ -125,6 +125,9 @@ func reachedRelease(s core.State) string {
 func landingText(pr handoff.CandidatePR) string {
 	switch pr.State {
 	case handoff.LandingPending:
+		if pr.Waiting != "" {
+			return fmt.Sprintf("Merging #%d into `%s` waits: %s.", pr.Number, pr.Base, shownText(pr.Waiting))
+		}
 		return fmt.Sprintf("Merging #%d into `%s` now that the release is verified.", pr.Number, pr.Base)
 	case handoff.LandingMerged:
 		if pr.MergeCommit != "" {
@@ -133,9 +136,16 @@ func landingText(pr handoff.CandidatePR) string {
 		return fmt.Sprintf("**Merged** #%d into `%s`.", pr.Number, pr.Base)
 	case handoff.LandingLeftOpen:
 		if pr.Number == 0 {
-			return fmt.Sprintf("**Not merged:** the candidate is left for the Owner: %s.", oneLine(pr.Reason))
+			return fmt.Sprintf("**Not merged:** the candidate is left for the Owner: %s.", shownText(pr.Reason))
 		}
-		return fmt.Sprintf("**Not merged:** #%d is left for the Owner: %s.", pr.Number, oneLine(pr.Reason))
+		return fmt.Sprintf("**Not merged:** #%d is left for the Owner: %s.", pr.Number, shownText(pr.Reason))
 	}
 	return ""
+}
+
+// shownText is a recorded reason as one line of the progress comment. An
+// HTML comment opener is defused: the comment's own marker is one, and a
+// reason may quote text from GitHub.
+func shownText(s string) string {
+	return oneLine(strings.ReplaceAll(s, "<!--", "&lt;!--"))
 }

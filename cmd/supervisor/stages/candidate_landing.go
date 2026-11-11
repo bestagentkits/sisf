@@ -2,9 +2,11 @@ package stages
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
@@ -31,7 +33,41 @@ import (
 // again before the issue closes. A pull request already merged at the
 // candidate commit, as after a restart in the middle of a merge, counts as
 // merged and is not merged again.
+//
+// A token GitHub refuses (401) decides nothing either, as it may be put
+// right, but the record says the merge waits on it (Waiting), so the hold
+// shows on the issue and in the run's record.
 func (c *CandidatePRs) Land(ctx context.Context, req release.LandRequest) (release.Landing, error) {
+	landing, err := c.land(ctx, req)
+	if core.HasCode(err, core.CodeUnauthenticated) {
+		if waitErr := c.wait(ctx, req.RunID, "GitHub refused the supervisor's token (401); "+
+			"the merge waits until the token is replaced and the supervisor restarted"); waitErr != nil {
+			return release.Landing{}, errors.Join(err, waitErr)
+		}
+	}
+	return landing, err
+}
+
+// wait records on the run's undecided pull request what its landing waits
+// on, keeping the time it first did.
+func (c *CandidatePRs) wait(ctx context.Context, run core.RunID, why string) error {
+	return c.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		pr, err := handoff.ReadCandidatePR(ctx, tx, run)
+		if core.HasCode(err, core.CodeNotFound) {
+			return nil
+		}
+		if err != nil || pr.State.Final() || pr.Waiting == why {
+			return err
+		}
+		pr.Waiting = why
+		if pr.WaitingSince.IsZero() {
+			pr.WaitingSince = c.Clock.Now().UTC()
+		}
+		return handoff.PutCandidatePR(ctx, tx, pr)
+	})
+}
+
+func (c *CandidatePRs) land(ctx context.Context, req release.LandRequest) (release.Landing, error) {
 	pr, err := c.ensure(ctx, req.IssueID, req.RunID, req.Candidate.Attempt)
 	if err != nil {
 		return release.Landing{}, err
@@ -203,6 +239,7 @@ func (c *CandidatePRs) leave(ctx context.Context, pr handoff.CandidatePR, reason
 // decide records the final state of the pull request.
 func (c *CandidatePRs) decide(ctx context.Context, pr handoff.CandidatePR, s handoff.LandingState, reason string, merge core.CommitSHA) (release.Landing, error) {
 	pr.State, pr.Reason, pr.MergeCommit, pr.DecidedAt = s, reason, merge, c.Clock.Now().UTC()
+	pr.Waiting, pr.WaitingSince = "", time.Time{}
 	if err := c.put(ctx, pr); err != nil {
 		return release.Landing{}, err
 	}

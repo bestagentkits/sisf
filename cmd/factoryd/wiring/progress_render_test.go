@@ -74,3 +74,21 @@ func TestTheProgressCommentShowsOnlyKnownFailureCodesAndBoundsThem(t *testing.T)
 		t.Fatalf("the failures read:\n%s", body)
 	}
 }
+
+// A merge held by a token GitHub refuses says so on the issue, so the
+// Owner sees why it stays verified.
+func TestTheProgressCommentSaysWhatAHeldMergeWaitsOn(t *testing.T) {
+	t.Parallel()
+	facts := progressFacts{
+		record: core.StateRecord{IssueID: core.IssueRef{Owner: "acme", Repo: "app", Number: 7}, State: core.StateVerified, RunID: "run-1"},
+		pr: &handoff.CandidatePR{Number: 12, Base: "main", State: handoff.LandingPending,
+			Waiting: "GitHub refused the supervisor's token (401)\n<!-- sisf:progress -->"},
+	}
+	body := renderProgress(facts)
+	if !strings.Contains(body, "Merging #12 into `main` waits: GitHub refused the supervisor's token (401)") {
+		t.Fatalf("the held merge reads:\n%s", body)
+	}
+	if strings.Count(body, "<!--") != 0 {
+		t.Fatalf("the wait put a marker on the issue:\n%s", body)
+	}
+}

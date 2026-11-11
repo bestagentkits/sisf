@@ -59,9 +59,14 @@ type CandidatePR struct {
 	MergeCommit core.CommitSHA `json:"merge_commit,omitempty"`
 	// Retries counts the merges GitHub asked to try again, as when the
 	// default branch moved just before; they are bounded.
-	Retries   int       `json:"retries,omitempty"`
-	OpenedAt  time.Time `json:"opened_at"`
-	DecidedAt time.Time `json:"decided_at,omitzero"`
+	Retries int `json:"retries,omitempty"`
+	// Waiting says what a landing that cannot be decided now waits on, as a
+	// token GitHub refuses, since WaitingSince; empty while nothing holds it.
+	// The supervisor writes it; it is cleared once the landing is decided.
+	Waiting      string    `json:"waiting,omitempty"`
+	WaitingSince time.Time `json:"waiting_since,omitzero"`
+	OpenedAt     time.Time `json:"opened_at"`
+	DecidedAt    time.Time `json:"decided_at,omitzero"`
 }
 
 // CandidatePRKey is the key of the pull request of a run's candidate.

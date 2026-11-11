@@ -193,3 +193,32 @@ func TestAPullRequestOfAnEarlierBuildIsAdoptedByItsAuthorAndRun(t *testing.T) {
 		})
 	})
 }
+
+// A token GitHub refuses (401) never decides a landing, as it may be put
+// right; but the record says the merge waits on it, so the Owner can see
+// why the issue stays verified. Once GitHub takes the token again the
+// merge is made and the wait is cleared.
+func TestARefusedTokenHoldsTheMergeAndSaysSo(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		ctx := context.Background()
+		w := newLandingWorld(t, db.Open(t, core.ZoneControl))
+		if _, err := w.prs.ensure(ctx, w.req.IssueID, w.req.RunID, 1); err != nil {
+			t.Fatal(err)
+		}
+		w.data.FailOn(http.MethodGet, "/pulls", http.StatusUnauthorized, "Bad credentials")
+		if _, err := w.prs.Land(ctx, w.req); !core.HasCode(err, core.CodeUnauthenticated) {
+			t.Fatalf("Land = %v, want the refused token reported", err)
+		}
+		pr, err := w.prs.ensure(ctx, w.req.IssueID, w.req.RunID, 1)
+		if err != nil || pr.State != handoff.LandingPending || !strings.Contains(pr.Waiting, "refused the supervisor's token") || pr.WaitingSince.IsZero() {
+			t.Fatalf("recorded %+v, %v", pr, err)
+		}
+		if landing, err := w.prs.Land(ctx, w.req); err != nil || !landing.Merged {
+			t.Fatalf("Land = %+v, %v", landing, err)
+		}
+		if pr, _ = w.prs.ensure(ctx, w.req.IssueID, w.req.RunID, 1); pr.Waiting != "" || !pr.WaitingSince.IsZero() {
+			t.Fatalf("the wait is still recorded after the merge: %+v", pr)
+		}
+	})
+}
