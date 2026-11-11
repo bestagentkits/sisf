@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -351,4 +352,78 @@ func TestTheLKGOfAVerifiedReleaseIsRecordedBeforeItIsAdoptedAgain(t *testing.T) 
 		t.Fatalf("the LKG adopted at the restart is %+v, want the verified release", lkg)
 	}
 	w.requireState(issue, core.StateVerified)
+}
+
+// Under an emergency stop the recovery does not verify a release recorded
+// as the LKG: verifying is a step forward. Once the stop is lifted it does.
+func TestAReleaseRecordedAsTheLKGIsNotVerifiedUnderAnEmergencyStop(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := newWorld(t)
+	issue, run := issueRef(79), core.RunID("run-79")
+	w.seedInFlight(issue, run, firstBuild, core.StateMonitoring)
+	req := w.request(issue, run, firstBuild)
+	if err := w.book.record(verifiedRelease{issue: issue, run: run, artifact: req.Artifact, receipt: req.Receipt, verifiedAt: w.clock.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	w.freeze.frozen.Store(true)
+	p := w.pipeline()
+	if out, err := p.Recover(ctx, issue, testUnit); !core.HasCode(err, core.CodeFrozen) || out.Waits == "" {
+		t.Fatalf("Recover during the stop = %+v, %v; want held by it", out, err)
+	}
+	w.requireState(issue, core.StateMonitoring)
+	if _, rollbacks, _, _ := w.backend.snapshot(); len(rollbacks) != 0 {
+		t.Fatalf("the recovery rolled back to %v", rollbacks)
+	}
+	w.freeze.frozen.Store(false)
+	if out, err := p.Recover(ctx, issue, testUnit); err != nil || out.State != core.StateVerified {
+		t.Fatalf("Recover after the stop = %+v, %v; want verified", out, err)
+	}
+}
+
+// putLandingDue records a landing as due the way an earlier build of the
+// supervisor did, after it had published the release.
+func (w *world) putLandingDue(req LandRequest) {
+	w.t.Helper()
+	raw, err := json.Marshal(req)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	err = w.store.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
+		_, err := tx.PutKV(ctx, state.KVEntry{Namespace: RecoveryNamespace, Key: LandingDueKey(req.RunID), Value: raw})
+		return err
+	})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// A record an earlier build left Verified with its landing due was already
+// published: it is merged once and closed without being published again,
+// and both records of what was due are gone.
+func TestAVerifiedRecordWithAnEarlierLandingDueIsLandedWithoutPublishingAgain(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := newWorld(t)
+	lander := &countingLander{}
+	w.cfg.Lander = lander
+	w.publisher.err = core.NewError(core.CodeUnavailable, "GitHub is out")
+	issue, run := issueRef(87), core.RunID("run-87")
+	w.seedReleaseCandidate(issue, run, firstBuild)
+	req := w.request(issue, run, firstBuild)
+	if _, err := w.pipeline().Release(ctx, req); err == nil {
+		t.Fatal("want the release held on the publication")
+	}
+	w.forgetFinishDue(run)
+	w.putLandingDue(LandRequest{IssueID: issue, RunID: run, Release: core.ReleaseDigest(firstBuild), Candidate: req.Candidate, Receipt: req.Receipt})
+	if out, err := w.pipeline().FinishVerified(ctx, req); err != nil || out.Result != ResultClosed {
+		t.Fatalf("FinishVerified = %+v, %v; want closed", out, err)
+	}
+	w.requireState(issue, core.StateClosed)
+	if len(w.publisher.entries) != 0 || lander.lands.Load() != 1 {
+		t.Fatalf("published %d times and merged %d; want no publication and one merge", len(w.publisher.entries), lander.lands.Load())
+	}
+	if _, due := w.finishDue(run); due || w.landingDue(run) {
+		t.Fatal("what was due is still recorded")
+	}
 }

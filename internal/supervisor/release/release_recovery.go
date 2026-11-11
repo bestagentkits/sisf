@@ -174,6 +174,12 @@ func (p *Pipeline) restoreWithoutLease(ctx context.Context, issue core.IssueRef,
 // would change nothing: the release is the LKG.
 func (p *Pipeline) verifyRecordedLKG(ctx context.Context, h *holding, unit string, lkg LKG) (Outcome, error) {
 	out := Outcome{State: h.record.State, Release: h.record.ReleaseDigest}
+	if p.frozen(ctx) {
+		// Verifying is a step forward, which an emergency stop freezes. The
+		// release is the LKG, so there is nothing to roll back to either.
+		out.Waits = waitsEmergencyStop
+		return out, core.NewError(core.CodeFrozen, "an emergency stop holds the verification of a release recorded as the last known good release")
+	}
 	rev := deploy.Revision{Unit: unit, Digest: h.record.ReleaseDigest}
 	observed, err := p.cfg.Backend.ObservedRevision(ctx, unit)
 	if err != nil || !observed.Matches(rev) {

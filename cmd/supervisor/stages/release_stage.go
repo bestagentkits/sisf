@@ -239,6 +239,12 @@ func (s *ReleaseStage) Recover(ctx context.Context) ReleasePassResult {
 				res.Outcomes[j.record.IssueID] = out
 			}
 			continue
+		case out.Result == "" && out.Waits != "":
+			// Waits on something that holds it, such as an emergency stop.
+			if s.changedWait(j.record.IssueID, out.Waits) {
+				res.Outcomes[j.record.IssueID] = out
+			}
+			continue
 		case out.Result == "":
 			if err != nil {
 				res.Errors = append(res.Errors, fmt.Errorf("%s: recover its release: %w", j.record.IssueID, err))
