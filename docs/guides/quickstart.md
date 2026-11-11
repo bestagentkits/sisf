@@ -98,7 +98,7 @@ The agents keep running as local processes under `trusted_code_only`; only the b
 
 - an internal Docker network for the runners (`docker network create --internal NET`);
 - an egress proxy on that network as its only way out, for example the edge's (`edge --egress-listen=egress:3128 --allow-non-loopback ...` in a container attached to `NET` with the alias `egress` and to an outbound network);
-- a runner image that holds the build command and reports `sisf-image-digest:` and `sisf-image:` lines (`cmd/supervisor/stages/image_builders.go`), pinned as `name@sha256:...` by a registry digest: the docker backend runs no image by tag or local image ID, so push a locally built image to a registry first, such as one on loopback;
+- a runner image that holds the build command and reports `sisf-tests:`, `sisf-image-digest:`, `sisf-image:`, `sisf-sbom:` and `sisf-provenance:` lines (`cmd/supervisor/stages/image_builders.go`; `tests/smoke/sandbox/build-candidate.sh` is an example). A build that names no SBOM and provenance fails the observed-build hard gate on every attempt, whatever QA scores it, and one that does not report its tests as passed fails the tests gate. Pin it as `name@sha256:...` by a registry digest: the docker backend runs no image by tag or local image ID, so push a locally built image to a registry first, such as one on loopback;
 - the runner Docker request filter: `sisf docker-filter --role runner --listen 127.0.0.1:PORT --factory-id ID --network NET --image IMAGE --socket SOCKET`, started before `sisf up`;
 - a launcher that runs the QA agent in a sandbox and keeps its standard input and output.
 
