@@ -63,17 +63,19 @@ func (p *Pipeline) Recover(ctx context.Context, issue core.IssueRef, unit string
 		return failed(core.NewError(core.CodeTampered, "the record of a release in "+string(h.record.State)+" names no release"))
 	}
 	lkg, found, err := p.cfg.LKG.Get(ctx, unit)
+	unrestorable := &rollout{h: h, unit: unit, rev: deploy.Revision{Unit: unit, Digest: h.record.ReleaseDigest}}
 	switch {
 	case err != nil:
 		return failed(holdf("the last known good release of %s cannot be read", unit).WithCause(err))
 	case !found:
-		return failed(holdf("unit %s has no last known good release to restore", unit))
+		return p.blockWithNothingToRestore(ctx, unrestorable, "the release was left in "+string(h.record.State)+
+			" unjudged and unit "+unit+" has no last known good release to restore")
 	case lkg.Digest == h.record.ReleaseDigest && h.record.State == core.StateMonitoring &&
 		lkg.Source == SourcePromoted && lkg.RunID == h.record.RunID:
 		return p.verifyRecordedLKG(ctx, h, unit, lkg)
 	case lkg.Digest == h.record.ReleaseDigest:
-		return failed(holdf("the release left in %s is already the last known good release of %s, so there is nothing to restore",
-			h.record.State, unit))
+		return p.blockWithNothingToRestore(ctx, unrestorable, "the release was left in "+string(h.record.State)+
+			" unjudged and is already the last known good release of "+unit)
 	}
 	r := &rollout{
 		h: h, unit: unit, lkg: lkg,
@@ -157,6 +159,9 @@ func (p *Pipeline) restoreWithoutLease(ctx context.Context, issue core.IssueRef,
 		}
 		out.Observed = observed
 		p.markRestored(issue, record.ReleaseDigest, lkg.Digest)
+		_ = p.audit(ctx, &holding{record: record}, "release.rollback", core.OutcomeExecuted, map[string]string{
+			"release": string(record.ReleaseDigest), "restored_to": string(observed.Digest), "without_lease": "true",
+		})
 	}
 	out.Result, out.RestoredTo, out.Reason = ResultInterrupted, lkg.Digest, held.Error()
 	out.Waits = "the issue lease is held by " + holder + ", so the release's steps wait; the last known good release serves again"
@@ -183,10 +188,11 @@ func (p *Pipeline) verifyRecordedLKG(ctx context.Context, h *holding, unit strin
 	rev := deploy.Revision{Unit: unit, Digest: h.record.ReleaseDigest}
 	observed, err := p.cfg.Backend.ObservedRevision(ctx, unit)
 	if err != nil || !observed.Matches(rev) {
-		out.Result = ResultRestoreFailed
-		err = holdf("the release recorded as the last known good release of %s is not observed running and healthy", unit)
-		out.Reason = err.Error()
-		return out, err
+		// An earlier build recorded the release as the LKG before its
+		// Verified step: there is no release before it to restore.
+		return p.blockWithNothingToRestore(ctx, &rollout{h: h, unit: unit, rev: rev, observed: observed},
+			"the release an earlier build recorded as the last known good release of "+unit+
+				" before its Verified step is not observed running and healthy")
 	}
 	out.Observed = observed
 	proof := statemachine.PostDeployProof{
@@ -207,7 +213,12 @@ func (p *Pipeline) verifyRecordedLKG(ctx context.Context, h *holding, unit strin
 		also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error { return putFinishDue(ctx, tx, due) },
 	})
 	out.State = h.record.State
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	return out, p.audit(ctx, h, "release.verify_recovered", core.OutcomeExecuted, map[string]string{
+		"release": string(rev.Digest), "observed": string(observed.Digest),
+	})
 }
 
 // keepLease makes sure the pipeline still holds the issue lease it is about

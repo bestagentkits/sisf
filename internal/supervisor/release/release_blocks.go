@@ -23,7 +23,10 @@ type Block struct {
 	Code       core.ErrorCode
 	Release    core.ReleaseDigest
 	RestoredTo core.ReleaseDigest
-	BlockedAt  time.Time
+	// Verified is set when the release was verified before it could no
+	// longer be judged: it was not finished, and its change not merged.
+	Verified  bool
+	BlockedAt time.Time
 }
 
 // BlockRecorder keeps the record of why the pipeline blocked an issue, in

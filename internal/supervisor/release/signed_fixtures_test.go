@@ -39,6 +39,9 @@ type keyring struct {
 	clock    *fakeClock
 	qa       *delegation.DelegatedSigner
 	artifact *delegation.DelegatedSigner
+	// issued are every delegation the keyring issued, as the supervisor
+	// keeps the ones it trusted.
+	issued []delegation.SignedDelegation
 }
 
 func newKeyring(t *testing.T, clock *fakeClock) *keyring {
@@ -83,7 +86,23 @@ func (k *keyring) delegateTo(t *testing.T, purpose delegation.Purpose, holder de
 	if err != nil {
 		t.Fatalf("load %s key: %v", purpose, err)
 	}
+	k.issued = append(k.issued, issued.Delegation)
 	return signer
+}
+
+// verifierAt judges signatures as of at, with every delegation the keyring
+// issued.
+func (k *keyring) verifierAt(at time.Time) (core.Verifier, error) {
+	v, err := delegation.NewChainVerifier(delegation.VerifierConfig{FactoryID: testFactory, Root: k.rootPub, Clock: &fakeClock{now: at}})
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range k.issued {
+		if err := v.Trust(context.Background(), d); err != nil {
+			return nil, err
+		}
+	}
+	return v, nil
 }
 
 // candidate is the candidate of run on issue, built as build.

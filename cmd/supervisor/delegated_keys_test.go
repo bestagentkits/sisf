@@ -99,3 +99,40 @@ func TestMissingDelegatedKeysAreNotFound(t *testing.T) {
 		t.Fatalf("got %v, want NOT_FOUND", err)
 	}
 }
+
+// A receipt signed with a key that expired since still verifies as of an
+// instant the key was valid, and not as of one after its end.
+func TestASignatureIsJudgedAsOfAnEarlierInstant(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	start := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	clock := sqlstoretest.NewClock(start)
+	dir, pub, root := trustVolume(t)
+	keys, err := loadSupervisorKeys(ctx, dir, testFactory, pub, root, clock, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := core.NewPayloadBuilder("sisf.qa_receipt", 1).Bytes()
+	sig, err := keys.QA.Sign(ctx, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(2 * delegation.MaxLifetime)
+	if err := keys.Verifier.Verify(ctx, payload, sig); err == nil {
+		t.Fatal("an expired key still verifies now; the test does not exercise expiry")
+	}
+	then, err := keys.VerifierAt(start.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := then.Verify(ctx, payload, sig); err != nil {
+		t.Fatalf("the signature does not verify as of when the key was valid: %v", err)
+	}
+	later, err := keys.VerifierAt(start.Add(2 * delegation.MaxLifetime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := later.Verify(ctx, payload, sig); err == nil {
+		t.Fatal("the signature verifies as of after the key's end")
+	}
+}

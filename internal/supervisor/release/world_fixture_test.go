@@ -123,7 +123,7 @@ func newWorld(t *testing.T) *world {
 	}
 	w.book = w.recordInstallLKG(lkgDigest)
 	w.cfg = Config{
-		FactoryID: testFactory, State: w.store, Backend: w.backend, Verifier: w.keys.verifier, LKG: w.book,
+		FactoryID: testFactory, State: w.store, Backend: w.backend, Verifier: w.keys.verifier, VerifierAt: w.keys.verifierAt, LKG: w.book,
 		Freeze: w.freeze, Publisher: w.publisher, Blocks: storeBlocks{}, Clock: clock,
 	}
 	return w

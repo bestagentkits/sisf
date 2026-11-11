@@ -11,22 +11,23 @@ import (
 
 // finish closes a release that passed its observation window. The revision
 // is read from the running system once more after the window: only the
-// release itself, healthy, is verified. The verified release is recorded
-// as the LKG first, so that a supervisor that stops at any later point
-// starts this release again, as the record will say. The Verified step is
-// written next, with what the release still owes (FinishDue) in the same
-// transaction; then the changelog and the catalog are published, the change
-// is landed and the issue closes (complete). A step after the Verified step
-// that cannot be taken leaves the issue Verified with its finish due, which
+// release itself, healthy, is verified. The Verified step is written first,
+// with what the release still owes (FinishDue) in the same transaction, and
+// the LKG after it (finishVerified): a step that cannot be written leaves
+// the LKG naming the release before this one, so the release is restored to
+// it. A supervisor that stops between the step and the LKG records the LKG
+// at its next start or on a later pass (RecordVerifiedLKG, FinishVerified).
+// Then the changelog and the catalog are published, the change is landed
+// and the issue closes (complete). A step after the Verified step that
+// cannot be taken leaves the issue Verified with its finish due, which
 // FinishVerified takes up on a later pass.
 func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
-	out := Outcome{Release: r.rev.Digest, Windows: r.windows, State: r.h.record.State}
 	windowEnd := p.cfg.Clock.Now()
 	observed, err := p.cfg.Backend.ObservedRevision(ctx, r.unit)
 	if err != nil {
 		return p.restore(ctx, r, *unjudged("the release cannot be observed after its observation window"))
 	}
-	r.observed, out.Observed = observed, observed
+	r.observed = observed
 	if !observed.Matches(r.rev) {
 		return p.restore(ctx, r, *judgedUnhealthy("regression: the revision observed after the window is not the healthy release"))
 	}
@@ -41,10 +42,6 @@ func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
 		IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Released: r.rev.Digest, Observed: observed.Digest,
 		Healthy: observed.Healthy, ObservedAt: observed.ObservedAt, WindowEndsAt: windowEnd, DoD: dod,
 	}
-	// A failed write of the LKG changes nothing on the trust volume; the
-	// release is still verified, and the LKG is recorded on a later pass
-	// (FinishVerified) or before the LKG is adopted at the next start.
-	lkgErr := p.cfg.LKG.record(r.v)
 	due := FinishDue{IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Release: r.rev.Digest, Unit: r.unit}
 	err = p.step(ctx, r.h, stepSpec{
 		event: core.EventPostDeployVerified, reason: "the observed release met its DoD through the observation window",
@@ -54,24 +51,41 @@ func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
 		})},
 		also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error { return putFinishDue(ctx, tx, due) },
 	})
-	switch {
-	case err != nil && lkgErr == nil:
-		// The release is the LKG already, so restoring the LKG would
-		// change nothing; the recovery verifies it from the running system
-		// on the next pass instead.
-		out.Result, out.Reason, out.State = ResultInterrupted, "the verified release could not be recorded: "+err.Error(), r.h.record.State
-		return out, err
-	case err != nil:
-		// The release served through its window but neither its LKG nor its
-		// verification could be recorded, so it cannot be kept unwatched.
+	if err != nil {
+		// The LKG still names the release before this one, so the release
+		// served through its window but cannot be kept unwatched.
 		return p.restore(ctx, r, undo{cause: statemachine.BlockReleaseInterrupted,
 			reason: "the verified release could not be recorded, so it could not be kept: " + err.Error()})
-	case lkgErr != nil:
-		out.Result, out.Reason, out.State, out.Waits = ResultHeld, lkgErr.Error(), r.h.record.State, waits(waitsLKG, lkgErr)
-		return out, lkgErr
 	}
-	done, err := p.complete(ctx, &finishing{h: r.h, due: due, feature: r.feature, summary: r.summary, candidate: r.candidate,
-		receipt: r.v.receipt, evidence: []string{"observed:" + string(observed.Digest)}})
-	done.Windows, done.Observed = r.windows, observed
+	req := Request{IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Candidate: r.candidate, Receipt: r.v.receipt,
+		Artifact: r.v.artifact, Feature: r.feature, Summary: r.summary}
+	done, err := p.finishVerified(ctx, r.h, req, due, []string{"observed:" + string(observed.Digest)})
+	done.Windows = r.windows
+	if done.Observed.Digest == "" {
+		done.Observed = observed
+	}
 	return done, err
+}
+
+// finishVerified settles the LKG of a verified release and finishes it:
+// recorded or already the LKG, it is published, landed and closed; a
+// release a later one superseded is closed without the LKG, unpublished, its
+// pull request left for the Owner unless it was merged already; one that
+// cannot be judged is blocked (blockVerified). When the LKG cannot be
+// settled now, the issue stays Verified and says what it waits on.
+func (p *Pipeline) finishVerified(ctx context.Context, h *holding, req Request, due FinishDue, evidence []string) (Outcome, error) {
+	d, err := p.settleLKG(ctx, h.record, req)
+	if err != nil {
+		out := Outcome{Release: h.record.ReleaseDigest, State: h.record.State, Result: ResultHeld, Reason: err.Error(), Waits: waits(waitsLKG, err)}
+		return out, err
+	}
+	f := &finishing{h: h, due: due, feature: req.Feature, summary: req.Summary, candidate: req.Candidate,
+		receipt: req.Receipt, evidence: evidence}
+	switch d.verdict {
+	case lkgUnjudged:
+		return p.blockVerified(ctx, h, req.Artifact.Unit, d)
+	case lkgSuperseded:
+		f.superseded = d.reason
+	}
+	return p.complete(ctx, f)
 }

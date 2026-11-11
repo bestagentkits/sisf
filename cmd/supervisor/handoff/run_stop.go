@@ -40,7 +40,10 @@ type RunStop struct {
 	ReleaseCode core.ErrorCode     `json:"release_code,omitempty"`
 	Release     core.ReleaseDigest `json:"release,omitempty"`
 	RestoredTo  core.ReleaseDigest `json:"restored_to,omitempty"`
-	BlockedAt   time.Time          `json:"blocked_at"`
+	// Verified is set when the release was verified before it could no
+	// longer be judged; it was not finished and its change not merged.
+	Verified  bool      `json:"verified,omitempty"`
+	BlockedAt time.Time `json:"blocked_at"`
 }
 
 // RunStopKey is the key of the record of one stopped run.
@@ -88,10 +91,23 @@ func (s RunStop) Summary() string {
 		return fmt.Sprintf("The release of run %s was stopped before it could be judged, because the supervisor stopped or could not go on with it; "+
 			"it was rolled back and the last known good release serves again. Nothing is known about whether the release was healthy.", s.RunID)
 	case statemachine.BlockReleaseUnjudged:
+		if s.Verified {
+			return fmt.Sprintf("The release of run %s was verified, but it could then no longer be judged to be what serves, healthy, "+
+				"and no later release replaced it, so it was not finished: %s. It was not published, and its pull request stays open and unmerged.",
+				s.RunID, s.restoredWords())
+		}
 		return fmt.Sprintf("The release of run %s could not be judged while it served traffic, because it could not be observed or measured "+
-			"or its synthetic suite could not be run; it was rolled back and the last known good release serves again.", s.RunID)
+			"or its synthetic suite could not be run; %s.", s.RunID, s.restoredWords())
 	}
 	return fmt.Sprintf("Run %s stopped without a candidate.", s.RunID)
+}
+
+// restoredWords says whether the last known good release was restored.
+func (s RunStop) restoredWords() string {
+	if s.RestoredTo != "" {
+		return "it was rolled back and the last known good release serves again"
+	}
+	return "nothing was restored, because there was no other release to restore or another release already served; the recovery report says what serves"
 }
 
 // refusal says why a release was refused, by the code it was refused with.
@@ -130,7 +146,14 @@ func (s RunStop) WayOut() string {
 				"A retry would build the same program again; " + retry + " only if the issue needs a change the program shows."
 		}
 		return "A" + retry[1:] + ": the issue returns to Ready and a new run codes, judges and releases it afresh, which spends agent budget."
-	case statemachine.BlockRolledBack, statemachine.BlockReleaseInterrupted, statemachine.BlockReleaseUnjudged:
+	case statemachine.BlockReleaseUnjudged:
+		if s.Verified {
+			return "Read the recovery report. The candidate's pull request stays open and unmerged: review it and merge it by hand only if you accept the change. " +
+				"To have the factory release it again, " + retry + ": the issue returns to Ready and a new run codes, judges and releases it, which spends agent budget."
+		}
+		return "Read the recovery report and remove the cause, then, " + retry +
+			": the issue returns to Ready and a new run codes, judges and releases it, which spends agent budget."
+	case statemachine.BlockRolledBack, statemachine.BlockReleaseInterrupted:
 		return "Read the recovery report and remove the cause, then, " + retry +
 			": the issue returns to Ready and a new run codes, judges and releases it, which spends agent budget."
 	}

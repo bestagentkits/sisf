@@ -85,6 +85,14 @@ func (s *ReleaseStage) resumeVerified(ctx context.Context, res *ReleasePassResul
 				res.Errors = append(res.Errors, fmt.Errorf("%s: record its finished release: %w", j.record.IssueID, recErr))
 			}
 			res.Outcomes[j.record.IssueID] = out
+		case out.Result == release.ResultBlocked:
+			// The verified release could no longer be judged: the issue is
+			// blocked and its pull request left open for the Owner.
+			s.forgetWait(j.record.IssueID)
+			if recErr := s.recordOutcome(ctx, j.record, out, err); recErr != nil {
+				res.Errors = append(res.Errors, fmt.Errorf("%s: record its blocked release: %w", j.record.IssueID, recErr))
+			}
+			res.Outcomes[j.record.IssueID] = out
 		case out.Waits != "":
 			if s.reportWait(ctx, j.record, out.Waits, res) {
 				res.Outcomes[j.record.IssueID] = out
@@ -131,10 +139,13 @@ func (s *ReleaseStage) forgetWait(issue core.IssueRef) {
 }
 
 // RecordVerifiedLKGs makes the release of every issue left Verified the
-// LKG of its unit when it is not yet and no later release replaced it. It
-// runs at startup, before the LKG is adopted, so that a supervisor that
-// stopped between a verification and the write of its LKG starts the
-// verified release, as the record says, and not the one before it.
+// LKG of its unit when it is observed serving, healthy, and no later
+// release superseded it. It runs at startup, before the LKG is adopted, so
+// that a supervisor that stopped between a Verified step and the write of
+// its LKG starts the verified release again when the running system still
+// serves it. A backend that observes only what it started itself observes
+// nothing yet: the LKG before the release is adopted, and the next pass
+// blocks the verified release it can no longer judge.
 func (s *ReleaseStage) RecordVerifiedLKGs(ctx context.Context) ReleasePassResult {
 	res := ReleasePassResult{Outcomes: map[core.IssueRef]release.Outcome{}}
 	finisher, ok := s.Pipeline.(VerifiedFinisher)

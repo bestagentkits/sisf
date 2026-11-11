@@ -17,6 +17,6 @@ type releaseBlocks struct{}
 func (releaseBlocks) RecordBlock(ctx context.Context, kv state.KV, b release.Block) error {
 	return handoff.PutRunStop(ctx, kv, handoff.RunStop{
 		IssueID: b.IssueID, RunID: b.RunID, Attempt: b.Attempt, Cause: b.Cause,
-		ReleaseCode: b.Code, Release: b.Release, RestoredTo: b.RestoredTo, BlockedAt: b.BlockedAt,
+		ReleaseCode: b.Code, Release: b.Release, RestoredTo: b.RestoredTo, Verified: b.Verified, BlockedAt: b.BlockedAt,
 	})
 }

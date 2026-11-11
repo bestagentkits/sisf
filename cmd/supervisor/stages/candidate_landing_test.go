@@ -126,6 +126,9 @@ func TestAVerifiedCandidateIsMergedOnlyWhileItIsWhatWasJudgedAndReleased(t *test
 			"another build was released": {bend: func(_ *testing.T, w *landingWorld) {
 				w.req.Release = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
 			}, reason: "not the build"},
+			"a later release superseded it": {bend: func(_ *testing.T, w *landingWorld) {
+				w.req.Superseded = "the release of run-2 (sha256:55) was verified later"
+			}, reason: "superseded it before it was recorded as the last known good release"},
 			"its changes may be listed in part": {bend: func(_ *testing.T, w *landingWorld) {
 				w.req.Candidate.ChangedPathsIncomplete = true
 			}, reason: "only part of the paths"},

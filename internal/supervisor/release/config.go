@@ -91,8 +91,13 @@ type Config struct {
 	// Verifier trusts the delegated keys that sign QA receipts and deploy
 	// artifacts.
 	Verifier core.Verifier
-	LKG      *LKGBook
-	Freeze   FreezeCheck
+	// VerifierAt is optional: it returns a verifier that judges signatures
+	// as of an earlier instant, with every delegation the supervisor has
+	// trusted. The QA evidence of a release that is already verified is
+	// judged with it as of its Verified step; without it, as of now.
+	VerifierAt func(at time.Time) (core.Verifier, error)
+	LKG        *LKGBook
+	Freeze     FreezeCheck
 	// Publisher writes the changelog and the catalog before an issue closes.
 	Publisher Publisher
 	// Blocks keeps the record of why the pipeline blocked an issue, which

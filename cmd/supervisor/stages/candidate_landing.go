@@ -209,6 +209,10 @@ func (c *CandidatePRs) live(ctx context.Context, pr handoff.CandidatePR) (github
 // mayNotMerge says why the factory may not merge this candidate, "" when
 // it may. An error means the policy in force could not be read.
 func (c *CandidatePRs) mayNotMerge(ctx context.Context, req release.LandRequest, pr handoff.CandidatePR) (string, error) {
+	if req.Superseded != "" {
+		return "a later release superseded it before it was recorded as the last known good release (" + req.Superseded +
+			"), so its change does not serve", nil
+	}
 	var build handoff.BuildRecord
 	err := c.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
 		var err error

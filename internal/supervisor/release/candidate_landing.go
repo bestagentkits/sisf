@@ -52,6 +52,10 @@ type LandRequest struct {
 	// signed receipt: the release was built from Candidate.CommitSHA.
 	Candidate qa.Candidate   `json:"candidate"`
 	Receipt   core.QAReceipt `json:"receipt"`
+	// Superseded, when set, says which later release superseded this one
+	// before it was recorded as the LKG. Its change does not serve, so it
+	// is not merged; a merge the Owner already made stands.
+	Superseded string `json:"superseded,omitempty"`
 }
 
 // Landing is what became of the change: merged, or left for the Owner
@@ -89,8 +93,11 @@ func (p *Pipeline) land(ctx context.Context, req LandRequest) (Landing, error) {
 // closeLanded closes the issue of a verified release after its landing.
 // The closing step says whether the change was merged, and forgets in the
 // same transaction what the release owed: it is all done.
-func (p *Pipeline) closeLanded(ctx context.Context, h *holding, landing Landing, evidence []string) error {
+func (p *Pipeline) closeLanded(ctx context.Context, h *holding, landing Landing, superseded string, evidence []string) error {
 	reason := "verified, recorded as the LKG, changelog and catalog published"
+	if superseded != "" {
+		reason = "verified, then superseded before it was recorded as the LKG (" + superseded + "); not published"
+	}
 	if landing.Summary != "" {
 		reason += "; " + landing.Summary
 	}

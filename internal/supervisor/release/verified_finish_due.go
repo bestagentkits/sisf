@@ -95,13 +95,18 @@ type finishing struct {
 	candidate        qa.Candidate
 	receipt          core.QAReceipt
 	evidence         []string
+	// superseded, when set, says which later release superseded this one
+	// before it was recorded as the LKG: it is closed without being
+	// published, and its change is merged only when that already happened.
+	superseded string
 }
 
 // complete publishes, lands and closes a verified release, each step at
 // most once: the publication is recorded as done before the landing, the
 // Lander decides a landing once, and the closing step deletes what was
 // due. Any step that cannot be taken now leaves the issue Verified with
-// its finish due, and the outcome says what it waits on.
+// its finish due, and the outcome says what it waits on. A superseded
+// release is not published: its change does not serve.
 func (p *Pipeline) complete(ctx context.Context, f *finishing) (Outcome, error) {
 	out := Outcome{Release: f.due.Release, State: f.h.record.State, PublicationRef: f.due.PublicationRef}
 	held := func(err error, waitsOn string) (Outcome, error) {
@@ -111,7 +116,7 @@ func (p *Pipeline) complete(ctx context.Context, f *finishing) (Outcome, error) 
 	if p.frozen(ctx) {
 		return held(core.NewError(core.CodeFrozen, "an emergency stop froze publishing; the verified release is not published"), waitsEmergencyStop)
 	}
-	if !f.due.Published {
+	if !f.due.Published && f.superseded == "" {
 		ref, err := p.cfg.Publisher.Publish(ctx, catalog.Entry{
 			IssueID: f.due.IssueID, RunID: f.due.RunID, Unit: f.due.Unit, Release: f.due.Release,
 			Feature: f.feature, Summary: f.summary, VerifiedAt: p.cfg.Clock.Now().UTC(),
@@ -126,7 +131,7 @@ func (p *Pipeline) complete(ctx context.Context, f *finishing) (Outcome, error) 
 		out.PublicationRef = ref
 	}
 	landing, err := p.land(ctx, LandRequest{IssueID: f.due.IssueID, RunID: f.due.RunID, Release: f.due.Release,
-		Candidate: f.candidate, Receipt: f.receipt})
+		Candidate: f.candidate, Receipt: f.receipt, Superseded: f.superseded})
 	switch {
 	case core.HasCode(err, core.CodeFrozen):
 		return held(err, waitsEmergencyStop)
@@ -137,12 +142,13 @@ func (p *Pipeline) complete(ctx context.Context, f *finishing) (Outcome, error) 
 	if f.due.PublicationRef != "" {
 		evidence = append(evidence, f.due.PublicationRef)
 	}
-	if err := p.closeLanded(ctx, f.h, landing, evidence); err != nil {
+	if err := p.closeLanded(ctx, f.h, landing, f.superseded, evidence); err != nil {
 		return held(err, waits(waitsClose, err))
 	}
 	out.Result, out.State = ResultClosed, f.h.record.State
 	return out, p.audit(ctx, f.h, "release.promote", core.OutcomeExecuted, map[string]string{
 		"release": string(f.due.Release), "publication": f.due.PublicationRef, "merged": strconv.FormatBool(landing.Merged),
+		"superseded": f.superseded,
 	})
 }
 
@@ -150,13 +156,13 @@ func (p *Pipeline) complete(ctx context.Context, f *finishing) (Outcome, error) 
 // supervisor restarted, an emergency stop or an outage held it, or the LKG
 // could not be recorded, after the release was verified. req is the
 // release request of the issue's run, as the supervisor's records rebuild
-// it. Whatever already happened is not done again: the LKG is recorded only
-// when it does not name the release and no later release replaced it, and
-// then only after req is verified once more; the publication is skipped
-// once recorded; the change is merged at most once. A record an earlier
-// build left Verified with nothing recorded as due is finished the same
-// way, from the publication on (or the landing, when that build recorded
-// it as due).
+// it. Only a record that is Verified with this run's release is finished,
+// whatever the documents of what it owes say. Whatever already happened is
+// not done again: the LKG is settled as finishVerified says, its QA
+// evidence judged as of the Verified step; the publication is skipped once
+// recorded; the change is merged at most once. A record an earlier build
+// left Verified with nothing recorded as due is finished the same way, from
+// the publication on (or the landing, when that build recorded it as due).
 func (p *Pipeline) FinishVerified(ctx context.Context, req Request) (Outcome, error) {
 	out := Outcome{Release: req.Artifact.Digest}
 	stop := func(result Result, err error, waitsOn string) (Outcome, error) {
@@ -189,17 +195,16 @@ func (p *Pipeline) FinishVerified(ctx context.Context, req Request) (Outcome, er
 	if err != nil {
 		return stop(ResultHeld, err, waits(waitsClose, err))
 	}
-	if err := p.ensureLKG(ctx, h.record, req); err != nil {
-		return stop(ResultHeld, err, waits(waitsLKG, err))
-	}
-	return p.complete(ctx, &finishing{h: h, due: due, feature: req.Feature, summary: req.Summary, candidate: req.Candidate,
-		receipt: req.Receipt, evidence: []string{"release:" + string(req.Artifact.Digest)}})
+	return p.finishVerified(ctx, h, req, due, []string{"release:" + string(req.Artifact.Digest)})
 }
 
-// RecordVerifiedLKG makes the release of an issue left Verified the LKG
-// of its unit when it is not yet and no later release replaced it, so a
-// supervisor starting again serves what the record says. It runs before
-// the LKG is adopted at startup; it writes no lifecycle step.
+// RecordVerifiedLKG makes the release of an issue left Verified the LKG of
+// its unit when settleLKG may: it is observed serving, healthy, now and no
+// later release superseded it. It runs before the LKG is adopted at
+// startup, so a supervisor that stopped between a Verified step and its LKG
+// serves what the record says when the running system still serves it. It
+// writes no lifecycle step: a release it cannot record is judged, and
+// blocked when it must be, by FinishVerified on a later pass.
 func (p *Pipeline) RecordVerifiedLKG(ctx context.Context, req Request) error {
 	if err := req.validate(); err != nil {
 		return err
@@ -220,7 +225,8 @@ func (p *Pipeline) RecordVerifiedLKG(ctx context.Context, req Request) error {
 	if record.State != core.StateVerified || record.RunID != req.RunID || record.ReleaseDigest != req.Artifact.Digest {
 		return core.NewError(core.CodeConflict, "the issue is not verified with this run's release")
 	}
-	return p.ensureLKG(ctx, record, req)
+	_, err := p.settleLKG(ctx, record, req)
+	return err
 }
 
 // readDue reads what the verified release of record still owes. A record
@@ -251,28 +257,4 @@ func (p *Pipeline) readDue(ctx context.Context, record core.StateRecord, unit st
 		return FinishDue{}, core.NewError(core.CodeTampered, "what the verified release of "+string(record.RunID)+" owes names another release")
 	}
 	return due, err
-}
-
-// ensureLKG makes sure the LKG of the release's unit is the verified
-// release of record, unless a release verified after it replaced it. An
-// entry is written only for a request verified again now: only the
-// pipeline's verification may make an artifact the LKG.
-func (p *Pipeline) ensureLKG(ctx context.Context, record core.StateRecord, req Request) error {
-	lkg, found, err := p.cfg.LKG.Get(ctx, req.Artifact.Unit)
-	if err != nil {
-		return err
-	}
-	if found && lkg.Source == SourcePromoted {
-		if lkg.Digest == record.ReleaseDigest && lkg.RunID == record.RunID {
-			return nil
-		}
-		if lkg.RecordedAt.After(record.UpdatedAt) {
-			return nil // a later release is the LKG now
-		}
-	}
-	v, err := p.verify(ctx, req, record)
-	if err != nil {
-		return err
-	}
-	return p.cfg.LKG.record(v)
 }

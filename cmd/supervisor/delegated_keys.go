@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/signing"
@@ -30,6 +32,57 @@ type supervisorKeys struct {
 	Verifier *delegation.ChainVerifier
 	QA       core.Signer
 	Artifact core.Signer
+
+	factory  core.FactoryID
+	rootPub  ed25519.PublicKey
+	rootHeld bool
+	// mu guards trusted: every delegation the verifier was given since the
+	// supervisor started, kept so that a signature can be judged as of an
+	// earlier instant (VerifierAt).
+	mu      sync.Mutex
+	trusted []delegation.SignedDelegation
+}
+
+// remember keeps a delegation the verifier trusts.
+func (k *supervisorKeys) remember(d delegation.SignedDelegation) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.trusted = append(k.trusted, d)
+}
+
+// VerifierAt returns a verifier that judges signatures as of at, trusting
+// every delegation the supervisor has trusted since it started. The QA
+// receipt of a release that is already verified is judged with it as of
+// its Verified step, so a key that expired since does not hold the release
+// for good. A delegation the supervisor no longer holds, as one replaced
+// before a restart, is not known to it: such a receipt does not verify.
+func (k *supervisorKeys) VerifierAt(at time.Time) (core.Verifier, error) {
+	v, err := delegation.NewChainVerifier(delegation.VerifierConfig{
+		FactoryID: k.factory, Root: k.rootPub, Clock: fixedClock(at), RootKeyInFactoryStore: k.rootHeld,
+	})
+	if err != nil {
+		return nil, err
+	}
+	k.mu.Lock()
+	trusted := slices.Clone(k.trusted)
+	k.mu.Unlock()
+	for _, d := range trusted {
+		if err := v.Trust(context.Background(), d); err != nil {
+			return nil, err
+		}
+	}
+	return v, nil
+}
+
+// fixedClock is a clock that stands at one instant.
+type fixedClock time.Time
+
+func (c fixedClock) Now() time.Time { return time.Time(c) }
+
+func (c fixedClock) After(d time.Duration) <-chan time.Time {
+	fired := make(chan time.Time, 1)
+	fired <- time.Time(c).Add(d)
+	return fired
 }
 
 // delegationFile and privateKeyFile name a purpose's key files on the trust
@@ -49,6 +102,7 @@ func loadSupervisorKeys(ctx context.Context, trustDir string, factory core.Facto
 	if err != nil {
 		return nil, err
 	}
+	keys := &supervisorKeys{Verifier: verifier, factory: factory, rootPub: rootPub, rootHeld: root != nil}
 	load := func(p delegation.Purpose) (core.Signer, error) {
 		return newReloadingSigner(ctx, p, func(ctx context.Context) (*delegation.DelegatedSigner, time.Time, error) {
 			if root != nil {
@@ -63,10 +117,12 @@ func loadSupervisorKeys(ctx context.Context, trustDir string, factory core.Facto
 			// Load adds the delegation to the verifier the stages check
 			// signatures with before it returns the signer.
 			signer, err := delegation.Load(ctx, verifier, delegation.LoadRequest{Holder: delegation.HolderSupervisor, Delegation: signed, PrivateKey: priv})
+			if err == nil {
+				keys.remember(signed)
+			}
 			return signer, signed.Delegation.NotAfter, err
 		}, clock, log)
 	}
-	keys := &supervisorKeys{Verifier: verifier}
 	if keys.QA, err = load(delegation.PurposeQAReceipt); err != nil {
 		return nil, err
 	}
