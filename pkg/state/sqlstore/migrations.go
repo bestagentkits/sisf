@@ -96,6 +96,20 @@ var releaseMigrations = []migration{
 		file:      "0008_run_stop_steps.sql",
 		postgres:  recordStepScript,
 	},
+	{
+		// The trigger that holds a record to one step of the lifecycle also
+		// holds what the step changes: the run only on the claim, to a run
+		// the issue has not had; the attempt only as the claim and a failed
+		// evaluation set it; the candidate and the release only on the steps
+		// that name them; and the lease token to the latest one issued. The
+		// zones' policies are written
+		// afresh, unchanged. No data moves and no column changes. The
+		// previous release's store writes every step this way already, so it
+		// keeps working on the schema.
+		Migration: state.Migration{Version: 9, Name: "lifecycle steps change only what they set", BackwardCompatible: true},
+		file:      "0009_record_step_columns.sql",
+		postgres:  recordStepScript,
+	},
 }
 
 // Migrations lists the migrations this release ships, for callers that must

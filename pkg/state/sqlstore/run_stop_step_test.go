@@ -51,9 +51,8 @@ func TestOnlyTheControlZoneBlocksAnIssueWhoseRunStopped(t *testing.T) {
 func TestTheRunStopMigrationAdmitsTheNewStepsToTheControlZoneOnly(t *testing.T) {
 	t.Parallel()
 	shipped := sqlstore.Migrations()
-	last := shipped[len(shipped)-1]
-	if last.Version != 8 || !last.BackwardCompatible {
-		t.Fatalf("the last migration is %+v, want the backward compatible migration 8", last)
+	if len(shipped) < 8 || shipped[7].Version != 8 || !shipped[7].BackwardCompatible {
+		t.Fatalf("the shipped migrations are %+v, want a backward compatible migration 8", shipped)
 	}
 	script, err := sqlstore.MigrationScript(8, sqlstore.DialectPostgres)
 	if err != nil {
