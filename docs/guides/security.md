@@ -51,7 +51,7 @@ What each mode protects and whom it trusts. The rules are checked by `sisf docto
 In both modes:
 
 - **The install directory is the Owner's.** `<dir>/secrets` holds the root signing key, which signs releases (the lower-assurance local profile `init` warns about), and the control zone's env file. Whoever can read the control zone's environment can run the Owner's host commands (`factoryd policy approve`, `factoryd issue retry`), which count as the Owner with a fresh step-up (`cmd/factoryd/wiring/control_policy.go`). Keep the directory, and every backup of it, readable by the Owner alone.
-- **One factory per machine.** The ports are fixed and the supervisor's admin socket does not check which factory a stop is for ([installing](install.md#one-factory-per-machine)).
+- **One factory per machine.** The ports are fixed, so a second factory cannot run beside the first. The supervisor's admin socket refuses a stop for any factory but its own, and `sisf emergency-stop` sends a stop only to a supervisor that proves it serves the factory named (`internal/supervisor/admin_emergency_stop.go`, [installing](install.md#one-factory-per-machine)).
 - **A development install** signs in whoever reads `<dir>/secrets/control/dev-sign-in` as the Owner, including an agent running as your user.
 
 ## Operator habits
