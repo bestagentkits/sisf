@@ -121,25 +121,51 @@ func (l *lifecycleFlags) startLifecycle(ctx context.Context, d lifecycleDeps, op
 	opts.Rollback = st.Pipeline.OwnerRollback
 	opts.HeldBuilds = heldBuilds(d.stop.store)
 	return func(ctx context.Context) {
-		// A supervisor that stopped between a verification and the write of
-		// its LKG left a Verified record whose release the LKG does not name
-		// yet: it is recorded first, so adoption starts what the record says.
-		if lkgs := st.Release.RecordVerifiedLKGs(ctx); ctx.Err() == nil {
-			logPass(d.log, stages.PassResult{Release: lkgs})
-		}
-		if l.adopter != nil && !l.adopter.until(ctx, l, d.clock, d.log) {
-			return
-		}
-		// A release a supervisor that stopped left in Canary or Monitoring
-		// is undone before anything else runs: the last known good release,
-		// which adoption put back under the local backend, is restored
-		// through the backend and the issue blocked.
-		recovered := st.Release.Recover(ctx)
-		if ctx.Err() == nil {
-			logPass(d.log, stages.PassResult{Release: recovered})
-		}
-		runStages(ctx, st, l, d.clock, d.log)
+		startup{
+			recordVerifiedLKGs: func(ctx context.Context) {
+				if lkgs := st.Release.RecordVerifiedLKGs(ctx); ctx.Err() == nil {
+					logPass(d.log, stages.PassResult{Release: lkgs})
+				}
+			},
+			adopt: func(ctx context.Context) bool {
+				return l.adopter == nil || l.adopter.until(ctx, l, d.clock, d.log)
+			},
+			recover: func(ctx context.Context) {
+				if recovered := st.Release.Recover(ctx); ctx.Err() == nil {
+					logPass(d.log, stages.PassResult{Release: recovered})
+				}
+			},
+			run: func(ctx context.Context) { runStages(ctx, st, l, d.clock, d.log) },
+		}.start(ctx)
 	}, nil
+}
+
+// startup is what the lifecycle does when the supervisor starts, in the
+// order start runs it.
+type startup struct {
+	recordVerifiedLKGs func(context.Context)
+	adopt              func(context.Context) bool
+	recover            func(context.Context)
+	run                func(context.Context)
+}
+
+// start runs the startup steps in order:
+//   - A supervisor that stopped between a verification and the write of its
+//     LKG left a Verified record whose release the LKG does not name yet. It
+//     is recorded first, so that adoption starts what the record says.
+//   - Adoption starts the LKG; when it gives up nothing else runs.
+//   - A release that a stopped supervisor left in Canary or Monitoring is
+//     undone before anything else runs. The LKG, which adoption put back
+//     under the local backend, is restored through the backend and the issue
+//     is blocked.
+//   - The stages run.
+func (s startup) start(ctx context.Context) {
+	s.recordVerifiedLKGs(ctx)
+	if !s.adopt(ctx) {
+		return
+	}
+	s.recover(ctx)
+	s.run(ctx)
 }
 
 // getenv adapts lookupEnv to the getenv the process logger reads.
