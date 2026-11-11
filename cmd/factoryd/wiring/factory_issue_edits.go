@@ -91,14 +91,14 @@ func (c *Control) editIssue(ctx context.Context, ref core.IssueRef, intent editI
 	return nil
 }
 
-// confirmOwnEdit reports whether every comment of the issue updated at or
-// after since carries the factory's marker (see control.ConfirmOwnEdit).
-func (c *Control) confirmOwnEdit(ctx context.Context, ref core.IssueRef, since time.Time) (bool, error) {
+// confirmOwnEdit lists the comments of the issue updated at or after since
+// that do not carry the factory's marker (see control.ConfirmOwnEdit).
+func (c *Control) confirmOwnEdit(ctx context.Context, ref core.IssueRef, since time.Time) ([]github.Comment, error) {
 	comments, err := c.cfg.GitHub.ListComments(ctx, ref, since)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return !slices.ContainsFunc(comments, func(cm github.Comment) bool { return !intake.IsFactoryComment(cm.Body) }), nil
+	return slices.DeleteFunc(comments, func(cm github.Comment) bool { return intake.IsFactoryComment(cm.Body) }), nil
 }
 
 // outboxIssue is the issue an outbox message edits: intake's effects name

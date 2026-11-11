@@ -30,7 +30,7 @@ func TestAReconciledChangeIsTakenForTheFactorysEditOnlyWhenConfirmed(t *testing.
 		return github.WebhookEvent{DeliveryID: "reconcile-" + is.UpdatedAt.String() + is.Ref.String(), Type: "issues",
 			Action: "reconciled", InstallationID: 1, Repo: repo, Issue: &is, ReceivedAt: at}
 	}
-	confirmed := func(context.Context, core.IssueRef, time.Time) (bool, error) { return true, nil }
+	confirmed := func(context.Context, core.IssueRef, time.Time) ([]github.Comment, error) { return nil, nil }
 	cases := []struct {
 		name    string
 		listed  func(number int) github.Issue
@@ -40,10 +40,16 @@ func TestAReconciledChangeIsTakenForTheFactorysEditOnlyWhenConfirmed(t *testing.
 		{"own edit", func(n int) github.Issue { return issue(n, at.Add(time.Second), "sisf:needs-info") }, confirmed, false},
 		{"another label", func(n int) github.Issue { return issue(n, at.Add(time.Second), "sisf:needs-info", "kind:bug") }, confirmed, true},
 		{"a person's comment", func(n int) github.Issue { return issue(n, at.Add(time.Second), "sisf:needs-info") },
-			func(context.Context, core.IssueRef, time.Time) (bool, error) { return false, nil }, true},
+			func(context.Context, core.IssueRef, time.Time) ([]github.Comment, error) {
+				return []github.Comment{{ID: 9, Body: "It also fails at night.", UpdatedAt: at.Add(time.Second)}}, nil
+			}, true},
+		{"the comment the edit answers", func(n int) github.Issue { return issue(n, at.Add(time.Second), "sisf:needs-info") },
+			func(context.Context, core.IssueRef, time.Time) ([]github.Comment, error) {
+				return []github.Comment{{ID: 9, Body: "It also fails at night.", UpdatedAt: at}}, nil
+			}, false},
 		{"no confirmation", func(n int) github.Issue { return issue(n, at.Add(time.Second), "sisf:needs-info") },
-			func(context.Context, core.IssueRef, time.Time) (bool, error) {
-				return false, errors.New("GitHub is down")
+			func(context.Context, core.IssueRef, time.Time) ([]github.Comment, error) {
+				return nil, errors.New("GitHub is down")
 			}, true},
 	}
 	withServer(t, func(t *testing.T, e *env) {

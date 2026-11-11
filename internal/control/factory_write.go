@@ -14,10 +14,10 @@ import (
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
-// ConfirmOwnEdit reports whether every comment of the issue updated at or
-// after since is one the factory wrote. It reads GitHub, so it runs outside
-// any store transaction.
-type ConfirmOwnEdit func(ctx context.Context, ref core.IssueRef, since time.Time) (bool, error)
+// ConfirmOwnEdit lists the comments of the issue updated at or after since
+// that the factory did not write. It reads GitHub, so it runs outside any
+// store transaction.
+type ConfirmOwnEdit func(ctx context.Context, ref core.IssueRef, since time.Time) ([]github.Comment, error)
 
 // AcceptReconciledIssue stores a change that reconciliation found on GitHub
 // as an inbox entry, the way the webhook route stores a delivery, so the
@@ -35,9 +35,12 @@ type ConfirmOwnEdit func(ctx context.Context, ref core.IssueRef, since time.Time
 // in the same second as the factory's edit leaves the issue at the time the
 // edit was recorded with. A change found at that time is taken for the
 // factory's own only when its content proves it: the issue still shows what
-// the factory saw just after its edit, and confirm finds nothing but the
-// factory's comments since just before it. Anything else, a failure to
-// confirm included, is stored: taking the factory's edit in once more is
+// the factory saw just after its edit, and confirm finds no comment since
+// just before it but the factory's and those taken in already (see
+// takenIn). The edit is usually the factory's answer to a person's
+// comment, which then leaves the issue at its update time just before the
+// edit: that comment is a change taken in, not one to find.
+// Anything else, a failure to confirm included, is stored: taking the factory's edit in once more is
 // harmless, losing a person's change is not. It reports whether the entry
 // was stored.
 func AcceptReconciledIssue(ctx context.Context, store state.Store, ev github.WebhookEvent, confirm ConfirmOwnEdit) (bool, error) {
@@ -56,11 +59,11 @@ func AcceptReconciledIssue(ctx context.Context, store state.Store, ev github.Web
 	if err != nil || !ev.Issue.UpdatedAt.After(seen.IssueAt) {
 		return false, err
 	}
-	own := false
+	own, others := false, []github.Comment(nil)
 	if ownCandidate(seen, *ev.Issue) && confirm != nil {
 		// A second earlier, so the check holds however GitHub rounds since.
-		ok, err := confirm(ctx, ev.Issue.Ref, seen.SelfSince.Add(-time.Second))
-		own = err == nil && ok
+		others, err = confirm(ctx, ev.Issue.Ref, seen.SelfSince.Add(-time.Second))
+		own = err == nil
 	}
 	var accepted bool
 	err = store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
@@ -70,7 +73,7 @@ func AcceptReconciledIssue(ctx context.Context, store state.Store, ev github.Web
 			return err
 		case !ev.Issue.UpdatedAt.After(current.IssueAt):
 			return nil
-		case own && ownCandidate(current, *ev.Issue):
+		case own && ownCandidate(current, *ev.Issue) && takenIn(current, others):
 			return projectEvent(ctx, tx, ev)
 		}
 		accepted, err = acceptEvent(ctx, tx, ev)
@@ -83,6 +86,16 @@ func AcceptReconciledIssue(ctx context.Context, store state.Store, ev github.Web
 // recorded edit left it: the same update time and the same content.
 func ownCandidate(view issueProjection, issue github.Issue) bool {
 	return !view.SelfAt.IsZero() && issue.UpdatedAt.Equal(view.SelfAt) && view.SelfDigest == contentDigest(issue)
+}
+
+// takenIn reports whether every comment of others was updated no later
+// than the update the issue's view took in. Such a comment was there when
+// that update was taken in, and intake read it then; or it came later in
+// the same second, which leaves the issue at that update time, so polling
+// could not tell it apart from what was taken in whether the factory edited
+// the issue after it or not.
+func takenIn(view issueProjection, others []github.Comment) bool {
+	return !slices.ContainsFunc(others, func(c github.Comment) bool { return c.UpdatedAt.After(view.IssueAt) })
 }
 
 // RecordFactoryWrite notes that the factory edited an issue: before is the
