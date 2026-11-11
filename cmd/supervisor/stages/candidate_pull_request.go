@@ -99,7 +99,7 @@ func (c *CandidatePRs) Pass(ctx context.Context) CandidatePRPassResult {
 }
 
 // scopeOf is the Scope of Work digest the run was briefed from, "" when the
-// dispatcher's record of the run cannot say.
+// dispatcher's record of the run cannot say or holds anything but a digest.
 func scopeOf(ctx context.Context, kv state.KV, run core.RunID) core.Digest {
 	entry, err := kv.GetKV(ctx, handoff.Namespace, "run/"+string(run))
 	if err != nil {
@@ -108,6 +108,9 @@ func scopeOf(ctx context.Context, kv state.KV, run core.RunID) core.Digest {
 	var record dispatcher.RunRecord
 	if json.Unmarshal(entry.Value, &record) != nil || record.RunID != run {
 		return ""
+	}
+	if record.Brief.ScopeDigest.Validate() != nil {
+		return "" // the record is the agent zone's: only a well-formed digest is quoted
 	}
 	return record.Brief.ScopeDigest
 }

@@ -23,6 +23,11 @@ type progressFacts struct {
 	restored core.ReleaseDigest
 }
 
+// maxShownFailures bounds the failed coding attempts the comment lists;
+// the dispatcher's record is the agent zone's and its length is not the
+// control zone's to trust.
+const maxShownFailures = 10
+
 // releaseSteps are the release states in the order a release reaches them.
 var releaseSteps = []core.State{core.StateReleaseCandidate, core.StateCanary, core.StateMonitoring, core.StateVerified, core.StateClosed}
 
@@ -40,8 +45,16 @@ func renderProgress(f progressFacts) string {
 		line("Claimed by run `%s`.", f.record.RunID)
 	}
 	if f.run != nil {
-		for _, failure := range f.run.Failures {
-			line("Coding attempt %d failed (`%s`).", failure.Attempt, failure.Code)
+		for i, failure := range f.run.Failures {
+			if i == maxShownFailures {
+				line("%d more failed coding attempts.", len(f.run.Failures)-i)
+				break
+			}
+			if failure.Code.Valid() {
+				line("Coding attempt %d failed (`%s`).", failure.Attempt, failure.Code)
+			} else {
+				line("Coding attempt %d failed (an unrecognised code).", failure.Attempt)
+			}
 		}
 	}
 	for _, n := range f.notes {
@@ -56,7 +69,7 @@ func renderProgress(f progressFacts) string {
 	if reached := reachedRelease(f.record.State); reached != "" {
 		line("Release: %s.", reached)
 	}
-	if f.restored != "" {
+	if f.restored != "" && core.Digest(f.restored).Validate() == nil {
 		line("**Rolled back** to the last known good release `%s`; the factory will not merge this candidate.", f.restored)
 	}
 	if f.pr != nil {

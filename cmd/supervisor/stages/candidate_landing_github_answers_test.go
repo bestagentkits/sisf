@@ -2,14 +2,17 @@ package stages
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
+	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/internal/testkit/fakegithub"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/state"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
 
@@ -142,6 +145,45 @@ func TestACopiedMarkerDoesNotSuppressTheFactorysNote(t *testing.T) {
 		comments, err := w.client.ListComments(ctx, ref, time.Time{})
 		if err != nil || len(comments) != 2 || !strings.Contains(comments[1].Body, "left open for the Owner") {
 			t.Fatalf("the pull request's comments: %+v, %v", comments, err)
+		}
+	})
+}
+
+// The pull request quotes the run's Scope of Work digest only when the
+// dispatcher's record holds a well-formed one: that record is the agent
+// zone's, so anything else is left out rather than published.
+func TestThePullRequestQuotesOnlyAWellFormedScopeDigest(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		ctx := context.Background()
+		agentZone, control := db.Open(t, core.ZoneAgent), db.Open(t, core.ZoneControl)
+		for digest, want := range map[core.Digest]core.Digest{
+			landingDigest: landingDigest,
+			"x`\n\nFixes #12 <!-- sisf:candidate -->": "",
+		} {
+			raw, err := json.Marshal(dispatcher.RunRecord{RunID: "run-1", Brief: dispatcher.Brief{ScopeDigest: digest}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = agentZone.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+				version := int64(0)
+				if e, err := tx.GetKV(ctx, handoff.Namespace, "run/run-1"); err == nil {
+					version = e.Version
+				}
+				_, err := tx.PutKV(ctx, state.KVEntry{Namespace: handoff.Namespace, Key: "run/run-1", Value: raw, Version: version})
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got core.Digest
+			err = control.View(ctx, func(ctx context.Context, tx state.Tx) error {
+				got = scopeOf(ctx, tx, "run-1")
+				return nil
+			})
+			if err != nil || got != want {
+				t.Fatalf("scopeOf(%q) = %q, %v", digest, got, err)
+			}
 		}
 	})
 }

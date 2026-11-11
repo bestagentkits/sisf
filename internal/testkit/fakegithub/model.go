@@ -85,22 +85,22 @@ type jBranch struct {
 }
 
 type jPull struct {
-	Number            int       `json:"number"`
-	HTMLURL           string    `json:"html_url"`
-	Title             string    `json:"title"`
-	Body              string    `json:"body"`
-	State             string    `json:"state"`
-	Draft             bool      `json:"draft"`
+	Number  int    `json:"number"`
+	HTMLURL string `json:"html_url"`
+	Title   string `json:"title"`
+	Body    string `json:"body"`
+	State   string `json:"state"`
+	Draft   bool   `json:"draft"`
 	// Merged is in the single pull request's answer only; the list answers
 	// carry merged_at alone, as GitHub's do.
 	Merged            *bool      `json:"merged,omitempty"`
 	MergedAt          *time.Time `json:"merged_at"`
-	Head              jBranch   `json:"head"`
-	Base              jBranch   `json:"base"`
-	User              jUser     `json:"user"`
-	AuthorAssociation string    `json:"author_association"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	Head              jBranch    `json:"head"`
+	Base              jBranch    `json:"base"`
+	User              jUser      `json:"user"`
+	AuthorAssociation string     `json:"author_association"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 // pull is the pull-request half of an issue entry.

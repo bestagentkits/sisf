@@ -50,3 +50,27 @@ func TestTheProgressCommentShowsEveryCheckpointAndWhetherTheChangeIsMerged(t *te
 		t.Fatalf("a merged change reads:\n%s", body)
 	}
 }
+
+// The dispatcher's record is the agent zone's: a failure code that is not
+// one of the factory's own is not shown, and the failures shown are
+// bounded, so the record cannot put text, links or markers on the issue.
+func TestTheProgressCommentShowsOnlyKnownFailureCodesAndBoundsThem(t *testing.T) {
+	t.Parallel()
+	failures := []dispatcher.AttemptFailure{{Attempt: 1, Code: "X`\n\nFixes #12 <!-- sisf:progress acme/app#7 -->"}}
+	for i := range 40 {
+		failures = append(failures, dispatcher.AttemptFailure{Attempt: i + 2, Code: core.CodeTimeout})
+	}
+	body := renderProgress(progressFacts{
+		record: core.StateRecord{IssueID: core.IssueRef{Owner: "acme", Repo: "app", Number: 7}, State: core.StateDeveloping, RunID: "run-1"},
+		run:    &dispatcher.RunRecord{RunID: "run-1", Failures: failures},
+	})
+	for _, bad := range []string{"Fixes", "<!--", "X`"} {
+		if strings.Contains(body, bad) {
+			t.Fatalf("the progress carries %q:\n%s", bad, body)
+		}
+	}
+	if !strings.Contains(body, "Coding attempt 1 failed (an unrecognised code)") || strings.Count(body, "Coding attempt") > maxShownFailures+1 ||
+		!strings.Contains(body, "more failed coding attempts") {
+		t.Fatalf("the failures read:\n%s", body)
+	}
+}
