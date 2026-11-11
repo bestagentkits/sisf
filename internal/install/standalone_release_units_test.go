@@ -43,7 +43,7 @@ func TestStandaloneRunsTheLifecycleWithNativeProcessesAndTheLocalBackends(t *tes
 	must(t, err)
 	info, _ := os.Stat(r.in.Layout.Bin(appLauncher))
 	if info.Mode().Perm() != 0o755 || !strings.Contains(string(script), `HELLO_ADDR="$SISF_LISTEN"`) ||
-		!strings.Contains(string(script), "exec '"+r.in.Layout.Bin("hello-app")+"'") {
+		!strings.Contains(string(script), "program='"+r.in.Layout.Bin("hello-app")+"'") || !strings.Contains(string(script), `exec "$program"`) {
 		t.Errorf("the launcher (%04o):\n%s", info.Mode().Perm(), script)
 	}
 	if _, err := readDelegations(dirReader(r.in.Layout.Data("trust")), "sisf-hello-app"); err != nil {

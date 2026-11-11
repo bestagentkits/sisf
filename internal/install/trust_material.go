@@ -127,6 +127,13 @@ func decodeTrustFiles(value string) (map[string][]byte, error) {
 // and removes the promoted LKG entries of an earlier run. The volume must
 // exist and be writable by its owner alone, as the supervisor requires.
 func WriteTrustFiles(dir string, files map[string][]byte) error {
+	return writeTrustFiles(dir, files, nil)
+}
+
+// writeTrustFiles is WriteTrustFiles, except that a promoted LKG entry is
+// left in place when keep, given the entry's file name and content, says
+// so.
+func writeTrustFiles(dir string, files map[string][]byte, keep func(name string, entry []byte) bool) error {
 	for name, data := range files {
 		path, err := supervisor.TrustPath(dir, name)
 		if err != nil {
@@ -142,6 +149,12 @@ func WriteTrustFiles(dir string, files map[string][]byte) error {
 	}
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), promotedLKGPrefix) && strings.HasSuffix(e.Name(), ".json") {
+			if keep != nil {
+				// An entry that cannot be read is not one to keep.
+				if raw, err := os.ReadFile(filepath.Join(dir, e.Name())); err == nil && keep(e.Name(), raw) {
+					continue
+				}
+			}
 			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
 				return unavailablef(err, "an earlier LKG entry cannot be removed")
 			}
