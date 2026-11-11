@@ -261,14 +261,14 @@ func lifecycle(name string, act func(context.Context, *install.Installer, bool) 
 			}
 			return err
 		}
-		wasRunning, err := in.Running()
+		prior, err := in.PriorState(ctx)
 		if err != nil {
 			return err
 		}
 		if err := act(ctx, in, volumes); err != nil {
 			return err
 		}
-		return env.Printf("%s\n", lifecycleDone(name, abs, volumes, wasRunning || isDocker(in)))
+		return env.Printf("%s\n", lifecycleDone(name, abs, volumes, prior))
 	}
 }
 
@@ -284,20 +284,21 @@ func bindLifecycleFlags(name string, dir *string, volumes *bool) func(*flag.Flag
 	}
 }
 
-// isDocker reports whether the install runs in Docker mode, where Compose,
-// not a pid file, knows whether the factory ran.
-func isDocker(in *install.Installer) bool {
-	m, err := in.Layout.LoadManifest()
-	return err == nil && m.Mode == manifest.ModeDocker
-}
-
 // lifecycleDone is the line a lifecycle command prints once it succeeded, so
-// a command that changed the running factory never ends in silence, and one
-// that found it stopped says so.
-func lifecycleDone(name, dir string, volumes, wasRunning bool) string {
+// a command that changed the running factory never ends in silence, one
+// that found it stopped says so, and one that found nothing of the install
+// says it removed nothing.
+func lifecycleDone(name, dir string, volumes bool, prior install.PriorState) string {
+	wasRunning := prior.Running
 	switch {
 	case name == "restart":
 		return "the factory in " + dir + " is restarting every unit"
+	case prior.NeverStarted && name == "down" && volumes && prior.ForeignData != "":
+		return "the factory in " + dir + " was never started, so nothing was removed; the volumes of its Compose project's name belong to " + prior.ForeignData
+	case prior.NeverStarted && name == "down" && volumes:
+		return "the factory in " + dir + " was never started; nothing was removed"
+	case prior.NeverStarted:
+		return "the factory in " + dir + " was never started; nothing to stop"
 	case !wasRunning && name == "down" && volumes:
 		return "the factory in " + dir + " was not running; its data is removed"
 	case !wasRunning:

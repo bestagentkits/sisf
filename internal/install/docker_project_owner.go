@@ -69,33 +69,51 @@ func (in *Installer) checkProjectContainers(ctx context.Context, m *manifest.Man
 // own unlabelled volumes: Compose does not relabel a volume that exists.
 func (in *Installer) checkProjectVolumes(ctx context.Context, m *manifest.Manifest) error {
 	name := project(m.FactoryID)
-	// Each line is the volume's name, which has no space, then the label.
-	out, err := in.Exec.Run(ctx, Cmd{Name: "docker", Args: []string{"volume", "ls",
-		"--filter", "label=com.docker.compose.project=" + name,
-		"--format", `{{.Name}} {{.Label "` + installDirLabel + `"}}`}})
+	volumes, err := in.projectVolumes(ctx, m)
 	if err != nil {
-		return unavailablef(err, "docker cannot list the volumes of project %s; is Docker running?", name)
+		return err
 	}
 	rendered := in.composeRendered()
-	for _, line := range strings.Split(string(out), "\n") {
-		volume, owner, _ := strings.Cut(strings.TrimRight(line, "\r"), " ")
-		owner = strings.TrimSpace(owner)
+	for _, v := range volumes {
 		switch {
-		case volume == "":
-			continue
-		case owner != "" && !sameFile(owner, in.Layout.Dir):
-			return core.NewError(core.CodeConflict, "volume "+volume+" of the Compose project "+name+" belongs to the install in "+owner+
+		case v.owner != "" && !sameFile(v.owner, in.Layout.Dir):
+			return core.NewError(core.CodeConflict, "volume "+v.name+" of the Compose project "+name+" belongs to the install in "+v.owner+
 				"; nothing was changed. Two installs of factory "+string(m.FactoryID)+" cannot run in Docker on one host",
-				core.NextAction{Action: "sisf down -v --dir " + owner, Description: "remove the other install's data, if you no longer need it"},
+				core.NextAction{Action: "sisf down -v --dir " + v.owner, Description: "remove the other install's data, if you no longer need it"},
 				core.NextAction{Action: "sisf init --factory-id ID", Description: "make this install again under a factory id of its own"})
-		case owner == "" && !rendered:
-			return core.NewError(core.CodeConflict, "volume "+volume+" of the Compose project "+name+
+		case v.owner == "" && !rendered:
+			return core.NewError(core.CodeConflict, "volume "+v.name+" of the Compose project "+name+
 				" was left by an install this directory does not know; nothing was changed, so its data is not adopted. Two installs of factory "+string(m.FactoryID)+" cannot run in Docker on one host",
 				core.NextAction{Action: "docker volume ls --filter label=com.docker.compose.project=" + name, Description: "see the volumes; remove them only if no install needs their data"},
 				core.NextAction{Action: "sisf init --factory-id ID", Description: "make this install again under a factory id of its own"})
 		}
 	}
 	return nil
+}
+
+// projectVolume is a volume of the install's Compose project and the
+// directory of the install its label names, "" for none.
+type projectVolume struct{ name, owner string }
+
+// projectVolumes lists the volumes of the install's Compose project name,
+// whichever install made them.
+func (in *Installer) projectVolumes(ctx context.Context, m *manifest.Manifest) ([]projectVolume, error) {
+	name := project(m.FactoryID)
+	// Each line is the volume's name, which has no space, then the label.
+	out, err := in.Exec.Run(ctx, Cmd{Name: "docker", Args: []string{"volume", "ls",
+		"--filter", "label=com.docker.compose.project=" + name,
+		"--format", `{{.Name}} {{.Label "` + installDirLabel + `"}}`}})
+	if err != nil {
+		return nil, unavailablef(err, "docker cannot list the volumes of project %s; is Docker running?", name)
+	}
+	var volumes []projectVolume
+	for _, line := range strings.Split(string(out), "\n") {
+		volume, owner, _ := strings.Cut(strings.TrimRight(line, "\r"), " ")
+		if volume != "" {
+			volumes = append(volumes, projectVolume{name: volume, owner: strings.TrimSpace(owner)})
+		}
+	}
+	return volumes, nil
 }
 
 // isOwnComposeFile reports whether path, as Compose recorded it, is this
