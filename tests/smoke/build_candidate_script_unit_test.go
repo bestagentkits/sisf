@@ -208,3 +208,35 @@ func (b *scriptBuild) Exec(ctx context.Context, _ execution.SandboxID, c executi
 }
 
 func (*scriptBuild) Destroy(context.Context, execution.SandboxID) error { return nil }
+
+// A report phase whose build wrote no program fails, saying so, instead of
+// reporting the digest of nothing.
+func TestTheBuildScriptFailsWhenTheBuildProducedNoProgram(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	commit := sandboxCommit(t, filepath.Join(dir, "repo"), filepath.Join(dir, "mirror.git"))
+	realGo, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A go that does everything but write the program.
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := "#!/bin/sh\nfor a in \"$@\"; do case $a in */out/program) exit 0 ;; esac; done\nexec '" + realGo + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(filepath.Join(repoRoot(), "tests", "smoke", "sandbox", "build-candidate.sh"))
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"SISF_PHASE=report", "SISF_REPORT_COMMIT="+commit, "SISF_REPORT_NONCE=n0nce",
+		"SISF_REPORT_TARGET_OS="+runtime.GOOS, "SISF_REPORT_TARGET_ARCH="+runtime.GOARCH,
+		"SISF_SMOKE_MIRROR="+filepath.Join(dir, "mirror.git"), "SISF_SMOKE_WORKDIR="+filepath.Join(dir, "work"), "GOFLAGS=-mod=readonly")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err = cmd.Run()
+	if err == nil || strings.Contains(stdout.String(), "image-digest") || !strings.Contains(stderr.String(), "no program") {
+		t.Fatalf("a build that wrote no program: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+}

@@ -67,13 +67,20 @@ done
 git checkout -q FETCH_HEAD
 # The Go module is the repository's root, or else its one directory with a
 # go.mod (the sandbox may hold the example application below examples/).
+# The go.mod files are counted one character each, so a directory name with
+# a space or a line break in it can neither split nor join two of them.
 if [ ! -f go.mod ]; then
-	modules=$(find . -name go.mod -not -path './.*' | sed 's|/go.mod$||')
-	if [ "$(printf '%s\n' "$modules" | grep -c .)" -ne 1 ]; then
-		echo "the candidate has no single Go module to build: ${modules:-none}" >&2
+	count=$(find . -name go.mod -not -path './.*' -exec printf x \; | wc -c | tr -d ' ')
+	if [ "$count" -ne 1 ]; then
+		echo "the candidate has $count Go modules; it needs exactly one to build" >&2
 		exit 1
 	fi
-	cd "$modules"
+	module=$(find . -name go.mod -not -path './.*' -exec dirname {} \;)
+	if [ ! -f "$module/go.mod" ]; then
+		echo "the directory of the candidate's Go module cannot be named safely" >&2
+		exit 1
+	fi
+	cd "$module"
 fi
 if [ "$phase" = test ]; then
 	go vet ./... >&2
@@ -92,8 +99,26 @@ if [ "$phase" = build ]; then
 	CGO_ENABLED=0 go build -trimpath -o "$out/" ./... >&2
 	exit 0
 fi
+rm -f "$out/program"
 CGO_ENABLED=0 GOOS=$target_os GOARCH=$target_arch go build -trimpath -o "$out/program" "$program" >&2
+# A build that wrote no program has nothing to report: the digest of an
+# absent or empty file names no program.
+if [ ! -s "$out/program" ]; then
+	echo "the build produced no program at $out/program" >&2
+	exit 1
+fi
 digest=$(sha256sum "$out/program" | cut -d' ' -f1)
+case $digest in
+[0-9a-f]*) ;;
+*)
+	echo "the program's digest cannot be computed" >&2
+	exit 1
+	;;
+esac
+if [ ${#digest} -ne 64 ]; then
+	echo "the program's digest cannot be computed" >&2
+	exit 1
+fi
 # The SBOM is the module list Go recorded in the program; the provenance
 # names the commit, the toolchain, the target and this builder. Each is
 # referenced by the digest of what was written.

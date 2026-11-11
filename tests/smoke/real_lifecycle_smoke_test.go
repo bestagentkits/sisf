@@ -60,16 +60,17 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	stage := "preflight (no side effect)"
 	t.Cleanup(func() {
 		rep.Finished = time.Now()
-		switch {
-		case t.Failed():
-			rep.Outcome = "FAIL during " + stage
+		rep.Outcome = reportOutcome(t.Failed(), stage, rep.Checks)
+		if rep.Outcome != "PASS" {
 			evidence := failureEvidence(upLog, home, scrub)
 			for _, e := range evidence {
 				t.Log(e)
 			}
 			rep.Evidence = append(rep.Evidence, evidence...)
-		default:
-			rep.Outcome = "PASS"
+		}
+		if !t.Failed() && rep.Outcome != "PASS" {
+			// A failed check the run went on after still fails the run.
+			t.Errorf("the run listed failed checks: %s", rep.Outcome)
 		}
 		switch mode {
 		case modeUpOnly:

@@ -86,6 +86,25 @@ func (r *smokeReport) check(name, status, evidence string) {
 	r.Checks = append(r.Checks, checkResult{Name: name, Status: status, Evidence: evidence})
 }
 
+// reportOutcome is the outcome a report states: FAIL when the test failed,
+// during stage, or when any check it lists failed, and PASS only when
+// neither happened.
+func reportOutcome(testFailed bool, stage string, checks []checkResult) string {
+	if testFailed {
+		return "FAIL during " + stage
+	}
+	var failed []string
+	for _, c := range checks {
+		if c.Status == statusFail {
+			failed = append(failed, c.Name)
+		}
+	}
+	if len(failed) > 0 {
+		return "FAIL: checks failed: " + strings.Join(failed, "; ")
+	}
+	return "PASS"
+}
+
 func (r *smokeReport) deviate(format string, args ...any) {
 	r.Deviations = append(r.Deviations, fmt.Sprintf(format, args...))
 }
