@@ -26,6 +26,15 @@ import (
 // its role, a row it may not change is left alone, and a row it may not
 // write is refused with insufficient_privilege. The owner of the tables,
 // who installs and migrates the schema, is not subject to the policies.
+//
+// A policy sees each row on its own, never the change from the old row to
+// the new one, so it cannot say that an update is one step of the
+// lifecycle. A trigger on the records says it (migration 7,
+// recordStepTrigger): for every session the policies hold, a record moves
+// from one state to the next only along an edge of the lifecycle, to the
+// next version, and stays the record of its factory and issue. With the
+// policy of a zone on the states its steps start and end in, that admits
+// exactly the zone's own steps.
 var rowPolicyTables = []string{tableRecords, tableTransitions, tableKV, tableUsage}
 
 // policyCommands are the commands a policy is written for, one per
@@ -243,6 +252,60 @@ func keyedStepCheck(zone core.Zone, records string) (string, error) {
 		" AND r.state = transitions.to_state AND r.version = transitions.version" +
 		" AND r.idempotency_key = transitions.idempotency_key)", nil
 }
+
+// recordStepTrigger returns the statements that install the trigger which
+// holds every update of a record, by a session that row-level security
+// holds, to one step of the lifecycle: the pair of the old and the new state
+// is an edge of statemachine.Edges, the version goes up by one, and the
+// factory and the issue stay as they are. Anything else is refused with
+// insufficient_privilege.
+//
+// The trigger leaves alone a session row-level security does not hold
+// either: the owner of the table, a superuser and a role that bypasses row
+// security. They install, migrate and repair the schema. The function runs
+// with pg_catalog alone on its search path, so a session cannot slip its
+// own functions or operators into it.
+func recordStepTrigger() (string, error) {
+	var pairs []string
+	for _, edge := range statemachine.Edges() {
+		if edge.From == "" {
+			continue
+		}
+		from, err := literal(string(edge.From), literalPattern)
+		if err != nil {
+			return "", err
+		}
+		to, err := literal(string(edge.To), literalPattern)
+		if err != nil {
+			return "", err
+		}
+		pairs = appendNew(pairs, "("+from+", "+to+")")
+	}
+	slices.Sort(pairs)
+	return `CREATE OR REPLACE FUNCTION ` + quote(recordStepFunction) + `() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $sisf_record_step$
+BEGIN
+	IF pg_has_role(current_user, (SELECT relowner FROM pg_class WHERE oid = TG_RELID), 'USAGE')
+		OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_user AND rolbypassrls) THEN
+		RETURN NEW;
+	END IF;
+	IF NEW.factory_id = OLD.factory_id AND NEW.issue = OLD.issue AND NEW.version = OLD.version + 1
+		AND (OLD.state, NEW.state) IN (` + strings.Join(pairs, ", ") + `) THEN
+		RETURN NEW;
+	END IF;
+	RAISE EXCEPTION 'a lifecycle record moves only along one step of the lifecycle, to its next version'
+		USING ERRCODE = 'insufficient_privilege';
+END
+$sisf_record_step$;
+DROP TRIGGER IF EXISTS ` + quote(recordStepFunction) + ` ON ` + quote(tableRecords) + `;
+CREATE TRIGGER ` + quote(recordStepFunction) + ` BEFORE UPDATE ON ` + quote(tableRecords) + `
+	FOR EACH ROW EXECUTE FUNCTION ` + quote(recordStepFunction) + `();
+`, nil
+}
+
+// recordStepFunction names the trigger of recordStepTrigger and its
+// function.
+const recordStepFunction = "sisf_record_step"
 
 // eventNames lists the events zone may write.
 func eventNames(zone core.Zone) []string {

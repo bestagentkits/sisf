@@ -17,9 +17,13 @@ import (
 
 // runEvents are the steps the agent zone writes: the dispatcher claims a
 // Ready issue under its lease and a budget reservation and starts
-// development, the run submits the candidate it built, and the run's QA
-// sends a failed candidate back into development for the next attempt,
-// within the attempts the run has left.
+// development, and the run submits the candidate it built.
+//
+// A failed evaluation is not among them. It is the verdict of the
+// independent QA, which the supervisor's QA stage writes in the control
+// zone; a run that could write it could discard an evaluation in progress
+// and spend the attempts of its own issue. Nothing in the agent zone has
+// written it, so the step is refused to that zone rather than left open.
 //
 // Every other step is the control zone's. Intake and scoping record the
 // conversation about the issue; every way into Ready rests on the Owner's
@@ -29,7 +33,7 @@ import (
 // to the release supervisor. A run that could write any of them could start
 // unapproved work or release its own candidate.
 var runEvents = []core.Event{
-	core.EventClaimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted, core.EventQAFailed,
+	core.EventClaimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted,
 }
 
 // controlEvents are the steps the control zone writes: all of them, the run
@@ -58,7 +62,7 @@ var zoneEvents = map[core.Zone]map[core.Event]bool{
 // a step another zone has yet to write, and that step would then be refused
 // as a replay of a different one. The dispatcher keys the claim
 // "claim/<run>" and the start of development "develop/<run>"; the submission
-// of a candidate and a failed evaluation have their prefixes reserved here.
+// of a candidate has its prefix reserved here.
 // None of them meets a key of the control zone, whose intake keys its steps
 // "intake/<issue>/<event>" and an authorized retry "retry/<issue>".
 //
@@ -69,7 +73,6 @@ var zoneStepKeys = map[core.Zone]map[core.Event]string{
 		core.EventClaimed:            "claim/",
 		core.EventDevelopmentStarted: "develop/",
 		core.EventCandidateSubmitted: "candidate/",
-		core.EventQAFailed:           "qa/",
 	},
 }
 

@@ -73,6 +73,18 @@ var releaseMigrations = []migration{
 		file:      "0006_agent_reads_usage_ledger.sql",
 		postgres:  usageLedgerPolicyScript,
 	},
+	{
+		// A trigger holds every update of a record by a zone role to one
+		// step of the lifecycle, and the zones' policies are written for
+		// this release's steps, which take the failed evaluation from the
+		// agent zone. No data moves and no column changes. Every step the
+		// previous release writes is an edge to the next version, and its
+		// agent zone never wrote a failed evaluation, so it keeps working
+		// on the schema.
+		Migration: state.Migration{Version: 7, Name: "records move only along lifecycle steps", BackwardCompatible: true},
+		file:      "0007_record_step_trigger.sql",
+		postgres:  recordStepScript,
+	},
 }
 
 // Migrations lists the migrations this release ships, for callers that must

@@ -116,3 +116,57 @@ $sisf_migration$;
 	}
 	return script.String(), nil
 }
+
+// recordStepScript is the PostgreSQL script of the migration that holds a
+// record to one step of the lifecycle (recordStepTrigger) and writes afresh
+// the policies of every zone on updating the records and journaling a step,
+// for the steps the zones may write in this release (rowRule).
+//
+// As in keyedStepPolicyScript, the migration does not know the zone roles:
+// each policy keeps the roles it names, and a schema whose roles were never
+// granted is left with the trigger alone; granting writes the policies
+// afresh.
+func recordStepScript() (string, error) {
+	trigger, err := recordStepTrigger()
+	if err != nil {
+		return "", err
+	}
+	var script strings.Builder
+	script.WriteString(trigger)
+	for _, rewrite := range []struct {
+		table   string
+		command privilege
+		name    string
+	}{{tableRecords, canUpdate, "UPDATE"}, {tableTransitions, canInsert, "INSERT"}} {
+		for _, zone := range core.Zones() {
+			if zonePrivileges[zone][rewrite.table]&rewrite.command == 0 {
+				continue
+			}
+			clauses, err := policyClauses(rewrite.table, rewrite.command, zone, quote(tableRecords))
+			if err != nil {
+				return "", err
+			}
+			if strings.Contains(clauses, "$") {
+				return "", core.NewError(core.CodeInternal, "the condition of a row policy cannot be quoted in a migration")
+			}
+			name := policyName(zone, rewrite.name)
+			script.WriteString(`DO $sisf_migration$
+DECLARE
+	holders text;
+BEGIN
+	SELECT string_agg(quote_ident(holder::text), ', ') INTO holders
+	FROM pg_policies, unnest(roles) AS holder
+	WHERE schemaname = current_schema() AND tablename = '` + rewrite.table + `' AND policyname = '` + name + `';
+	IF holders IS NULL THEN
+		RETURN;
+	END IF;
+	EXECUTE 'DROP POLICY ` + quote(name) + ` ON ` + quote(rewrite.table) + `';
+	EXECUTE 'CREATE POLICY ` + quote(name) + ` ON ` + quote(rewrite.table) + ` FOR ` + rewrite.name + ` TO ' || holders
+		|| ` + stepPolicyScriptTag + clauses + stepPolicyScriptTag + `;
+END
+$sisf_migration$;
+`)
+		}
+	}
+	return script.String(), nil
+}
