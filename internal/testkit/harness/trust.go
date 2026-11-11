@@ -30,6 +30,8 @@ type Trust struct {
 	Supervisor core.Digest
 	// Installed are the units' first releases.
 	Installed map[string]core.ReleaseDigest
+	// Dir is the trust volume the LKG book is kept on.
+	Dir string
 }
 
 // digestOf names a fixed build of the harness.
@@ -69,6 +71,7 @@ func newTrust(t testingT, factory core.FactoryID, clock core.Clock) *Trust {
 
 	dir := filepath.Join(t.TempDir(), "trust")
 	must(t, os.Mkdir(dir, 0o700))
+	tr.Dir = dir
 	rootVerifier, err := signing.NewVerifier(pub)
 	must(t, err)
 	store, err := supervisor.OpenLKGStore(dir, filepath.Join(dir, supervisor.DefaultLKGFile), factory, rootVerifier)

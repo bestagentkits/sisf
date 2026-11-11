@@ -32,9 +32,9 @@ const (
 	// lkgSuperseded: a release verified later, or a later install, holds
 	// the LKG or was verified after it; the release is finished without it.
 	lkgSuperseded lkgVerdict = "superseded"
-	// lkgUnjudged: the release is not observed serving, healthy, or its QA
-	// evidence does not verify even as of its verification, and nothing
-	// superseded it: it cannot be finished.
+	// lkgUnjudged: the running system answers that the release is not what
+	// serves, or not healthy, or its QA evidence does not verify even as of
+	// its verification, and nothing superseded it: it cannot be finished.
 	lkgUnjudged lkgVerdict = "unjudged"
 )
 
@@ -47,10 +47,8 @@ type lkgDecision struct {
 	// lkg and found are the LKG of the unit as read for the decision.
 	lkg   LKG
 	found bool
-	// observed is what the running system answered, observeErr when it
-	// did not answer.
-	observed   deploy.Observed
-	observeErr error
+	// observed is what the running system answered.
+	observed deploy.Observed
 }
 
 // settleLKG decides, and when it may records, the LKG for the verified
@@ -78,11 +76,13 @@ func (p *Pipeline) settleLKG(ctx context.Context, record core.StateRecord, req R
 		d.verdict, d.reason = lkgSuperseded, superseded
 		return d, nil
 	}
-	d.observed, d.observeErr = p.cfg.Backend.ObservedRevision(ctx, unit)
+	var observeErr error
+	d.observed, observeErr = p.cfg.Backend.ObservedRevision(ctx, unit)
 	switch {
-	case d.observeErr != nil:
-		d.verdict, d.reason = lkgUnjudged, "the verified release cannot be observed serving its unit, so it cannot be recorded as the last known good release"
-		return d, nil
+	case observeErr != nil:
+		// A running system that does not answer is an outage that clears,
+		// like the store's: the release waits and is judged once it answers.
+		return d, core.NewError(core.CodeUnavailable, "the running system of the unit cannot be observed").WithCause(observeErr)
 	case !d.observed.Matches(deploy.Revision{Unit: unit, Digest: record.ReleaseDigest}):
 		d.verdict, d.reason = lkgUnjudged, "the verified release is no longer observed serving its unit, healthy ("+
 			string(d.observed.Digest)+" serves), and no later release replaced it"
@@ -206,7 +206,7 @@ func (p *Pipeline) blockVerified(ctx context.Context, h *holding, unit string, d
 	release := h.record.ReleaseDigest
 	out := Outcome{Release: release, State: h.record.State, Observed: d.observed, Reason: d.reason}
 	r := &rollout{h: h, unit: unit, rev: deploy.Revision{Unit: unit, Digest: release}, observed: d.observed}
-	mayServe := d.observeErr != nil || d.observed.Digest == release
+	mayServe := d.observed.Digest == release
 	reason := d.reason
 	switch {
 	case mayServe && d.found && d.lkg.Digest != release:

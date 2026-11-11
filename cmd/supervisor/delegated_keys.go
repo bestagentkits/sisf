@@ -54,8 +54,11 @@ func (k *supervisorKeys) remember(d delegation.SignedDelegation) {
 // every delegation the supervisor has trusted since it started. The QA
 // receipt of a release that is already verified is judged with it as of
 // its Verified step, so a key that expired since does not hold the release
-// for good. A delegation the supervisor no longer holds, as one replaced
-// before a restart, is not known to it: such a receipt does not verify.
+// for good. Only expiry is judged as of at: a key the supervisor's verifier
+// holds revoked now is refused whatever the instant, since a revocation
+// says the key may have signed what it should not have. A delegation the
+// supervisor no longer holds, as one replaced before a restart, is not
+// known to it: such a receipt does not verify.
 func (k *supervisorKeys) VerifierAt(at time.Time) (core.Verifier, error) {
 	v, err := delegation.NewChainVerifier(delegation.VerifierConfig{
 		FactoryID: k.factory, Root: k.rootPub, Clock: fixedClock(at), RootKeyInFactoryStore: k.rootHeld,
@@ -71,7 +74,21 @@ func (k *supervisorKeys) VerifierAt(at time.Time) (core.Verifier, error) {
 			return nil, err
 		}
 	}
-	return v, nil
+	return revocationsInForce{pinned: v, now: k.Verifier}, nil
+}
+
+// revocationsInForce verifies with a verifier pinned at an instant, after
+// refusing a key the verifier in force holds revoked.
+type revocationsInForce struct {
+	pinned core.Verifier
+	now    *delegation.ChainVerifier
+}
+
+func (r revocationsInForce) Verify(ctx context.Context, payload []byte, sig core.Signature) error {
+	if r.now.Revoked(sig.KeyID) {
+		return core.NewError(core.CodeSignatureInvalid, "delegated key "+sig.KeyID+" is revoked")
+	}
+	return r.pinned.Verify(ctx, payload, sig)
 }
 
 // fixedClock is a clock that stands at one instant.

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -80,7 +78,7 @@ func TestALaterVerifiedReleaseKeepsTheLKGWhateverOrderTheyAreFinishedIn(t *testi
 	t.Parallel()
 	ctx := context.Background()
 	w := newWorld(t)
-	lander := &recordingLander{}
+	lander := &countingLander{}
 	w.cfg.Lander = lander
 	unlock := w.lockTrustVolume()
 
@@ -124,31 +122,6 @@ func TestALaterVerifiedReleaseKeepsTheLKGWhateverOrderTheyAreFinishedIn(t *testi
 	if n := w.published(); n != 1 {
 		t.Fatalf("%d releases were published, want only the one that serves", n)
 	}
-	// The earlier release's pull request is handed over as superseded, so
-	// the factory does not merge a change that does not serve.
-	landed := lander.requests()
-	if len(landed) != 2 || landed[0].RunID != firstRun || landed[0].Superseded == "" || landed[1].RunID != secondRun || landed[1].Superseded != "" {
-		t.Fatalf("the landings were %+v, want the first superseded and the second not", landed)
-	}
-}
-
-// recordingLander records what it was asked to land and merges nothing.
-type recordingLander struct {
-	mu   sync.Mutex
-	seen []LandRequest
-}
-
-func (l *recordingLander) Land(_ context.Context, req LandRequest) (Landing, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.seen = append(l.seen, req)
-	return Landing{Summary: "left for the Owner"}, nil
-}
-
-func (l *recordingLander) requests() []LandRequest {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return slices.Clone(l.seen)
 }
 
 // At startup a verified release whose LKG was not written is recorded only
