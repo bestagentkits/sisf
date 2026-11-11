@@ -114,3 +114,58 @@ func TestAReleaseLeftInCanaryByAStoppedSupervisorIsRestoredAndBlocked(t *testing
 		t.Fatalf("the retried issue is %s, want Ready", got)
 	}
 }
+
+// A release left in Canary whose issue lease another holder keeps, as a
+// role that took it over, is still rolled back by the supervisor's pass:
+// the wait is reported once, naming the holder, and once the lease is free
+// the steps are written and the issue blocked.
+func TestAReleaseLeftInCanaryIsRolledBackWhileAnotherHolderKeepsItsLease(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := harness.New(t, harness.Options{})
+	f.Quiet()
+	number := f.OpenIssue("maintainer", "MEMBER", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
+	f.ScriptPatch(number, 0, greetingDiff)
+	f.Cycle(4)
+	if held := f.Record(number); held.State != core.StateReleaseCandidate {
+		t.Fatalf("the release is not held in ReleaseCandidate: %+v", held)
+	}
+	leaveInCanary(t, f, number)
+	resource := state.IssueLeaseResource(f.Issue(number))
+	var intruder state.Lease
+	err := f.ControlStore.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		lease, err := tx.AcquireLease(ctx, resource, release.DefaultLeaseOwner, time.Hour)
+		if err != nil {
+			return err
+		}
+		if err := tx.ReleaseLease(ctx, lease); err != nil {
+			return err
+		}
+		intruder, err = tx.AcquireLease(ctx, resource, "agent-intruder", time.Hour)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := f.Stages.Release.Pass(ctx)
+	out, reported := first.Outcomes[f.Issue(number)]
+	if len(first.Errors) != 0 || !reported || !strings.Contains(out.Waits, "agent-intruder") || out.RestoredTo != core.ReleaseDigest(f.Trust.Installed["app"]) {
+		t.Fatalf("the first pass: %+v, errors %v; want the LKG restored and the wait reported", out, first.Errors)
+	}
+	if second := f.Stages.Release.Pass(ctx); len(second.Errors) != 0 || len(second.Outcomes) != 0 {
+		t.Fatalf("the second pass reported %+v, %v; want the unchanged wait not reported again", second.Outcomes, second.Errors)
+	}
+	if got := f.Record(number).State; got != core.StateCanary {
+		t.Fatalf("the steps were written without the lease: %s", got)
+	}
+	if err := f.ControlStore.Update(ctx, func(ctx context.Context, tx state.Tx) error { return tx.ReleaseLease(ctx, intruder) }); err != nil {
+		t.Fatal(err)
+	}
+	f.Busy()
+	f.Cycle(1)
+	wantSurfaces(t, f, number, core.StateBlocked)
+	if stop := runStopOf(t, f, f.Record(number).RunID); stop.Cause != statemachine.BlockReleaseInterrupted {
+		t.Fatalf("the block: %+v, want interrupted", stop)
+	}
+}

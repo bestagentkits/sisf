@@ -2,6 +2,7 @@ package killswitch
 
 import (
 	"context"
+	"slices"
 	"sort"
 
 	"github.com/bestagentkits/sisf/internal/supervisor"
@@ -10,9 +11,17 @@ import (
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
+// rollbackStates are the states of an issue whose release is rolling out,
+// watched or being undone. The stop does not hold their leases: the only
+// way the supervisor moves them under a stop is back to the last known good
+// release (the release pipeline checks the stop before every forward step),
+// and its recovery needs the lease to write those steps. An emergency stop
+// freezes forward progress; it never blocks a rollback.
+var rollbackStates = []core.State{core.StateCanary, core.StateMonitoring, core.StateRolledBack}
+
 // holdClaims takes the dispatcher's leadership and the lease of every open
-// issue, each in its own transaction so one refusal does not undo the
-// others. An issue a live run still holds is not a failure: its run is
+// issue but those in rollbackStates, each in its own transaction so one
+// refusal does not undo the others. An issue a live run still holds is not a failure: its run is
 // cancelled, and a later pass takes the lease once the run lets it go. An
 // unleased issue held by someone else is: something is claiming it.
 func (s *Switch) holdClaims(ctx context.Context, records []core.StateRecord, report *supervisor.EmergencyStopReport) {
@@ -20,6 +29,9 @@ func (s *Switch) holdClaims(ctx context.Context, records []core.StateRecord, rep
 	// with it held by a live leader the issue leases still stop each claim.
 	_ = s.hold(ctx, leadershipResource)
 	for _, r := range records {
+		if slices.Contains(rollbackStates, r.State) {
+			continue
+		}
 		err := s.hold(ctx, state.IssueLeaseResource(r.IssueID))
 		switch {
 		case err == nil:

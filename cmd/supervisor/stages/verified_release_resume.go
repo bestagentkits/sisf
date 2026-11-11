@@ -105,15 +105,21 @@ func (s *ReleaseStage) reportWait(ctx context.Context, record core.StateRecord, 
 			res.Errors = append(res.Errors, fmt.Errorf("%s: record what its verified release waits on: %w", record.IssueID, err))
 		}
 	}
+	return s.changedWait(record.IssueID, why)
+}
+
+// changedWait remembers why as what issue waits on and reports whether
+// that changed since it was last reported.
+func (s *ReleaseStage) changedWait(issue core.IssueRef, why string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.reported == nil {
 		s.reported = map[core.IssueRef]string{}
 	}
-	if s.reported[record.IssueID] == why {
+	if s.reported[issue] == why {
 		return false
 	}
-	s.reported[record.IssueID] = why
+	s.reported[issue] = why
 	return true
 }
 

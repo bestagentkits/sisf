@@ -83,7 +83,10 @@ func (p *Pipeline) restore(ctx context.Context, r *rollout, why undo) (Outcome, 
 		if r.h.record.State == core.StateCanary {
 			event = core.EventErrorThresholdExceeded
 		}
-		if err := p.step(ctx, r.h, stepSpec{event: event, reason: why.reason, evidence: evidence}); err != nil {
+		if err := p.step(ctx, r.h, stepSpec{event: event, reason: why.reason, evidence: evidence,
+			also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error {
+				return putRestoreCause(ctx, tx, r.h.record.RunID, why)
+			}}); err != nil {
 			return failed(ResultInterrupted, err)
 		}
 	}
@@ -100,6 +103,9 @@ func (p *Pipeline) restore(ctx context.Context, r *rollout, why undo) (Outcome, 
 		event: core.EventRecoveryReported, reason: "the LKG serves again; the recovery report is recorded", evidence: evidence,
 		also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error {
 			if err := writeRecoveryReport(ctx, tx, report); err != nil {
+				return err
+			}
+			if err := deleteRestoreCause(ctx, tx, r.h.record.RunID); err != nil {
 				return err
 			}
 			return p.cfg.Blocks.RecordBlock(ctx, tx, block)
@@ -135,4 +141,64 @@ func writeRecoveryReport(ctx context.Context, tx state.Tx, report RecoveryReport
 		return err
 	}
 	return tx.Enqueue(ctx, state.OutboxMessage{Topic: TopicRecoveryReport, Key: "release/" + string(report.RunID) + "/recovery", Payload: raw})
+}
+
+// restoreCause is why a restore undid a release, kept with its RolledBack
+// step so that the recovery that blocks the issue later, when the restore
+// could not, blocks it with the same cause and reason.
+type restoreCause struct {
+	Cause  statemachine.BlockCause `json:"cause"`
+	Reason string                  `json:"reason"`
+}
+
+// RestoreCauseKey is the key, in RecoveryNamespace, of why the release of
+// run was rolled back, while its issue is not blocked yet.
+func RestoreCauseKey(run core.RunID) string { return "restore-cause/" + string(run) }
+
+func putRestoreCause(ctx context.Context, tx state.Tx, run core.RunID, why undo) error {
+	raw, err := json.Marshal(restoreCause{Cause: why.cause, Reason: why.reason})
+	if err != nil {
+		return invalid("the cause of the restore cannot be encoded").WithCause(err)
+	}
+	version := int64(0)
+	if existing, err := tx.GetKV(ctx, RecoveryNamespace, RestoreCauseKey(run)); err == nil {
+		version = existing.Version
+	} else if !core.HasCode(err, core.CodeNotFound) {
+		return err
+	}
+	_, err = tx.PutKV(ctx, state.KVEntry{Namespace: RecoveryNamespace, Key: RestoreCauseKey(run), Value: raw, Version: version})
+	return err
+}
+
+func deleteRestoreCause(ctx context.Context, tx state.Tx, run core.RunID) error {
+	existing, err := tx.GetKV(ctx, RecoveryNamespace, RestoreCauseKey(run))
+	if core.HasCode(err, core.CodeNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return tx.DeleteKV(ctx, RecoveryNamespace, RestoreCauseKey(run), existing.Version)
+}
+
+// readRestoreCause reads why the release of run was rolled back; false when
+// nothing is kept, as for a record an earlier build left RolledBack.
+func (p *Pipeline) readRestoreCause(ctx context.Context, run core.RunID) (undo, bool, error) {
+	var kept restoreCause
+	found := false
+	err := p.cfg.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		entry, err := tx.GetKV(ctx, RecoveryNamespace, RestoreCauseKey(run))
+		if core.HasCode(err, core.CodeNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if json.Unmarshal(entry.Value, &kept) != nil || !kept.Cause.Valid() || kept.Reason == "" {
+			return core.NewError(core.CodeTampered, "why the release of "+string(run)+" was rolled back cannot be read")
+		}
+		found = true
+		return nil
+	})
+	return undo{cause: kept.Cause, reason: kept.Reason}, found, err
 }

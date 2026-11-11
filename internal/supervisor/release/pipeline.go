@@ -69,6 +69,9 @@ type Pipeline struct {
 	// never run at once.
 	mu      sync.Mutex
 	driving map[core.IssueRef]bool
+	// restoredWithoutLease is, per issue, the release and the LKG a
+	// recovery switched back to while another holder kept the issue lease.
+	restoredWithoutLease map[core.IssueRef]string
 }
 
 // New returns a pipeline built from cfg.
@@ -77,7 +80,7 @@ func New(cfg Config) (*Pipeline, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Pipeline{cfg: cfg, driving: map[core.IssueRef]bool{}}, nil
+	return &Pipeline{cfg: cfg, driving: map[core.IssueRef]bool{}, restoredWithoutLease: map[core.IssueRef]string{}}, nil
 }
 
 // drive marks issue as driven by the caller until done is called; false

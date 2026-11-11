@@ -2,7 +2,9 @@ package release
 
 import (
 	"context"
+	"errors"
 	"slices"
+	"strconv"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
@@ -42,6 +44,9 @@ func (p *Pipeline) Recover(ctx context.Context, issue core.IssueRef, unit string
 	}
 	defer done()
 	h, err := p.take(ctx, issue)
+	if core.HasCode(err, core.CodeLeaseHeld) {
+		return p.restoreWithoutLease(ctx, issue, unit, err)
+	}
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -75,7 +80,87 @@ func (p *Pipeline) Recover(ctx context.Context, issue core.IssueRef, unit string
 		rev:    deploy.Revision{Unit: unit, Digest: h.record.ReleaseDigest},
 		lkgRev: deploy.Revision{Unit: unit, Digest: lkg.Digest},
 	}
-	return p.restore(ctx, r, undo{cause: statemachine.BlockReleaseInterrupted, reason: interruptedReason})
+	why := undo{cause: statemachine.BlockReleaseInterrupted, reason: interruptedReason}
+	if h.record.State == core.StateRolledBack {
+		// A restore that rolled the release back but could not block the
+		// issue kept why it did; the block says the same.
+		kept, found, err := p.readRestoreCause(ctx, h.record.RunID)
+		if err != nil {
+			return failed(err)
+		}
+		if found {
+			why = kept
+		}
+	}
+	return p.restore(ctx, r, why)
+}
+
+// restoreWithoutLease rolls the unit back to its LKG when the release of
+// issue is left unwatched but another holder keeps its lease: an emergency
+// stop that held it, or a role that took it over. Rolling back is always
+// the safe direction, so it does not wait for the lease; only the steps
+// do, and they are written by a later recovery that can take it. The LKG is
+// switched to only when it is not observed serving already, so a recovery
+// that is retried on every pass switches it once. The outcome says on whom
+// the steps wait (Waits) and carries LEASE_HELD.
+//
+// The LKG is switched to once per release and process: a canary share is
+// not seen in what the running system reports, so the switch is not
+// skipped on an observation, and the recovery retried on every pass does
+// not switch again.
+func (p *Pipeline) restoreWithoutLease(ctx context.Context, issue core.IssueRef, unit string, held error) (Outcome, error) {
+	var record core.StateRecord
+	if err := p.cfg.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		var err error
+		record, err = tx.GetRecord(ctx, issue)
+		return err
+	}); err != nil {
+		return Outcome{}, err
+	}
+	out := Outcome{State: record.State, Release: record.ReleaseDigest}
+	if !slices.Contains(RecoverableStates(), record.State) || record.ReleaseDigest.Validate() != nil {
+		return out, held
+	}
+	holder := "an unknown holder"
+	var refused *core.Error
+	if errors.As(held, &refused) && refused.Details["holder"] != "" {
+		holder = strconv.Quote(refused.Details["holder"])
+	}
+	failed := func(err error) (Outcome, error) {
+		out.Result, out.Reason = ResultRestoreFailed, err.Error()
+		out.Waits = "the issue lease is held by " + holder + ", and the last known good release could not be restored: " + string(core.CodeOf(err))
+		return out, err
+	}
+	lkg, found, err := p.cfg.LKG.Get(ctx, unit)
+	switch {
+	case err != nil:
+		return failed(holdf("the last known good release of %s cannot be read", unit).WithCause(err))
+	case !found:
+		return failed(holdf("unit %s has no last known good release to restore", unit))
+	case lkg.Digest == record.ReleaseDigest:
+		out.Waits = "the issue lease is held by " + holder + "; the release is the last known good release, so nothing is restored"
+		return out, held
+	}
+	target := deploy.Revision{Unit: unit, Digest: lkg.Digest}
+	if !p.restoredOnce(issue, record.ReleaseDigest, lkg.Digest) {
+		r := &rollout{h: &holding{record: record}, unit: unit, rev: deploy.Revision{Unit: unit, Digest: record.ReleaseDigest}}
+		charge := p.runRollbackCharge(r)
+		spend := p.reserveRollback(ctx, charge)
+		err := p.cfg.Backend.Rollback(ctx, target)
+		p.recordRollbackSpend(ctx, charge, spend)
+		if err != nil {
+			return failed(holdf("the last known good release could not be restored").WithCause(err))
+		}
+		observed, err := p.cfg.Backend.ObservedRevision(ctx, unit)
+		if err != nil || !observed.Matches(target) {
+			return failed(holdf("the last known good release is not observed running and healthy after the restore"))
+		}
+		out.Observed = observed
+		p.markRestored(issue, record.ReleaseDigest, lkg.Digest)
+	}
+	out.Result, out.RestoredTo, out.Reason = ResultInterrupted, lkg.Digest, held.Error()
+	out.Waits = "the issue lease is held by " + holder + ", so the release's steps wait; the last known good release serves again"
+	return out, held
 }
 
 // verifyRecordedLKG writes the Verified step of a release the pipeline
@@ -143,4 +228,19 @@ func (p *Pipeline) keepLease(ctx context.Context, h *holding) error {
 		h.lease, h.record = lease, record
 		return nil
 	})
+}
+
+// restoredOnce reports whether this pipeline already restored to to the
+// unit released as release of issue without the issue lease.
+func (p *Pipeline) restoredOnce(issue core.IssueRef, release, to core.ReleaseDigest) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.restoredWithoutLease[issue] == string(release)+">"+string(to)
+}
+
+// markRestored remembers a restore restoreWithoutLease made.
+func (p *Pipeline) markRestored(issue core.IssueRef, release, to core.ReleaseDigest) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.restoredWithoutLease[issue] = string(release) + ">" + string(to)
 }

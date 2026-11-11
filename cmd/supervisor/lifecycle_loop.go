@@ -81,9 +81,15 @@ func logRelease(log *slog.Logger, issue core.IssueRef, out release.Outcome) {
 		log.Info("release closed: the verified release serves the application", "issue", issue.String(), "release", string(out.Release))
 		return
 	}
-	if out.State == core.StateVerified && out.Waits != "" {
+	switch {
+	case out.State == core.StateVerified && out.Waits != "":
 		log.Warn("verified release not finished yet: the issue stays Verified and the supervisor finishes it on a later pass",
 			"issue", issue.String(), "waits", out.Waits, "release", string(out.Release))
+		return
+	case out.Waits != "":
+		log.Warn("release left unwatched waits for its issue lease: the supervisor writes its steps once it can take the lease",
+			"issue", issue.String(), "state", string(out.State), "waits", out.Waits, "release", string(out.Release),
+			"restored_to", string(out.RestoredTo))
 		return
 	}
 	msg, ok := releaseMessages[out.Result]

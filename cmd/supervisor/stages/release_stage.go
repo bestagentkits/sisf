@@ -200,8 +200,9 @@ func (s *ReleaseStage) recordOutcome(ctx context.Context, record core.StateRecor
 // left in Canary or Monitoring, and one whose restore could not block its
 // issue. The LKG of the release's unit is restored and the issue blocked.
 // It runs when the supervisor starts and at the start of every pass; a
-// release the pipeline drives is left alone, and an issue whose lease
-// another holder has is left for a later pass.
+// release the pipeline drives is left alone. When another holder keeps an
+// issue's lease the LKG is restored all the same, the steps are left for a
+// pass that can take the lease, and the wait is reported once per change.
 func (s *ReleaseStage) Recover(ctx context.Context) ReleasePassResult {
 	res := ReleasePassResult{Outcomes: map[core.IssueRef]release.Outcome{}}
 	type job struct {
@@ -232,6 +233,11 @@ func (s *ReleaseStage) Recover(ctx context.Context) ReleasePassResult {
 		out, err := s.Pipeline.Recover(ctx, j.record.IssueID, j.unit)
 		switch {
 		case core.HasCode(err, core.CodeLeaseHeld):
+			// Another holder keeps the issue: the LKG was restored without
+			// the lease, and the steps wait for it. Said once per change.
+			if out.Waits != "" && s.changedWait(j.record.IssueID, out.Waits) {
+				res.Outcomes[j.record.IssueID] = out
+			}
 			continue
 		case out.Result == "":
 			if err != nil {
@@ -239,6 +245,7 @@ func (s *ReleaseStage) Recover(ctx context.Context) ReleasePassResult {
 			}
 			continue
 		}
+		s.forgetWait(j.record.IssueID)
 		if recErr := s.recordOutcome(ctx, j.record, out, err); recErr != nil {
 			res.Errors = append(res.Errors, fmt.Errorf("%s: record its recovered release: %w", j.record.IssueID, recErr))
 		}
