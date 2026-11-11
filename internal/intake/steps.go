@@ -70,7 +70,7 @@ func (p *plan) with(effects ...func() (state.OutboxMessage, error)) (*plan, erro
 // scoped writes the first scope version from a complete draft and moves the
 // issue to ScopeDraft.
 func (s *Service) scoped(in input, snap snapshot, draft Draft, event core.Event) (*plan, error) {
-	kind := Classify(draft, in.issue.AuthorAssociation, in.policy.Catalog).Kind
+	kind := Classify(draft, requester(in.issue), in.policy.Catalog).Kind
 	sow := newSoW(snap.doc.Issue, snap.doc.SoWVersion+1, kind, draft, in.policy.Revision, in.now)
 	doc := snap.doc
 	doc.SoWVersion, doc.SoWDigest = sow.Version, sow.Digest

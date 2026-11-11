@@ -3,6 +3,7 @@ package intake
 import (
 	"strings"
 
+	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/internal/policy"
 	"github.com/bestagentkits/sisf/pkg/decision"
 	"github.com/bestagentkits/sisf/pkg/github"
@@ -77,6 +78,18 @@ func Classify(draft Draft, author github.AuthorAssociation, catalog policy.Catal
 	}
 	c.NeedsApproval = len(c.Reasons) > 0
 	return c
+}
+
+// requester is the standing of whoever asked for issue, as Classify weighs
+// it: the association of its author on GitHub, except for an issue opened
+// for a public report. Its text came from someone outside the project,
+// whatever account opened it, so it is weighed as the request of someone
+// without write access.
+func requester(issue github.Issue) github.AuthorAssociation {
+	if report.IsReportIssue(issue) {
+		return github.AssociationNone
+	}
+	return issue.AuthorAssociation
 }
 
 // mentionsRules reports whether any part of the draft names a protected

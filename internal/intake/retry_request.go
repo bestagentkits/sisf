@@ -78,7 +78,7 @@ func (s *Service) requestRetryApproval(ctx context.Context, issue core.IssueRef,
 		return approvals.Request{}, err
 	}
 	sow := *snap.sow
-	verdict := Classify(draftOf(sow), in.issue.AuthorAssociation, in.policy.Catalog)
+	verdict := Classify(draftOf(sow), requester(in.issue), in.policy.Catalog)
 	if !verdict.NeedsApproval {
 		return approvals.Request{}, core.NewError(core.CodeConflict, "the scope now lies inside the delegated scope; its retry needs no approval",
 			core.NextAction{Action: "runs.explain", Params: map[string]string{"issue": issue.String()},

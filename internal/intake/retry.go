@@ -100,7 +100,7 @@ func (s *Service) planRetry(ctx context.Context, in input, snap snapshot, req Re
 		p.doc.ApprovalID = approval.ID
 		p.spend = spend(in, sow, approval.ID)
 		p.transition.EvidenceRefs = append(p.transition.EvidenceRefs, "approval:"+approval.ID)
-	case !Classify(draftOf(sow), in.issue.AuthorAssociation, in.policy.Catalog).NeedsApproval:
+	case !Classify(draftOf(sow), requester(in.issue), in.policy.Catalog).NeedsApproval:
 		p.delegation = delegated(in, sow)
 	}
 	return p.with(func() (state.OutboxMessage, error) {
