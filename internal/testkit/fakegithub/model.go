@@ -91,7 +91,10 @@ type jPull struct {
 	Body              string    `json:"body"`
 	State             string    `json:"state"`
 	Draft             bool      `json:"draft"`
-	Merged            bool      `json:"merged"`
+	// Merged is in the single pull request's answer only; the list answers
+	// carry merged_at alone, as GitHub's do.
+	Merged            *bool      `json:"merged,omitempty"`
+	MergedAt          *time.Time `json:"merged_at"`
 	Head              jBranch   `json:"head"`
 	Base              jBranch   `json:"base"`
 	User              jUser     `json:"user"`
@@ -106,6 +109,7 @@ type pull struct {
 	headOwner, headName string
 	headSHA, baseSHA    string
 	draft, merged       bool
+	mergedAt            time.Time
 }
 
 type issue struct {

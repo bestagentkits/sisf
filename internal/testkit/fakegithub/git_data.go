@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -68,6 +69,9 @@ func (g *GitData) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if f, ok := g.takeRouteFault(r); ok {
+		if f.after {
+			g.mux.ServeHTTP(httptest.NewRecorder(), r) // done, but the answer is lost
+		}
 		writeError(w, f.status, f.message)
 		return
 	}

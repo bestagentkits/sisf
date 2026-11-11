@@ -67,6 +67,10 @@ func ErrorStatus(err error) int {
 	return n
 }
 
+// ErrorMessage returns the message GitHub gave with a refusal, "" when it
+// gave none.
+func ErrorMessage(err error) string { return detail(err, "github_message") }
+
 // ContentFault returns the content fault err is, "" when it is none.
 func ContentFault(err error) string { return detail(err, detailContentFault) }
 

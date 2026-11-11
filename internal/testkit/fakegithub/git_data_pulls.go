@@ -67,7 +67,9 @@ func (g *GitData) listPulls(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []jPull{}
 	for _, is := range found {
-		out = append(out, g.livePull(repoName(r), is, rp))
+		p := g.livePull(repoName(r), is, rp)
+		p.Merged = nil // the list answer has merged_at, not merged
+		out = append(out, p)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -193,7 +195,7 @@ func (s *Server) markMerged(repoName string, number int, head string, by User) e
 		if err != nil {
 			return nil, err
 		}
-		is.pr.merged, is.pr.headSHA, is.state, is.updated = true, head, "closed", s.now()
+		is.pr.merged, is.pr.mergedAt, is.pr.headSHA, is.state, is.updated = true, s.now(), head, "closed", s.now()
 		return []pending{s.event(r, "pull_request", "closed", by, map[string]any{"pull_request": pullJSON(r, is)})}, nil
 	})
 }
