@@ -21,7 +21,7 @@ Requirements for every install:
 - `sisf` built once and kept at a stable path: `make install` in the checkout installs it into `$(go env GOPATH)/bin`, stamped with its version, commit and build date (`Makefile`); `sisf version` prints them. A plain `go install ./cmd/sisf` also works but reports its version as `devel`. Do not run `sisf init` from `go run`: the service units name the running executable, so `init` skips them for such a build.
 - Docker mode, or a Standalone build sandbox: Docker with Compose.
 - Free ports 7460-7469 on 127.0.0.1 (`internal/install/options.go`).
-- A new or empty install directory: `init` refuses one that holds other files.
+- A new or empty install directory, on a file system that supports `flock`: `init` refuses one that holds other files, and a Standalone `sisf up` holds a lock on `<dir>/run/sisf.lock` for as long as it runs, so a second `up` of the same install is refused (`internal/install/run_lock.go`).
 
 ### One factory per machine
 
@@ -42,11 +42,12 @@ sisf init --dev --mode standalone --dir "$HOME/.sisf/dev" --repo owner/app \
   --github-credential gh-cli --budget-cap 5
 ```
 
-Expected output (observed, paths shortened):
+Expected output (paths shortened):
 
 ```text
 factory sisf-app created in <dir>
 sign in at http://127.0.0.1:7463 as the Owner http://127.0.0.1:7468#owner
+source checkout <checkout>: every `sisf up` of this install builds its programs from it
 warning: The root signing key is stored in <dir>/secrets/control. ...
 warning: DEVELOPMENT INSTALL: the Owner signs in through the fake identity provider on 127.0.0.1:7468, without a password; ...
 next: sisf up --dir <dir>
@@ -154,7 +155,7 @@ The agents keep running as local processes under `trusted_code_only`; only the b
 
 - an internal Docker network for the runners (`docker network create --internal NET`);
 - an egress proxy on that network as its only way out, for example the edge's (`edge --egress-listen=egress:3128 --allow-non-loopback ...` in a container attached to `NET` with the alias `egress` and to an outbound network);
-- a runner image that holds the build command and reports `sisf-tests:`, `sisf-image-digest:`, `sisf-image:`, `sisf-sbom:` and `sisf-provenance:` lines (`cmd/supervisor/stages/image_builders.go`; `tests/smoke/sandbox/build-candidate.sh` is an example). A build that names no SBOM and provenance fails the observed-build hard gate on every attempt, whatever QA scores it, and one that does not report its tests as passed fails the tests gate. Pin it by content, the way the docker backend runs it (`adapters/exec/docker/sandbox.go`): `name@sha256:<digest>` by a registry digest, or the full ID of an image built on this host, `sha256:<64 hex>` (what `docker image inspect --format '{{.Id}}'` prints, and how Docker mode pins the runner it builds itself). `init --runner-image` refuses a tag and a short ID (`internal/install/standalone_build_sandbox.go`);
+- a runner image that holds the build command. The supervisor runs the command once per phase, each time in a fresh container, with the phase in `SISF_PHASE`: `test` (only the exit status is read; 0 means the tests passed), `build` (anything but exit 0 refuses the candidate) and `report`, which runs no code of the candidate. The report phase is told the candidate as `SISF_REPORT_COMMIT`, `SISF_REPORT_UNIT` and `SISF_REPORT_BRANCH`, and a nonce in `SISF_REPORT_NONCE`; it prints `sisf-report <nonce> <key>: <value>` lines for `image-digest`, `image`, `sbom` and `provenance`, each exactly once (`cmd/supervisor/stages/image_builders.go`; `tests/smoke/sandbox/build-candidate.sh` is an example). A build whose report names no SBOM and provenance is held before QA, and one whose tests did not pass fails the tests gate. Pin it by content, the way the docker backend runs it (`adapters/exec/docker/sandbox.go`): `name@sha256:<digest>` by a registry digest, or the full ID of an image built on this host, `sha256:<64 hex>` (what `docker image inspect --format '{{.Id}}'` prints, and how Docker mode pins the runner it builds itself). `init --runner-image` refuses a tag and a short ID (`internal/install/standalone_build_sandbox.go`);
 - the runner Docker request filter: `sisf docker-filter --role runner --listen 127.0.0.1:PORT --factory-id ID --network NET --image IMAGE --socket SOCKET`, started before `sisf up`;
 - a launcher that runs the QA agent in a sandbox and keeps its standard input and output.
 
@@ -166,11 +167,12 @@ sisf init --dir /srv/sisf/factory --repo owner/app ... \
   --egress-proxy http://egress:3128 --runner-image registry/runner@sha256:... --build-command /usr/local/bin/build
 ```
 
-- `init` refuses a partial sandbox, a filter off loopback, an image not pinned as `name@sha256:`, a sandbox without `--build-command` or `--qa-agent-binary`, and `--qa-home` with it: the launcher owns the QA agent's home (`internal/install/standalone_build_sandbox.go`).
+- `init` refuses a partial sandbox, a filter off loopback, an image not pinned by content (`name@sha256:<digest>` or `sha256:<64 hex>`), a sandbox without `--build-command` or `--qa-agent-binary`, and `--qa-home` with it: the launcher owns the QA agent's home (`internal/install/standalone_build_sandbox.go`).
 - The supervisor reads `NET` through the runner filter (`GET /networks/NET`, the one network read the runner filter allows) and builds nothing unless Docker reports it internal: on an ordinary bridge a runner would reach the internet around the egress proxy (`adapters/exec/docker/backend.go`). `sisf doctor` fails the `sandbox network` check for the same reason, in Docker mode for the Compose project's `-sandbox` network as well.
 - A build holds no secret, so the build command fetches the candidate's commit (`SISF_COMMIT`) without one: through the egress proxy from a public repository, or from a mirror you serve on the sandbox network.
 - Standalone's local deployment backend runs the candidate's own program. The supervisor tells the build command's report phase its operating system and architecture (`SISF_REPORT_TARGET_OS`, `SISF_REPORT_TARGET_ARCH`); the command must export the unit's one program for it on the report's lines (`sisf-report <nonce> program: <base64>`), and the reported `image-digest` must be the sha256 of exactly those bytes. A build that exports nothing, or another program than the digest names, is held as an outage (`cmd/supervisor/stages/report_reader.go`; `tests/smoke/sandbox/build-candidate.sh` is a working command).
 - The supervisor keeps exported programs under `data/trust/programs/`, hashes a program again before every start, and removes those that are neither the last known good release nor in flight. A release whose digest it has no program for is not started; the installed program runs only under the digest `sisf up` pinned for it. The promoted program is started again after a restart and after `sisf down` and `sisf up`; if its file is gone or changed, `sisf up` says so and the application starts from the installed release.
 - A candidate that passed QA therefore runs as a host process with the rights of the application unit, your operating-system user: the build is sandboxed, the released program is not ([ADR 0022](../adr/0022-standalone-deploys-the-candidates-own-program.md)).
-- The local backend moves all traffic to the new program in one step; the release is then watched and, on a failure, rolled back to the last known good release.
+- The local backend moves all traffic to the new program in one step; the release is then watched and, on a failure, rolled back to the last known good release. It is not a canary rollout with a traffic share.
+- The supervisor records the application process of each slot under `data/trust/local-slots/`. At start it stops the processes an earlier supervisor left, verified by pid and start time, before starting the last known good release (`adapters/deploy/local/slot_records.go`).
 - The smoke run (`tests/smoke`) provisions all of this for itself, with a git mirror of the private sandbox repository and a launcher that runs codex in a container (`tests/smoke/sandbox/`).

@@ -1,6 +1,6 @@
 # CLI reference
 
-Every `sisf` command, its flags and where it is used. The command line is the authority: `sisf help` lists the commands and `sisf help <command>` (for a pair such as `runs explain`, `sisf help runs explain`) prints the full text. Most commands, such as `init`, `call`, `emergency-stop`, `doctor` and `down`, print a list of their flags there; a few, such as `docker-filter`, `sim github` and `state bootstrap`, name them only in their usage line. This page groups the commands and adds those flags, read from the flag definitions in `cmd/sisf/`.
+Every `sisf` command, its flags and where it is used. The command line is the authority: `sisf help` lists the commands and `sisf help <command>` (for a pair such as `runs explain`, `sisf help runs explain`) prints the full text. Most commands, such as `init`, `call`, `emergency-stop`, `doctor` and `down`, print a list of their flags there; `conformance check`, `docker-filter`, `sim github`, `sim oidc`, `state bootstrap` and `trust install` name them only in their usage line. This page groups the commands and gives the flags of those six in tables, read from the flag definitions in `cmd/sisf/`.
 
 Conventions of every command (`cmd/sisf/main.go`): exit 0 on success, 1 on a failure, 2 on a wrong invocation. A wrong invocation (an unknown command or flag, a missing argument, an option `init` refuses) prints `sisf <command>: message` and the command's usage line. A failure prints `sisf: CODE: message`, often followed by `next:` lines. A few invalid values are noticed only later and exit 1 with `INVALID_ARGUMENT:`, for example `sisf up --mode docker` on a Standalone install. Secrets are never taken from a flag value and never printed.
 
@@ -22,13 +22,13 @@ Owner: `cmd/sisf/cmd_install*.go`, `cmd/sisf/cmd_service_units.go`, `internal/in
 | `sisf up [--dir path] [init flags]` | Builds the programs or images from the source checkout, signs the release manifest, checks isolation, prepares the state store and starts every unit. Creates the install first when the directory holds none. Standalone stays in the foreground; Docker starts one Compose project and returns. |
 | `sisf stop [--dir path]` | Stops the factory and keeps everything (`docker compose stop` in Docker mode). |
 | `sisf restart [--dir path]` | Restarts every unit (Standalone: the same as sending SIGHUP to `sisf up`). On a stopped Standalone install it answers `NOT_FOUND` and exits 1. |
-| `sisf down [--dir path] [-v]` | Stops the factory; Docker mode also removes the project's containers and networks. `-v` (or `--volumes`) also removes the data: the project's volumes in Docker mode (`docker compose down --volumes`), `<dir>/data` in Standalone. Secrets and `factory.yaml` are never removed. |
+| `sisf down [--dir path] [-v]` | Stops the factory; Docker mode also removes the project's containers and networks. `-v` (or `--volumes`) also removes the data: the project's volumes in Docker mode (`docker compose down --volumes`), the `control-data` volume with the control zone's `local:` secret store included; `<dir>/data` in Standalone, except that store in `data/control/secrets`. Secrets and `factory.yaml` are never removed. |
 | `sisf doctor [--dir path] [--json]` | Checks the install end to end and changes nothing. Prints `sisf <version>, install <dir>`, then one `OK`, `WARN`, `FAIL` or `SKIP` line per check and a summary; exits 1 on any failure. Its `running` check proves the factory answering on the fixed ports is this install's; when it is not running, or another factory answers, the live checks are skipped. `--json` prints the same report as one object: `dir`, `sisf_version`, `ok`, `counts`, `checks`. |
 | `sisf service units [--dir path] [--source path]` | Writes the systemd and launchd units of an existing Standalone install again, into `<dir>/service/`, for when `init` skipped them or after `sisf` or the checkout moved. The units run the `sisf` that wrote them. |
 
 `--dir` defaults to `$SISF_HOME`, else `~/.sisf/factory`.
 
-On a factory that is not running, `stop`, `down` and `down -v` exit 0 and print `the factory in <dir> was not running; nothing to stop` (`down -v`: `...; its data is removed`). In Docker mode `up`, `stop`, `restart` and `down` refuse a Compose project of this install's name that another install made, and change nothing.
+On a Standalone factory that is not running, `stop`, `down` and `down -v` exit 0 and print `the factory in <dir> was not running; nothing to stop` (`down -v`: `...; its data is removed`). In Docker mode `up`, `stop`, `restart` and `down` refuse, and change nothing, when a Compose project of this install's name was started from another install's Compose file, or when its volumes carry another install's directory in their `sisf.install-dir` label; `up` also refuses unlabelled volumes of that project when this install never started it (`internal/install/docker_project_owner.go`). A Standalone `sisf up` holds a lock on `<dir>/run/sisf.lock` while it runs; a second `up` of the install is refused.
 
 Flags of `init`, which `up` also accepts (`cmd/sisf/cmd_install_flags.go`):
 
@@ -95,11 +95,65 @@ Before anything is sent to the supervisor, it must prove that it serves this fac
 
 | Command | What it does |
 |---|---|
-| `sisf conformance check [file]` | Checks one factory manifest against the deployment rules; exits 0 only when it is conformant. The default file is `.sisf/factory.yaml` in the current directory, the repository's policy copy. To check an install, pass `<dir>/factory.yaml`. |
+| `sisf conformance check [file]` | Checks one factory manifest against the deployment rules; exits 0 only when it is conformant, and then prints every reduction of assurance and accepted risk. The default file is `.sisf/factory.yaml` in the current directory, the repository's policy copy. To check an install, pass `<dir>/factory.yaml`. |
+
+It takes no flags (`cmd/sisf/cmd_conformance.go`): one optional argument, the manifest file. A second argument, or an argument starting with `-`, is a wrong invocation (exit 2). Each finding names the rule that failed; the rules are the constants in `internal/conformance/rule_names.go`.
 
 ## Run by the factory itself
 
-Listed by `sisf help` but started by `sisf up` or its Compose project, not by hand: `sisf state bootstrap`, `sisf trust install`, `sisf docker-filter` (also started by the operator for a [Standalone build sandbox](install.md#building-in-a-docker-sandbox)), `sisf sim github`, `sisf sim oidc`.
+Listed by `sisf help` but started by `sisf up` or its Compose project, not by hand: `sisf state bootstrap`, `sisf trust install`, `sisf docker-filter` (also started by the operator for a [Standalone build sandbox](install.md#building-in-a-docker-sandbox), although its help says "never by hand"), `sisf sim github`, `sisf sim oidc`. Their flags follow.
+
+`sisf docker-filter --role runner|deploy --listen host:port --factory-id id --network name --image ref... [--socket path] [--sim-image unit=ref]...` (`cmd/sisf/cmd_install_docker_filter.go`). `--listen`, `--factory-id`, `--network` and at least one `--image` are required.
+
+| Flag | Meaning |
+|---|---|
+| `--role` | `runner` (the containers candidate builds run in) or `deploy` (the revisions of the factory's units) |
+| `--listen` | address to serve on |
+| `--socket` | the Docker daemon's socket (default `/var/run/docker.sock`) |
+| `--factory-id` | factory the containers belong to |
+| `--network` | the sandbox network (runner) or the deploy network (deploy) |
+| `--image` | allowed image, pinned by digest or named by its full local image ID (repeatable) |
+| `--sim-image` | deploy role, simulation only: `unit=ref` (repeatable) |
+
+`sisf sim github [--addr host:port] [--allow-non-loopback] [--repo owner/name]... [--webhook-url url] [--installation-id id]` (`cmd/sisf/cmd_sim_github.go`). The webhook signing secret is read from `SISF_SIM_WEBHOOK_SECRET`.
+
+| Flag | Meaning |
+|---|---|
+| `--addr` | listen address, loopback only (default `127.0.0.1:7467`) |
+| `--allow-non-loopback` | allow `--addr` to be a non-loopback address, only where the network around the process is closed |
+| `--repo` | repository to create, `owner/name` (repeatable) |
+| `--webhook-url` | where to send webhooks |
+| `--installation-id` | installation id webhooks carry (default 4242) |
+
+`sisf sim oidc [--addr host:port] [--allow-non-loopback] [--issuer url] [--client-id id] [--redirect-uri url]... [--sign-in-secret-file path]` (`cmd/sisf/cmd_sim_oidc.go`). The client secret is read from `SISF_SIM_OIDC_CLIENT_SECRET`; empty makes the client public.
+
+| Flag | Meaning |
+|---|---|
+| `--addr` | listen address, loopback only (default `127.0.0.1:7468`) |
+| `--allow-non-loopback` | allow `--addr` to be a non-loopback address |
+| `--issuer` | issuer URL (default `http://<addr>`) |
+| `--client-id` | client ID of the factory (default `sisf-local`) |
+| `--redirect-uri` | registered redirect URI (repeatable; default the control server's Google and GitHub callbacks) |
+| `--sign-in-secret-file` | file holding the secret a browser must post to `/_sim/unlock` before it can sign in, as a development install uses |
+
+`sisf state bootstrap --dialect postgres|sqlite --factory-id id [--sqlite-path file] [--confirm-unlimited (--alert-micros n | --no-alert) | --cap-micros n --run-estimate-micros n [--alert-micros n]]` (`cmd/sisf/cmd_install_state.go`). PostgreSQL credentials are read from `SISF_STATE_OWNER_DSN` and `SISF_ZONE_PASSWORD_APPLICATION`, `SISF_ZONE_PASSWORD_AGENT` and `SISF_ZONE_PASSWORD_CONTROL`, never from the command line.
+
+| Flag | Meaning |
+|---|---|
+| `--dialect` | `postgres` or `sqlite` (required) |
+| `--factory-id` | factory id of the store (required) |
+| `--sqlite-path` | database file (sqlite) |
+| `--confirm-unlimited` | record the unlimited-budget confirmation |
+| `--alert-micros` | alert threshold in micros |
+| `--no-alert` | no budget alert (with `--confirm-unlimited`) |
+| `--cap-micros` | record a capped budget of this many micros instead |
+| `--run-estimate-micros` | with `--cap-micros`: what each run sets aside, in micros |
+
+`sisf trust install --trust-dir dir` (`cmd/sisf/cmd_install_trust.go`). The files are read from `SISF_TRUST_FILES`, never from the command line.
+
+| Flag | Meaning |
+|---|---|
+| `--trust-dir` | the supervisor's trust volume |
 
 ## Owner commands on the factory host: `factoryd`
 

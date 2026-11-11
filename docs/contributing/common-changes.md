@@ -29,12 +29,13 @@ go test ./internal/actions/... -count=1
 
 ## Change the issue lifecycle
 
-The fifteen states and twenty-three edges of brief §5.2 are fixed by the brief, so a new state or transition is a change to the contract, not only to code. It touches, in one PR:
+The states and edges of brief §5.2 are fixed by the brief, so a new state or transition is a change to the contract, not only to code. It touches, in one PR:
 
 - the state diagram in both languages of the brief (§5.2 of [English](../self-improvement-software-factory-decision-brief.en.md) and [Vietnamese](../self-improvement-software-factory-decision-brief.md));
 - the states and events in [pkg/core/states.go](../../pkg/core/states.go);
 - the transition table `lifecycle` in [pkg/core/statemachine/table.go](../../pkg/core/statemachine/table.go), with a comment on the edge that says why it needs no proof, or a `GuardKind` and its guard;
 - the tests that pin the table, such as `table_test.go` and `transition_matrix_test.go` in the same package.
+- the zone that may take the step, in `controlEvents` or its neighbours in [pkg/state/sqlstore/zone_ownership.go](../../pkg/state/sqlstore/zone_ownership.go), and a new migration at the end of `releaseMigrations` in [pkg/state/sqlstore/migrations.go](../../pkg/state/sqlstore/migrations.go) that writes the PostgreSQL record trigger and the zones' row policies afresh, as migrations 8 and 10 do: the trigger is generated from the edge table, and an applied migration is never edited.
 
 [tests/docs/lifecycle_diagram_test.go](../../tests/docs/lifecycle_diagram_test.go) compares the table with the brief's diagram in both directions, so changing only one of them fails. Every way into Ready, every step back and every step towards users is guarded; keep it so, and add a negative test showing the step is refused without its proof (for example `approval_guard_test.go`).
 

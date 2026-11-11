@@ -1,6 +1,6 @@
 # Maintenance: upgrade, back up, restore
 
-How to move a factory to a newer build, and how to copy and restore what it holds. The product has no upgrade, backup or restore command yet; these are the manual procedures that work with what exists. The decisions they will follow are still proposals: [ADR 0012](../adr/0012-backup-and-restore.md) (backup targets) and [ADR 0013](../adr/0013-schema-migration-on-self-update.md) (migrations compatible across two versions) await the Owner, so nothing guarantees today that a newer build's schema can be read by an older one.
+How to move a factory to a newer build, and how to copy and restore what it holds. The product has no upgrade, backup or restore command yet; these are the manual procedures that work with what exists. The decisions they will follow are still proposals: [ADR 0012](../adr/0012-backup-and-restore.md) (backup targets) and [ADR 0013](../adr/0013-schema-migration-on-self-update.md) (migrations compatible across two versions) await the Owner. What the code does today: each migration is marked backward compatible or not, and a build works on a schema ahead of it only when every migration it does not know is marked compatible; otherwise its store refuses to start (`pkg/state/sqlstore/migrate.go`). Every migration this release ships is marked compatible (`pkg/state/sqlstore/migrations.go`).
 
 ## What an install holds
 
@@ -15,9 +15,9 @@ Everything of a Standalone install lives below its install directory `<dir>` (`i
 | `release/release-manifest.json` | the signed release manifest | rebuilt by `sisf up` |
 | `data/state/factory.db` (and its `-wal`, `-shm` files) | the operational state: issues, runs, approvals, the policy record, the ledger, the audit log | the factory's memory |
 | `data/control/` | the control zone's encrypted secret store and its key (`local:` references) | `local:` secrets |
-| `data/trust/` | the supervisor's delegated keys and last known good releases | rollback targets |
+| `data/trust/` | the supervisor's delegated keys, last known good releases, the programs of released candidates (`programs/`) and the record of each slot's application process (`local-slots/`) | rollback targets |
 | `data/app/`, `data/artifacts/`, `data/workspaces/`, `data/qa-workspaces/` | application data, build artifacts, agent workspaces | application data |
-| `bin/`, `logs/`, `run/`, `service/` | built programs, logs, the pid file, unit files | rebuilt or rewritten |
+| `bin/`, `logs/`, `run/`, `service/` | built programs, logs, the pid file and the run lock `run/sisf.lock`, unit files | rebuilt or rewritten; the run lock file is never deleted, and the install directory must be on a file system that supports `flock` |
 
 A Docker install keeps `factory.yaml`, `budget-confirmation.json`, `source.json` (written by `init` in every mode), `secrets/`, `release/` and the rendered `compose.yaml` in `<dir>`, and its data in named volumes, each `<project>-<name>` where the project is `sisf-<repository name>` unless `--factory-id` said otherwise (`templates/compose/compose.yaml`): `state-data` (PostgreSQL), `control-data`, `trust`, `app-data`, `artifacts`, `workspaces`, `qa-workspaces`, and `supervisor-admin` (a socket only).
 
@@ -60,13 +60,15 @@ Standalone (observed on a scratch install: after the restore the policy record w
 
 Docker mode: unpack `<dir>` the same way. Putting the volumes back has no tested procedure in this release: each volume must be refilled under the same name while no container uses it, and nothing here has been exercised.
 
-What is not restored: the state of everything after the backup, and the trust record, which `sisf up` replaces with the release it builds; GitHub keeps issues, comments and pull requests made since, and the factory meets them again through reconciliation. Sessions and tokens are in memory and lost on every restart anyway, so everyone signs in again.
+What is not restored: the state of everything after the backup, and the trust record, which `sisf up` replaces with the release it builds (a Standalone install keeps a promoted release whose program is still stored, as in [upgrade](#upgrade)); GitHub keeps issues, comments and pull requests made since, and the factory meets them again through reconciliation. Sessions and tokens are in memory and lost on every restart anyway, so everyone signs in again.
 
 Undo: stop the factory, `rm -rf "$D"`, and `mv "$D.old" "$D"`.
 
 ## Upgrade
 
-`sisf up` builds every program or image from the source checkout each time it starts, migrates the state store forward, signs a new release manifest and installs that release as the last known good one (`internal/install/release.go`, `internal/install/trust_material.go`). Upgrading is therefore: new source, then `sisf up`. Every `sisf up` replaces the trust record this way, so the releases promoted during an earlier run are forgotten: afterwards a rollback can return only to the release `sisf up` just installed.
+`sisf up` builds every program or image from the source checkout each time it starts, migrates the state store forward, signs a new release manifest and installs that release as the last known good one (`internal/install/release.go`, `internal/install/trust_material.go`). Upgrading is therefore: new source, then `sisf up`. In Docker mode and in the simulation, every `sisf up` replaces the trust record this way, so the releases promoted during an earlier run are forgotten: afterwards a rollback can return only to the release `sisf up` just installed. A Standalone install keeps a promoted release when the supervisor's program store still holds its program unchanged, and otherwise says that the application starts from the installed release again (`internal/install/standalone_promoted_program.go`).
+
+The supervisor records the application process of each slot under `data/trust/local-slots/`. At start it stops the processes an earlier supervisor left, verified by pid and start time, before starting the last known good release.
 
 1. [Back up](#back-up) (the factory is stopped after step 1 of it).
 2. Update the checkout the install recorded in `$D/source.json` to the build you want, and rebuild the command line: `git pull` (or `git checkout <tag or commit>`), then `make install`. `sisf version` names the new build.
@@ -75,14 +77,16 @@ Undo: stop the factory, `rm -rf "$D"`, and `mv "$D.old" "$D"`.
 
 Verify: `sisf doctor` reports no failure, its `release manifest` line is `OK`, and `sisf status` answers.
 
+Upgrading to this release applies migrations 7 to 10 to a store that lacks them; each is backward compatible and needs no down migration. A Standalone factory started by an older `sisf` holds no run lock: the new `sisf` refuses to start beside it, names its process and asks you to stop it first ([troubleshooting](troubleshooting.md#installing-and-starting)). A factory started by an older `sisf` names no root key in `/healthz`, so the CLI refuses to send it a token until it is restarted with `sisf up`.
+
 Undo: there are no down migrations. Stop the factory, [restore](#restore) the backup of step 1, check out the previous commit, `make install`, and `sisf up`.
 
 The rebuilt programs get new digests in `<dir>/factory.yaml`. If the repository's `.sisf/factory.yaml` is meant to match the install's file, committing the new one is a [policy change](policy-and-approvals.md#changing-the-policy).
 
 ## Renewing the supervisor's delegated keys
 
-`sisf up` issues the supervisor's delegated signing keys from the root key. `sisf doctor` warns `delegated keys  they expire at <time>; run sisf up to issue new ones` as they near expiry and fails once one has expired. Stop the factory and run `sisf up` again.
+`sisf up` issues the supervisor's delegated signing keys from the root key. `sisf doctor` warns `delegated keys  they expire at <time>; run sisf up to issue new ones` as they near expiry and fails once one has expired. Stop the factory and run `sisf up` again. A running supervisor reads its delegated keys from the trust volume again every hour, and sooner when one nears its end, so it keeps signing once a replacement is there. It logs `a delegated key was replaced`, or, at warning level, `a delegated key could not be reloaded; the key in use is kept`; a key in use still refuses to sign once it has ended or is revoked (`cmd/supervisor/reloading_delegated_signer.go`).
 
 ## Removing an install
 
-`sisf down -v --dir "$D"` stops the factory and removes its data: `<dir>/data` in Standalone, and in Docker mode the project's containers, networks and volumes. It does so whether or not the factory runs. Secrets and `factory.yaml` are never removed by it; delete the directory yourself afterwards. Note that `-v` also removes the control zone's `local:` secret store and the trust record.
+`sisf down -v --dir "$D"` stops the factory and removes its data: `<dir>/data` in Standalone, except the control zone's `local:` secret store in `data/control/secrets`, and in Docker mode the project's containers, networks and volumes, the `control-data` volume with that store included. It does so whether or not the factory runs. Secrets and `factory.yaml` are never removed by it; delete the directory yourself afterwards. Note that `-v` also removes the trust record.

@@ -36,11 +36,12 @@ Standalone is the trusted-code profile: the units run as local processes under o
 sisf init --repo acme/hello --profile sim --confirm-unlimited --no-alert
 ```
 
-Expected output (observed, paths shortened):
+Expected output (paths shortened):
 
 ```text
 factory sisf-hello created in <SISF_HOME>
 sign in at http://127.0.0.1:7463 as the Owner http://127.0.0.1:7468#owner
+source checkout <checkout>: every `sisf up` of this install builds its programs from it
 warning: The root signing key is stored in <SISF_HOME>/secrets/control. This is the lower-assurance local profile: ...
 next: sisf up --dir <SISF_HOME>
 ```
