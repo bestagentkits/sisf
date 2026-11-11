@@ -37,6 +37,23 @@ What the factory enforces today and where to read the owner of each control. Why
 - A step-up must be a real new sign-in, so it is confirmed only through an OpenID Connect provider, which can force one and prove when it happened. GitHub OAuth cannot, so a step-up through GitHub is refused with `NOT_SUPPORTED`, which names the OIDC providers to confirm through. The dashboard and the `sisf login` verification page offer a confirm button only for a provider that can confirm the person signed in (`step_up_providers` in `GET /auth/session`). When no provider can, they say so in one sentence. Signing in with GitHub still works, but a step-up must be made by the identity that is signed in. An Owner who decides approvals, rolls back, changes the budget or mints tokens must therefore sign in through an OIDC provider.
 - The incident notifier in [ADR 0018](../adr/0018-people-during-an-incident.md) is a proposal, not shipped.
 
+## Trust model of each mode
+
+What each mode protects and whom it trusts. The rules are checked by `sisf doctor` and `sisf conformance check`; the reasons are in the [threat model](../threat-model.md).
+
+| | Standalone | Docker Compose |
+|---|---|---|
+| Separation of the zones | per-zone env files and store credentials; every unit is a process of the same user, so the separation holds against mistakes, not against code that runs as that user | one container per unit with its own env file, networks and store role; containers run with `no-new-privileges`, all capabilities dropped and a read-only root file system; the state database is on an internal network the edge is not on (`templates/compose/compose.yaml`) |
+| Agent code | trusted code only (`trusted_code_only: true`): agents run unconfined as your user and can read the factory's processes and environment; candidate builds are held unless the operator provides a Docker build sandbox | no container sandboxing of untrusted code in this release |
+| Docker socket | not used, except by the runner filter of an optional build sandbox | mounted only by the two Docker request filters, which refuse every request their role does not need |
+| Network exposure | every port on 127.0.0.1; reaching the factory from elsewhere needs a reverse proxy you run | the same: every published port on 127.0.0.1 |
+
+In both modes:
+
+- **The install directory is the Owner's.** `<dir>/secrets` holds the root signing key, which signs releases (the lower-assurance local profile `init` warns about), and the control zone's env file. Whoever can read the control zone's environment can run the Owner's host commands (`factoryd policy approve`, `factoryd issue retry`), which count as the Owner with a fresh step-up (`cmd/factoryd/wiring/control_policy.go`). Keep the directory, and every backup of it, readable by the Owner alone.
+- **One factory per machine.** The ports are fixed and the supervisor's admin socket does not check which factory a stop is for ([installing](install.md#one-factory-per-machine)).
+- **A development install** signs in whoever reads `<dir>/secrets/control/dev-sign-in` as the Owner, including an agent running as your user.
+
 ## Operator habits
 
 - Keep `<dir>/secrets` private and out of version control; never paste tokens into issues or logs.
