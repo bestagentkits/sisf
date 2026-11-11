@@ -15,6 +15,7 @@ import (
 	"github.com/bestagentkits/sisf/internal/actions"
 	"github.com/bestagentkits/sisf/internal/audit"
 	"github.com/bestagentkits/sisf/internal/auth"
+	"github.com/bestagentkits/sisf/internal/budget"
 	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/intake"
 	"github.com/bestagentkits/sisf/internal/policy"
@@ -123,6 +124,9 @@ type Control struct {
 	// access watches the operator token's write access on an install that
 	// acts with it; nil on one with a GitHub App installation.
 	access *operatorAccess
+	// budget closes the reservation of a run whose issue the control zone
+	// blocks because the run stopped.
+	budget *budget.Gate
 	// parkingDeferred is the earliest deadline of the unanswered issues
 	// whose parking waits, and parkingDeferredWhy why; zero when none waits.
 	parkingDeferred    time.Time
@@ -159,7 +163,8 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 	repo := github.RepoRef{Owner: m.Repository.Owner, Name: m.Repository.Repo}
 	c := &Control{cfg: cfg, log: cfg.Logger, backoff: map[string]retryAt{}, projected: map[core.IssueRef]int64{},
 		progress:      &github.ProgressComment{Issues: cfg.GitHub, Self: settings.Self, Factory: m.FactoryID},
-		progressShown: map[core.IssueRef]string{}, redactor: redact.New(redact.Config{})}
+		progressShown: map[core.IssueRef]string{}, redactor: redact.New(redact.Config{}),
+		budget: budget.NewGate(budget.Config{Clock: cfg.Clock})}
 	c.Audit = audit.New(cfg.Store, cfg.Clock)
 	reconcile, err := cfg.Reconcile.withDefaults()
 	if err != nil {

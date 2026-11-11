@@ -40,6 +40,13 @@ const (
 // when it stopped the run, with the record of why (handoff.RunStop) in the
 // same transaction. An issue whose lease is still held is left for the
 // next pass.
+//
+// The same transaction closes the run's budget reservation: a blocked run
+// spends nothing more and its build never runs, so nothing else would, and
+// a reservation left held counts against the budget cap for ever. The
+// dispatcher's record names the reservation and may have been rewritten in
+// the agent zone, so the close checks the reservation is the run's own; one
+// that is not, or does not exist, is left as it is and the block goes on.
 func (c *Control) blockStoppedRuns(ctx context.Context) error {
 	var held []core.StateRecord
 	err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
@@ -60,15 +67,26 @@ func (c *Control) blockStoppedRuns(ctx context.Context) error {
 		case stop != nil:
 			c.log.Warn("blocked an issue whose run stopped without a candidate; it waits for the Owner's retry",
 				"issue", stop.IssueID.String(), "run", string(stop.RunID), "cause", string(stop.Cause), "code", string(stop.LastCode))
+			if stop.refused != nil {
+				c.log.Error("the run record of a blocked issue names a reservation that is not its run's; it was left as it is",
+					"issue", stop.IssueID.String(), "run", string(stop.RunID), "code", string(core.CodeOf(stop.refused)), "error", stop.refused.Error())
+			}
 		}
 	}
 	return errors.Join(failed...)
 }
 
+// blockedRun is the record of why a run's issue was blocked, and why its
+// reservation was left as it is, if it was.
+type blockedRun struct {
+	handoff.RunStop
+	refused error
+}
+
 // blockStoppedRun blocks issue when the run its record names stopped, and
 // returns the record of why; nil when the run goes on.
-func (c *Control) blockStoppedRun(ctx context.Context, issue core.IssueRef) (*handoff.RunStop, error) {
-	var written *handoff.RunStop
+func (c *Control) blockStoppedRun(ctx context.Context, issue core.IssueRef) (*blockedRun, error) {
+	var written *blockedRun
 	err := c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		written = nil
 		record, err := tx.GetRecord(ctx, issue)
@@ -77,6 +95,10 @@ func (c *Control) blockStoppedRun(ctx context.Context, issue core.IssueRef) (*ha
 		}
 		stop, stopped, err := stoppedRun(ctx, tx, record, c.cfg.Clock.Now().UTC())
 		if err != nil || !stopped {
+			return err
+		}
+		run, err := runRecordOf(ctx, tx, record)
+		if err != nil {
 			return err
 		}
 		lease, err := tx.AcquireLease(ctx, state.IssueLeaseResource(issue), stoppedRunActor, stoppedRunLeaseTTL)
@@ -104,10 +126,14 @@ func (c *Control) blockStoppedRun(ctx context.Context, issue core.IssueRef) (*ha
 				return err
 			}
 		}
+		refused, err := c.closeStoppedReservation(ctx, tx, run)
+		if err != nil {
+			return err
+		}
 		if err := keepProgress(ctx, tx, issue); err != nil {
 			return err
 		}
-		written = &stop
+		written = &blockedRun{RunStop: stop, refused: refused}
 		return tx.ReleaseLease(ctx, lease)
 	})
 	return written, err
@@ -138,17 +164,10 @@ func stoppedRun(ctx context.Context, tx state.Tx, record core.StateRecord, now t
 			return stop, false, err
 		}
 	}
-	entry, err := tx.GetKV(ctx, handoff.Namespace, "run/"+string(record.RunID))
-	if core.HasCode(err, core.CodeNotFound) {
-		return stop, false, nil
-	}
-	if err != nil {
+	run, err := runRecordOf(ctx, tx, record)
+	if err != nil || run == nil {
+		// No record of this run: nothing says the run stopped.
 		return stop, false, err
-	}
-	var run dispatcher.RunRecord
-	if json.Unmarshal(entry.Value, &run) != nil || run.RunID != record.RunID || run.Issue != record.IssueID {
-		// Not a record of this run: nothing says the run stopped.
-		return stop, false, nil
 	}
 	if run.Status != dispatcher.RunExhausted {
 		return stop, false, nil
@@ -158,6 +177,38 @@ func stoppedRun(ctx context.Context, tx state.Tx, record core.StateRecord, now t
 		stop.LastCode = run.Failures[n-1].Code
 	}
 	return stop, true, nil
+}
+
+// runRecordOf reads the dispatcher's record of the run record names; nil
+// when there is none or it is not a record of that run and issue.
+func runRecordOf(ctx context.Context, tx state.Tx, record core.StateRecord) (*dispatcher.RunRecord, error) {
+	entry, err := tx.GetKV(ctx, handoff.Namespace, "run/"+string(record.RunID))
+	if core.HasCode(err, core.CodeNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var run dispatcher.RunRecord
+	if json.Unmarshal(entry.Value, &run) != nil || run.RunID != record.RunID || run.Issue != record.IssueID {
+		return nil, nil
+	}
+	return &run, nil
+}
+
+// closeStoppedReservation closes the reservation of a run whose issue is
+// being blocked. A reservation that is not the run's own, or that does not
+// exist, is left as it is and returned as refused, so the block still
+// goes on; any other failure fails the block, which the next pass retries.
+func (c *Control) closeStoppedReservation(ctx context.Context, tx state.Tx, run *dispatcher.RunRecord) (refused error, err error) {
+	if run == nil || run.ReservationID == "" {
+		return nil, nil
+	}
+	err = dispatcher.CloseReservationOfRun(ctx, c.budget, tx, run.RunID, run.ReservationID, run.Spend)
+	if core.HasCode(err, core.CodeTampered) || core.HasCode(err, core.CodeNotFound) {
+		return err, nil
+	}
+	return nil, err
 }
 
 // endHeldBuild removes the hold of the build of record's attempt, and its
