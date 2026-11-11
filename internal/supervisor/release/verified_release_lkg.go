@@ -33,10 +33,17 @@ const (
 	// lkgSuperseded: a release verified later, or a later install, holds
 	// the LKG or was verified after it; the release is finished without it.
 	lkgSuperseded lkgVerdict = "superseded"
-	// lkgUnjudged: the running system answers that the release is not what
-	// serves, or not healthy, or its QA evidence does not verify even as of
-	// its verification, and nothing superseded it: it cannot be finished.
+	// lkgUnjudged: the running system answers that another release serves
+	// the unit, healthy, or the release's QA evidence does not verify even
+	// as of its verification, and nothing superseded it: it cannot be
+	// finished.
 	lkgUnjudged lkgVerdict = "unjudged"
+	// lkgUnseen: the running system does not show the release serving,
+	// healthy, nor another release serving, healthy, in its place: a probe
+	// that failed or found nothing, or the release answering its health
+	// check as down. That judges nothing yet; the release is observed again
+	// on later passes, for as long as finishVerified waits.
+	lkgUnseen lkgVerdict = "unseen"
 )
 
 // lkgDecision is the verdict on a verified release and what it was based on.
@@ -85,9 +92,12 @@ func (p *Pipeline) settleLKG(ctx context.Context, record core.StateRecord, req R
 		// A running system that does not answer is an outage that clears,
 		// like the store's: the release waits and is judged once it answers.
 		return d, core.NewError(core.CodeUnavailable, "the running system of the unit cannot be observed").WithCause(observeErr)
-	case !d.observed.Matches(deploy.Revision{Unit: unit, Digest: record.ReleaseDigest}):
+	case anotherServes(d.observed, record.ReleaseDigest):
 		d.verdict, d.reason = lkgUnjudged, "the verified release is no longer observed serving its unit, healthy ("+
-			string(d.observed.Digest)+" serves), and no later release replaced it"
+			string(d.observed.Digest)+" serves, healthy), and no later release replaced it"
+		return d, nil
+	case !d.observed.Matches(deploy.Revision{Unit: unit, Digest: record.ReleaseDigest}):
+		d.verdict, d.reason = lkgUnseen, "the verified release is not observed serving its unit, healthy"
 		return d, nil
 	}
 	v, err := p.verifyAsOf(ctx, req, record, record.UpdatedAt)
@@ -207,11 +217,13 @@ func evidenceJudged(err error) bool {
 }
 
 // blockVerified blocks the issue of a verified release that cannot be
-// finished (lkgUnjudged). When the release is what serves, unhealthy or
-// with evidence that does not verify, and another release is the LKG, the
-// unit is first switched back to it, so no release that cannot be judged
-// keeps serving; when there is nothing to
-// switch back to, the block says so. What the release owed is dropped with
+// finished (lkgUnjudged, or lkgUnseen for longer than finishVerified
+// waits). Unless another release is observed serving the unit, healthy,
+// and another release is the LKG, the unit is first switched back to it,
+// whether the release serves with evidence that does not verify or the
+// running system could not show what serves, so no release that cannot be
+// judged keeps serving; when there is nothing to switch back to, the block
+// says so. What the release owed is dropped with
 // the step: it is not published and its pull request is left open and
 // unmerged for the Owner. A switch that does not take leaves the issue
 // Verified, and it is tried again.
@@ -219,10 +231,10 @@ func (p *Pipeline) blockVerified(ctx context.Context, h *holding, unit string, d
 	release := h.record.ReleaseDigest
 	out := Outcome{Release: release, State: h.record.State, Observed: d.observed, Reason: d.reason}
 	r := &rollout{h: h, unit: unit, rev: deploy.Revision{Unit: unit, Digest: release}, observed: d.observed}
-	serves := d.observed.Digest == release
+	other := anotherServes(d.observed, release)
 	reason := d.reason
 	switch {
-	case serves && d.found && d.lkg.Digest != release:
+	case !other && d.found && d.lkg.Digest != release:
 		r.lkg, r.lkgRev = d.lkg, deploy.Revision{Unit: unit, Digest: d.lkg.Digest}
 		observed, result, err := p.switchBack(ctx, r)
 		if err != nil {
@@ -234,7 +246,7 @@ func (p *Pipeline) blockVerified(ctx context.Context, h *holding, unit string, d
 		}
 		out.Observed, out.RestoredTo = observed, observed.Digest
 		reason += "; the last known good release was restored"
-	case serves:
+	case !other:
 		reason += "; there is no other release to restore it to, so nothing was restored"
 	default:
 		reason += "; nothing was switched back"
@@ -274,4 +286,11 @@ func (p *Pipeline) blockVerified(ctx context.Context, h *holding, unit string, d
 	return out, p.audit(ctx, h, "release.unjudged", core.OutcomeExecuted, map[string]string{
 		"release": string(release), "restored_to": string(out.RestoredTo), "reason": reason,
 	})
+}
+
+// anotherServes reports whether the running system positively shows a
+// release other than release serving the unit, healthy: the only answer
+// that judges a verified release as no longer serving.
+func anotherServes(observed deploy.Observed, release core.ReleaseDigest) bool {
+	return observed.Digest != "" && observed.Digest != release && observed.Healthy
 }

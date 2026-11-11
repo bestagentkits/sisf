@@ -85,6 +85,10 @@ func (p *Pipeline) finishVerified(ctx context.Context, h *holding, req Request, 
 	}
 	f := &finishing{h: h, due: due, feature: req.Feature, summary: req.Summary, candidate: req.Candidate,
 		receipt: req.Receipt, evidence: evidence}
+	if d.verdict == lkgUnseen {
+		return p.waitUnseen(ctx, h, req.Artifact.Unit, d)
+	}
+	p.seen(h.record.RunID)
 	switch d.verdict {
 	case lkgUnjudged:
 		return p.blockVerified(ctx, h, req.Artifact.Unit, d)

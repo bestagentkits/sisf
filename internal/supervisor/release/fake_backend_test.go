@@ -51,8 +51,10 @@ type fakeBackend struct {
 	existing       map[core.ReleaseDigest]bool
 	totalPerWindow int64
 	errorRate      map[core.ReleaseDigest]float64
-	unhealthy      map[core.ReleaseDigest]bool
-	critical       map[core.ReleaseDigest]int64
+	// unhealthy revisions do not answer their health check; degraded ones
+	// answer it as down, naming themselves.
+	unhealthy, degraded map[core.ReleaseDigest]bool
+	critical            map[core.ReleaseDigest]int64
 	// runningInstead, when set, is what the running system reports whatever
 	// the calls answered.
 	runningInstead core.ReleaseDigest
@@ -83,7 +85,7 @@ func newFakeBackend(clock *fakeClock, stable core.ReleaseDigest) *fakeBackend {
 			core.CapDeployObservedRevision: core.SupportSupported, core.CapDeployRollback: core.SupportSupported,
 		},
 		totalPerWindow: 10000, errorRate: map[core.ReleaseDigest]float64{}, unhealthy: map[core.ReleaseDigest]bool{},
-		critical: map[core.ReleaseDigest]int64{}, measureErr: map[core.ReleaseDigest]error{}, dataVolume: "customer-data-v1",
+		degraded: map[core.ReleaseDigest]bool{}, critical: map[core.ReleaseDigest]int64{}, measureErr: map[core.ReleaseDigest]error{}, dataVolume: "customer-data-v1",
 	}
 }
 
@@ -170,7 +172,18 @@ func (b *fakeBackend) ObservedRevision(_ context.Context, unit string) (deploy.O
 	if !b.observedAt.IsZero() {
 		at = b.observedAt
 	}
-	return deploy.Observed{Unit: unit, Digest: running, Healthy: !b.unhealthy[running], ObservedAt: at}, nil
+	switch {
+	case b.unhealthy[running]:
+		// The real backends answer a probe that fails, times out or finds no
+		// process with no digest and not healthy, and no error: nothing
+		// about the running system is known.
+		return deploy.Observed{Unit: unit, ObservedAt: at}, nil
+	case b.degraded[running]:
+		// An application that answers its health check as down still names
+		// the revision it runs.
+		return deploy.Observed{Unit: unit, Digest: running, ObservedAt: at}, nil
+	}
+	return deploy.Observed{Unit: unit, Digest: running, Healthy: true, ObservedAt: at}, nil
 }
 
 func (b *fakeBackend) Rollback(_ context.Context, to deploy.Revision) error {

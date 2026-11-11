@@ -212,7 +212,7 @@ func TestTheBlockOfAnUnjudgedVerifiedReleaseIsAudited(t *testing.T) {
 	w.backend.unhealthy[core.ReleaseDigest(firstBuild)] = true
 	w.backend.mu.Unlock()
 
-	out, err := w.pipeline().FinishVerified(ctx, req)
+	out, err := w.finishAfterUnseenWait(w.pipeline(), req)
 	if err != nil || out.Result != ResultBlocked || out.Cause != statemachine.BlockReleaseUnjudged {
 		t.Fatalf("FinishVerified = %+v, %v; want blocked as not judged", out, err)
 	}

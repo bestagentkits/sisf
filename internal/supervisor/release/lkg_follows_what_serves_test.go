@@ -369,9 +369,9 @@ func TestAVerifiedReleaseThatNoLongerServesIsBlocked(t *testing.T) {
 	}
 }
 
-// A verified release that serves but is no longer healthy is restored to
-// the LKG before its issue is blocked, so no unjudged program keeps
-// serving.
+// A verified release whose health check keeps failing is waited for as
+// long as a release is watched before it is verified, then restored to the
+// LKG before its issue is blocked, so no unjudged program keeps serving.
 func TestAnUnhealthyVerifiedReleaseIsRestoredToTheLKGThenBlocked(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -390,7 +390,7 @@ func TestAnUnhealthyVerifiedReleaseIsRestoredToTheLKGThenBlocked(t *testing.T) {
 	w.backend.unhealthy[core.ReleaseDigest(firstBuild)] = true
 	w.backend.mu.Unlock()
 
-	_, _ = w.pipeline().FinishVerified(ctx, req)
+	_, _ = w.finishAfterUnseenWait(w.pipeline(), req)
 	w.requireState(issue, core.StateBlocked)
 	if serving := w.serving(); serving.Digest != lkgDigest || !serving.Healthy {
 		t.Fatalf("%+v serves, want the LKG restored", serving)
