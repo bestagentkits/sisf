@@ -2,20 +2,21 @@ package conformance
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
-// checkSecrets keeps secrets out of the free-form parts of the manifest. The
-// fields that name a secret are held to the reference form by the schema;
-// adapter config and extensions have no schema, so there a secret is
-// recognized two ways: by the key it stands under, and by its own shape
-// whatever the key. A finding gives the place and the expected form and
+// checkSecrets keeps secrets out of the manifest. The fields that name a
+// secret are held to the reference form by the schema; adapter config and
+// extensions have no schema, so there a secret is recognized two ways: by
+// the key it stands under, and by its own shape whatever the key. The typed
+// fields that hold free text, such as a unit's command or a zone's source,
+// are searched by shape. A finding gives the place and the expected form and
 // never the value.
 func (c *checker) checkSecrets() {
+	c.checkTypedTextSecrets()
 	adapters := []struct {
 		name   string
 		config map[string]any
@@ -66,7 +67,11 @@ func (c *checker) checkInlineSecrets(path string, value any, above setting) {
 		c.checkInlineSecrets(path, named, above)
 	case []any:
 		for i, item := range v {
-			c.checkInlineSecrets(fmt.Sprintf("%s[%d]", path, i), item, above)
+			at := fmt.Sprintf("%s[%d]", path, i)
+			if c.flagValueIsSecret(at, v, i) {
+				continue
+			}
+			c.checkInlineSecrets(at, item, above)
 		}
 	case string:
 		const fix = "store the secret with a secret provider and put " + manifest.SecretRefForm + " here"
@@ -86,26 +91,21 @@ func (c *checker) checkInlineSecrets(path string, value any, above setting) {
 	}
 }
 
-// The shapes a secret has whatever key it stands under.
-var (
-	// privateKeyBlock is the armour line of a private key in PEM, OpenSSH or
-	// PGP form. A certificate or a public key is not a secret.
-	privateKeyBlock = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----`)
-	// urlWithPassword is a URL whose authority carries "user:password@", as
-	// a connection string does.
-	urlWithPassword = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s/?#@:]*:[^\s/?#@]+@`)
-)
-
-// secretShape says what kind of secret a text value is by its shape, or ""
-// when it has none of the known shapes.
-func secretShape(value string) string {
-	switch {
-	case privateKeyBlock.MatchString(value):
-		return "a private key block"
-	case urlWithPassword.MatchString(value):
-		return "a URL with a password in it"
+// flagValueIsSecret reports, and records, a list item that follows a flag
+// named like a secret, as "opaque" follows "--token" in a list of arguments,
+// and is not a reference.
+func (c *checker) flagValueIsSecret(at string, items []any, i int) bool {
+	if i == 0 {
+		return false
 	}
-	return ""
+	flag, isText := items[i-1].(string)
+	value, alsoText := items[i].(string)
+	if !isText || !alsoText || !takesSecret(flag) || !givenSecret(value) {
+		return false
+	}
+	c.add(RuleSecretInline, at, "store the secret with a secret provider and pass "+manifest.SecretRefForm+" to the flag, or a file that holds it",
+		"%s follows a flag named like a secret, so it is that secret written in the manifest (the value is not shown)", at)
+	return true
 }
 
 // assignsSecret reports whether text is NAME=value with a name that says

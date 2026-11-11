@@ -10,7 +10,7 @@ import (
 // they stand in it. They are written in the singular; a key word is also
 // tried without its final "s", so "credentials" and "apikeys" match.
 var secretWords = []string{"password", "passwd", "pwd", "passphrase", "secret", "credential", "apikey", "privatekey",
-	"secretkey", "accesskey", "dsn", "authorization", "connectionstring", "connstr"}
+	"secretkey", "accesskey", "dsn", "authorization", "connectionstring", "connstr", "bearer"}
 
 // keyQualifiers are the words that make a key ending in "key" a secret: an
 // api key or a private key is one, a cache key or a sort key is not.
@@ -23,8 +23,9 @@ var formWords = []string{"ref", "pem", "der", "b64", "base64", "hex", "value", "
 
 // locatorWords end a key whose value says where a secret is kept rather
 // than being one: tls_secret_name names a platform secret, credentials_file
-// a path. Such a value is still judged by its shape.
-var locatorWords = []string{"name", "file", "path", "dir"}
+// a path, password_stdin the input it is read from. Such a value is still
+// judged by its shape.
+var locatorWords = []string{"name", "file", "path", "dir", "stdin"}
 
 // quantityWords make a key ending in "tokens" a count of model tokens
 // rather than a credential, as in max_tokens and output_tokens.
@@ -57,9 +58,10 @@ func namesSecret(key string) bool {
 		}
 	}
 	// A token is a secret where the key ends in it: token_endpoint and
-	// jwt_issuer describe one, github_token and service_jwt hold one.
+	// jwt_issuer describe one, github_token, service_jwt and github_pat (a
+	// personal access token) hold one.
 	switch last := singular(words[n-1]); last {
-	case "token", "jwt":
+	case "token", "jwt", "pat":
 		return !slices.ContainsFunc(words[:n-1], func(word string) bool { return slices.Contains(quantityWords, word) })
 	case "key":
 		return n > 1 && slices.Contains(keyQualifiers, words[n-2])
