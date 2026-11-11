@@ -13,10 +13,11 @@ type FinalReport struct {
 	// is set; tools without such a marker leave it empty.
 	Result    string
 	HasResult bool
-	// Complete is false when events past the cap were dropped or an output
-	// line over the size limit was skipped: the record of the run is then
-	// not the whole of what the tool said, and its last message may not be
-	// its last word.
+	// Complete is false when events past the cap were dropped, an output
+	// line over the size limit was skipped, or reading stopped after the
+	// run exited before the output could be read to its end: the record of
+	// the run is then not the whole of what the tool said, and its last
+	// message may not be its last word.
 	Complete bool
 }
 
@@ -34,7 +35,7 @@ func (b *Backend) FinalReport(_ context.Context, ref agent.RunRef) (FinalReport,
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	report := FinalReport{Complete: !r.dropped && !r.truncated}
+	report := FinalReport{Complete: !r.dropped && !r.truncated && !r.cutOff}
 	if r.final != nil && r.final.HasResult {
 		report.Result, report.HasResult = r.b.redactor.Text(r.final.Result), true
 	}
