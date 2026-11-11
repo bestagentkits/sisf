@@ -114,8 +114,10 @@ returns. Ports used: 7460-7469 on 127.0.0.1, nothing else.`,
 Stops the factory. In Docker mode it also removes the containers and networks
 of this install's Compose project. With -v the data is removed too (the
 state volume in Docker mode, the data directory in Standalone mode).
-Secrets and factory.yaml are never removed by this command, including the
-control zone's encrypted secret store in data/control/secrets.`,
+Secrets and factory.yaml are never removed by this command. In Standalone
+mode that includes the control zone's encrypted secret store in
+data/control/secrets; in Docker mode that store lies on the control-data
+volume, which -v removes with the other volumes.`,
 		Flags: bindLifecycleFlags("down", new(string), new(bool)),
 		Run:   lifecycle("down", func(ctx context.Context, in *install.Installer, volumes bool) error { return in.Down(ctx, volumes) }),
 	})

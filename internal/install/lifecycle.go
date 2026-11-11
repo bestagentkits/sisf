@@ -48,7 +48,9 @@ func (in *Installer) ensure(ctx context.Context, o UpOptions) (*manifest.Manifes
 		for _, w := range res.Warnings {
 			in.say("warning: %s\n", w)
 		}
-		in.say("source checkout %s: every `sisf up` of this install builds its programs from it\n", in.SourceDir)
+		if in.SourceDir != "" {
+			in.say("source checkout %s: every `sisf up` of this install builds its programs from it\n", in.SourceDir)
+		}
 	}
 	m, err := in.Layout.LoadManifest()
 	if err != nil {
