@@ -368,9 +368,10 @@ func (p ReportPublisher) reject(ctx context.Context, key string, code core.Error
 		}
 		var stored storedReport
 		readable := json.Unmarshal(entry.Value, &stored) == nil
+		unreadable := !readable || code == core.CodeTampered
 		stored.Publish.AttemptedAt = time.Time{}
 		stored.Publish.Rejections++
-		if readable && code != core.CodeTampered && stored.Publish.Rejections < maxReportRejections {
+		if !unreadable && stored.Publish.Rejections < maxReportRejections {
 			return putStored(ctx, tx, key, entry.Version, stored)
 		}
 		if err := tx.DeleteKV(ctx, ReportsNamespace, key, entry.Version); err != nil {
@@ -380,7 +381,18 @@ func (p ReportPublisher) reject(ctx context.Context, key string, code core.Error
 			return err
 		}
 		// A report given up no longer waits, so its client is forgotten.
-		if err := forgetWaiting(ctx, tx, stored.Client, key); err != nil {
+		// What an unreadable report says of its client and fingerprint
+		// cannot be trusted, so it is forgotten by its key wherever it is
+		// listed, and its fingerprint no longer names it: the same report
+		// sent again is a new one.
+		if unreadable {
+			if err := forgetWaitingAnywhere(ctx, tx, key); err != nil {
+				return err
+			}
+			if err := dropIndexOf(ctx, tx, key); err != nil {
+				return err
+			}
+		} else if err := forgetWaiting(ctx, tx, stored.Client, key); err != nil {
 			return err
 		}
 		stored.Client = ""
@@ -391,7 +403,7 @@ func (p ReportPublisher) reject(ctx context.Context, key string, code core.Error
 			_, err := tx.PutKV(ctx, state.KVEntry{Namespace: ReportsNamespace, Key: failedKey, Value: entry.Value})
 			return err
 		}
-		if err := putStored(ctx, tx, failedKey, 0, stored); err != nil {
+		if err := putStored(ctx, tx, failedKey, 0, stored); err != nil || unreadable {
 			return err
 		}
 		return putIndex(ctx, tx, stored.Fingerprint, failedKey)

@@ -130,6 +130,30 @@ func forgetWaiting(ctx context.Context, tx state.Tx, client, key string) error {
 	return list.put(ctx, tx)
 }
 
+// forgetWaitingAnywhere removes key from the waiting reports of whichever
+// client lists it, for a report whose value cannot be read to name its
+// client. It reads the client lists, never a report.
+func forgetWaitingAnywhere(ctx context.Context, tx state.Tx, key string) error {
+	entries, err := tx.ListKV(ctx, ReportsNamespace, reportClientPrefix, 0)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		list, err := decodeClientReports(e)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(list.keys, key) {
+			continue
+		}
+		list.keys = slices.DeleteFunc(list.keys, func(k string) bool { return k == key })
+		if err := list.put(ctx, tx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // forgetWaitingEntry forgets the waiting report stored at e, whose value
 // names its client.
 func forgetWaitingEntry(ctx context.Context, tx state.Tx, e state.KVEntry) error {

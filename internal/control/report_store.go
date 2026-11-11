@@ -216,10 +216,17 @@ func dropReport(ctx context.Context, tx state.Tx, e state.KVEntry) error {
 	if err := tx.DeleteKV(ctx, ReportsNamespace, e.Key, e.Version); err != nil {
 		return err
 	}
-	fingerprint := e.Key[strings.LastIndex(e.Key, "/")+1:]
+	return dropIndexOf(ctx, tx, e.Key)
+}
+
+// dropIndexOf removes the fingerprint index of the report stored at key,
+// when the index still names key. The fingerprint is read from the key,
+// so a report whose value cannot be read loses its index all the same.
+func dropIndexOf(ctx context.Context, tx state.Tx, key string) error {
+	fingerprint := key[strings.LastIndex(key, "/")+1:]
 	index, err := tx.GetKV(ctx, ReportsNamespace, reportIndexPrefix+fingerprint)
 	switch {
-	case err == nil && string(index.Value) == e.Key:
+	case err == nil && string(index.Value) == key:
 		return tx.DeleteKV(ctx, ReportsNamespace, index.Key, index.Version)
 	case err == nil || core.HasCode(err, core.CodeNotFound):
 		return nil
