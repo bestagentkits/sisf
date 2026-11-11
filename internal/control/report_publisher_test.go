@@ -265,8 +265,8 @@ func TestAReportsTextIsInertOnGitHub(t *testing.T) {
 }
 
 // GitHub being out leaves the report stored, to be published by a later
-// call; the attempt whose answer was lost is looked for first, so only one
-// issue is opened.
+// call once the attempt whose answer was lost is surely over; that attempt
+// is looked for first, so only one issue is opened.
 func TestAnOutageLeavesTheReportToALaterCall(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
@@ -280,6 +280,7 @@ func TestAnOutageLeavesTheReportToALaterCall(t *testing.T) {
 			if n := countKeys(t, e, "r/"); n != 1 {
 				t.Fatalf("%d reports wait after a failure, want the report kept", n)
 			}
+			db.Clock.Advance(3 * time.Minute)
 		}
 		if st, err := control.ReadReportPublication(context.Background(), e.store, db.Clock.Now()); err != nil || st.Waiting != 1 ||
 			!strings.Contains(st.LastError, string(core.CodeUnauthenticated)) {

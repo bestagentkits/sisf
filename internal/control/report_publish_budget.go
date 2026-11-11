@@ -72,21 +72,26 @@ func (b publishBudget) pausedUntil() time.Time {
 // now, in the transaction that records the attempt, so publishers sharing
 // the store cannot together exceed it. Every attempt is charged, one whose
 // answer was lost included: whether it opened an issue is not known, and
-// another publisher may still be waiting for its answer. It reports
-// whether the budget had room; when it had none, nothing is written.
-func reserveAttempt(ctx context.Context, tx state.Tx, now time.Time) (bool, error) {
+// another publisher may still be waiting for its answer. previous, when
+// not zero, is the report's earlier attempt, which a lookup showed opened
+// no issue: its charge is taken back in the same write, so a report tried
+// again holds one charge, not one for every try. It reports whether the
+// budget had room; when it had none, nothing is written.
+func reserveAttempt(ctx context.Context, tx state.Tx, previous, now time.Time) (bool, error) {
 	budget, err := readPublishBudget(ctx, tx, now)
 	if err != nil {
 		return false, err
 	}
-	if budget.remaining() == 0 {
+	times, _ := withoutAttempt(budget.times, previous)
+	if len(times) >= ReportDailyPublishBudget {
 		return false, nil
 	}
-	return true, budget.put(ctx, tx, append(budget.times, now.UTC()))
+	return true, budget.put(ctx, tx, append(times, now.UTC()))
 }
 
 // releaseAttempt takes back the charge of an attempt made at attempted
-// that GitHub refused, so it opened no issue. A zero time names none.
+// that opened no issue, as GitHub's refusal or a lookup shows. A zero time
+// names none.
 func releaseAttempt(ctx context.Context, tx state.Tx, attempted, now time.Time) error {
 	if attempted.IsZero() {
 		return nil
@@ -95,11 +100,24 @@ func releaseAttempt(ctx context.Context, tx state.Tx, attempted, now time.Time) 
 	if err != nil {
 		return err
 	}
-	i := slices.IndexFunc(budget.times, attempted.Equal)
-	if i < 0 {
+	times, charged := withoutAttempt(budget.times, attempted)
+	if !charged {
 		return nil
 	}
-	return budget.put(ctx, tx, slices.Delete(budget.times, i, i+1))
+	return budget.put(ctx, tx, times)
+}
+
+// withoutAttempt returns times without the charge of the attempt made at
+// attempted, and whether it held one. A zero time names none.
+func withoutAttempt(times []time.Time, attempted time.Time) ([]time.Time, bool) {
+	if attempted.IsZero() {
+		return times, false
+	}
+	i := slices.IndexFunc(times, attempted.Equal)
+	if i < 0 {
+		return times, false
+	}
+	return slices.Delete(times, i, i+1), true
 }
 
 // put stores times as the budget.
@@ -117,7 +135,8 @@ func (b publishBudget) put(ctx context.Context, tx state.Tx, times []time.Time) 
 // the factory's status shows it.
 type ReportPublication struct {
 	// Waiting counts the stored reports not published yet, Failed those
-	// given up after GitHub refused them, which will never be published.
+	// given up after GitHub refused them or never answered for them, which
+	// will never be published.
 	Waiting int
 	Failed  int
 	// Dropped counts the waiting reports pushed out of a full store to

@@ -67,8 +67,12 @@ type reportPublishState struct {
 	AttemptedAt time.Time `json:"attempted_at,omitzero"`
 	// Rejections counts the times GitHub refused the issue as invalid.
 	Rejections int `json:"rejections,omitempty"`
-	// FailedCode is the code GitHub's last refusal carried, set once the
-	// report was given up and moved under f/.
+	// Unanswered counts the attempts GitHub gave no answer to and that a
+	// lookup showed opened no issue.
+	Unanswered int `json:"unanswered,omitempty"`
+	// FailedCode is the code GitHub's last refusal carried, or UNAVAILABLE
+	// for a report GitHub never answered for, set once the report was
+	// given up and moved under f/.
 	FailedCode core.ErrorCode `json:"failed_code,omitempty"`
 }
 

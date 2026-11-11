@@ -160,6 +160,9 @@ func TestAReportBeingPublishedIsNeverPushedOut(t *testing.T) {
 		if code, _ := sendReportText(t, e, "Newcomer", "Body.", 2); code != http.StatusAccepted {
 			t.Fatalf("a newcomer: %d, want the older, idle report pushed out", code)
 		}
+		// Once the broken attempt is surely over, the newer report is
+		// tried again.
+		db.Clock.Advance(3 * time.Minute)
 		for range 3 {
 			publish(t, p)
 		}
