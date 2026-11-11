@@ -50,9 +50,10 @@ type verifiedRelease struct {
 	artifact   deploy.Artifact
 	receipt    core.QAReceipt
 	verifiedAt time.Time
-	// verifiedStepAt is when the release's Verified step was written, once
-	// it was: the LKG keeps it to order releases by their verification.
-	verifiedStepAt time.Time
+	// sequence is the place of the release's Verified step in the order
+	// of Verified steps, once it was written: the LKG keeps it to order
+	// releases by their verification.
+	sequence int64
 }
 
 // verify accepts a release only when all of the following hold:

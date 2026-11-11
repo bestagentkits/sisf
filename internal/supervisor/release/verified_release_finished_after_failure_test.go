@@ -302,7 +302,8 @@ func TestAFinishNeverTakesTheLKGBackFromALaterRelease(t *testing.T) {
 	}
 	later := w.request(issueRef(77), "run-77", secondBuild)
 	w.clock.Advance(DefaultWindow)
-	if err := w.book.record(verifiedRelease{issue: later.IssueID, run: later.RunID, artifact: later.Artifact, receipt: later.Receipt, verifiedAt: w.clock.Now()}); err != nil {
+	// The later release's Verified step was the second the store numbered.
+	if err := w.book.record(verifiedRelease{issue: later.IssueID, run: later.RunID, artifact: later.Artifact, receipt: later.Receipt, verifiedAt: w.clock.Now(), sequence: 2}); err != nil {
 		t.Fatal(err)
 	}
 	w.forgetFinishDue(run)

@@ -42,14 +42,18 @@ func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
 		IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Released: r.rev.Digest, Observed: observed.Digest,
 		Healthy: observed.Healthy, ObservedAt: observed.ObservedAt, WindowEndsAt: windowEnd, DoD: dod,
 	}
-	due := FinishDue{IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Release: r.rev.Digest, Unit: r.unit}
+	due, err := p.verifiedDue(ctx, FinishDue{IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Release: r.rev.Digest, Unit: r.unit})
+	if err != nil {
+		return p.restore(ctx, r, undo{cause: statemachine.BlockReleaseInterrupted,
+			reason: "the install in force could not be read, so the verified release could not be recorded: " + err.Error()})
+	}
 	err = p.step(ctx, r.h, stepSpec{
 		event: core.EventPostDeployVerified, reason: "the observed release met its DoD through the observation window",
 		release: r.rev.Digest, evidence: []string{"observed:" + string(observed.Digest)},
 		guards: statemachine.Guards{PostDeploy: statemachine.PostDeployGuardFunc(func(context.Context, core.Transition) (statemachine.PostDeployProof, error) {
 			return proof, nil
 		})},
-		also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error { return putFinishDue(ctx, tx, due) },
+		also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error { return putVerifiedDue(ctx, tx, &due) },
 	})
 	if err != nil {
 		// The LKG still names the release before this one, so the release
@@ -74,7 +78,7 @@ func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
 // cannot be judged is blocked (blockVerified). When the LKG cannot be
 // settled now, the issue stays Verified and says what it waits on.
 func (p *Pipeline) finishVerified(ctx context.Context, h *holding, req Request, due FinishDue, evidence []string) (Outcome, error) {
-	d, err := p.settleLKG(ctx, h.record, req)
+	d, err := p.settleLKG(ctx, h.record, req, due)
 	if err != nil {
 		out := Outcome{Release: h.record.ReleaseDigest, State: h.record.State, Result: ResultHeld, Reason: err.Error(), Waits: waits(waitsLKG, err)}
 		return out, err

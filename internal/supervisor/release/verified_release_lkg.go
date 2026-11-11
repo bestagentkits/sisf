@@ -16,8 +16,9 @@ import (
 // what serves the unit: the LKG is recorded only for a release observed
 // serving the unit, healthy, at that moment. A verified release is recorded
 // after its Verified step, so a release whose step could not be written is
-// still undone to the LKG before it. Releases of a unit are ordered by
-// their Verified step, never by when an LKG entry was written. A release a
+// still undone to the LKG before it. Releases of a unit are ordered by the
+// order the store wrote their Verified steps in (nextVerifiedSequence),
+// never by a clock or by when an LKG entry was written. A release a
 // later one superseded does not take the LKG back; one that is neither
 // serving, healthy, nor superseded cannot be finished and blocks its issue.
 
@@ -57,7 +58,7 @@ type lkgDecision struct {
 // the store could not be read, the running system did not answer, the
 // artifact could not be verified now or the LKG could not be written; the
 // release waits and is tried again.
-func (p *Pipeline) settleLKG(ctx context.Context, record core.StateRecord, req Request) (lkgDecision, error) {
+func (p *Pipeline) settleLKG(ctx context.Context, record core.StateRecord, req Request, due FinishDue) (lkgDecision, error) {
 	unit := req.Artifact.Unit
 	var d lkgDecision
 	var err error
@@ -69,7 +70,7 @@ func (p *Pipeline) settleLKG(ctx context.Context, record core.StateRecord, req R
 		d.verdict = lkgNamesIt
 		return d, nil
 	}
-	superseded, err := p.supersededBy(ctx, record, unit, d.lkg, d.found)
+	superseded, err := p.supersededBy(ctx, record, due, unit, d.lkg, d.found)
 	if err != nil {
 		return d, err
 	}
@@ -97,7 +98,7 @@ func (p *Pipeline) settleLKG(ctx context.Context, record core.StateRecord, req R
 		}
 		return d, err
 	}
-	v.verifiedStepAt = record.UpdatedAt
+	v.sequence = due.Sequence
 	if err := p.cfg.LKG.record(v); err != nil {
 		return d, err
 	}
@@ -107,20 +108,20 @@ func (p *Pipeline) settleLKG(ctx context.Context, record core.StateRecord, req R
 
 // supersededBy says which release superseded the verified release of
 // record, "" when none did. A release is superseded when the LKG names
-// another release verified after it, when a later install pins the LKG,
-// or when another release of the unit was verified after it and still
-// waits to be finished. Releases are ordered by their Verified step; equal
-// instants supersede nothing. The unit of another release is the one its
+// another release verified after it, when an install other than the one in
+// force at its Verified step pins the LKG, or when another release of the
+// unit was verified after it and still waits to be finished. Releases are
+// ordered by the sequence of their Verified steps; equal numbers, which
+// only releases an earlier build verified share, supersede nothing. The unit of another release is the one its
 // build record names (unitOfRelease), never what a document of what it
 // still owes says: that document is written by the control zone, which
 // factoryd shares.
-func (p *Pipeline) supersededBy(ctx context.Context, record core.StateRecord, unit string, lkg LKG, found bool) (string, error) {
-	verifiedAt := record.UpdatedAt
+func (p *Pipeline) supersededBy(ctx context.Context, record core.StateRecord, due FinishDue, unit string, lkg LKG, found bool) (string, error) {
 	if found {
 		switch {
-		case lkg.Source == SourcePromoted && lkg.RunID != record.RunID && lkg.verifiedStep().After(verifiedAt):
+		case lkg.Source == SourcePromoted && lkg.RunID != record.RunID && lkg.VerifiedSequence > due.Sequence:
 			return "the release of " + string(lkg.RunID) + " (" + string(lkg.Digest) + "), verified later, is the last known good release", nil
-		case lkg.Source == SourceReleaseManifest && lkg.RecordedAt.After(verifiedAt):
+		case lkg.Source == SourceReleaseManifest && installedSince(due, lkg):
 			return "a later install pins " + string(lkg.Digest) + " as the last known good release", nil
 		}
 	}
@@ -131,7 +132,17 @@ func (p *Pipeline) supersededBy(ctx context.Context, record core.StateRecord, un
 			return err
 		}
 		for _, r := range records {
-			if r.IssueID == record.IssueID || !r.UpdatedAt.After(verifiedAt) {
+			if r.IssueID == record.IssueID {
+				continue
+			}
+			other, err := ReadFinishDue(ctx, tx, r.RunID)
+			if core.HasCode(err, core.CodeNotFound) {
+				continue // an earlier build verified it, before any numbered step
+			}
+			if err != nil {
+				return err
+			}
+			if other.Sequence <= due.Sequence {
 				continue
 			}
 			built, found, err := unitOfRelease(ctx, tx, r)

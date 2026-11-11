@@ -53,23 +53,15 @@ type LKG struct {
 	// ArtifactKeyID is the key whose signature was verified at promotion.
 	ArtifactKeyID string    `json:"artifact_key_id,omitempty"`
 	VerifiedAt    time.Time `json:"verified_at,omitzero"`
-	// VerifiedStepAt is when the release's Verified step was written: the
-	// order in which releases of a unit were verified. An entry an earlier
-	// build wrote, before the Verified step, has none (see verifiedStep).
+	// VerifiedSequence is the place of the release's Verified step in the
+	// order of Verified steps (nextVerifiedSequence), by which releases of a
+	// unit are ordered. An entry an earlier build wrote has none, and is
+	// older than any release verified since.
+	VerifiedSequence int64 `json:"verified_sequence,omitempty"`
+	// VerifiedStepAt is read from entries an earlier build wrote and never
+	// written: a clock does not order releases.
 	VerifiedStepAt time.Time `json:"verified_step_at,omitzero"`
 	RecordedAt     time.Time `json:"recorded_at"`
-}
-
-// verifiedStep is when the release the entry names was verified, for
-// ordering it against other releases of the unit: its Verified step, or,
-// for an entry an earlier build wrote just before that step, when it was
-// written. For the release the root-signed manifest pins it is when the
-// install recorded it.
-func (l LKG) verifiedStep() time.Time {
-	if !l.VerifiedStepAt.IsZero() {
-		return l.VerifiedStepAt
-	}
-	return l.RecordedAt
 }
 
 // LKGBook keeps the LKG of each unit on the trust volume. Before any release
@@ -176,7 +168,7 @@ func (b *LKGBook) record(v verifiedRelease) error {
 	entry := LKG{
 		Unit: v.artifact.Unit, Digest: v.artifact.Digest, Image: v.artifact.Image, Source: SourcePromoted,
 		IssueID: v.issue, RunID: v.run, ArtifactKeyID: v.artifact.Signature.KeyID,
-		VerifiedAt: v.verifiedAt, VerifiedStepAt: v.verifiedStepAt.UTC(), RecordedAt: b.clock.Now().UTC(),
+		VerifiedAt: v.verifiedAt, VerifiedSequence: v.sequence, RecordedAt: b.clock.Now().UTC(),
 	}
 	data, err := json.MarshalIndent(entry, "", "  ")
 	if err != nil {

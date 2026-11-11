@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/bestagentkits/sisf/internal/catalog"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -23,6 +24,14 @@ type FinishDue struct {
 	RunID   core.RunID         `json:"run_id"`
 	Release core.ReleaseDigest `json:"release"`
 	Unit    string             `json:"unit"`
+	// Sequence is the place of the release's Verified step in the order of
+	// Verified steps (nextVerifiedSequence); zero for a release an earlier
+	// build verified, which is older than any numbered one.
+	Sequence int64 `json:"sequence,omitempty"`
+	// Install is when the root-signed release manifest record in force at
+	// the Verified step was recorded, zero when there was none: an LKG the
+	// manifest pins that was recorded at another instant is a later install.
+	Install time.Time `json:"install,omitzero"`
 	// Published is set once the changelog and the catalog were published,
 	// with PublicationRef the reference the Publisher returned.
 	Published      bool   `json:"published,omitempty"`
@@ -225,7 +234,11 @@ func (p *Pipeline) RecordVerifiedLKG(ctx context.Context, req Request) error {
 	if record.State != core.StateVerified || record.RunID != req.RunID || record.ReleaseDigest != req.Artifact.Digest {
 		return core.NewError(core.CodeConflict, "the issue is not verified with this run's release")
 	}
-	_, err := p.settleLKG(ctx, record, req)
+	due, err := p.readDue(ctx, record, req.Artifact.Unit)
+	if err != nil {
+		return err
+	}
+	_, err = p.settleLKG(ctx, record, req, due)
 	return err
 }
 
