@@ -74,7 +74,7 @@ Status meanings: **present** means the file exists in this branch and its packag
 | Behaviour | Test file | Status |
 |---|---|---|
 | A process's start time is read from `/proc` and a record matches only a start time read the same way | `internal/install/process_identity_test.go` | present |
-| A unit that outlives a killed `sisf up` keeps the install running until it is stopped | `internal/install/orphaned_units_test.go` (`TestAUnitThatOutlivesAKilledUpKeepsTheInstallRunningUntilStopped`) | present |
+| A unit that outlives a killed `sisf up` keeps the install running until it is stopped; on Linux the unit is told to stop when its `sisf up` dies and the install is then not running | `internal/install/orphaned_units_test.go` (`TestAUnitThatOutlivesAKilledUpKeepsTheInstallRunningUntilStopped`) | present |
 | A Standalone unit starts only its own binary from the install's `bin/` directory | `internal/conformance/launcher_commands_test.go` (`TestAStandaloneUnitStartsOnlyItsOwnBinaryFromTheInstallsBinDirectory`) | present |
 | The `state` and `artifacts` units start no `bin/` program, a command word with surrounding whitespace is refused, and `sisf-supervisor` always counts as the factory's binary | `internal/conformance/launcher_binaries_test.go` | present |
 
