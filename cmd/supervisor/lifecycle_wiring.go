@@ -94,7 +94,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
-	backend, err := l.deployBackend(m.FactoryID, admin, d.clock, d.log)
+	backend, err := l.deployBackend(m.FactoryID, admin, d.cfg.TrustDir, d.clock, d.log)
 	if err != nil {
 		return nil, err
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/bestagentkits/sisf/adapters/deploy/compose"
 	"github.com/bestagentkits/sisf/adapters/deploy/local"
 	"github.com/bestagentkits/sisf/internal/edge"
+	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/deploy"
 )
@@ -32,8 +33,15 @@ func (l *lifecycleFlags) edgeAdmin(lookupEnv func(string) (string, bool)) (*edge
 	return edge.NewAdminClient(l.edgeAdminURL, token, nil)
 }
 
+// localSlotsRecord names, in the trust volume, the directory where the
+// local deploy backend records the process of each slot, so a restarted
+// supervisor stops the application processes it started before.
+const localSlotsRecord = "local-slots"
+
 // deployBackend builds the configured deploy backend over the edge.
-func (l *lifecycleFlags) deployBackend(factory core.FactoryID, ctl edge.Controller, clock core.Clock, log *slog.Logger) (deploy.Backend, error) {
+// trustDir is the trust volume, where the local backend records its
+// processes; empty records nothing.
+func (l *lifecycleFlags) deployBackend(factory core.FactoryID, ctl edge.Controller, trustDir string, clock core.Clock, log *slog.Logger) (deploy.Backend, error) {
 	switch l.deploy {
 	case "local":
 		if l.localProgram == "" || !filepath.IsAbs(l.localProgram) {
@@ -47,7 +55,14 @@ func (l *lifecycleFlags) deployBackend(factory core.FactoryID, ctl edge.Controll
 			AddrEnv: localAddrEnv, Clock: clock, Command: programs.command,
 			OnLog: func(line string) { log.Info("unit output", "line", line) },
 		}
-		return local.New(local.Config{Factory: factory, Starter: starter, Edge: ctl, Clock: clock, Logger: log})
+		var slots string
+		if trustDir != "" {
+			var err error
+			if slots, err = supervisor.TrustPath(trustDir, localSlotsRecord); err != nil {
+				return nil, err
+			}
+		}
+		return local.New(local.Config{Factory: factory, Starter: starter, Edge: ctl, Clock: clock, Logger: log, StateDir: slots})
 	case "compose":
 		return compose.New(compose.Config{
 			Endpoint: l.deployEndpoint, Factory: factory, Network: l.deployNetwork, AppPort: l.appPort,

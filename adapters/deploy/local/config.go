@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,11 @@ type Config struct {
 	ReadyTimeout, PollInterval time.Duration
 	// Logger receives cleanup failures; nil discards them.
 	Logger *slog.Logger
+	// StateDir is a directory only the owner of the backend writes, where
+	// it records the process of each slot so that a later backend, after a
+	// restart, can stop what an earlier one left running (StopStale). Empty
+	// keeps nothing on disk.
+	StateDir string
 }
 
 func (c Config) withDefaults() (Config, error) {
@@ -110,6 +116,9 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.PollInterval == 0 {
 		c.PollInterval = 500 * time.Millisecond
+	}
+	if c.StateDir != "" && !filepath.IsAbs(c.StateDir) {
+		return bad("the state directory must be an absolute path")
 	}
 	if c.Logger == nil {
 		c.Logger = slog.New(slog.DiscardHandler)

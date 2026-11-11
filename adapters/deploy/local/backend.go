@@ -23,7 +23,9 @@ type slot struct {
 
 // Backend is the Standalone deployment backend. It is safe for concurrent
 // use. It keeps its processes in memory, so a restart of the owner of the
-// backend loses the handles; the next Stage starts clean.
+// backend loses the handles. With a state directory it also records each
+// slot's process there, and StopStale stops what an earlier backend left
+// running before the next Stage reuses its port.
 type Backend struct {
 	cfg  Config
 	ops  sync.Mutex // one mutation at a time
@@ -119,6 +121,7 @@ func (b *Backend) Stage(ctx context.Context, a deploy.Artifact) (deploy.Revision
 	b.mu.Lock()
 	s.digest, s.proc = a.Digest, proc
 	b.mu.Unlock()
+	b.recordSlot(ctx, s, a.Unit, a.Digest, proc)
 	rev := deploy.Revision{Unit: a.Unit, Digest: a.Digest, ID: s.name}
 	if err := b.waitReady(ctx, rev); err != nil {
 		if stopErr := b.stopSlot(context.WithoutCancel(ctx), s); stopErr != nil {
@@ -153,6 +156,7 @@ func (b *Backend) stopSlot(ctx context.Context, s *slot) error {
 	b.mu.Lock()
 	s.proc, s.digest = nil, ""
 	b.mu.Unlock()
+	b.forgetSlot(s)
 	return nil
 }
 

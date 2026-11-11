@@ -1,0 +1,218 @@
+package local
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/bestagentkits/sisf/pkg/core"
+)
+
+// staleStopGrace is how long a stale process gets to leave after SIGTERM
+// before it is killed, and stalePoll how often its exit is looked for.
+const (
+	staleStopGrace = 5 * time.Second
+	stalePoll      = 100 * time.Millisecond
+)
+
+// identifiedProcess is a Process that can say which operating-system
+// process it is. The backend records such a process in its state
+// directory, so a later backend can find it again after a restart.
+type identifiedProcess interface {
+	PID() int
+}
+
+// slotRecord is what the backend keeps on disk about the process of one
+// slot. Start and Command identify the process beyond its pid, which the
+// system may give to another process once this one has gone.
+type slotRecord struct {
+	Slot    string             `json:"slot"`
+	Port    int                `json:"port"`
+	Unit    string             `json:"unit"`
+	Digest  core.ReleaseDigest `json:"digest"`
+	PID     int                `json:"pid"`
+	Start   string             `json:"start"`
+	Command string             `json:"command"`
+}
+
+// processIdentity reads when pid started and the command line it runs, as
+// ps prints them in the C locale. It fails when there is no such process.
+func processIdentity(ctx context.Context, pid int) (start, command string, err error) {
+	read := func(field string) (string, error) {
+		cmd := exec.CommandContext(ctx, "ps", "-o", field+"=", "-p", strconv.Itoa(pid))
+		cmd.Env = []string{"LC_ALL=C", "PATH=/usr/bin:/bin"}
+		out, err := cmd.Output()
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	if start, err = read("lstart"); err != nil {
+		return "", "", err
+	}
+	if command, err = read("args"); err != nil {
+		return "", "", err
+	}
+	if start == "" || command == "" {
+		return "", "", fmt.Errorf("process %d has no identity", pid)
+	}
+	return start, command, nil
+}
+
+// slotFile is where the record of a slot is kept.
+func (b *Backend) slotFile(s *slot) string {
+	return filepath.Join(b.cfg.StateDir, s.name+".json")
+}
+
+// recordSlot writes the record of the process a slot now runs. Without a
+// state directory, or for a process that cannot say which it is, nothing
+// is written. A record that cannot be written is logged: the process runs
+// regardless, and only a later restart loses track of it.
+func (b *Backend) recordSlot(ctx context.Context, s *slot, unit string, digest core.ReleaseDigest, proc Process) {
+	if b.cfg.StateDir == "" {
+		return
+	}
+	identified, ok := proc.(identifiedProcess)
+	if !ok {
+		return
+	}
+	rec := slotRecord{Slot: s.name, Port: s.port, Unit: unit, Digest: digest, PID: identified.PID()}
+	var err error
+	if rec.Start, rec.Command, err = processIdentity(ctx, rec.PID); err == nil {
+		err = writeSlotRecord(b.slotFile(s), rec)
+	}
+	if err != nil {
+		b.cfg.Logger.Warn("the process of a slot could not be recorded; a restart will not find it", "slot", s.name, "pid", rec.PID, "error", err.Error())
+	}
+}
+
+// writeSlotRecord writes rec to path through a temporary file, so a crash
+// leaves the old record or the new one, never half of one.
+func writeSlotRecord(path string, rec slotRecord) error {
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// forgetSlot removes the record of a slot whose process was stopped.
+func (b *Backend) forgetSlot(s *slot) {
+	if b.cfg.StateDir == "" {
+		return
+	}
+	if err := os.Remove(b.slotFile(s)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		b.cfg.Logger.Warn("the record of a stopped slot could not be removed", "slot", s.name, "error", err.Error())
+	}
+}
+
+// StopStale stops the processes an earlier backend recorded in the state
+// directory and this one does not run: those a supervisor started before
+// it stopped, which still hold the slots' ports. A recorded process is
+// signalled only while its pid still names the process recorded, started
+// at the same time with the same command line; otherwise its pid belongs
+// to something else now and the record is dropped without a signal. A
+// process is asked to leave with SIGTERM and killed when it has not after
+// a grace period. Without a state directory there is nothing to stop.
+func (b *Backend) StopStale(ctx context.Context) error {
+	if b.cfg.StateDir == "" {
+		return nil
+	}
+	b.ops.Lock()
+	defer b.ops.Unlock()
+	var failed []error
+	for _, s := range b.slot {
+		if err := b.stopStaleSlot(ctx, s); err != nil {
+			failed = append(failed, fmt.Errorf("slot %s: %w", s.name, err))
+		}
+	}
+	return errors.Join(failed...)
+}
+
+// stopStaleSlot stops the recorded process of one slot, if it is stale.
+func (b *Backend) stopStaleSlot(ctx context.Context, s *slot) error {
+	path := b.slotFile(s)
+	raw, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	}
+	var rec slotRecord
+	if json.Unmarshal(raw, &rec) != nil || rec.PID <= 1 || rec.Slot != s.name || rec.Start == "" || rec.Command == "" {
+		b.cfg.Logger.Warn("a slot record that does not hold together is dropped without a signal", "slot", s.name)
+		return os.Remove(path)
+	}
+	b.mu.Lock()
+	ours := s.proc != nil
+	if identified, ok := s.proc.(identifiedProcess); ok && identified.PID() != rec.PID {
+		ours = false
+	}
+	b.mu.Unlock()
+	if ours {
+		return nil
+	}
+	if !sameProcess(ctx, rec) {
+		b.cfg.Logger.Info("a recorded process is gone; its record is dropped", "slot", s.name, "pid", rec.PID)
+		return os.Remove(path)
+	}
+	b.cfg.Logger.Warn("stopping a process an earlier supervisor started", "slot", s.name, "pid", rec.PID, "release", string(rec.Digest))
+	if err := stopRecorded(ctx, rec, b.cfg.Clock); err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
+
+// sameProcess reports whether rec's pid still names the process recorded.
+func sameProcess(ctx context.Context, rec slotRecord) bool {
+	start, command, err := processIdentity(ctx, rec.PID)
+	return err == nil && start == rec.Start && command == rec.Command
+}
+
+// stopRecorded sends SIGTERM to the recorded process, waits for it to
+// leave, and kills it after the grace period. Each signal is sent only
+// after the pid is shown to name the recorded process still.
+func stopRecorded(ctx context.Context, rec slotRecord, clock core.Clock) error {
+	proc, err := os.FindProcess(rec.PID)
+	if err != nil {
+		return err
+	}
+	if err := proc.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return fmt.Errorf("signal process %d: %w", rec.PID, err)
+	}
+	deadline, killed := clock.Now().Add(staleStopGrace), false
+	for sameProcess(ctx, rec) {
+		if !clock.Now().Before(deadline) {
+			if killed {
+				return fmt.Errorf("process %d did not leave after it was killed", rec.PID)
+			}
+			if err := proc.Signal(syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				return fmt.Errorf("kill process %d: %w", rec.PID, err)
+			}
+			deadline, killed = clock.Now().Add(staleStopGrace), true
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-clock.After(stalePoll):
+		}
+	}
+	return nil
+}
