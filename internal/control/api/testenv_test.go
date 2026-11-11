@@ -102,11 +102,9 @@ type env struct {
 	clock *intaketest.Clock
 	fake  *fakeoidc.Server
 	auth  *auth.Service
-	// api is the REST handler under test.
-	api  http.Handler
-	rec  *recorder
-	base string
-	logs *strings.Builder
+	rec   *recorder
+	base  string
+	logs  *strings.Builder
 }
 
 func newEnv(t *testing.T, registry func(*recorder) (*actions.Registry, error), mutate ...func(*api.Config)) *env {
