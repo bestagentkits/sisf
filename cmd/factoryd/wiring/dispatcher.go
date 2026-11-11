@@ -38,6 +38,9 @@ type DispatcherConfig struct {
 	// Estimate is what each run sets aside from a capped budget; a capped
 	// budget admits no run without one. Zero suits an unlimited budget.
 	Estimate core.Micros
+	// OnTick follows every tick of the dispatcher's loop, such as
+	// DispatcherTickLog; nothing when nil.
+	OnTick func(dispatcher.TickResult, error)
 }
 
 // DispatcherOwner names one dispatcher process: its host and a random
@@ -82,7 +85,7 @@ func NewDispatcher(cfg DispatcherConfig) (*dispatcher.Dispatcher, error) {
 	return dispatcher.New(dispatcher.Config{
 		Owner: cfg.Owner, State: cfg.Store, Agent: cfg.Agent, Budget: gate, Briefs: StoreBriefs(cfg.Store),
 		Limits: LimitsOf(cfg.Manifest), Clock: cfg.Clock, LeaseTTL: cfg.LeaseTTL, PollInterval: cfg.PollInterval,
-		NewRunID: cfg.NewRunID, Estimate: cfg.Estimate,
+		NewRunID: cfg.NewRunID, Estimate: cfg.Estimate, OnTick: cfg.OnTick,
 	})
 }
 

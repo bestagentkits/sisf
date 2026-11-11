@@ -83,9 +83,10 @@ func TestRunTicksOnTheClockAndGivesItsLeasesUpWhenStopped(t *testing.T) {
 		if err := f.agent.Script(agent.RoleCoder, issue, fake.Hang()); err != nil {
 			t.Fatal(err)
 		}
-		d := f.dispatcher("worker-a", nil)
 		ticks := make(chan dispatcher.TickResult)
-		dispatcher.SetTickHook(d, func(res dispatcher.TickResult) { ticks <- res })
+		d := f.dispatcher("worker-a", func(c *dispatcher.Config) {
+			c.OnTick = func(res dispatcher.TickResult, _ error) { ticks <- res }
+		})
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() { done <- d.Run(ctx) }()

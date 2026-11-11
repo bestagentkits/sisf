@@ -72,6 +72,7 @@ func runDispatcher(ctx context.Context, args []string, getenv func(string) strin
 	d, err := wiring.NewDispatcher(wiring.DispatcherConfig{
 		Manifest: s.manifest, Store: s.store, Agent: zone.Agent, Clock: s.clock,
 		PollInterval: wiring.DispatcherPollInterval, LeaseTTL: wiring.DispatcherLeaseTTL, Estimate: core.Micros(df.estimate),
+		OnTick: wiring.DispatcherTickLog(log),
 	})
 	if err != nil {
 		return err

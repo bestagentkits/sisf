@@ -27,8 +27,6 @@ type Dispatcher struct {
 	// runs are the runs this instance holds the issue lease of.
 	runs   map[core.RunID]*activeRun
 	health Health
-	// onTick, when set, is called after every tick of Run.
-	onTick func(TickResult)
 }
 
 // activeRun is a run this instance holds the issue lease of.
@@ -60,6 +58,9 @@ type TickResult struct {
 	Exhausted []core.IssueRef
 	// Lost lists issues whose lease this instance found taken over or lapsed.
 	Lost []core.IssueRef
+	// Failed lists the agent attempts this tick counted as failed, including
+	// those that never started.
+	Failed []FailedAttempt
 	// Held is the typed reason Ready issues were left unclaimed, such as
 	// BUDGET_UNCONFIRMED or LIMIT_EXCEEDED; nil when none waited for it.
 	Held error
@@ -85,14 +86,22 @@ func (d *Dispatcher) Tick(ctx context.Context) (TickResult, error) {
 	return res, err
 }
 
-// Run ticks until ctx ends, pausing PollInterval on the clock between ticks.
-// On the way out it gives up its leases so a successor need not wait for
-// them to lapse, and returns nil.
+// FailedAttempt is one agent attempt of a run that did not succeed.
+type FailedAttempt struct {
+	Issue core.IssueRef
+	RunID core.RunID
+	AttemptFailure
+}
+
+// Run ticks until ctx ends, pausing PollInterval on the clock between ticks,
+// and hands every tick's outcome to Config.OnTick. On the way out it gives
+// up its leases so a successor need not wait for them to lapse, and
+// returns nil.
 func (d *Dispatcher) Run(ctx context.Context) error {
 	for {
-		res, _ := d.Tick(ctx)
-		if d.onTick != nil {
-			d.onTick(res)
+		res, err := d.Tick(ctx)
+		if d.cfg.OnTick != nil {
+			d.cfg.OnTick(res, err)
 		}
 		select {
 		case <-ctx.Done():

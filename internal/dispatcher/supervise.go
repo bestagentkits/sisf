@@ -111,13 +111,21 @@ func (d *Dispatcher) startAttempt(ctx context.Context, r *activeRun, run RunReco
 		Limits:         agent.Limits{Timeout: d.cfg.Limits.RunTimeout},
 		IdempotencyKey: fmt.Sprintf("%s/attempt/%d", run.RunID, attempt),
 	}
-	ref, startErr := d.cfg.Agent.Start(ctx, task, agent.WorkspaceRef{ID: string(run.RunID)}, nil)
+	// The workspace starts at the commit the run's policy is pinned to,
+	// the commit the supervisor applies the patch to. A real agent's
+	// workspace is checked out at it and cannot be made without it.
+	ws := agent.WorkspaceRef{ID: string(run.RunID), BaseSHA: run.Brief.Policy.PolicySHA}
+	ref, startErr := d.cfg.Agent.Start(ctx, task, ws, nil)
 	now := d.cfg.Clock.Now()
 	var exhausted bool
+	failure := AttemptFailure{Attempt: attempt, At: now}
+	if startErr != nil {
+		failure.Code, failure.Detail = core.CodeOf(startErr), "the agent did not start: "+startErr.Error()
+	}
 	lease, _, err := d.fenced(ctx, r.issue, r.run, r.lease, version, func(ctx context.Context, tx state.Tx, record core.StateRecord, stored *RunRecord) error {
 		stored.Attempt = attempt
 		if startErr != nil {
-			stored.Failures = append(stored.Failures, AttemptFailure{Attempt: attempt, Code: core.CodeOf(startErr), Detail: "the agent did not start: " + startErr.Error(), At: now})
+			stored.Failures = append(stored.Failures, failure)
 			if exhausted = attempt >= d.cfg.Limits.MaxAttempts; exhausted {
 				return d.stopRun(ctx, tx, stored, r.lease)
 			}
@@ -139,6 +147,9 @@ func (d *Dispatcher) startAttempt(ctx context.Context, r *activeRun, run RunReco
 		return err
 	}
 	r.lease = lease
+	if startErr != nil {
+		res.Failed = append(res.Failed, FailedAttempt{Issue: r.issue, RunID: r.run, AttemptFailure: failure})
+	}
 	if exhausted {
 		delete(d.runs, r.run)
 		res.Exhausted = append(res.Exhausted, r.issue)
@@ -148,16 +159,17 @@ func (d *Dispatcher) startAttempt(ctx context.Context, r *activeRun, run RunReco
 
 // failAttempt records a failed attempt and starts the next one, if any is left.
 func (d *Dispatcher) failAttempt(ctx context.Context, r *activeRun, run RunRecord, version int64, code core.ErrorCode, detail string, res *TickResult) error {
-	now := d.cfg.Clock.Now()
+	failure := AttemptFailure{Attempt: run.Attempt, Code: code, Detail: detail, At: d.cfg.Clock.Now()}
 	lease, written, err := d.fenced(ctx, r.issue, r.run, r.lease, version, func(_ context.Context, _ state.Tx, _ core.StateRecord, stored *RunRecord) error {
-		stored.Failures = append(stored.Failures, AttemptFailure{Attempt: stored.Attempt, Code: code, Detail: detail, At: now})
-		stored.Agent, stored.AttemptStartedAt = nil, now
+		stored.Failures = append(stored.Failures, failure)
+		stored.Agent, stored.AttemptStartedAt = nil, failure.At
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 	r.lease = lease
+	res.Failed = append(res.Failed, FailedAttempt{Issue: r.issue, RunID: r.run, AttemptFailure: failure})
 	run.Agent = nil
 	return d.startAttempt(ctx, r, run, written, res)
 }
