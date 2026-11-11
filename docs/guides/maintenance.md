@@ -10,6 +10,7 @@ Everything of a Standalone install lives below its install directory `<dir>` (`i
 |---|---|---|
 | `factory.yaml` | the install's manifest, with pinned digests | the install |
 | `budget-confirmation.json` | the Owner's budget confirmation | the budget confirmation |
+| `source.json` | the source checkout `sisf up` and the service units build from | the recorded checkout; pass `--source` |
 | `secrets/` | per-zone credentials, the root signing key, the GitHub token, the webhook secret, sign-in client secrets | every credential; the root key cannot be recreated |
 | `release/release-manifest.json` | the signed release manifest | rebuilt by `sisf up` |
 | `data/state/factory.db` (and its `-wal`, `-shm` files) | the operational state: issues, runs, approvals, the policy record, the ledger, the audit log | the factory's memory |
@@ -18,7 +19,7 @@ Everything of a Standalone install lives below its install directory `<dir>` (`i
 | `data/app/`, `data/artifacts/`, `data/workspaces/`, `data/qa-workspaces/` | application data, build artifacts, agent workspaces | application data |
 | `bin/`, `logs/`, `run/`, `service/` | built programs, logs, the pid file, unit files | rebuilt or rewritten |
 
-A Docker install keeps `factory.yaml`, `budget-confirmation.json`, `secrets/`, `release/` and the rendered `compose.yaml` in `<dir>`, and its data in named volumes, each `<project>-<name>` where the project is `sisf-<repository name>` unless `--factory-id` said otherwise (`templates/compose/compose.yaml`): `state-data` (PostgreSQL), `control-data`, `trust`, `app-data`, `artifacts`, `workspaces`, `qa-workspaces`, and `supervisor-admin` (a socket only).
+A Docker install keeps `factory.yaml`, `budget-confirmation.json`, `source.json`, `secrets/`, `release/` and the rendered `compose.yaml` in `<dir>`, and its data in named volumes, each `<project>-<name>` where the project is `sisf-<repository name>` unless `--factory-id` said otherwise (`templates/compose/compose.yaml`): `state-data` (PostgreSQL), `control-data`, `trust`, `app-data`, `artifacts`, `workspaces`, `qa-workspaces`, and `supervisor-admin` (a socket only).
 
 The env files hold absolute paths (Standalone: the SQLite path; both modes: unit files), so restore an install to the same directory it was made in.
 
@@ -43,7 +44,7 @@ Prerequisites: the factory is stopped, so no process writes the database while i
    done
    ```
 
-4. Start it again from the checkout: `sisf up --dir "$D"`, then `sisf doctor --dir "$D"`.
+4. Start it again: `sisf up --dir "$D"`, then `sisf doctor --dir "$D"`.
 
 The archive holds the root signing key and every credential in clear text: keep it where only the Owner can read it.
 
@@ -55,7 +56,7 @@ Standalone (observed on a scratch install: after the restore the policy record w
 
 1. Stop the factory (as above) and move the current directory aside: `mv "$D" "$D.old"`.
 2. Unpack the archive to the same path: `tar -C "$(dirname "$D")" -xpf sisf-backup.tar`.
-3. From a checkout of the same build that made the backup: `sisf up --dir "$D"`, then `sisf doctor --dir "$D"`.
+3. With the checkout recorded in `$D/source.json` at the same build that made the backup (or another checkout of it named with `--source`): `sisf up --dir "$D"`, then `sisf doctor --dir "$D"`.
 
 Docker mode: unpack `<dir>` the same way. Putting the volumes back has no tested procedure in this release: each volume must be refilled under the same name while no container uses it, and nothing here has been exercised.
 
@@ -68,13 +69,13 @@ Undo: stop the factory, `rm -rf "$D"`, and `mv "$D.old" "$D"`.
 `sisf up` builds every program or image from the source checkout each time it starts, migrates the state store forward, signs a new release manifest and installs that release as the last known good one (`internal/install/release.go`, `internal/install/trust_material.go`). Upgrading is therefore: new source, then `sisf up`. Every `sisf up` replaces the trust record this way, so the releases promoted during an earlier run are forgotten: afterwards a rollback can return only to the release `sisf up` just installed.
 
 1. [Back up](#back-up) (the factory is stopped after step 1 of it).
-2. Update the checkout to the build you want, and rebuild the command line: `git pull` (or `git checkout <tag or commit>`), then `go install ./cmd/sisf`.
-3. From the checkout: `sisf up --dir "$D"`. Expected: `building ...` lines, then `factory <id> is up: control http://127.0.0.1:7463, app via edge http://127.0.0.1:7460`.
+2. Update the checkout the install recorded in `$D/source.json` to the build you want, and rebuild the command line: `git pull` (or `git checkout <tag or commit>`), then `make install`. `sisf version` names the new build.
+3. `sisf up --dir "$D"`. Expected: `building ...` lines, then `factory <id> is up: control http://127.0.0.1:7463, app via edge http://127.0.0.1:7460`.
 4. `sisf doctor --dir "$D"`.
 
 Verify: `sisf doctor` reports no failure, its `release manifest` line is `OK`, and `sisf status` answers.
 
-Undo: there are no down migrations. Stop the factory, [restore](#restore) the backup of step 1, check out the previous commit, `go install ./cmd/sisf`, and `sisf up`.
+Undo: there are no down migrations. Stop the factory, [restore](#restore) the backup of step 1, check out the previous commit, `make install`, and `sisf up`.
 
 The rebuilt programs get new digests in `<dir>/factory.yaml`. If the repository's `.sisf/factory.yaml` is meant to match the install's file, committing the new one is a [policy change](policy-and-approvals.md#changing-the-policy).
 
@@ -84,4 +85,4 @@ The rebuilt programs get new digests in `<dir>/factory.yaml`. If the repository'
 
 ## Removing an install
 
-`sisf down -v --dir "$D"` stops the factory and removes its data: `<dir>/data` in Standalone, and in Docker mode the project's containers, networks and volumes. Secrets and `factory.yaml` are never removed by it; delete the directory yourself afterwards. On a Standalone install that is not running, `down -v` answers `NOT_FOUND` and removes nothing: delete `"$D/data"` or the whole directory yourself. Note that `-v` also removes the control zone's `local:` secret store and the trust record.
+`sisf down -v --dir "$D"` stops the factory and removes its data: `<dir>/data` in Standalone, and in Docker mode the project's containers, networks and volumes. It does so whether or not the factory runs. Secrets and `factory.yaml` are never removed by it; delete the directory yourself afterwards. Note that `-v` also removes the control zone's `local:` secret store and the trust record.

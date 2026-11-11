@@ -4,7 +4,7 @@ Run one factory on your machine against a simulated GitHub, sign in, and send a 
 
 ## Prerequisites
 
-- Linux or macOS, Go 1.25 ([ADR 0019](../adr/0019-go-1-25-toolchain.md)), git, and `curl` and `jq` for the first issue.
+- Linux or macOS, Go 1.25 ([ADR 0019](../adr/0019-go-1-25-toolchain.md)), git, GNU Make, and `curl` and `jq` for the first issue.
 - Docker with Compose, for Docker mode only.
 - Ports 7460-7469 on 127.0.0.1 free: the factory binds exactly these, and one machine runs one factory ([why](install.md#one-factory-per-machine)).
 
@@ -13,13 +13,16 @@ Run one factory on your machine against a simulated GitHub, sign in, and send a 
 ```sh
 git clone https://github.com/bestagentkits/sisf.git
 cd sisf
-go install ./cmd/sisf          # puts sisf in $(go env GOPATH)/bin; make sure that is on your PATH
+make install                   # puts sisf in $(go env GOPATH)/bin; make sure that is on your PATH
+sisf version                   # names the build: version, commit, build date
 sisf help                      # lists the commands
 ```
 
-Run every later command from this checkout: `sisf up` builds the factory from the current directory (or from `--source`).
+`make install` stamps `sisf` with its version; a plain `go install ./cmd/sisf` works too but reports `devel`. Name the output of `sisf version` in a bug report.
 
-Choose an install directory outside the checkout, without spaces in its path, and export it so every command finds it:
+Run `sisf init` from this checkout: it refuses to create an install without one, and records it in `<install>/source.json` so that every `sisf up` builds the factory from it. The first-issue steps below also read files of the checkout.
+
+Choose a new or empty install directory outside the checkout, without spaces in its path, and export it so every command finds it:
 
 ```sh
 export SISF_HOME=$HOME/.sisf/sim
@@ -58,7 +61,7 @@ In a second terminal (with `SISF_HOME` exported again):
 sisf doctor
 ```
 
-One line per check, `OK`, `WARN` or `FAIL`, and a summary. Every check should be `OK` or a `WARN` you can explain: `artifacts` (not every image is built until a release builds it) and `trust model` (Standalone runs trusted code only) are expected. A `FAIL` names its cause; see [troubleshooting](troubleshooting.md).
+It starts with `sisf <version>, install <dir>`, then prints one line per check, `OK`, `WARN`, `FAIL` or `SKIP`, and a summary; `--json` prints the same report as one object. Its `running` check proves that the factory answering on the ports is this install's; when it fails, the checks that need a running factory are skipped. Every check should be `OK` or a `WARN` you can explain: `artifacts` (not every image is built until a release builds it) and `trust model` (Standalone runs trusted code only) are expected. A `FAIL` names its cause; see [troubleshooting](troubleshooting.md).
 
 ## 3. Sign in
 
@@ -114,11 +117,11 @@ The fake GitHub keeps everything in memory. After a restart of the factory, post
 ## 5. Stop and clean up
 
 ```sh
-sisf down -v           # while it runs: stops it and removes the data; secrets and factory.yaml stay
+sisf down -v           # stops it if it runs and removes the data; secrets and factory.yaml stay
 rm -rf "$SISF_HOME"    # removes the install itself
 ```
 
-`sisf stop` (or Ctrl-C in the terminal running `sisf up`) stops it and keeps everything. Once a Standalone factory is stopped, `sisf stop`, `sisf down` and `sisf down -v` answer `NOT_FOUND: no running standalone factory was found` and change nothing; delete `$SISF_HOME/data` or the whole directory yourself.
+`sisf stop` (or Ctrl-C in the terminal running `sisf up`) stops it and keeps everything. On a factory that is already stopped, `stop`, `down` and `down -v` succeed and say so, for example `the factory in <dir> was not running; nothing to stop` (observed); `down -v` still removes the data and prints `the factory in <dir> was not running; its data is removed`.
 
 ## Docker Compose mode
 

@@ -13,11 +13,11 @@ The factory core is implemented and tested in this repository (Go 1.25, see [ADR
 
 ## Quickstart
 
-Try it on your machine against a simulated GitHub, with a fake sign-in and a scripted agent: no token, no paid model. You need Linux or macOS, Go 1.25, and ports 7460-7469 on 127.0.0.1 free.
+Try it on your machine against a simulated GitHub, with a fake sign-in and a scripted agent: no token, no paid model. You need Linux or macOS, Go 1.25, GNU Make, and ports 7460-7469 on 127.0.0.1 free.
 
 ```sh
 git clone https://github.com/bestagentkits/sisf.git && cd sisf
-go install ./cmd/sisf                      # sisf on your PATH via $(go env GOPATH)/bin
+make install                               # sisf on your PATH via $(go env GOPATH)/bin, stamped with its version
 export SISF_HOME=$HOME/.sisf/sim           # the install directory, outside the checkout
 sisf init --repo acme/hello --profile sim --confirm-unlimited --no-alert
 sisf up                                    # builds and starts all three zones; stays in the foreground
@@ -27,7 +27,7 @@ In a second terminal: `sisf doctor` checks the install, and `http://127.0.0.1:74
 
 ## Installing for real
 
-A factory that serves a real repository needs a GitHub account and token it acts as, its webhook, a sign-in provider and an HTTPS origin. [Installing a factory](docs/guides/install.md) covers the development install on your own machine (`--dev`, your `gh` login), the real install step by step, real coding agents and running as a service. Real GitHub App and Google sign-in flows are tested only against fakes so far.
+A factory that serves a real repository needs a GitHub App installation, which `sisf init` names with `--github-installation-id` and `--github-app-login`, a long-lived token it acts with, its webhook, a sign-in provider and an HTTPS origin. [Installing a factory](docs/guides/install.md) covers the development install on your own machine (`--dev`, your `gh` login), the real install step by step, real coding agents and running as a service. Real GitHub App and Google sign-in flows are tested only against fakes so far.
 
 ## Where to go next
 
