@@ -2,12 +2,16 @@ package main
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/bestagentkits/sisf/internal/install"
 	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
@@ -16,11 +20,18 @@ import (
 // serves factory and counts the stops it receives.
 func fakeAdmin(t *testing.T, factory core.FactoryID) (addr string, stops *atomic.Int32) {
 	t.Helper()
+	return fakeAdminOfKey(t, factory, "")
+}
+
+// fakeAdminOfKey is fakeAdmin for a supervisor whose release is signed by
+// the root key keyID.
+func fakeAdminOfKey(t *testing.T, factory core.FactoryID, keyID string) (addr string, stops *atomic.Int32) {
+	t.Helper()
 	stops = &atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/status":
-			_ = json.NewEncoder(w).Encode(supervisor.Status{FactoryID: factory, SelfCheck: supervisor.SelfCheckStatus{Passed: true}})
+			_ = json.NewEncoder(w).Encode(supervisor.Status{FactoryID: factory, SelfCheck: supervisor.SelfCheckStatus{Passed: true, ManifestKeyID: keyID}})
 		case r.URL.Path == supervisor.EmergencyStopPath && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(supervisor.FreezeStatus{Frozen: true, StopID: "stop-of-" + string(factory)})
 		case r.URL.Path == supervisor.EmergencyStopPath:
@@ -93,5 +104,56 @@ func TestEmergencyStopReadsTheFactoryFromTheInstall(t *testing.T) {
 	status, _, stderr = runWithOutput(t, "emergency-stop", "--dir", docker, "--reason", "x", "--actor", "user:t")
 	if status != exitFailure || !strings.Contains(stderr, "Docker mode") || !strings.Contains(stderr, "factory.emergency_stop") {
 		t.Fatalf("a Docker install = %d %q, want the routes that work there", status, stderr)
+	}
+}
+
+// installTree lists every path under dir, relative to it.
+func installTree(t *testing.T, dir string) []string {
+	t.Helper()
+	var paths []string
+	err := filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		paths = append(paths, rel)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return paths
+}
+
+// An install that was never started has no state store. A stop or a lift
+// reports that and creates none, and the stop still reaches the supervisor.
+func TestEmergencyStopOnAnInstallNeverStartedCreatesNothing(t *testing.T) {
+	t.Setenv("SISF_STATE_DSN", "")
+	dir := initSim(t, "standalone")
+	before := installTree(t, dir)
+	target, err := install.ReadStopTarget(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, stops := fakeAdminOfKey(t, target.FactoryID, target.RootKeyID)
+	for _, tc := range []struct {
+		args      []string
+		wantStops int32
+	}{
+		{[]string{"--admin", "none"}, 0},
+		{[]string{"--admin", addr}, 1},
+		{[]string{"--admin", "none", "--lift"}, 1},
+	} {
+		args := append([]string{"emergency-stop", "--dir", dir, "--reason", "drill", "--actor", "user:tester"}, tc.args...)
+		status, stdout, stderr := runWithOutput(t, args...)
+		if status != exitFailure || !strings.Contains(stdout+stderr, "the state store is not prepared") {
+			t.Errorf("%q = %d\nstdout: %s\nstderr: %s", tc.args, status, stdout, stderr)
+		}
+		if got := stops.Load(); got != tc.wantStops {
+			t.Errorf("%q: the supervisor got %d stops, want %d", tc.args, got, tc.wantStops)
+		}
+		if after := installTree(t, dir); !slices.Equal(after, before) {
+			t.Fatalf("%q changed the install:\nbefore %q\nafter  %q", tc.args, before, after)
+		}
 	}
 }

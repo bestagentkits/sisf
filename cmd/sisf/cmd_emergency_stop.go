@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"strings"
 	"time"
@@ -95,16 +97,36 @@ func runEmergencyStop(ctx context.Context, env *Env, args []string) error {
 	if missing := missingStopInput(f, target); missing != "" {
 		return usagef("%s", missing)
 	}
+	unprepared := unpreparedStore(target.StateDSN)
 	if f.lift {
+		if unprepared != nil {
+			return unprepared
+		}
 		if err := killswitch.LiftFromOperator(ctx, target.FactoryID, target.StateDSN, core.SystemClock{}, f.actor, f.reason); err != nil {
 			return err
 		}
 		return env.Printf("emergency stop of %s lifted\n", target.FactoryID)
 	}
-	report, stopErr := killswitch.StopFromOperator(ctx, killswitch.OperatorRequest{
-		FactoryID: target.FactoryID, Actor: f.actor, Reason: f.reason, StateDSN: target.StateDSN,
-		AdminAddr: target.AdminAddr, AdminKeyID: target.RootKeyID, Clock: core.SystemClock{},
-	})
+	var report killswitch.OperatorReport
+	var stopErr error
+	if unprepared != nil {
+		// Opening the store would create it; the supervisor route is still
+		// worth trying.
+		target.StateDSN = core.SecretValue{}
+		report.Failures = append(report.Failures, "store: "+unprepared.Error())
+		stopErr = core.NewError(core.CodeUnavailable, "the emergency stop could not use every route it was given")
+	}
+	if !target.StateDSN.IsZero() || target.AdminAddr != "" {
+		routes, err := killswitch.StopFromOperator(ctx, killswitch.OperatorRequest{
+			FactoryID: target.FactoryID, Actor: f.actor, Reason: f.reason, StateDSN: target.StateDSN,
+			AdminAddr: target.AdminAddr, AdminKeyID: target.RootKeyID, Clock: core.SystemClock{},
+		})
+		report.Store, report.Supervisor = routes.Store, routes.Supervisor
+		report.Failures = append(report.Failures, routes.Failures...)
+		if stopErr == nil || (err != nil && !core.HasCode(err, core.CodeUnavailable)) {
+			stopErr = err
+		}
+	}
 	if report.Store != nil || report.Supervisor != nil || len(report.Failures) > 0 {
 		if err := printJSON(env, report); err != nil {
 			return err
@@ -156,6 +178,22 @@ func stopTarget(f emergencyStopFlags) (install.StopTarget, error) {
 		t.AdminAddr = f.admin
 	}
 	return t, nil
+}
+
+// unpreparedStore returns the kill switch's UNAVAILABLE error when dsn names
+// a SQLite file that does not exist, as on an install that was never
+// started, and nil otherwise. The store opens such a path by creating an
+// empty database, which a stop must not leave behind; a PostgreSQL URL is
+// left to the store to judge.
+func unpreparedStore(dsn core.SecretValue) error {
+	raw := strings.TrimSpace(string(dsn.Reveal()))
+	if raw == "" || strings.HasPrefix(raw, "postgres://") || strings.HasPrefix(raw, "postgresql://") {
+		return nil
+	}
+	if _, err := os.Stat(raw); !errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return core.NewError(core.CodeUnavailable, "the state store is not prepared; run `sisf up`, which migrates it")
 }
 
 // missingStopInput names exactly what a stop or a lift still needs, or ""
