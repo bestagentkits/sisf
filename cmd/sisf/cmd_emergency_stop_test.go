@@ -46,6 +46,16 @@ func TestEmergencyStopNamesOnlyWhatIsMissing(t *testing.T) {
 	}
 }
 
+// A stop with no route to the factory is a missing input like the others:
+// it exits 2 and says what to give.
+func TestEmergencyStopWithNoRouteIsAMissingInput(t *testing.T) {
+	t.Setenv("SISF_STATE_DSN", "")
+	status, _, stderr := runWithOutput(t, "emergency-stop", "--factory-id", "sisf-hello", "--reason", "test", "--actor", "user:t", "--admin", "none")
+	if status != exitUsage || !strings.Contains(stderr, "set $SISF_STATE_DSN") || !strings.Contains(stderr, "--admin") {
+		t.Fatalf("emergency-stop without a store or a supervisor = %d %q, want exit 2 naming both routes", status, stderr)
+	}
+}
+
 func TestEmergencyStopIsNeverSentToTheSupervisorOfAnotherFactory(t *testing.T) {
 	t.Setenv("SISF_STATE_DSN", "")
 	dir := initSim(t, "standalone")

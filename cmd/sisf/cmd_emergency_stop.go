@@ -174,6 +174,9 @@ func missingStopInput(f emergencyStopFlags, t install.StopTarget) string {
 	if f.lift && t.StateDSN.IsZero() {
 		missing = append(missing, "the state store, which a lift needs: pass --dir of the install or set $"+f.dsnEnv)
 	}
+	if !f.lift && t.StateDSN.IsZero() && t.AdminAddr == "" {
+		missing = append(missing, "a route to the factory: pass --dir of the install, set $"+f.dsnEnv+" or give the supervisor's address with --admin")
+	}
 	if len(missing) == 0 {
 		return ""
 	}
