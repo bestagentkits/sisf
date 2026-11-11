@@ -16,10 +16,13 @@ import (
 type progressFacts struct {
 	record core.StateRecord
 	// run is the dispatcher's record of the run; nil when it has none.
-	run      *dispatcher.RunRecord
-	notes    []handoff.QANote
-	hold     *handoff.QAHold
-	pr       *handoff.CandidatePR
+	run   *dispatcher.RunRecord
+	notes []handoff.QANote
+	hold  *handoff.QAHold
+	pr    *handoff.CandidatePR
+	// release is the held or refused release of a candidate waiting in
+	// ReleaseCandidate; its Summary is the only part shown.
+	release  *handoff.ReleaseHold
 	restored core.ReleaseDigest
 }
 
@@ -68,6 +71,9 @@ func renderProgress(f progressFacts) string {
 	}
 	if reached := reachedRelease(f.record.State); reached != "" {
 		line("Release: %s.", reached)
+	}
+	if f.release != nil && f.release.Waiting() {
+		line("**Release waiting:** %s", f.release.Summary())
 	}
 	if f.restored != "" && core.Digest(f.restored).Validate() == nil {
 		line("**Rolled back** to the last known good release `%s`; the factory will not merge this candidate.", f.restored)

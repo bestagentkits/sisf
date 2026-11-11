@@ -133,6 +133,9 @@ func (f *Factory) ScriptQA(number int, points map[qa.Category]int) {
 // no real traffic to judge the last known good release by.
 func (f *Factory) Quiet() { f.quiet = true }
 
+// Busy brings the users' traffic back after Quiet.
+func (f *Factory) Busy() { f.quiet = false }
+
 // Cycle runs rounds of the whole factory: the control zone's pass, a
 // dispatcher tick, the agent zone's exporter and the supervisor's stages,
 // with one window of users' traffic through every unit before the stages.

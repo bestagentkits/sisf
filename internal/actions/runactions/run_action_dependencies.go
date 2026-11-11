@@ -40,14 +40,35 @@ type QAHold struct {
 	At             time.Time `json:"at"`
 }
 
+// ReleaseHold is a held or refused release as runs.inspect and
+// runs.explain show it.
+type ReleaseHold struct {
+	Result string `json:"result"`
+	Code   string `json:"code"`
+	// Summary is the public sentence the issue's progress comment shows;
+	// Reason is the supervisor's own, for the Owner.
+	Summary string `json:"summary"`
+	Reason  string `json:"reason,omitempty"`
+	// Resumed is set once the Owner's retry let a held release start over.
+	Resumed bool      `json:"resumed"`
+	Ref     string    `json:"ref"`
+	At      time.Time `json:"at"`
+}
+
+// ReleaseHolds reads the held or refused release of one evaluator attempt
+// of a run, NOT_FOUND when its release was neither.
+type ReleaseHolds interface {
+	ReleaseHold(ctx context.Context, run core.RunID, attempt int) (ReleaseHold, error)
+}
+
 // QAHolds reads the hold of one evaluator attempt of a run, NOT_FOUND when
 // QA did not hold it.
 type QAHolds interface {
 	QAHold(ctx context.Context, run core.RunID, attempt int) (QAHold, error)
 }
 
-// Deps is what the actions read from. Every field but Clock, GitHub and
-// QAHolds is required.
+// Deps is what the actions read from. Every field but Clock, GitHub,
+// QAHolds, CandidatePRs and ReleaseHolds is required.
 type Deps struct {
 	FactoryID core.FactoryID
 	Records   Records
@@ -62,6 +83,9 @@ type Deps struct {
 	QAHolds QAHolds
 	// CandidatePRs reads the candidates' pull requests; nil leaves them out.
 	CandidatePRs CandidatePRs
+	// ReleaseHolds reads the supervisor's held and refused releases; nil
+	// leaves them out.
+	ReleaseHolds ReleaseHolds
 }
 
 // New returns the actions of this package over deps.

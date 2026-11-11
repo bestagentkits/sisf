@@ -117,7 +117,7 @@ func (c *Control) registry(sc SurfaceConfig, repo github.RepoRef) (*actions.Regi
 	reg := actions.NewRegistry()
 	err = actionsets.Register(reg, actionsets.Deps{
 		FactoryID: cfg.Manifest.FactoryID,
-		Runs: runactions.Deps{FactoryID: cfg.Manifest.FactoryID, Records: runactions.StoreRecords(cfg.Store), QAHolds: storeQAHolds{store: cfg.Store}, CandidatePRs: storeCandidatePRs{store: cfg.Store},
+		Runs: runactions.Deps{FactoryID: cfg.Manifest.FactoryID, Records: runactions.StoreRecords(cfg.Store), QAHolds: storeQAHolds{store: cfg.Store}, CandidatePRs: storeCandidatePRs{store: cfg.Store}, ReleaseHolds: storeReleaseHolds{store: cfg.Store},
 			Runs: dispatcher.StoredRunRecords{State: cfg.Store}, Approvals: c.Approvals, Clock: cfg.Clock, GitHub: c.GitHubSync},
 		Approvals: c.Approvals, Budget: budget.ActionsConfig{Store: budget.StateStore(cfg.Store), Clock: cfg.Clock},
 		SecretProviders: sc.SecretProviders, Catalog: catalog.ActionsConfig{Publisher: publisher, Docs: docs, DocsRoot: docsRoot},

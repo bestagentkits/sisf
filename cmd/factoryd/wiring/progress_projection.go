@@ -233,6 +233,13 @@ func (c *Control) progressFacts(ctx context.Context, r core.StateRecord) (progre
 				return err
 			}
 		}
+		if r.State == core.StateReleaseCandidate {
+			if hold, err := handoff.ReadReleaseHold(ctx, tx, r.RunID, r.Attempt); err == nil {
+				f.release = &hold
+			} else if !core.HasCode(err, core.CodeNotFound) {
+				return err
+			}
+		}
 		if pr, err := handoff.ReadCandidatePR(ctx, tx, r.RunID); err == nil {
 			f.pr = &pr
 		} else if !core.HasCode(err, core.CodeNotFound) {

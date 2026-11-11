@@ -31,6 +31,24 @@ func (s storeQAHolds) QAHold(ctx context.Context, run core.RunID, attempt int) (
 		Ref: handoff.BuildNamespace + ":" + handoff.QAHoldKey(run, attempt), At: h.HeldAt}, nil
 }
 
+// storeReleaseHolds reads the supervisor's held and refused releases for
+// runs.inspect and runs.explain.
+type storeReleaseHolds struct{ store state.Store }
+
+func (s storeReleaseHolds) ReleaseHold(ctx context.Context, run core.RunID, attempt int) (runactions.ReleaseHold, error) {
+	var h handoff.ReleaseHold
+	err := s.store.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		var err error
+		h, err = handoff.ReadReleaseHold(ctx, tx, run, attempt)
+		return err
+	})
+	if err != nil {
+		return runactions.ReleaseHold{}, err
+	}
+	return runactions.ReleaseHold{Result: h.Result, Code: string(h.Code), Summary: h.Summary(), Reason: h.Reason, Resumed: h.Resumed(),
+		Ref: handoff.BuildNamespace + ":" + handoff.ReleaseHoldKey(run, attempt), At: h.HeldAt}, nil
+}
+
 // storeCandidatePRs reads the candidates' pull requests for runs.inspect
 // and runs.explain.
 type storeCandidatePRs struct{ store state.Store }

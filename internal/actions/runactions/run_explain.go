@@ -21,7 +21,10 @@ const (
 	CauseAwaitingInformation Cause = "awaiting_information"
 	CauseAttemptsExhausted   Cause = "attempts_exhausted"
 	CauseFinished            Cause = "finished"
-	CauseInProgress          Cause = "in_progress"
+	// CauseReleaseHeld: the supervisor held or refused the release of a
+	// candidate QA passed, and the issue waits in ReleaseCandidate.
+	CauseReleaseHeld Cause = "release_held"
+	CauseInProgress  Cause = "in_progress"
 )
 
 // Evidence is one fact an explanation rests on, with where to find it.
@@ -95,6 +98,10 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 	if err != nil {
 		return Explanation{}, err
 	}
+	released, err := h.releaseHold(ctx, r)
+	if err != nil {
+		return Explanation{}, err
+	}
 	about := map[string]string{"issue": issue}
 	inspect := core.NextAction{Action: ActionRunsInspect, Description: "read the full records", Params: about}
 	switch {
@@ -121,6 +128,12 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 		}
 		out.Reason = hold.Summary + " The lifecycle has no step out of a held evaluation yet, so an Owner retry is refused."
 		out.Evidence = append(out.Evidence, Evidence{Kind: "qa_hold", Ref: hold.Ref, Summary: hold.Summary, At: hold.At})
+		out.NextActions = []core.NextAction{inspect}
+	case released != nil && !released.Resumed:
+		out.Stopped, out.Cause = true, CauseReleaseHeld
+		out.Reason = released.Summary + " " + releaseWayOut(*released, issue)
+		out.Evidence = append(out.Evidence, Evidence{Kind: "release_hold", Ref: released.Ref, At: released.At,
+			Summary: fmt.Sprintf("release %s with %s: %s", released.Result, released.Code, released.Reason)})
 		out.NextActions = []core.NextAction{inspect}
 	case exhausted:
 		out.Stopped, out.Cause = true, CauseAttemptsExhausted
@@ -151,6 +164,34 @@ func (h handlers) qaHold(ctx context.Context, r core.StateRecord) (*QAHold, erro
 		return nil, err
 	}
 	return &hold, nil
+}
+
+// releaseHold reads the held or refused release of an issue in
+// ReleaseCandidate, nil when its release was neither or no reader is
+// wired. A held release the Owner resumed is not waiting any more.
+func (h handlers) releaseHold(ctx context.Context, r core.StateRecord) (*ReleaseHold, error) {
+	if h.ReleaseHolds == nil || r.State != core.StateReleaseCandidate || r.RunID == "" {
+		return nil, nil
+	}
+	hold, err := h.ReleaseHolds.ReleaseHold(ctx, r.RunID, r.Attempt)
+	switch {
+	case core.HasCode(err, core.CodeNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, err
+	}
+	return &hold, nil
+}
+
+// releaseWayOut says how the Owner gets the issue out of ReleaseCandidate.
+// A held release starts over on the Owner's retry, on the factory's host,
+// once its cause is removed; no surface action retries an issue yet. A
+// refused release is never tried again.
+func releaseWayOut(hold ReleaseHold, issue string) string {
+	if hold.Result != "held" {
+		return "The Owner merges or closes its pull request by hand."
+	}
+	return "Remove the cause in the evidence, then, as the Owner on the factory's host, run `factoryd issue retry --issue " + issue + "` to start the release over."
 }
 
 func approvalSteps(pending string, inspect core.NextAction) []core.NextAction {

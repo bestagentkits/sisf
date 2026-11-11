@@ -1063,6 +1063,7 @@ paths:
                           - awaiting_approval
                           - awaiting_information
                           - attempts_exhausted
+                          - release_held
                           - finished
                           - in_progress
                         type: string
@@ -1152,6 +1153,9 @@ paths:
                         description: Present when QA held the run's candidate and the issue waits in QAEvaluation for the Owner.
                         type: object
                       record:
+                        type: object
+                      release_hold:
+                        description: 'Present when the supervisor held or refused the release of the candidate and the issue waits in ReleaseCandidate: the result, the code, the public summary, the supervisor''s reason and whether the Owner''s retry resumed it.'
                         type: object
                       run:
                         type:
