@@ -2,6 +2,7 @@ package killswitch
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -18,7 +19,11 @@ type OperatorRequest struct {
 	StateDSN core.SecretValue
 	// AdminAddr is the supervisor's admin socket; empty skips it.
 	AdminAddr string
-	Clock     core.Clock
+	// AdminKeyID, when set, is the root key of the install being stopped:
+	// the supervisor that answers must report a release signed by it, so a
+	// stop is not sent to another install of the same factory id.
+	AdminKeyID string
+	Clock      core.Clock
 }
 
 // OperatorReport is what each route of an operator stop did.
@@ -58,7 +63,7 @@ func StopFromOperator(ctx context.Context, req OperatorRequest) (OperatorReport,
 		}
 	}
 	if req.AdminAddr != "" {
-		if done, err := stopThroughSupervisor(ctx, req.AdminAddr, stop); err != nil {
+		if done, err := stopThroughSupervisor(ctx, req.AdminAddr, req.AdminKeyID, stop); err != nil {
 			report.Failures = append(report.Failures, "supervisor: "+err.Error())
 		} else {
 			report.Supervisor = &done
@@ -88,13 +93,38 @@ func stopInStore(ctx context.Context, req OperatorRequest, stop supervisor.Emerg
 	return s.Stop(ctx, stop)
 }
 
-// stopThroughSupervisor asks the supervisor to stop the factory.
-func stopThroughSupervisor(ctx context.Context, addr string, stop supervisor.EmergencyStopRequest) (supervisor.EmergencyStopReport, error) {
+// stopThroughSupervisor asks the supervisor to stop the factory, after it
+// proved it serves that factory and, when keyID is set, this install. The
+// admin address of Standalone mode is a fixed loopback port that another
+// factory on the same host may hold; the supervisor refuses a stop for
+// another factory too, but nothing is sent to one that is not this one.
+func stopThroughSupervisor(ctx context.Context, addr, keyID string, stop supervisor.EmergencyStopRequest) (supervisor.EmergencyStopReport, error) {
 	client, err := supervisor.NewClient(addr)
 	if err != nil {
 		return supervisor.EmergencyStopReport{}, err
 	}
+	if err := VerifySupervisor(ctx, client, stop.FactoryID, keyID); err != nil {
+		return supervisor.EmergencyStopReport{}, err
+	}
 	return client.EmergencyStop(ctx, stop)
+}
+
+// VerifySupervisor proves that the supervisor client reaches serves factory
+// and, when keyID is set, verified a release signed by that root key. A
+// supervisor that is someone else's is CONFLICT, and its message says that
+// nothing was sent to it.
+func VerifySupervisor(ctx context.Context, client *supervisor.Client, factory core.FactoryID, keyID string) error {
+	status, err := client.Status(ctx)
+	if err != nil {
+		return err
+	}
+	switch {
+	case status.FactoryID != factory:
+		return core.NewError(core.CodeConflict, fmt.Sprintf("the supervisor that answers serves factory %q, not %q; nothing was sent to it", status.FactoryID, factory))
+	case keyID != "" && status.SelfCheck.ManifestKeyID != keyID:
+		return core.NewError(core.CodeConflict, fmt.Sprintf("the supervisor that answers serves another install of factory %q (its release is signed by another root key); nothing was sent to it", factory))
+	}
+	return nil
 }
 
 // LiftFromOperator lifts the stop in force through the store. The supervisor
