@@ -82,6 +82,7 @@ func (f *Factory) startLifecycle(client *github.RESTClient) {
 	f.Stages, err = stages.New(stages.Config{
 		FactoryID: m.FactoryID, Repo: repo, State: f.ControlStore, GitHub: client, Judge: judge, Merger: merger,
 		QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
+		Self:     github.Identity{ID: f.GitHub.Bot().ID, Login: f.GitHub.Bot().Login},
 		QASigner: f.Trust.QA, ArtifactSigner: f.Trust.Artifact, Verifier: f.Trust.Verifier, ApprovalVerifier: f.Trust.Verifier,
 		Redactor: redact.New(redact.Config{}), MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: clock,
 		Budget: budget.NewGate(budget.Config{Clock: f.Clock}),

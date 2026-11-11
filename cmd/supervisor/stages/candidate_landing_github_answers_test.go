@@ -12,6 +12,7 @@ import (
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/internal/testkit/fakegithub"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/state"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
@@ -184,6 +185,34 @@ func TestThePullRequestQuotesOnlyAWellFormedScopeDigest(t *testing.T) {
 			if err != nil || got != want {
 				t.Fatalf("scopeOf(%q) = %q, %v", digest, got, err)
 			}
+		}
+	})
+}
+
+// An installation token of a GitHub App cannot ask GitHub which account it
+// is, so the factory's account comes from the install: with it named,
+// the factory's own pull request is found and merged without asking.
+func TestTheInstallNamesTheFactorysAccount(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		ctx := context.Background()
+		w := newLandingWorld(t, db.Open(t, core.ZoneControl))
+		bot := w.fake.Bot()
+		w.prs.self = github.User{ID: bot.ID, Login: bot.Login}
+		for range 4 {
+			w.data.FailOn(http.MethodGet, "/user", http.StatusForbidden, "Resource not accessible by integration")
+		}
+		if _, err := w.prs.ensure(ctx, w.req.IssueID, w.req.RunID, 1); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.prs.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+			return tx.DeleteKV(ctx, handoff.BuildNamespace, handoff.CandidatePRKey(w.req.RunID), 1) // forgotten, as after a lost write
+		}); err != nil {
+			t.Fatal(err)
+		}
+		landing, err := w.prs.Land(ctx, w.req)
+		if err != nil || !landing.Merged || w.data.Merges() != 1 {
+			t.Fatalf("Land = %+v, %v after %d merges", landing, err, w.data.Merges())
 		}
 	})
 }

@@ -72,6 +72,10 @@ type Config struct {
 	// candidate QA passes gets a pull request, merged once its release is
 	// verified; nil opens none and merges nothing.
 	Merger Merger
+	// Self is the factory's own GitHub account, as the install names it: a
+	// candidate's pull request is the one it opened. When zero it is asked
+	// of GitHub, which only a token of a person's login can answer.
+	Self github.Identity
 	// Budget closes the reservation of a run QA passed or held; nil leaves
 	// it held until the dispatcher stops the run.
 	Budget dispatcher.ReservationCloser
@@ -116,7 +120,8 @@ func New(cfg Config) (*Stages, error) {
 	}
 	var prs *CandidatePRs
 	if cfg.Merger != nil {
-		prs = &CandidatePRs{Repo: cfg.Repo, Base: cfg.BaseBranch, State: cfg.State, GitHub: cfg.GitHub, Merger: cfg.Merger, Policy: refs, Clock: cfg.Clock}
+		prs = &CandidatePRs{Repo: cfg.Repo, Base: cfg.BaseBranch, State: cfg.State, GitHub: cfg.GitHub, Merger: cfg.Merger, Policy: refs, Clock: cfg.Clock,
+			self: github.User{ID: cfg.Self.ID, Login: cfg.Self.Login}}
 	}
 	rc := cfg.Release
 	rc.FactoryID, rc.State, rc.Verifier, rc.Publisher, rc.Clock = cfg.FactoryID, cfg.State, cfg.Verifier, publisher, cfg.Clock

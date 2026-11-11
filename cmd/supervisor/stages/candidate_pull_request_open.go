@@ -127,8 +127,10 @@ func sameAccount(self, author github.User) bool {
 	return self.ID != 0 && author.ID == self.ID || self.ID == 0 && self.Login != "" && strings.EqualFold(author.Login, self.Login)
 }
 
-// factoryAccount is the account the supervisor's token acts as, learned
-// from GitHub once.
+// factoryAccount is the factory's own account: the one the install names
+// (Config.Self), else the one the supervisor's token acts as, learned from
+// GitHub once. An installation token of a GitHub App cannot ask GitHub
+// this, so an App install must name its account.
 func (c *CandidatePRs) factoryAccount(ctx context.Context) (github.User, error) {
 	c.selfMu.Lock()
 	defer c.selfMu.Unlock()
