@@ -2,9 +2,11 @@ package wiring_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
@@ -47,5 +49,27 @@ func TestTheDispatcherLogSaysWhyAClaimedIssueDoesNotMoveOn(t *testing.T) {
 	}
 	if n := strings.Count(out, "held back"); n != 1 {
 		t.Errorf("the hold is logged %d times, want once while it lasts:\n%s", n, out)
+	}
+}
+
+// A long detail of a failed attempt is cut on a character boundary, so the
+// log never holds half of a multi-byte character.
+func TestTheDispatcherLogCutsALongDetailOnACharacterBoundary(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	onTick := wiring.DispatcherTickLog(slog.New(slog.NewJSONHandler(&buf, nil)))
+	// One byte, then three-byte characters: byte 500 falls inside one.
+	detail := "x" + strings.Repeat("世", 300)
+	onTick(dispatcher.TickResult{Leader: true, Failed: []dispatcher.FailedAttempt{{
+		Issue: core.IssueRef{Owner: "acme", Repo: "app", Number: 7}, RunID: "run-0001",
+		AttemptFailure: dispatcher.AttemptFailure{Attempt: 1, Code: core.CodeInternal, Detail: detail},
+	}}}, nil)
+	var line struct{ Detail string }
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatal(err)
+	}
+	logged, ok := strings.CutSuffix(line.Detail, "...")
+	if !ok || !utf8.ValidString(logged) || len(logged) > 500 || len(logged) < 497 || !strings.HasPrefix(detail, logged) {
+		t.Fatalf("the logged detail is not cut on a character boundary near 500 bytes: %d bytes, %q", len(logged), line.Detail)
 	}
 }

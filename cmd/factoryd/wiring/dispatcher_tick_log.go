@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -18,8 +19,11 @@ const maxLoggedDetail = 500
 // happen; states that last (standing by for another instance, Ready issues
 // held back, a failure that repeats every tick) are logged when they begin
 // or change. Errors are logged by their typed messages, which carry no
-// cause and so no output of a failed program; the process log redacts the
-// secrets it knows of besides.
+// cause. A failed attempt is logged with its code and its detail, cut to
+// maxLoggedDetail bytes; the detail may quote what the coding agent said
+// when it failed, such as a CLI's error or the model's last message, which
+// the agent backend clipped and redacted of the secrets it knows of. The
+// process log redacts the secrets it knows of besides.
 func DispatcherTickLog(log *slog.Logger) func(dispatcher.TickResult, error) {
 	var (
 		mu                 sync.Mutex
@@ -82,9 +86,15 @@ func tickFailures(res dispatcher.TickResult, err error) string {
 	return strings.Join(parts, "; ")
 }
 
+// truncateDetail cuts s to at most maxLoggedDetail bytes, on a rune
+// boundary so a multi-byte character is never split, and marks the cut.
 func truncateDetail(s string) string {
 	if len(s) <= maxLoggedDetail {
 		return s
 	}
-	return s[:maxLoggedDetail] + "..."
+	cut := maxLoggedDetail
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
