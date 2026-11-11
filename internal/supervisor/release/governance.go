@@ -105,7 +105,7 @@ func checkSelfPublishable(units []string, unit string) error {
 // list is a second refusal on top of it. Paths are compared without regard
 // to letter case, so a case-insensitive file system cannot be used to slip
 // past an entry.
-func checkGovernance(protected []string, unit string, changed []string) error {
+func checkGovernance(protected []string, inputs UnitInputs, unit string, changed []string) error {
 	if strings.EqualFold(strings.TrimSpace(unit), supervisorUnit) {
 		return governance("the candidate is a build of the supervisor itself")
 	}
@@ -125,7 +125,7 @@ func checkGovernance(protected []string, unit string, changed []string) error {
 			}
 		}
 	}
-	return checkUnitInputs(unit, changed)
+	return checkUnitInputs(inputs, unit, changed)
 }
 
 // repoPath cleans a repository-relative path. A path that is absolute or

@@ -45,7 +45,7 @@ func TestACandidateThatTouchesTheTrustedControlSurfaceIsAGovernanceChange(t *tes
 		"no listed changes":            nil,
 	}
 	for name, changed := range cases {
-		if err := checkGovernance(DefaultProtectedPaths(), testUnit, changed); !core.HasCode(err, core.CodeApprovalRequired) {
+		if err := checkGovernance(DefaultProtectedPaths(), UnitInputs{}, testUnit, changed); !core.HasCode(err, core.CodeApprovalRequired) {
 			t.Errorf("%s: %v, want APPROVAL_REQUIRED", name, err)
 		}
 	}
@@ -83,7 +83,7 @@ func TestTheReleasePipelineRefusesAChangeOfTheStoreRulesBeforeDeployingAnything(
 
 func TestABuildOfTheSupervisorIsNeverReleasedByThePipeline(t *testing.T) {
 	t.Parallel()
-	if err := checkGovernance(DefaultProtectedPaths(), "Supervisor", []string{"README.md"}); !core.HasCode(err, core.CodeApprovalRequired) {
+	if err := checkGovernance(DefaultProtectedPaths(), UnitInputs{}, "Supervisor", []string{"README.md"}); !core.HasCode(err, core.CodeApprovalRequired) {
 		t.Fatalf("a supervisor build = %v, want APPROVAL_REQUIRED", err)
 	}
 }
@@ -94,7 +94,7 @@ func TestACandidateChangingOnlyTheApplicationsInputsIsNotAGovernanceChange(t *te
 	t.Parallel()
 	changed := []string{"examples/hello-app/main.go", "examples/hello-app/app_test.go", "build/hello-app.Dockerfile",
 		"Examples/Hello-App/faults.go", "examples/hello-app/new_handler.go"}
-	if err := checkGovernance(DefaultProtectedPaths(), testUnit, changed); err != nil {
+	if err := checkGovernance(DefaultProtectedPaths(), UnitInputs{}, testUnit, changed); err != nil {
 		t.Fatalf("a candidate of the application's inputs was refused: %v", err)
 	}
 }
@@ -104,7 +104,7 @@ func TestACandidateChangingOnlyTheApplicationsInputsIsNotAGovernanceChange(t *te
 func TestAnInputOfTheUnitThatIsProtectedIsRefused(t *testing.T) {
 	t.Parallel()
 	protected := append(DefaultProtectedPaths(), "examples/hello-app/main.go")
-	err := checkGovernance(protected, testUnit, []string{"examples/hello-app/MAIN.go"})
+	err := checkGovernance(protected, UnitInputs{}, testUnit, []string{"examples/hello-app/MAIN.go"})
 	var refused *core.Error
 	if !errors.As(err, &refused) || refused.Code != core.CodeApprovalRequired || refused.Details["protected"] == "" {
 		t.Fatalf("a protected input = %v, want APPROVAL_REQUIRED naming the protected entry", err)

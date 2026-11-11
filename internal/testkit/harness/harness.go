@@ -77,6 +77,9 @@ type Options struct {
 	// Owner lets the factory publish by itself. The sample manifest names
 	// the application alone.
 	ReleaseUnits []manifest.UnitName
+	// UnitInputs sets the installed manifest's release.unit_inputs, the
+	// paths each unit consumes in place of its built-in inputs.
+	UnitInputs map[manifest.UnitName][]string
 	// Upstream is a fake GitHub shared with other factories, where the
 	// factory's repository is a fork of the upstream one. A factory gets a
 	// fake GitHub of its own when it is nil.
@@ -172,6 +175,12 @@ func New(t testing.TB, opts Options) *Factory {
 		t.Fatalf("harness: the sample manifest cannot be read: %v", err)
 	}
 	m.Extensions = map[string]any{"profile": "sim"}
+	if opts.UnitInputs != nil {
+		m.Release.UnitInputs = opts.UnitInputs
+		if found := manifest.Validate(m); len(found) != 0 {
+			t.Fatalf("harness: the declared unit inputs are not valid: %v", found)
+		}
+	}
 	f.Manifest, f.Repo = m, m.Repository.Owner+"/"+m.Repository.Repo
 
 	host := opts.Upstream

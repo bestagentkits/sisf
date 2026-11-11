@@ -201,11 +201,14 @@ func (b *CandidateBuilder) commitFault(ctx context.Context, base core.CommitSHA,
 }
 
 // UnitRouter decides which runtime unit a change is a build of, from the
-// inputs of each unit (release.UnitOfPath): a path is the input of at most
-// one unit, and a path that is the input of none decides nothing.
-type UnitRouter struct{}
+// inputs of each unit (release.UnitInputs, the ones the release judges the
+// candidate by): a path that is the input of no unit, or of more than one,
+// decides nothing.
+type UnitRouter struct {
+	Inputs release.UnitInputs
+}
 
-// DefaultUnitRouter returns the router of the units' inputs.
+// DefaultUnitRouter returns the router of the units' built-in inputs.
 func DefaultUnitRouter() UnitRouter { return UnitRouter{} }
 
 // judgedOnlyUnit is the unit a change that is the input of no unit is built
@@ -220,13 +223,13 @@ const judgedOnlyUnit = "app"
 // unit, so the rest of the change would never be deployed or observed. A
 // change set that changes the input of no unit is built as judgedOnlyUnit,
 // for the Owner to merge by hand once QA judged it.
-func (UnitRouter) UnitOf(paths []string) (string, error) {
+func (r UnitRouter) UnitOf(paths []string) (string, error) {
 	if len(paths) == 0 {
 		return "", core.NewError(core.CodeInvalidArgument, "the change touches no path")
 	}
 	unit, first := "", ""
 	for _, p := range paths {
-		of, ok := release.UnitOfPath(p)
+		of, ok := r.Inputs.UnitOf(p)
 		if !ok {
 			continue
 		}

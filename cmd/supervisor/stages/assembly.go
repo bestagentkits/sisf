@@ -121,7 +121,8 @@ func New(cfg Config) (*Stages, error) {
 	var prs *CandidatePRs
 	if cfg.Merger != nil {
 		prs = &CandidatePRs{Repo: cfg.Repo, Base: cfg.BaseBranch, State: cfg.State, GitHub: cfg.GitHub, Merger: cfg.Merger, Policy: refs, Clock: cfg.Clock,
-			self: github.User{ID: cfg.Self.ID, Login: cfg.Self.Login}}
+			UnitInputs: cfg.Release.UnitInputs,
+			self:       github.User{ID: cfg.Self.ID, Login: cfg.Self.Login}}
 	}
 	rc := cfg.Release
 	rc.FactoryID, rc.State, rc.Verifier, rc.Publisher, rc.Clock = cfg.FactoryID, cfg.State, cfg.Verifier, publisher, cfg.Clock
@@ -166,7 +167,7 @@ func New(cfg Config) (*Stages, error) {
 		Build: &BuildStage{
 			Owner: "supervisor-builder", State: cfg.State, QAPolicy: refs, CodingPolicy: stepPolicy(loader, core.StepCoding), Clock: cfg.Clock,
 			Retry:   cfg.BuildRetry,
-			Builder: &CandidateBuilder{FactoryID: cfg.FactoryID, Repo: cfg.Repo, Git: cfg.GitHub, Images: cfg.Images, Units: DefaultUnitRouter(), Clock: cfg.Clock},
+			Builder: &CandidateBuilder{FactoryID: cfg.FactoryID, Repo: cfg.Repo, Git: cfg.GitHub, Images: cfg.Images, Units: UnitRouter{Inputs: cfg.Release.UnitInputs}, Clock: cfg.Clock},
 		},
 		QA: &QAStage{
 			FactoryID: cfg.FactoryID, Owner: "supervisor-qa", State: cfg.State, Evaluator: evaluator, Tree: tree, Policy: refs,

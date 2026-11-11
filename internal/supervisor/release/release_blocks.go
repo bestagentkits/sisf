@@ -60,7 +60,7 @@ func (p *Pipeline) refusal(ctx context.Context, req Request, record core.StateRe
 	if req.Candidate.ChangedPathsIncomplete {
 		return verifiedRelease{}, governance("GitHub may list only part of the paths the candidate changes, so it cannot be shown to leave the trusted control surface alone")
 	}
-	if err := checkGovernance(p.cfg.Protected, req.Artifact.Unit, req.Candidate.ChangedPaths); err != nil {
+	if err := checkGovernance(p.cfg.Protected, p.cfg.UnitInputs, req.Artifact.Unit, req.Candidate.ChangedPaths); err != nil {
 		return verifiedRelease{}, err
 	}
 	if err := checkSelfPublishable(p.cfg.SelfPublishable, req.Artifact.Unit); err != nil {

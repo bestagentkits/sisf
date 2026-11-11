@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
 //go:generate go run ../trustedclosure/gentrustedpackages -root ../../.. -list app -out app_unit_package_dirs_generated.go -package release
@@ -17,30 +18,34 @@ import (
 // that unit consumes and for nothing else; every other path, whatever it is
 // for, needs the Owner's approval. The protected paths (DefaultProtectedPaths)
 // stay a second refusal on top: a path that is both an input and protected
-// is refused.
+// is refused, whoever declared it an input.
+//
+// The inputs of a unit are built in (isAppInput, isControlInput) unless the
+// Owner declares them in the installed manifest's release.unit_inputs, which
+// replaces the built-in inputs of the units it names: a factory may work on
+// a repository whose application is not laid out like this one.
 //
 // Paths are compared without regard to letter case, as governance compares
 // them, so a case-insensitive file system or checkout cannot route or admit
 // a path under another spelling.
 
-// Units whose inputs are listed. Any other unit has no input the factory
-// may change by itself.
+// Units whose inputs are built in. Any other unit has no input the factory
+// may change by itself unless the manifest declares some.
 const (
 	appUnit     = "app"
 	controlUnit = "control"
 )
 
-// appUnitFiles are the inputs of the application that are not Go package
-// directories: how its image is built.
+// appUnitFiles are the built-in inputs of the application that are not Go
+// package directories: how its image is built.
 var appUnitFiles = []string{"build/hello-app.dockerfile"}
 
 // controlUnitDir holds the dashboard's templates and static assets, the
-// only inputs of the control unit a candidate may change by itself. The Go
-// code of the control unit is not one of them: the installer and the
-// simulation link the control unit's Go packages, so one observed release
-// of the control unit cannot vouch for it. A template or a static asset is
-// what a trial update of a non-sensitive part such as a read-only dashboard
-// page changes.
+// only built-in inputs of the control unit. The Go code of the control unit
+// is never one of its inputs: the installer and the simulation link the
+// control unit's Go packages, so one observed release of the control unit
+// cannot vouch for it. A template or a static asset is what a trial update
+// of a non-sensitive part such as a read-only dashboard page changes.
 const controlUnitDir = "ui/"
 
 // goToolchainExtensions are the extensions of files the Go toolchain
@@ -55,20 +60,88 @@ var goToolchainExtensions = []string{
 // builds wherever they are.
 var goToolchainFiles = []string{"go.mod", "go.sum", "go.work", "go.work.sum"}
 
-// UnitOfPath returns the unit whose inputs include the repository path p,
-// false when p is the input of no unit and so needs the Owner's approval. A
-// path is the input of at most one unit.
-func UnitOfPath(p string) (string, bool) {
+// UnitInputs are the inputs of each unit: the built-in ones, and the
+// patterns the Owner declared in the installed manifest's
+// release.unit_inputs, which replace the built-in inputs of the units they
+// name. The zero value is the built-in inputs alone.
+type UnitInputs struct {
+	declared map[string][]string
+}
+
+// DefaultUnitInputs returns the built-in inputs of every unit.
+func DefaultUnitInputs() UnitInputs { return UnitInputs{} }
+
+// NewUnitInputs returns the inputs with the declared patterns of each unit
+// in place of its built-in ones. A pattern manifest.UnitInputPatternProblem
+// refuses is refused here as well, so a manifest that was not validated
+// cannot widen a unit's inputs.
+func NewUnitInputs(declared map[string][]string) (UnitInputs, error) {
+	if len(declared) == 0 {
+		return UnitInputs{}, nil
+	}
+	kept := make(map[string][]string, len(declared))
+	for unit, patterns := range declared {
+		for _, p := range patterns {
+			if problem := manifest.UnitInputPatternProblem(p); problem != "" {
+				return UnitInputs{}, core.NewError(core.CodeInvalidArgument, fmt.Sprintf("release.unit_inputs.%s: the pattern %q %s", unit, p, problem))
+			}
+		}
+		kept[strings.ToLower(unit)] = slices.Clone(patterns)
+	}
+	return UnitInputs{declared: kept}, nil
+}
+
+// units returns the units that may have inputs: those with built-in inputs
+// and those the manifest declares, sorted.
+func (u UnitInputs) units() []string {
+	units := []string{appUnit, controlUnit}
+	for unit := range u.declared {
+		if !slices.Contains(units, unit) {
+			units = append(units, unit)
+		}
+	}
+	slices.Sort(units)
+	return units
+}
+
+// consumes reports whether unit consumes the case-folded clean path. Files
+// the Go toolchain reads are never inputs of the control unit, declared or
+// built in.
+func (u UnitInputs) consumes(unit, clean string) bool {
+	patterns, declared := u.declared[unit]
+	switch {
+	case !declared && unit == appUnit:
+		return isAppInput(clean)
+	case !declared && unit == controlUnit:
+		return isControlInput(clean)
+	case unit == controlUnit && goToolchainFile(clean):
+		return false
+	}
+	return slices.ContainsFunc(patterns, func(p string) bool { return manifest.MatchUnitInput(p, clean) })
+}
+
+// consumers returns every unit whose inputs include the repository path p.
+func (u UnitInputs) consumers(p string) []string {
 	clean, ok := repoPath(p)
 	if !ok {
-		return "", false
+		return nil
 	}
 	clean = strings.ToLower(clean)
-	switch {
-	case isAppInput(clean):
-		return appUnit, true
-	case isControlInput(clean):
-		return controlUnit, true
+	var of []string
+	for _, unit := range u.units() {
+		if u.consumes(unit, clean) {
+			of = append(of, unit)
+		}
+	}
+	return of
+}
+
+// UnitOf returns the one unit whose inputs include the repository path p,
+// false when p is the input of no unit, or of more than one, and so needs
+// the Owner's approval.
+func (u UnitInputs) UnitOf(p string) (string, bool) {
+	if of := u.consumers(p); len(of) == 1 {
+		return of[0], true
 	}
 	return "", false
 }
@@ -89,46 +162,73 @@ func isAppInput(clean string) bool {
 // static asset of the dashboard: below ui/ and not a file the Go toolchain
 // builds.
 func isControlInput(clean string) bool {
-	if !strings.HasPrefix(clean, controlUnitDir) {
-		return false
-	}
+	return strings.HasPrefix(clean, controlUnitDir) && !goToolchainFile(clean)
+}
+
+// goToolchainFile reports whether the case-folded path is a file the Go
+// toolchain reads.
+func goToolchainFile(clean string) bool {
 	base := path.Base(clean)
-	return !slices.Contains(goToolchainFiles, base) && !slices.Contains(goToolchainExtensions, path.Ext(base))
+	return slices.Contains(goToolchainFiles, base) || slices.Contains(goToolchainExtensions, path.Ext(base))
 }
 
 // shownPaths is how many offending paths a refusal names.
 const shownPaths = 3
 
+// namedPaths names the first shownPaths of paths and counts the rest.
+func namedPaths(paths []string) string {
+	named := strings.Join(paths[:min(len(paths), shownPaths)], ", ")
+	if more := len(paths) - shownPaths; more > 0 {
+		named += fmt.Sprintf(" and %d more", more)
+	}
+	return named
+}
+
 // checkUnitInputs refuses, for the Owner's approval, a candidate built as
-// unit that changes a path which is not an input of unit: what one observed
-// release of unit can vouch for is only what unit consumes. A change mixing
-// the inputs of two units is refused the same way.
-func checkUnitInputs(unit string, changed []string) error {
-	var outside []string
+// unit that changes a path which is not an input of unit, or that more than
+// one unit consumes: what one observed release of unit can vouch for is
+// only what unit alone consumes. A change mixing the inputs of two units is
+// refused the same way.
+func checkUnitInputs(inputs UnitInputs, unit string, changed []string) error {
+	unit = strings.TrimSpace(unit)
+	var outside, shared []string
+	var sharedBy []string
 	for _, raw := range changed {
-		if of, ok := UnitOfPath(raw); !ok || !strings.EqualFold(of, strings.TrimSpace(unit)) {
+		of := inputs.consumers(raw)
+		switch {
+		case len(of) > 1:
+			shared = append(shared, strings.TrimSpace(raw))
+			if sharedBy == nil {
+				sharedBy = of
+			}
+		case len(of) == 0 || !strings.EqualFold(of[0], unit):
 			outside = append(outside, strings.TrimSpace(raw))
 		}
 	}
-	if len(outside) == 0 {
+	var err *core.Error
+	switch {
+	case len(outside) > 0:
+		err = core.NewError(core.CodeApprovalRequired, fmt.Sprintf(
+			"the candidate changes %s, which the unit %q it releases does not consume; observing %q cannot vouch for them, "+
+				"so they need the Owner's approval", namedPaths(outside), unit, unit))
+		err.Details = map[string]string{"unit": unit, "path": outside[0]}
+	case len(shared) > 0:
+		err = core.NewError(core.CodeApprovalRequired, fmt.Sprintf(
+			"the candidate changes %s, which the units %s all consume; observing %q alone cannot vouch for them, "+
+				"so they need the Owner's approval", namedPaths(shared), strings.Join(sharedBy, " and "), unit))
+		err.Details = map[string]string{"unit": unit, "path": shared[0]}
+	default:
 		return nil
 	}
-	named := strings.Join(outside[:min(len(outside), shownPaths)], ", ")
-	if more := len(outside) - shownPaths; more > 0 {
-		named += fmt.Sprintf(" and %d more", more)
-	}
-	err := core.NewError(core.CodeApprovalRequired, fmt.Sprintf(
-		"the candidate changes %s, which the unit %q it releases does not consume; observing %q cannot vouch for them, "+
-			"so they need the Owner's approval", named, unit, unit))
-	err.Details = map[string]string{"unit": unit, "path": outside[0]}
 	return err
 }
 
 // CheckSelfPublishedChange is the rule a candidate the factory publishes and
 // merges by itself must meet, as the release governance applies it: it is
-// not the supervisor, every path it changes is an input of unit, and none of
-// them is on the protected list. A refusal has the code APPROVAL_REQUIRED.
-// The merge applies it again with the unit recorded at build time.
-func CheckSelfPublishedChange(protected []string, unit string, changed []string) error {
-	return checkGovernance(protected, unit, changed)
+// not the supervisor, every path it changes is an input of unit alone, and
+// none of them is on the protected list. A refusal has the code
+// APPROVAL_REQUIRED. The merge applies it again with the unit recorded at
+// build time.
+func CheckSelfPublishedChange(protected []string, inputs UnitInputs, unit string, changed []string) error {
+	return checkGovernance(protected, inputs, unit, changed)
 }

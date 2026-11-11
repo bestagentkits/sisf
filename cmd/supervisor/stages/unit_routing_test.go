@@ -3,6 +3,7 @@ package stages
 import (
 	"testing"
 
+	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -38,5 +39,27 @@ func TestAChangeOfNoUnitsInputsIsBuiltForTheOwnerToJudge(t *testing.T) {
 	}
 	if _, err := DefaultUnitRouter().UnitOf(nil); !core.HasCode(err, core.CodeInvalidArgument) {
 		t.Fatalf("an empty change = %v, want INVALID_ARGUMENT", err)
+	}
+}
+
+// The router routes by the inputs the release judges by: with the
+// application's inputs declared as the Go files at the repository root, a
+// change of app.go is a build of the application, and a change of the
+// replaced built-in directory is the input of no unit.
+func TestTheRouterFollowsDeclaredInputs(t *testing.T) {
+	t.Parallel()
+	inputs, err := release.NewUnitInputs(map[string][]string{"app": {"*.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := UnitRouter{Inputs: inputs}
+	if unit, err := router.UnitOf([]string{"app.go", "release_rehearsal_fault.go"}); err != nil || unit != "app" {
+		t.Fatalf("the sandbox's candidate routes to %q (%v), want app", unit, err)
+	}
+	if unit, err := router.UnitOf([]string{"app.go", "ui/templates/a.html"}); !core.HasCode(err, core.CodeInvalidArgument) {
+		t.Fatalf("a change of app.go and a template routes to %q (%v), want refused as spanning two units", unit, err)
+	}
+	if _, ok := inputs.UnitOf("examples/hello-app/main.go"); ok {
+		t.Fatal("the replaced built-in directory is still an input")
 	}
 }

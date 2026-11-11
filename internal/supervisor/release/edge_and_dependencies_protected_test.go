@@ -16,7 +16,7 @@ func TestTheEdgeAndTheModulesDependenciesAreProtected(t *testing.T) {
 		}
 	}
 	for _, changed := range []string{"cmd/edge/main.go", "build/edge.Dockerfile", "go.mod", "go.sum"} {
-		if err := checkGovernance(protected, "app", []string{changed}); err == nil {
+		if err := checkGovernance(protected, UnitInputs{}, "app", []string{changed}); err == nil {
 			t.Errorf("a candidate that changes %s passed the governance check", changed)
 		}
 	}

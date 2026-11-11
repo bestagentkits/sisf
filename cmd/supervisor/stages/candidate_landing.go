@@ -240,7 +240,7 @@ func (c *CandidatePRs) mayNotMerge(ctx context.Context, req release.LandRequest,
 	// The rule the release was judged by, applied again to the unit the
 	// supervisor recorded when it built the candidate: only the inputs of
 	// that unit, none of them protected.
-	if err := release.CheckSelfPublishedChange(release.DefaultProtectedPaths(), build.Unit, req.Candidate.ChangedPaths); err != nil {
+	if err := release.CheckSelfPublishedChange(release.DefaultProtectedPaths(), c.UnitInputs, build.Unit, req.Candidate.ChangedPaths); err != nil {
 		var refused *core.Error
 		if errors.As(err, &refused) {
 			return refused.Message + ", so only the Owner merges it", nil

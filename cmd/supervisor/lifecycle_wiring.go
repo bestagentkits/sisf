@@ -49,6 +49,10 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if m.FactoryID != d.cfg.FactoryID {
 		return nil, core.NewError(core.CodeInvalidArgument, "the factory manifest is not the one of --factory-id")
 	}
+	inputs, err := release.NewUnitInputs(declaredUnitInputs(m))
+	if err != nil {
+		return nil, err
+	}
 	sim := manifestsettings.SimulationProfile(m)
 	client, settings, err := gitHubClient(m, d.lookupEnv, d.clock)
 	if err != nil {
@@ -151,7 +155,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
 		BuildRetry: stages.BuildRetry{HoldAfter: l.buildOutageLimit}, Budget: spend,
 		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor, Synthetic: synthetic,
-			SelfPublishable: selfPublishableUnits(m), VerifierAt: keys.VerifierAt,
+			SelfPublishable: selfPublishableUnits(m), UnitInputs: inputs, VerifierAt: keys.VerifierAt,
 			// A rollback reserves through the rollback reserve and records
 			// its spend; an exhausted budget never blocks it.
 			Budget: spend},

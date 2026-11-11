@@ -132,6 +132,10 @@ type Config struct {
 	ExtraGates []string
 	// Protected lists the paths of the trusted control surface.
 	Protected []string
+	// UnitInputs are the paths each unit consumes; a self-published
+	// candidate may change only inputs of the unit it releases. The zero
+	// value is the built-in inputs.
+	UnitInputs UnitInputs
 	// SelfPublishable lists the units the pipeline publishes by itself, as
 	// the manifest's release.units names them; a release of any other unit
 	// is refused for want of a person. Nil means DefaultSelfPublishable and

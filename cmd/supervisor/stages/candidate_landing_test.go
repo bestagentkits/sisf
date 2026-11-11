@@ -126,6 +126,13 @@ func TestAVerifiedCandidateIsMergedOnlyWhileItIsWhatWasJudgedAndReleased(t *test
 			"another build was released": {bend: func(_ *testing.T, w *landingWorld) {
 				w.req.Release = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
 			}, reason: "not the build"},
+			"a path the declared inputs of its unit do not include": {bend: func(t *testing.T, w *landingWorld) {
+				inputs, err := release.NewUnitInputs(map[string][]string{"app": {"*.go"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				w.prs.UnitInputs = inputs
+			}, reason: "examples/hello-app/main.go, which the unit \"app\" it releases does not consume"},
 			"a later release superseded it": {bend: func(_ *testing.T, w *landingWorld) {
 				w.req.Superseded = "the release of run-2 (sha256:55) was verified later"
 			}, reason: "superseded it before it was recorded as the last known good release"},

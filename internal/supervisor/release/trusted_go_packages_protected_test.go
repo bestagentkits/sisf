@@ -37,7 +37,7 @@ func TestEveryPackageTheSupervisorLinksIsProtected(t *testing.T) {
 	t.Parallel()
 	for _, dir := range trustedGoPackageDirs {
 		for _, changed := range []string{dir + "x.go", dir + "zz_new_file.go"} {
-			if err := checkGovernance(DefaultProtectedPaths(), testUnit, []string{changed}); !core.HasCode(err, core.CodeApprovalRequired) {
+			if err := checkGovernance(DefaultProtectedPaths(), UnitInputs{}, testUnit, []string{changed}); !core.HasCode(err, core.CodeApprovalRequired) {
 				t.Errorf("%s: %v, want APPROVAL_REQUIRED", changed, err)
 			}
 		}

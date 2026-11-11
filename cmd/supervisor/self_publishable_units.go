@@ -1,6 +1,10 @@
 package main
 
-import "github.com/bestagentkits/sisf/pkg/manifest"
+import (
+	"slices"
+
+	"github.com/bestagentkits/sisf/pkg/manifest"
+)
 
 // selfPublishableUnits returns the units the manifest's release.units lets
 // the pipeline publish by itself. The result is never nil: a manifest that
@@ -12,4 +16,16 @@ func selfPublishableUnits(m *manifest.Manifest) []string {
 		units = append(units, string(u))
 	}
 	return units
+}
+
+// declaredUnitInputs returns the inputs the installed manifest's
+// release.unit_inputs declares, per unit. The supervisor reads them only
+// from the manifest it was started with (--factory-manifest), never from a
+// candidate's tree: a candidate's .sisf/factory.yaml is a protected path.
+func declaredUnitInputs(m *manifest.Manifest) map[string][]string {
+	declared := make(map[string][]string, len(m.Release.UnitInputs))
+	for unit, patterns := range m.Release.UnitInputs {
+		declared[string(unit)] = slices.Clone(patterns)
+	}
+	return declared
 }

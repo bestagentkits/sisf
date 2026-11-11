@@ -10,6 +10,7 @@ import (
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
+	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/state"
@@ -36,7 +37,10 @@ type CandidatePRs struct {
 	// Policy is the policy in force; a candidate is merged only while it
 	// is the one the run was pinned to.
 	Policy PolicyRefs
-	Clock  core.Clock
+	// UnitInputs are the paths each unit consumes, as the release judged
+	// the candidate by; a merge applies the same rule again.
+	UnitInputs release.UnitInputs
+	Clock      core.Clock
 
 	selfMu sync.Mutex
 	self   github.User // the factory's own account, as the install names it or learned once

@@ -80,6 +80,12 @@ func (f *Factory) startLifecycle(client *github.RESTClient) {
 	}
 	merger, err := github.NewMerger(client)
 	must(f.t, err)
+	declared := map[string][]string{}
+	for unit, patterns := range m.Release.UnitInputs {
+		declared[string(unit)] = patterns
+	}
+	inputs, err := release.NewUnitInputs(declared)
+	must(f.t, err)
 	f.Stages, err = stages.New(stages.Config{
 		FactoryID: m.FactoryID, Repo: repo, State: f.ControlStore, GitHub: client, Judge: judge, Merger: merger,
 		QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
@@ -89,8 +95,8 @@ func (f *Factory) startLifecycle(client *github.RESTClient) {
 		Budget: budget.NewGate(budget.Config{Clock: f.Clock}),
 		Release: release.Config{
 			Backend: f.Deploy, LKG: f.Trust.LKG, Freeze: f.Freeze,
-			SelfPublishable: unitNames(m.Release.Units),
-			Monitor:         release.MonitorConfig{Window: ReleaseWindow, MinSamples: minSamples},
+			SelfPublishable: unitNames(m.Release.Units), UnitInputs: inputs,
+			Monitor: release.MonitorConfig{Window: ReleaseWindow, MinSamples: minSamples},
 		},
 	})
 	must(f.t, err)
