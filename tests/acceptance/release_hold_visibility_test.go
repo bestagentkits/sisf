@@ -271,3 +271,38 @@ func TestAHeldReleaseResumedAfterItsReceiptExpiredBlocksItsIssue(t *testing.T) {
 		t.Fatalf("the second retry moved the issue: %+v", got)
 	}
 }
+
+// A held release whose record cannot be read is not retried as if nothing
+// were held: the Owner's retry reports the record as tampered with and
+// moves nothing.
+func TestTheRetryOfAReleaseWhoseHoldCannotBeReadSaysSo(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := harness.New(t, harness.Options{})
+	f.Quiet()
+	number := f.OpenIssue("maintainer", "MEMBER", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
+	f.ScriptPatch(number, 0, greetingDiff)
+	f.Cycle(4)
+	record := f.Record(number)
+	if record.State != core.StateReleaseCandidate {
+		t.Fatalf("the release is not held: %+v", record)
+	}
+	key := handoff.ReleaseHoldKey(record.RunID, record.Attempt)
+	if err := f.ControlStore.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		entry, err := tx.GetKV(ctx, handoff.BuildNamespace, key)
+		if err != nil {
+			return err
+		}
+		entry.Value = []byte(`{"run_id":"run-elsewhere"}`)
+		_, err = tx.PutKV(ctx, entry)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Control.Retry(ctx, f.Issue(number), ownerActor(f)); !core.HasCode(err, core.CodeTampered) {
+		t.Fatalf("the retry of a release whose hold cannot be read: %v", err)
+	}
+	if got := f.Record(number); got.State != record.State || got.Version != record.Version {
+		t.Fatalf("the retry moved the issue: %+v", got)
+	}
+}

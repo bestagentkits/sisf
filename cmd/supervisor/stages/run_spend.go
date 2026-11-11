@@ -3,8 +3,6 @@ package stages
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"strings"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/budget"
@@ -46,39 +44,6 @@ func judgeSpend(ctx context.Context, kv state.KV, run core.RunID) (dispatcher.Ru
 		return dispatcher.RunSpend{}, nil
 	}
 	return spend, err
-}
-
-// closeDuePrefix keys, in Namespace, the runs whose reservation is still to
-// be closed: QA passed or held them, and the close has not succeeded yet.
-const closeDuePrefix = "close-due/"
-
-// putCloseDue records, with the verdict that ends a run's coding, that its
-// reservation is to be closed; the QA stage tries until it succeeds.
-func putCloseDue(ctx context.Context, tx state.Tx, run core.RunID) error {
-	return put(ctx, tx, closeDuePrefix+string(run), string(run))
-}
-
-// closeDueRuns closes the reservation of every run whose close is due, the
-// ones a verdict of this pass recorded and those whose close failed before.
-// A run is forgotten in the transaction that closes it; one that fails is
-// tried again on the next pass.
-func (s *QAStage) closeDueRuns(ctx context.Context) []error {
-	var due []state.KVEntry
-	if err := s.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
-		var err error
-		due, err = tx.ListKV(ctx, Namespace, closeDuePrefix, 0)
-		return err
-	}); err != nil {
-		return []error{fmt.Errorf("list the runs whose reservation is due to close: %w", err)}
-	}
-	var failed []error
-	for _, entry := range due {
-		run := core.RunID(strings.TrimPrefix(entry.Key, closeDuePrefix))
-		if err := s.closeRun(ctx, run, entry.Version); err != nil {
-			failed = append(failed, fmt.Errorf("%s: close the run's reservation: %w", run, err))
-		}
-	}
-	return failed
 }
 
 // closeRun closes the reservation of a run that QA passed or held: either
