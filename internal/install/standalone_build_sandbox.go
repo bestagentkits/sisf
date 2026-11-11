@@ -34,10 +34,10 @@ type BuildSandbox struct {
 	Network string
 	// EgressProxy is the egress proxy's URL on the sandbox network.
 	EgressProxy string
-	// RunnerImage is the image candidate builds run in, as name@sha256:...:
-	// the docker backend runs only an image pinned by its repository
-	// digest, so a locally built image is first pushed to a registry, such
-	// as one on loopback.
+	// RunnerImage is the image candidate builds run in, pinned by content:
+	// name@sha256:<digest>, its repository digest, or sha256:<64 hex>, the
+	// full ID of an image built on this host, which needs no registry. A
+	// tag or a short ID is refused (see runnerImagePattern).
 	RunnerImage string
 }
 
