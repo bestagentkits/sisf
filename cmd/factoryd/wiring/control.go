@@ -123,6 +123,10 @@ type Control struct {
 	// access watches the operator token's write access on an install that
 	// acts with it; nil on one with a GitHub App installation.
 	access *operatorAccess
+	// parkingDeferred is the earliest deadline of the unanswered issues
+	// whose parking waits, and parkingDeferredWhy why; zero when none waits.
+	parkingDeferred    time.Time
+	parkingDeferredWhy string
 }
 
 // retryAt is when a failed delivery is tried again, and how often it failed.

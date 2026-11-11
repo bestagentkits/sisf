@@ -827,6 +827,11 @@ paths:
                           last_poll_at:
                             format: date-time
                             type: string
+                          parking_deferred_reason:
+                            type: string
+                          parking_deferred_since:
+                            format: date-time
+                            type: string
                           position:
                             format: date-time
                             type: string

@@ -41,6 +41,11 @@ type reconcileState struct {
 	// Skipped are changes given up after maxReconcileAttempts polls, the
 	// newest maxSkippedShown of them, oldest first.
 	Skipped []reconcileFailure `json:"skipped,omitempty"`
+	// ParkingDeferredSince is the earliest deadline of the unanswered
+	// issues whose parking waits until every answer is known to be taken
+	// in, and ParkingDeferredReason why; zero when none waits.
+	ParkingDeferredSince  time.Time `json:"parking_deferred_since,omitzero"`
+	ParkingDeferredReason string    `json:"parking_deferred_reason,omitempty"`
 }
 
 // reconcileFailure is one change of an issue that could not be stored.
@@ -130,6 +135,24 @@ func (r *reconciler) saveState(ctx context.Context, st reconcileState) error {
 	})
 }
 
+// recordParkingDeferred stores the deferral of parking (see
+// Control.noteParkingDeferred) when the stored state differs, and keeps it
+// in the state the reconciler holds, which its next save writes whole.
+func (r *reconciler) recordParkingDeferred(ctx context.Context, since time.Time, why string) error {
+	st, err := r.loadState(ctx)
+	if err != nil {
+		return err
+	}
+	if !st.ParkingDeferredSince.Equal(since) || st.ParkingDeferredReason != why {
+		st.ParkingDeferredSince, st.ParkingDeferredReason = since, why
+		if err := r.saveState(ctx, st); err != nil {
+			return err
+		}
+	}
+	r.state.ParkingDeferredSince, r.state.ParkingDeferredReason = since, why
+	return nil
+}
+
 // key names the position of the factory's one repository.
 func (r *reconciler) key() string { return "github/" + r.repo.Owner + "/" + r.repo.Name }
 
@@ -146,6 +169,7 @@ func (c *Control) GitHubSync(ctx context.Context) (runactions.GitHubSync, error)
 		}
 		out.Position, out.LastPollAt, out.Backlog, out.LastError = st.Since, st.LastPollAt, st.Backlog, st.LastError
 		out.Retrying, out.Skipped = syncIssues(st.Retrying), syncIssues(st.Skipped)
+		out.ParkingDeferredSince, out.ParkingDeferredReason = st.ParkingDeferredSince, st.ParkingDeferredReason
 	}
 	if c.access != nil {
 		c.access.status(&out)

@@ -57,6 +57,12 @@ type GitHubSync struct {
 	// could not reach GitHub.
 	TokenAccessDetail string    `json:"token_access_detail,omitempty"`
 	TokenCheckedAt    time.Time `json:"token_checked_at,omitzero"`
+	// ParkingDeferredSince is when the earliest unanswered issue became
+	// due to be parked, while its parking waits until every answer given
+	// on GitHub is known to be taken in; ParkingDeferredReason says why it
+	// waits. Zero and "" when no parking waits.
+	ParkingDeferredSince  time.Time `json:"parking_deferred_since,omitzero"`
+	ParkingDeferredReason string    `json:"parking_deferred_reason,omitempty"`
 }
 
 // SyncIssue is one issue change reconciliation could not store.

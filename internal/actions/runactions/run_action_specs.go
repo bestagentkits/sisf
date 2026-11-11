@@ -40,7 +40,7 @@ func Specs() []core.ActionSpec {
 "retrying":{"type":"array","items":{"type":"object","properties":{"issue":{"type":"integer"},"updated_at":{"type":"string","format":"date-time"},"attempts":{"type":"integer"},"reason":{"type":"string"}}}},
 "skipped":{"type":"array","description":"Issue changes given up after repeated failures.","items":{"type":"object","properties":{"issue":{"type":"integer"},"updated_at":{"type":"string","format":"date-time"},"attempts":{"type":"integer"},"reason":{"type":"string"}}}},
 "token_access":{"type":"string","enum":["confirmed","revoked"]},"token_access_detail":{"type":"string"},
-"token_checked_at":{"type":"string","format":"date-time"}}}}}`)},
+"token_checked_at":{"type":"string","format":"date-time"},"parking_deferred_since":{"type":"string","format":"date-time"},"parking_deferred_reason":{"type":"string"}}}}}`)},
 		{Name: ActionIssuesList, Summary: "List tracked issues with their lifecycle record, most recently changed first.",
 			Sensitivity: core.SensitivityRead, Scopes: []string{"issues:read"}, Roles: readers,
 			Input: actions.Schema(`{"type":"object","additionalProperties":false,"properties":{
