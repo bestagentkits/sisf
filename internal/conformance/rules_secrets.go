@@ -38,6 +38,9 @@ type setting struct {
 	// environment is true below a key that lists environment variables,
 	// where text may be an assignment such as NAME=value.
 	environment bool
+	// toggle is true below a key that turns the use of a secret on or off,
+	// such as use_credentials, where text must be a yes or a no.
+	toggle bool
 }
 
 // checkInlineSecrets walks one free-form value.
@@ -53,6 +56,7 @@ func (c *checker) checkInlineSecrets(path string, value any, above setting) {
 			c.checkInlineSecrets(path+"."+key, v[key], setting{
 				secret:      above.secret || namesSecret(key),
 				environment: above.environment || namesEnvironment(key),
+				toggle:      above.toggle || namesSecretSwitch(key),
 			})
 		}
 	case map[any]any:
@@ -80,6 +84,9 @@ func (c *checker) checkInlineSecrets(path string, value any, above setting) {
 		case above.secret:
 			c.add(RuleSecretInline, path, fix,
 				"%s is named like a secret but does not hold %s; a secret is never written in the manifest (the value is not shown)", path, manifest.SecretRefForm)
+		case above.toggle && !isBooleanWord(v):
+			c.add(RuleSecretInline, path, "set "+path+" to true or false, and put the secret it turns on, as "+manifest.SecretRefForm+", in a setting of its own",
+				"%s turns the use of a secret on or off, yet holds text other than a yes or a no, which may be the secret itself (the value is not shown)", path)
 		case shape != "":
 			c.add(RuleSecretInline, path, fix,
 				"%s holds %s; a secret is never written in the manifest, whatever the setting is called (the value is not shown)", path, shape)

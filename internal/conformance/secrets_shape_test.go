@@ -118,3 +118,42 @@ func TestAKeyThatLocatesASecretIsStillJudgedByTheShapeOfItsValue(t *testing.T) {
 	config := map[string]any{"credentials_file": "-----BEGIN PRIVATE KEY-----\nEXAMPLEONLY"}
 	wantOnly(t, Check(inCoderConfig(t, config)), RuleSecretInline, "adapters.coder.config.credentials_file")
 }
+
+// A key that says how a secret is found, checked or used describes it and
+// holds none: an endpoint, a helper, a provider, a mode, a policy, a length,
+// or the name of the variable that holds it. A switch such as
+// use_credentials holds a yes or a no.
+func TestSettingsThatDescribeASecretAreAccepted(t *testing.T) {
+	t.Parallel()
+	allowed := map[string]any{
+		"authorization_endpoint": "https://idp.example.com/oauth2/authorize",
+		"token_url":              "https://idp.example.com/oauth2/token",
+		"jwks_uri":               "https://idp.example.com/.well-known/jwks.json",
+		"credential_helper":      "osxkeychain",
+		"secret_provider":        "vault",
+		"credentials_mode":       "include",
+		"use_credentials":        "true",
+		"require_password":       "yes",
+		"password_policy":        "strong",
+		"password_min_length":    "12",
+		"password_env":           "DB_PASSWORD",
+		"dsn_env":                "SISF_STATE_DSN",
+	}
+	for key, value := range allowed {
+		if report := Check(inCoderConfig(t, map[string]any{key: value})); !report.Conformant() {
+			t.Errorf("%s describes a secret and holds none, got %+v", key, report.Findings)
+		}
+	}
+
+	// Its value is still judged by its shape, and a switch holds only a
+	// yes or a no.
+	refused := map[string]any{
+		"authorization_endpoint": "https://idp.example.com/authorize?client_secret=opaque-example-value",
+		"credential_helper":      "--password=opaque-example-value",
+		"use_credentials":        "opaque-example-value",
+		"enable_api_key":         "opaque-example-value",
+	}
+	for key, value := range refused {
+		wantOnly(t, Check(inCoderConfig(t, map[string]any{key: value})), RuleSecretInline, "adapters.coder.config."+key)
+	}
+}
