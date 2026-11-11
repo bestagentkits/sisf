@@ -78,7 +78,7 @@ func (in *Installer) standaloneUnits(m *manifest.Manifest) ([]unit, []io.Closer,
 			// The edge forwards a reporter's address from loopback.
 			"SISF_TRUSTED_PROXIES=127.0.0.1/32")}},
 		{"dispatcher", Cmd{Name: bin("factoryd"), Args: in.standaloneDispatcherArgs(choice, sim), Env: join(common, agent,
-			"SISF_LISTEN="+addr(PortDispatcher))}},
+			"SISF_LISTEN="+addr(PortDispatcher), operatorAccountEnv(choice.Agents.AgentHome, os.Getenv))}},
 		{"edge", Cmd{Name: bin("sisf-edge"), Args: []string{
 			"--listen=" + addr(PortEdge), "--upstream=http://" + addr(PortApp), "--revision=" + string(m.Units[manifest.UnitApp].Digest),
 			"--route=/webhooks/github=http://" + addr(PortControl), "--route=/report=http://" + addr(PortControl),
@@ -167,6 +167,18 @@ func (in *Installer) standaloneDispatcherArgs(c LifecycleChoice, sim bool) []str
 		args = append(args, "--run-estimate-micros="+itoa64(c.RunEstimateMicros))
 	}
 	return args
+}
+
+// operatorAccountEnv is the operator's USER for a dispatcher whose coding
+// agent runs with the operator's own home. The units start with a minimal
+// environment, and an agent that keeps its login in the operating system's
+// keychain finds it only under that account name; the dispatcher hands the
+// name on to such an agent and to no other.
+func operatorAccountEnv(agentHome string, getenv func(string) string) []string {
+	if user := getenv("USER"); agentHome != "" && user != "" {
+		return []string{"USER=" + user}
+	}
+	return nil
 }
 
 // join concatenates env lists and extra assignments.
