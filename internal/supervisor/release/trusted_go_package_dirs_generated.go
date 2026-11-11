@@ -3,8 +3,8 @@
 package release
 
 // trustedGoPackageDirs are the directories of the Go packages the trusted
-// binaries link (./cmd/supervisor), on every platform they
-// are built for. See package trustedclosure.
+// binaries link (./cmd/supervisor), on every platform they are built for.
+// See package trustedclosure.
 var trustedGoPackageDirs = []string{
 	"adapters/agent/claude/",
 	"adapters/agent/codex/",

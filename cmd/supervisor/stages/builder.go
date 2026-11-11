@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
+	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 )
@@ -200,6 +201,8 @@ func (b *CandidateBuilder) commitFault(ctx context.Context, base core.CommitSHA,
 	return classified
 }
 
+//go:generate go run ../../../internal/supervisor/trustedclosure/gentrustedpackages -root ../../.. -list control -out control_unit_package_dirs_generated.go -package stages
+
 // UnitRouter decides which runtime unit a change is a build of, by the
 // longest path prefix that covers a changed path.
 type UnitRouter struct {
@@ -209,10 +212,19 @@ type UnitRouter struct {
 	Default string
 }
 
-// DefaultUnitRouter routes the dashboard and the control plane to the
-// control unit and everything else to the application.
+// DefaultUnitRouter routes code that only the control unit links (the
+// dashboard, the control plane and what they alone use) to the control
+// unit, and everything else to the application. A protected directory is
+// not routed: the pipeline refuses a change to it whatever its unit.
 func DefaultUnitRouter() UnitRouter {
-	return UnitRouter{Prefixes: map[string]string{"ui/": "control", "internal/control/": "control", "cmd/factoryd/": "control"}, Default: "app"}
+	protected := release.DefaultProtectedPaths()
+	prefixes := map[string]string{}
+	for _, dir := range controlUnitPackageDirs {
+		if !slices.ContainsFunc(protected, func(p string) bool { return strings.HasSuffix(p, "/") && strings.HasPrefix(dir, p) }) {
+			prefixes[dir] = "control"
+		}
+	}
+	return UnitRouter{Prefixes: prefixes, Default: "app"}
 }
 
 // UnitOf returns the one unit a change set is a build of. A change set
