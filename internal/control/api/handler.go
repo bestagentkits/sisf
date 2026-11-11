@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/auth"
+	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -80,6 +81,9 @@ type Config struct {
 	// control.ClientAddress builds one that names an IPv6 client by its /64.
 	// Nil means the remote IP address.
 	ClientKey func(*http.Request) string
+	// deviceStarts replaces the start limits of login requests, for a test
+	// of the table behind them; nil means report.NewStartLimiter.
+	deviceStarts *report.Limiter
 }
 
 type handler struct {
@@ -121,6 +125,9 @@ func newHandler(cfg Config, pick func(n int) (int, error)) (http.Handler, error)
 	}
 	h := &handler{cfg: cfg, devices: newDeviceStore(cfg.Clock, cfg.DeviceCodeTTL, cfg.PollInterval)}
 	h.devices.pick = pick
+	if cfg.deviceStarts != nil {
+		h.devices.starts = cfg.deviceStarts
+	}
 	h.cfg.ExternalURL = strings.TrimRight(cfg.ExternalURL, "/")
 	for _, spec := range cfg.Actions.Specs() {
 		for _, scope := range spec.Scopes {

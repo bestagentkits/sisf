@@ -45,7 +45,12 @@ func (h *handler) deviceStart(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, core.NewError(core.CodeNotSupported, "the factory has no action a token could be scoped to"))
 		return
 	}
-	deviceCode, g, err := h.devices.start(in.Name, scopes, h.clientKey(r))
+	source := h.clientKey(r)
+	if err := h.devices.admitStart(source); err != nil {
+		h.fail(w, err)
+		return
+	}
+	deviceCode, g, err := h.devices.start(in.Name, scopes, source)
 	if err != nil {
 		h.fail(w, err)
 		return

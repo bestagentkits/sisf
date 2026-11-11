@@ -14,6 +14,8 @@ import (
 // clients on it so one process can play many addresses.
 const sourceHeader = "X-Test-Source"
 
+// The tests here are about the table of open login requests behind the
+// start limits, so they lift the limits (api.LiftStartLimits).
 func keyedBySourceHeader(cfg *api.Config) {
 	cfg.ClientKey = func(r *http.Request) string { return r.Header.Get(sourceHeader) }
 }
@@ -42,7 +44,7 @@ func TestOpenLoginRequestsDoNotKeepAPersonFromStartingOne(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			e := newEnv(t, sampleRegistry, keyedBySourceHeader)
+			e := newEnv(t, sampleRegistry, keyedBySourceHeader, api.LiftStartLimits)
 			attacker := e.browser(t)
 			for s := range flood.sources {
 				for range flood.each {
@@ -72,7 +74,7 @@ func TestOpenLoginRequestsDoNotKeepAPersonFromStartingOne(t *testing.T) {
 // and a request already approved is never dropped before it is collected.
 func TestAFloodDropsItsOwnLoginRequestsBeforeAPersons(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, sampleRegistry, keyedBySourceHeader)
+	e := newEnv(t, sampleRegistry, keyedBySourceHeader, api.LiftStartLimits)
 	cli, collector := e.browser(t), e.browser(t)
 	_, open := startFrom(t, cli, "192.0.2.10")
 	_, approved := startFrom(t, collector, "192.0.2.11")
@@ -105,7 +107,7 @@ func TestAFloodDropsItsOwnLoginRequestsBeforeAPersons(t *testing.T) {
 func TestAFloodOfOneLoginRequestPerAddressIsAdmittedAndMissesAPersonsRequest(t *testing.T) {
 	t.Parallel()
 	rng := rand.New(rand.NewPCG(7, 7))
-	e := newEnvWithEvictionPick(t, sampleRegistry, func(n int) (int, error) { return rng.IntN(n), nil }, keyedBySourceHeader)
+	e := newEnvWithEvictionPick(t, sampleRegistry, func(n int) (int, error) { return rng.IntN(n), nil }, keyedBySourceHeader, api.LiftStartLimits)
 	cli := e.browser(t)
 	_, open := startFrom(t, cli, "192.0.2.10")
 	e.clock.Advance(time.Second) // the person's request is the oldest open one
@@ -134,7 +136,7 @@ func TestAFloodOfOneLoginRequestPerAddressIsAdmittedAndMissesAPersonsRequest(t *
 // started as many as there are slots.
 func TestALoginFloodSharingThePersonsAddressTakesEverySlotToDropTheirRequest(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, sampleRegistry, keyedBySourceHeader)
+	e := newEnv(t, sampleRegistry, keyedBySourceHeader, api.LiftStartLimits)
 	cli := e.browser(t)
 	_, open := startFrom(t, cli, "192.0.2.10")
 	attacker := e.browser(t)

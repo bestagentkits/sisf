@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/auth"
+	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -64,10 +65,29 @@ type deviceStore struct {
 	// pick chooses which of n waiting requests to drop when every source
 	// holds one; nil means randomIndex.
 	pick func(n int) (int, error)
+	// starts limits how often login requests are started (admitStart).
+	starts *report.Limiter
 }
 
 func newDeviceStore(clock core.Clock, ttl, interval time.Duration) *deviceStore {
-	return &deviceStore{clock: clock, ttl: ttl, interval: interval, grants: map[string]*grant{}, byUser: map[string]string{}}
+	return &deviceStore{clock: clock, ttl: ttl, interval: interval, grants: map[string]*grant{}, byUser: map[string]string{},
+		starts: report.NewStartLimiter(maxOpenGrants)}
+}
+
+// admitStart takes a login request from source off the start limits
+// (report.NewStartLimiter), before start: StartsPerSource a minute from
+// one source and, from all together, the rate at which a flood rotating
+// through new sources drops a person's request approved within a minute
+// with probability at most 15%. A start beyond them is refused with
+// RATE_LIMITED and the seconds until it may be tried again.
+func (s *deviceStore) admitStart(source string) error {
+	ok, wait := s.starts.Take(source, s.clock.Now())
+	if ok {
+		return nil
+	}
+	err := core.NewError(core.CodeRateLimited, "too many login requests are being started; try again shortly")
+	err.Details = map[string]string{"retry_after_seconds": report.RetryAfter(wait)}
+	return err
 }
 
 func digestOf(secret string) string {
@@ -146,7 +166,7 @@ func (s *deviceStore) start(name string, scopes []string, source string) (device
 	defer s.mu.Unlock()
 	now := s.clock.Now()
 	s.purgeLocked(now)
-	if !s.makeRoomLocked() {
+	if !s.makeRoomLocked(source) {
 		return "", g, core.NewError(core.CodeRateLimited, "too many login requests are open; try again shortly")
 	}
 	var userCode string
@@ -174,10 +194,13 @@ func (s *deviceStore) start(name string, scopes []string, source string) (device
 func (g *grant) waiting() bool { return !g.claimed && !g.approved }
 
 // makeRoomLocked drops waiting requests until fewer than maxOpenGrants are
-// open, the oldest of the source holding the most while one holds more
-// than one and a random one otherwise, and reports whether there is room.
-func (s *deviceStore) makeRoomLocked() bool {
-	perSource := map[string]int{}
+// open for a request from source, the oldest of the source holding the
+// most while one holds more than one and a random one otherwise, and
+// reports whether there is room. The newcomer's source is counted as if
+// its new request were in the table already, so a source that holds a
+// request loses its own oldest before any other source's is touched.
+func (s *deviceStore) makeRoomLocked(source string) bool {
+	perSource := map[string]int{source: 1}
 	for _, g := range s.grants {
 		if g.waiting() {
 			perSource[g.source]++
