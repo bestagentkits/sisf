@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/bestagentkits/sisf/pkg/agent/redact"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -19,7 +20,22 @@ import (
 var (
 	unknownKeyProblem = regexp.MustCompile(`^(line \d+: )field (.+) not found in type \S+$`)
 	wrongKindProblem  = regexp.MustCompile("^(line \\d+: )cannot unmarshal !!(\\w+)(?: `(.*)`)? into .+$")
+	// urlWithUserInfo is a URL whose authority carries a user part, where a
+	// password or a token is written, as in a connection string.
+	urlWithUserInfo = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s/?#@]*@`)
 )
+
+// truncatedMark ends a value the decoder cut short in its message.
+const truncatedMark = "..."
+
+// quotable reports whether a value from the file may be quoted in a problem.
+// A value pasted in the wrong place may be a credential, so a value with the
+// shape of one, a token or a URL with a user part, is never quoted, and
+// neither is a value the decoder cut short: its first characters cannot be
+// judged and may be the start of a secret.
+func quotable(value string) bool {
+	return !strings.HasSuffix(value, truncatedMark) && redact.Text(value) == value && !urlWithUserInfo.MatchString(value)
+}
 
 // yamlKinds names each kind of YAML value the way its author thinks of it.
 var yamlKinds = map[string]string{
@@ -55,6 +71,9 @@ func decodeProblems(data []byte, err error) string {
 // passed through unchanged rather than guessed at.
 func plainProblem(problem string) string {
 	if m := unknownKeyProblem.FindStringSubmatch(problem); m != nil {
+		if !quotable(m[2]) {
+			return m[1] + "unknown key (its name is withheld: it has the shape of a secret)"
+		}
 		return m[1] + `unknown key "` + m[2] + `"`
 	}
 	if m := wrongKindProblem.FindStringSubmatch(problem); m != nil {
@@ -62,7 +81,7 @@ func plainProblem(problem string) string {
 		if !known {
 			kind = "this value"
 		}
-		if m[3] != "" {
+		if m[3] != "" && quotable(m[3]) {
 			kind += " (" + m[3] + ")"
 		}
 		return m[1] + kind + " does not fit here"
@@ -91,6 +110,9 @@ func textProblem(data []byte) string {
 	var typed *core.Error
 	if errors.As(err, &typed) {
 		reason = typed.Message
+	}
+	if !quotable(node.Value) {
+		return fmt.Sprintf("line %d: %s", node.Line, reason)
 	}
 	return fmt.Sprintf("line %d: %q: %s", node.Line, node.Value, reason)
 }
