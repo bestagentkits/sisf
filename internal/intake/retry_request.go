@@ -81,7 +81,8 @@ func (s *Service) requestRetryApproval(ctx context.Context, issue core.IssueRef,
 	verdict := Classify(draftOf(sow), in.issue.AuthorAssociation, in.policy.Catalog)
 	if !verdict.NeedsApproval {
 		return approvals.Request{}, core.NewError(core.CodeConflict, "the scope now lies inside the delegated scope; its retry needs no approval",
-			core.NextAction{Action: "issues.retry", Description: "retry the issue"})
+			core.NextAction{Action: "runs.explain", Params: map[string]string{"issue": issue.String()},
+				Description: "see where the issue stands; the Owner retries it on the factory's host with `factoryd issue retry --issue " + issue.String() + "`"})
 	}
 	// The block is told apart by the record version it was written at, so
 	// a later block of the same issue asks anew.

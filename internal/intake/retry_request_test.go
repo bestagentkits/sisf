@@ -2,6 +2,8 @@ package intake_test
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,6 +103,18 @@ func TestAskingAgainIsOnlyForIssuesBlockedForWantOfAnApproval(t *testing.T) {
 	g.github.edit(issueRef, func(issue *github.Issue) { issue.AuthorAssociation = github.AssociationMember })
 	_, err = g.service.RequestRetryApproval(ctx, issueRef)
 	wantCode(t, err, core.CodeConflict, "a scope inside the delegation")
+	// The refusal points at what exists: no action retries an issue, the
+	// Owner does it on the factory's host, and runs.explain says where the
+	// issue stands.
+	var refusal *core.Error
+	if !errors.As(err, &refusal) || len(refusal.NextActions) != 1 {
+		t.Fatalf("the refusal names %d next steps: %v", len(refusal.NextActions), err)
+	}
+	next := refusal.NextActions[0]
+	if next.Action != "runs.explain" || next.Params["issue"] != issueRef.String() ||
+		!strings.Contains(next.Description, "factoryd issue retry --issue "+issueRef.String()) {
+		t.Fatalf("the refusal points to %+v", next)
+	}
 }
 
 func TestTheApprovedScopeReadsTheSameThroughTheStore(t *testing.T) {
