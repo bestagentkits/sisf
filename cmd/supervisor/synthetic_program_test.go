@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/deploy"
@@ -78,15 +80,30 @@ func TestTheSyntheticProgramJudgesTheRevisionWhereItsPreviewServes(t *testing.T)
 	}
 }
 
-// The suite is wired only from an absolute program; without one a
-// low-traffic release keeps holding, as before.
-func TestTheSyntheticProgramMustBeAnAbsolutePath(t *testing.T) {
+// The suite is wired only from an absolute program that exists and may be
+// executed; without one a low-traffic release keeps holding, as before,
+// and a named program that is missing or cannot be run fails the start
+// with a message that names it.
+func TestTheSyntheticProgramMustBeAnExecutableAtAnAbsolutePath(t *testing.T) {
 	t.Parallel()
+	program, _ := syntheticScript(t, "0")
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "not-executable")
+	if err := os.WriteFile(plain, []byte("#!/bin/sh\nexit 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
-		arg  string
-		want bool
-		bad  bool
-	}{{"", false, false}, {"/opt/sisf/bin/hello-app-synthetic", true, false}, {"bin/hello-app-synthetic", false, true}} {
+		arg     string
+		want    bool
+		failure string
+	}{
+		{"", false, ""},
+		{program, true, ""},
+		{"bin/hello-app-synthetic", false, "absolute path"},
+		{filepath.Join(dir, "missing"), false, "cannot be found"},
+		{plain, false, "is not executable"},
+		{dir, false, "is not a regular file"},
+	} {
 		var l lifecycleFlags
 		fs := flag.NewFlagSet("t", flag.ContinueOnError)
 		l.register(fs)
@@ -94,8 +111,48 @@ func TestTheSyntheticProgramMustBeAnAbsolutePath(t *testing.T) {
 			t.Fatal(err)
 		}
 		suite, err := l.syntheticSuite(previewBackend{}, slog.Default())
-		if (err != nil) != tc.bad || (suite != nil) != tc.want {
+		if (suite != nil) != tc.want || (err != nil) != (tc.failure != "") ||
+			(err != nil && (!strings.Contains(err.Error(), tc.failure) || !strings.Contains(err.Error(), "--synthetic-program"))) {
 			t.Errorf("%q: suite %v, error %v", tc.arg, suite, err)
 		}
+	}
+}
+
+// A run that judged nothing is an error, never a failed run: a program
+// that cannot be started, one removed after the start, and a run the
+// caller stopped. Only a run that outlasts its own time is a failed run.
+func TestASyntheticRunThatJudgedNothingIsAnError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	rev := deploy.Revision{Unit: "app", Digest: core.ReleaseDigest("sha256:" + strings.Repeat("b", 64)), ID: "green"}
+	backend := previewBackend{url: "http://127.0.0.1:1"}
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	missing := &programSuite{program: filepath.Join(t.TempDir(), "gone"), backend: backend, log: quiet}
+	if err := missing.Ready(ctx); err == nil {
+		t.Error("a missing program is ready")
+	}
+	if result, err := missing.Run(ctx, rev); err == nil || result.Passed || result.Detail != "" {
+		t.Errorf("a program that cannot be started: %+v, %v", result, err)
+	}
+
+	sleeper := filepath.Join(t.TempDir(), "suite")
+	if err := os.WriteFile(sleeper, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	slow := &programSuite{program: sleeper, backend: backend, log: quiet}
+	if err := slow.Ready(ctx); err != nil {
+		t.Fatalf("an executable program is not ready: %v", err)
+	}
+	stopped, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer cancel()
+	if result, err := slow.Run(stopped, rev); err == nil || result.Passed || result.Detail != "" {
+		t.Errorf("a run the caller stopped: %+v, %v", result, err)
+	}
+
+	slow.timeout = 200 * time.Millisecond
+	result, err := slow.Run(ctx, rev)
+	if err != nil || result.Passed || !strings.Contains(result.Detail, "did not finish in time") {
+		t.Errorf("a run that outlasted its own time: %+v, %v", result, err)
 	}
 }
