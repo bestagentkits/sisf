@@ -59,21 +59,27 @@ Then, from the checkout, `sisf up --dir "$HOME/.sisf/dev"`, and in another termi
 
 A real install serves a repository through a GitHub account the factory acts as, signs people in at a real provider, and is reached over HTTPS. A real GitHub App and real Google sign-in have been tested only against fakes so far ([README status](../../README.md#status)); verify each step on your install.
 
-### 1. GitHub: the account and token the factory acts as
+### 1. GitHub: an App and the token the factory acts as
 
-The factory reads one GitHub token at `init`, from the environment variable `--github-token-env` names, stores it owner-only in `<dir>/secrets/control/github-token` and in the control and supervisor env files, and sends it as a bearer token. It never mints, refreshes or rotates the token (no installation-token exchange exists in `pkg/github` or `cmd/factoryd/wiring`). The token therefore has to stay valid for as long as the factory runs; a GitHub App installation token, which GitHub expires after an hour, does not.
+The factory is built to act as a GitHub App installed on the repository (`cmd/factoryd/wiring/github_settings.go`):
 
-What the token must allow, as `sisf doctor` and the supervisor check it (`internal/install/doctor_live.go`):
+- it accepts only webhook deliveries that name the installation in `extensions.github_installation_id` (`pkg/github/webhook_receiver.go`), so a plain repository webhook, whose deliveries name no installation, is refused;
+- it recognises its own pull requests and comments by the author login in `extensions.github_app_login`, the App's bot login written as `name[bot]`.
 
-- read and write the repository: issues (comments, labels, closing), contents (the supervisor pushes candidate branches `sisf/<factory>/<run>-<attempt>` and merges), pull requests (it opens and merges the candidate's pull request);
-- a classic token should not carry the `workflow` scope: `sisf doctor` warns `the token carries the workflow scope, so code pushed with it can change CI workflows`.
+Create the App with these repository permissions, which `sisf doctor` and the supervisor rely on (`internal/install/doctor_live.go`): Issues read and write (comments, labels, closing), Contents read and write (the supervisor pushes candidate branches `sisf/<factory>/<run>-<attempt>` and merges), Pull requests read and write (it opens and merges the candidate's pull request). Install it on the repository and note the installation id.
 
-### 2. GitHub: webhooks
+**The token is an open product question.** The factory reads one GitHub token at `init`, from the environment variable `--github-token-env` names, stores it owner-only in `<dir>/secrets/control/github-token` and in the control and supervisor env files (`internal/install/init_env.go`), and sends it as a bearer token. Nothing in this release mints, refreshes or rotates it: no code exchanges the App's key for installation tokens. An installation token of the App, which is what makes GitHub record the App as the author, expires after an hour; after that `sisf doctor` reports `the token was refused: it is wrong, expired or revoked` and GitHub calls fail. A token of another kind may live longer, but then GitHub records that token's account as the author, not the App's `name[bot]` login. Until the product decides this, a real install cannot run unattended for long; plan to replace the token (below) and verify each step on your install.
 
-GitHub delivers events to `/webhooks/github` on the control zone (`internal/control/routes.go`); the edge on 127.0.0.1:7460 routes the same path to control. Configure the webhook of the App (or repository) with:
+To replace the token: stop the factory, write the new token to `<dir>/secrets/control/github-token` and to the `SISF_GITHUB_TOKEN=` lines of `<dir>/secrets/control/runtime.env` and `<dir>/secrets/control/supervisor.env`, keeping the files owner-only, then `sisf up`.
 
-- URL: `<external URL>/webhooks/github`, through the reverse proxy below;
-- secret: the content of `<dir>/secrets/control/webhook-secret`, which `init` generates;
+A classic personal token should not carry the `workflow` scope: `sisf doctor` warns `the token carries the workflow scope, so code pushed with it can change CI workflows`.
+
+### 2. GitHub: the App's webhook
+
+GitHub delivers events to `/webhooks/github` on the control zone (`internal/control/routes.go`); the edge on 127.0.0.1:7460 routes the same path to control. Configure the App's webhook with:
+
+- URL: `<external URL>/webhooks/github`, through the reverse proxy of step 6;
+- secret: the content of `<dir>/secrets/control/webhook-secret`, which `init` generates (so create the install, step 4, before you finish this step);
 - events: Issues, Issue comments and Pull requests (`pkg/github/webhook_normalize.go`).
 
 A lost delivery is still picked up by reconciliation within one interval ([Reconciliation with GitHub](operations.md#reconciliation-with-github)).
@@ -123,7 +129,7 @@ Every port is bound to 127.0.0.1. Run a reverse proxy with TLS that forwards `<e
 3. Commit the foundation files to the repository and [put the first policy in force](policy-and-approvals.md#putting-the-first-policy-in-force).
 4. Sign in at the external URL as the Owner, and `sisf login --url https://factory.example.com` for the CLI.
 
-Undo: `sisf down -v --dir /srv/sisf/factory` stops it and removes its data; then delete the directory, which holds the secrets and `factory.yaml`.
+Undo: `sisf down -v --dir /srv/sisf/factory` while it runs stops it and removes its data (a stopped Standalone install answers `NOT_FOUND` instead); then delete the directory, which holds the secrets and `factory.yaml`.
 
 ## Running Standalone as a service
 
