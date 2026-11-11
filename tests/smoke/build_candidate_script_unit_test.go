@@ -5,15 +5,19 @@ package smoke
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
+	"github.com/bestagentkits/sisf/internal/supervisor/programstore"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/execution"
 )
@@ -28,9 +32,9 @@ func TestTheBuildScriptReportsTheSBOMAndProvenanceTheObservedBuildGateNeeds(t *t
 	dir := t.TempDir()
 	commit := sandboxCommit(t, filepath.Join(dir, "repo"), filepath.Join(dir, "mirror.git"))
 	script := filepath.Join(repoRoot(), "tests", "smoke", "sandbox", "build-candidate.sh")
-	images := stages.SandboxImages{Exec: scriptBuild{t: t, script: script, env: []string{
+	images := stages.SandboxImages{Exec: &scriptBuild{t: t, script: script, env: []string{
 		"SISF_SMOKE_MIRROR=" + filepath.Join(dir, "mirror.git"), "GOFLAGS=-mod=readonly"}, work: filepath.Join(dir, "work")},
-		Argv: []string{"build"}, Timeout: 5 * time.Minute}
+		Argv: []string{"build"}, Timeout: 5 * time.Minute, Programs: scriptStore(t, dir)}
 	built, err := images.BuildImage(context.Background(), stages.ImageRequest{Commit: core.CommitSHA(commit), Unit: "app", RunID: "run-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +47,82 @@ func TestTheBuildScriptReportsTheSBOMAndProvenanceTheObservedBuildGateNeeds(t *t
 			t.Errorf("the reference %q names no digest of a document the build wrote", ref)
 		}
 	}
+}
+
+// On a Standalone factory the script exports the unit's one program, built
+// for the operating system and architecture the supervisor names, and the
+// image digest it reports is the sha256 of that program: the supervisor
+// keeps exactly those bytes, and they run on the supervisor's host.
+func TestTheBuildScriptExportsTheProgramItsDigestNames(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	commit := sandboxCommit(t, filepath.Join(dir, "repo"), filepath.Join(dir, "mirror.git"))
+	store := scriptStore(t, dir)
+	build := &scriptBuild{t: t, script: filepath.Join(repoRoot(), "tests", "smoke", "sandbox", "build-candidate.sh"), env: []string{
+		"SISF_SMOKE_MIRROR=" + filepath.Join(dir, "mirror.git"), "GOFLAGS=-mod=readonly"}, work: filepath.Join(dir, "work")}
+	images := stages.SandboxImages{Exec: build, Argv: []string{"build"}, Timeout: 5 * time.Minute, Programs: store}
+	built, err := images.BuildImage(context.Background(), stages.ImageRequest{Commit: core.CommitSHA(commit), Unit: "app", RunID: "run-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !built.TestsPassed || built.Image != "smoke.local/sisf-sandbox@"+string(built.Digest) {
+		t.Fatalf("the build reported tests passed %t and image %q for %s", built.TestsPassed, built.Image, built.Digest)
+	}
+	program, err := store.Path(built.Digest)
+	if err != nil {
+		t.Fatalf("the store does not hold the program the digest names: %v", err)
+	}
+	raw, err := os.ReadFile(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum := sha256.Sum256(raw); "sha256:"+hex.EncodeToString(sum[:]) != string(built.Digest) {
+		t.Errorf("the image digest %s is not the sha256 of the exported program", built.Digest)
+	}
+	// Built for this host, it runs here.
+	out, err := exec.Command(program).CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "hello" {
+		t.Errorf("the exported program does not run on this host: %q, %v", out, err)
+	}
+	if got := build.reportEnv["SISF_REPORT_TARGET_OS"] + "/" + build.reportEnv["SISF_REPORT_TARGET_ARCH"]; got != runtime.GOOS+"/"+runtime.GOARCH {
+		t.Errorf("the report phase was told the target %s", got)
+	}
+}
+
+// A candidate with more than one program is refused where its code is
+// built: a unit is one program, and the script will not pick one.
+func TestTheBuildScriptRefusesACandidateWithTwoPrograms(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, "cmd", "other"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "cmd", "other", "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	commit := sandboxCommit(t, repo, filepath.Join(dir, "mirror.git"))
+	build := &scriptBuild{t: t, script: filepath.Join(repoRoot(), "tests", "smoke", "sandbox", "build-candidate.sh"), env: []string{
+		"SISF_SMOKE_MIRROR=" + filepath.Join(dir, "mirror.git"), "GOFLAGS=-mod=readonly"}, work: filepath.Join(dir, "work")}
+	images := stages.SandboxImages{Exec: build, Argv: []string{"build"}, Timeout: 5 * time.Minute}
+	_, err := images.BuildImage(context.Background(), stages.ImageRequest{Commit: core.CommitSHA(commit), Unit: "app", RunID: "run-1"})
+	if r, refused := stages.RefusalOf(err); !refused || r.Reason != stages.RefusalBuildFailed {
+		t.Fatalf("a candidate with two programs: %v, want its build refused", err)
+	}
+}
+
+// scriptStore is a program store on a new trust volume below dir.
+func scriptStore(t *testing.T, dir string) *programstore.Store {
+	t.Helper()
+	trust := filepath.Join(dir, "trust")
+	if err := os.Mkdir(trust, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := programstore.Open(trust)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
 }
 
 // sandboxCommit commits a small Go program with a test to a repository and
@@ -87,27 +167,35 @@ type scriptBuild struct {
 	script string
 	env    []string
 	work   string
+	// reportEnv is what the report phase was given.
+	reportEnv map[string]string
 }
 
-func (scriptBuild) Name() string { return "docker" }
+func (*scriptBuild) Name() string { return "docker" }
 
-func (scriptBuild) Capabilities(context.Context) (core.CapabilitySet, error) {
+func (*scriptBuild) Capabilities(context.Context) (core.CapabilitySet, error) {
 	return core.CapabilitySet{core.CapExecIsolation: core.SupportSupported, core.CapExecEgressEnforcement: core.SupportSupported}, nil
 }
 
-func (scriptBuild) CreateSandbox(context.Context, execution.SandboxSpec) (execution.SandboxInfo, error) {
+func (*scriptBuild) CreateSandbox(context.Context, execution.SandboxSpec) (execution.SandboxInfo, error) {
 	return execution.SandboxInfo{ID: "build-1", State: execution.SandboxRunning}, nil
 }
 
-func (b scriptBuild) Exec(ctx context.Context, _ execution.SandboxID, c execution.Command) (execution.ExecResult, error) {
+func (b *scriptBuild) Exec(ctx context.Context, _ execution.SandboxID, c execution.Command) (execution.ExecResult, error) {
 	cmd := exec.CommandContext(ctx, b.script)
 	cmd.Env = append(os.Environ(), b.env...)
 	cmd.Env = append(cmd.Env, "SISF_SMOKE_WORKDIR="+filepath.Join(b.work, c.Env["SISF_PHASE"]))
 	for k, v := range c.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
+	if c.Env["SISF_PHASE"] == "report" {
+		b.reportEnv = c.Env
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if c.Stdout != nil {
+		cmd.Stdout = c.Stdout // streamed, not captured
+	}
 	err := cmd.Run()
 	b.t.Logf("phase %s: %v\n%s", c.Env["SISF_PHASE"], err, stderr.Bytes())
 	res := execution.ExecResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
@@ -119,4 +207,4 @@ func (b scriptBuild) Exec(ctx context.Context, _ execution.SandboxID, c executio
 	return res, err
 }
 
-func (scriptBuild) Destroy(context.Context, execution.SandboxID) error { return nil }
+func (*scriptBuild) Destroy(context.Context, execution.SandboxID) error { return nil }
