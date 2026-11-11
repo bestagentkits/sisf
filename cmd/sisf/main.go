@@ -101,6 +101,10 @@ func usagef(format string, args ...any) error {
 // exitCoder is implemented by an error that chooses the exit status.
 type exitCoder interface{ ExitCode() int }
 
+// silent is implemented by an error the command already reported in full,
+// such as the doctor's failed checks; only its exit status is left to set.
+type silent interface{ Silent() bool }
+
 // registry holds the commands of the CLI.
 type registry struct{ commands []Command }
 
@@ -261,7 +265,10 @@ func report(env *Env, cmd Command, err error) int {
 		say(env.Stderr, "%s %s: %s\nUsage: %s\n", program, cmd.name(), usage.message, cmd.synopsis())
 		return exitUsage
 	}
-	printError(env.Stderr, err)
+	var quiet silent
+	if !errors.As(err, &quiet) || !quiet.Silent() {
+		printError(env.Stderr, err)
+	}
 	var coded exitCoder
 	if errors.As(err, &coded) {
 		return coded.ExitCode()
