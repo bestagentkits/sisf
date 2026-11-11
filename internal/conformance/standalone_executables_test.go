@@ -166,8 +166,76 @@ func TestInStandaloneModeNoUnitStartsABinaryFromAnotherUnitsDirectory(t *testing
 		})
 	}
 
-	// A unit may start a binary from a directory only it mounts.
+	// An interpreter or a loader runs the file it is given, so every word
+	// of the command, and the value after "=" in one, is held to the rule.
+	arguments := []struct {
+		name    string
+		unit    manifest.UnitName
+		command []string
+		path    string
+	}{
+		{"control runs a script from the coder's workspace", manifest.UnitControl,
+			[]string{"python3", "data/workspaces/control.py"}, "units.control.command[1]"},
+		{"control preloads a module from the coder's workspace", manifest.UnitControl,
+			[]string{"node", "--require=data/workspaces/hook.js", "bin/control.js"}, "units.control.command[1]"},
+		{"the edge loads a plugin from the application's data", manifest.UnitEdge,
+			[]string{"bin/sisf-edge", "--plugin", "./data/app/plugin.so"}, "units.edge.command[2]"},
+		{"the dispatcher runs a script from the coder's workspace by an absolute path", manifest.UnitDispatcher,
+			[]string{"python3", "/home/owner/factory/data/workspaces/dispatch.py"}, "units.dispatcher.command[1]"},
+		{"control runs a script given as a file URL", manifest.UnitControl,
+			[]string{"deno", "run", "file://data/workspaces/control.ts"}, "units.control.command[2]"},
+		// The factory root's name is unknown, so ../factory/data/workspaces
+		// may be the coder's workspace.
+		{"control runs a script through a path that climbs out of the factory root", manifest.UnitControl,
+			[]string{"python3", "../factory/data/workspaces/control.py"}, "units.control.command[1]"},
+		{"control starts a binary through a path that climbs out of the factory root", manifest.UnitControl,
+			[]string{"../factory/data/workspaces/factoryd"}, "units.control.command"},
+	}
+	for _, tc := range arguments {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := standalone(t)
+			editUnit(m, tc.unit, func(u *manifest.Unit) { u.Command = tc.command })
+			report := Check(m)
+			wantOnly(t, report, RuleExecutableInAnotherUnitsDirectory, tc.path)
+			if len(report.Findings) != 1 {
+				t.Fatalf("one argument is one finding, got %+v", report.Findings)
+			}
+		})
+	}
+
+	// The supervisor's later arguments may not name a file another unit
+	// writes either; its own trust directory is its own to name.
 	m := standalone(t)
+	editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) {
+		u.Command = []string{"bin/sisf-supervisor", "--policy=data/control/policy.wasm"}
+	})
+	report := Check(m)
+	wantOnly(t, report, RuleSupervisorNotPinned, "units.supervisor.command[1]")
+	if report.SelfUpdate {
+		t.Error("a supervisor that loads a file another unit writes disables self-update")
+	}
+	m = standalone(t)
+	editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) {
+		u.Command = []string{"bin/sisf-supervisor", "--trust-dir", "data/trust"}
+	})
+	if report := Check(m); !report.Conformant() || !report.SelfUpdate {
+		t.Fatalf("the supervisor may name its own trust directory, got %+v", report.Findings)
+	}
+
+	// Words that are not files of another unit pass: subcommands, flags,
+	// addresses, URLs and the unit's own directory.
+	m = standalone(t)
+	editUnit(m, manifest.UnitControl, func(u *manifest.Unit) {
+		u.Command = []string{"bin/factoryd", "control", "--listen=127.0.0.1:7463", "--upstream", "http://127.0.0.1:7461/data/app",
+			"--data", "data/control", "--log-dir=logs/control"}
+	})
+	if report := Check(m); !report.Conformant() {
+		t.Fatalf("arguments outside other units' directories must be allowed, got %+v", report.Findings)
+	}
+
+	// A unit may start a binary from a directory only it mounts.
+	m = standalone(t)
 	editUnit(m, manifest.UnitRunner, func(u *manifest.Unit) { u.Command = []string{"data/workspaces/tool"} })
 	if report := Check(m); !report.Conformant() {
 		t.Fatalf("a unit's own directory is its own to run from, got %+v", report.Findings)

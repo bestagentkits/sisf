@@ -135,7 +135,8 @@ func (c *checker) checkVolumeDirectories(placed []placedMount) {
 // exposure of the trust volume when it is or holds that volume's directory
 // and as an overlap of owners otherwise, and is not compared pair by pair.
 func (c *checker) refuseClimbingMount(mount placedMount, trust string, placed []placedMount) {
-	const fix = "mount the volume at a directory inside the factory root, without .. climbing above it, or at an absolute directory of its own other than the root of the file system"
+	const fix = "mount the volume at a directory inside the factory root, without .. climbing above it, or at an absolute directory of its own other than the root of the file system; " +
+		"a sibling of the factory root such as ../app-data is refused only because the name of the factory root is unknown, so it may be the factory root itself"
 	holdsTrust := trust != "" && (mount.volume == trust || slices.ContainsFunc(placed, func(other placedMount) bool {
 		return other.volume == trust && within(other.dir, mount.dir)
 	}))
