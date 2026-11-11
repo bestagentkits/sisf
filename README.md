@@ -10,7 +10,30 @@ The factory core is implemented and tested in this repository (Go 1.25, see [ADR
 - **Sign-in:** there is no Owner token. People sign in at an OpenID Connect or GitHub provider and the Owner is named at `sisf init` (`--owner issuer#subject`); the simulation and the loopback-only `--dev` install sign in at a fake identity provider the install runs itself.
 - **Not yet proven:** the real smoke run (`make smoke`), which has not been run, and agent-written candidate builds in Standalone mode, which are held in this release. Do not rely on them yet.
 - **Supported operating modes:** Standalone (trusted code only) and Docker Compose. Kubernetes, Vercel, Cloudflare, TOSE and Railway are unsupported or experimental; see the [capability matrix](docs/capability-matrix.md).
-- **Quickstart:** [docs/guides/quickstart.md](docs/guides/quickstart.md) runs a local factory against a simulated GitHub.
+
+## Quickstart
+
+Try it on your machine against a simulated GitHub, with a fake sign-in and a scripted agent: no token, no paid model. You need Linux or macOS, Go 1.25, and ports 7460-7469 on 127.0.0.1 free.
+
+```sh
+git clone https://github.com/bestagentkits/sisf.git && cd sisf
+go install ./cmd/sisf                      # sisf on your PATH via $(go env GOPATH)/bin
+export SISF_HOME=$HOME/.sisf/sim           # the install directory, outside the checkout
+sisf init --repo acme/hello --profile sim --confirm-unlimited --no-alert
+sisf up                                    # builds and starts all three zones; stays in the foreground
+```
+
+In a second terminal: `sisf doctor` checks the install, and `http://127.0.0.1:7463` is the dashboard, signed in as the Owner. To send a first issue through it, a policy must be put in force first; the [quickstart](docs/guides/quickstart.md) walks through that, the Docker Compose variant and the clean-up.
+
+## Installing for real
+
+A factory that serves a real repository needs a GitHub account and token it acts as, its webhook, a sign-in provider and an HTTPS origin. [Installing a factory](docs/guides/install.md) covers the development install on your own machine (`--dev`, your `gh` login), the real install step by step, real coding agents and running as a service. Real GitHub App and Google sign-in flows are tested only against fakes so far.
+
+## Where to go next
+
+- [Documentation index](docs/README.md): every guide and reference.
+- [Operations](docs/guides/operations.md), [Policy, approvals and budget](docs/guides/policy-and-approvals.md), [Why is my issue stuck?](docs/guides/stuck-issues.md), [Maintenance](docs/guides/maintenance.md), [Troubleshooting](docs/guides/troubleshooting.md), [CLI reference](docs/guides/cli-reference.md).
+- [Incident runbook](docs/guides/incident.md) and [Security guide](docs/guides/security.md).
 
 ## The idea in one picture
 
@@ -37,10 +60,6 @@ GitHub is the source of truth for source, policy, decisions and work items; oper
 - Decision brief and implementation contract: [English](docs/self-improvement-software-factory-decision-brief.en.md) · [Tiếng Việt](docs/self-improvement-software-factory-decision-brief.md) (original) — fixed product decisions, interfaces, issue state machine, QA and release rules, phased scope P0–P4, acceptance matrix SISF-01…20.
 - [Architecture](docs/self-improvement-software-factory-architecture.html) — detailed interactive page: topology, entrypoints, workflows, playable issue state graph, decisions, user flows, QA and release rules, surfaces and protocols, trust boundary and security requirements, deployment design per operating mode, roadmap (VI/EN, light/dark). Download and open in a browser.
 - [Architecture review](docs/self-improvement-software-factory-architecture-review.html) — interactive visual summary (VI/EN, light/dark). Download and open in a browser.
-
-## Guides
-
-- [Quickstart](docs/guides/quickstart.md) · [Operations](docs/guides/operations.md) · [Incident runbook](docs/guides/incident.md) · [Security guide](docs/guides/security.md)
 
 ## Security
 
