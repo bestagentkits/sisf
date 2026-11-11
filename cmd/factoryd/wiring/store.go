@@ -2,9 +2,9 @@ package wiring
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 
+	"github.com/bestagentkits/sisf/internal/manifestsettings"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
@@ -20,17 +20,8 @@ func DialectOf(dsn string) sqlstore.Dialect {
 }
 
 // StateStoreDir is the directory of a SQLite state store's file, absolute,
-// and empty for a server DSN, which names no local directory.
-func StateStoreDir(dsn string) string {
-	if dsn == "" || DialectOf(dsn) != sqlstore.DialectSQLite {
-		return ""
-	}
-	abs, err := filepath.Abs(dsn)
-	if err != nil {
-		return ""
-	}
-	return filepath.Dir(abs)
-}
+// and empty for a server DSN; see manifestsettings.StateStoreDir.
+func StateStoreDir(dsn string) string { return manifestsettings.StateStoreDir(dsn) }
 
 // OpenStore opens the operational store for one zone. A store the
 // installer has not prepared yet is refused: the units do not migrate on

@@ -8,6 +8,8 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
+//go:generate go run ../trustedclosure/gentrustedpackages -root ../../.. -out trusted_go_package_dirs_generated.go -package release
+
 // supervisorUnit is the runtime unit of the supervisor itself.
 const supervisorUnit = "supervisor"
 
@@ -24,7 +26,20 @@ const supervisorUnit = "supervisor"
 // package can change what the package enforces: a new file in the state
 // store with an init function could widen a zone's steps or append a
 // migration as surely as an edit of the file that declares them.
+//
+// The Go part is not kept by hand: every directory of a package the trusted
+// binaries link (trustedGoPackageDirs, generated from their dependency
+// closure) is protected, whatever it is for. The entries below are the
+// rest: files that are not Go packages, and Go code that is trusted without
+// being linked into the supervisor (the installer, the CLI, the synthetic
+// suite).
 func DefaultProtectedPaths() []string {
+	return slices.Concat(handKeptProtectedPaths(), trustedGoPackageDirs)
+}
+
+// handKeptProtectedPaths are the protected paths the dependency closure of
+// the trusted binaries does not name.
+func handKeptProtectedPaths() []string {
 	return []string{
 		// The trusted release supervisor and how it is built and deployed.
 		"cmd/supervisor/", "internal/supervisor/", "build/supervisor.Dockerfile", "templates/",

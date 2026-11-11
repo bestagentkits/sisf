@@ -50,7 +50,7 @@ func (q *qaFlags) register(fs *flag.FlagSet) {
 // judgeDeps are what the judge is built from besides the flags.
 type judgeDeps struct {
 	manifest *manifest.Manifest
-	// sim is the trusted simulation profile, as wiring.SimulationProfile decides.
+	// sim is the trusted simulation profile, as manifestsettings.SimulationProfile decides.
 	sim           bool
 	docker, local execution.Backend
 	// protected are the factory's secrets, state and trust directories the

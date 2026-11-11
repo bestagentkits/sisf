@@ -6,11 +6,11 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/audit"
 	"github.com/bestagentkits/sisf/internal/budget"
 	"github.com/bestagentkits/sisf/internal/intake/prgate"
+	"github.com/bestagentkits/sisf/internal/manifestsettings"
 	"github.com/bestagentkits/sisf/internal/redact"
 	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/internal/supervisor"
@@ -49,7 +49,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if m.FactoryID != d.cfg.FactoryID {
 		return nil, core.NewError(core.CodeInvalidArgument, "the factory manifest is not the one of --factory-id")
 	}
-	sim := wiring.SimulationProfile(m)
+	sim := manifestsettings.SimulationProfile(m)
 	client, settings, err := gitHubClient(m, d.lookupEnv, d.clock)
 	if err != nil {
 		return nil, err
@@ -160,8 +160,8 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 
 // gitHubClient connects to the factory's repository with the token in the
 // environment.
-func gitHubClient(m *manifest.Manifest, lookupEnv func(string) (string, bool), clock core.Clock) (*github.RESTClient, wiring.GitHubSettings, error) {
-	settings, err := wiring.GitHubSettingsOf(m)
+func gitHubClient(m *manifest.Manifest, lookupEnv func(string) (string, bool), clock core.Clock) (*github.RESTClient, manifestsettings.GitHubSettings, error) {
+	settings, err := manifestsettings.GitHubSettingsOf(m)
 	if err != nil {
 		return nil, settings, err
 	}
@@ -169,7 +169,7 @@ func gitHubClient(m *manifest.Manifest, lookupEnv func(string) (string, bool), c
 		settings.APIURL = url
 	}
 	token, _ := lookupEnv(envGitHubToken)
-	client, err := wiring.NewGitHubClient(settings, core.NewSecretValue([]byte(token)), clock)
+	client, err := manifestsettings.NewGitHubClient(settings, core.NewSecretValue([]byte(token)), clock)
 	return client, settings, err
 }
 

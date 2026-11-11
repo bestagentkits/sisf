@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/cmd/supervisor/runcontrol"
+	"github.com/bestagentkits/sisf/internal/manifestsettings"
 	"github.com/bestagentkits/sisf/pkg/agent/agentenv"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
@@ -68,7 +68,7 @@ func (l *lifecycleFlags) protectedDirs(trustDir, dsnEnv string, lookupEnv func(s
 		}
 	}
 	if dsn, ok := lookupEnv(dsnEnv); ok && dsnEnv != "" {
-		dirs = append(dirs, wiring.StateStoreDir(dsn))
+		dirs = append(dirs, manifestsettings.StateStoreDir(dsn))
 	}
 	return dirs
 }
