@@ -168,6 +168,16 @@ const (
 	// RuleReleaseUnit: release.units lists a unit the normal pipeline may
 	// not publish by itself.
 	RuleReleaseUnit Rule = "release.unit_not_self_publishable"
+	// RuleUnitInputsProtected: release.unit_inputs declares a pattern that
+	// can match a protected path, which the manifest may not open to a
+	// candidate the factory publishes by itself.
+	RuleUnitInputsProtected Rule = "release.unit_inputs_protected"
+	// RuleUnitInputsControlGoCode: release.unit_inputs declares, for the
+	// control unit, a pattern that can match a file the Go toolchain reads.
+	RuleUnitInputsControlGoCode Rule = "release.unit_inputs_control_go_code"
+	// RuleUnitInputsOverlap: a declared pattern and an input of another unit
+	// can match the same path.
+	RuleUnitInputsOverlap Rule = "release.unit_inputs_overlap"
 	// RuleBudgetAlert: the budget is unlimited and the Owner has neither set
 	// an alert threshold nor chosen to have none, or an alert threshold is
 	// set and declined at once.
@@ -191,6 +201,7 @@ func Rules() []Rule {
 		RuleStatePlacement, RuleArtifactsPlacement, RuleSecretInline, RuleSecretRefReused,
 		RuleModeUnsupported, RuleBackendUndeclared, RuleBackendMode, RuleBackendCapability,
 		RuleLimitsUnbounded, RuleReleaseDuration, RuleCanaryStepsMissing, RuleCanarySteps, RuleCanaryIncomplete,
-		RuleReleaseBounds, RuleSyntheticSuiteMissing, RuleReleaseUnit, RuleBudgetAlert, RuleModelRoutesEmpty,
+		RuleReleaseBounds, RuleSyntheticSuiteMissing, RuleReleaseUnit,
+		RuleUnitInputsProtected, RuleUnitInputsControlGoCode, RuleUnitInputsOverlap, RuleBudgetAlert, RuleModelRoutesEmpty,
 	}
 }

@@ -36,6 +36,7 @@ func (c *checker) checkRelease() {
 	c.checkRollbackBounds()
 	c.checkSelfPublishing()
 	c.checkCanary()
+	c.checkUnitInputs()
 }
 
 // span renders a bound the way a manifest writes it: "1m", not "1m0s".

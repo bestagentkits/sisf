@@ -42,7 +42,7 @@ func rejectFixtures(t *testing.T) []string {
 }
 
 func TestValidExamplesAreConformant(t *testing.T) {
-	examples := []string{"../../.sisf/factory.yaml", "testdata/valid-docker.yaml", "testdata/valid-standalone.yaml"}
+	examples := []string{"../../.sisf/factory.yaml", "testdata/valid-docker.yaml", "testdata/valid-standalone.yaml", "testdata/valid-standalone-unit-inputs.yaml"}
 	modes := map[string]bool{}
 	for _, path := range examples {
 		report, err := CheckFile(path)
