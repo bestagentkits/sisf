@@ -13,13 +13,21 @@ import (
 // processRecord identifies a process of a Standalone install beyond its
 // pid, which the system gives to another process once this one has gone:
 // Start is the time it started, labelled with the method that read it. On
-// Linux it is procStartMethod and the clock ticks from boot to the start,
-// field 22 of /proc/<pid>/stat, which neither a change of time zone nor
-// the ps of BusyBox alters; elsewhere, and in a record written before
-// Linux read /proc, it is the start as ps prints it in the C locale, with
-// no label. A record is checked by the method that wrote it, so a value
-// read one way never matches one read the other. Role is "up" or "down"
-// for the command that holds the run lock, or the name of a unit.
+// Linux it is procStartMethod, the boot id and the clock ticks from boot
+// to the start, field 22 of /proc/<pid>/stat, which neither a change of
+// time zone nor the ps of BusyBox alters, and the boot id keeps a process
+// of a later boot given the same pid at the same tick from matching;
+// elsewhere, and in a record written before Linux read /proc, it is the
+// start as ps prints it in the C locale, with no label. A record is
+// checked by the method that wrote it, so a value read one way never
+// matches one read the other. A record labelled procStartMethod with no
+// boot id, as written before the boot was recorded, never matches what
+// /proc gives now, so it names no live process: it is stale, and its
+// process group is never signalled, since the boot it was read in cannot
+// be proven. A unit such a record names that still runs holds the run
+// lock it inherited, so up and down refuse while it runs rather than
+// start beside it or signal it. Role is "up" or "down" for the command
+// that holds the run lock, or the name of a unit.
 type processRecord struct {
 	Role  string `json:"role"`
 	PID   int    `json:"pid"`
@@ -34,6 +42,21 @@ const processStartTimeout = 5 * time.Second
 
 // procStartMethod labels a start time read from /proc/<pid>/stat.
 const procStartMethod = "proc:"
+
+// parseBootID reads the boot id from raw, the content of
+// /proc/sys/kernel/random/boot_id: one word of letters, digits and dashes
+// on one line.
+func parseBootID(raw []byte) (string, error) {
+	id := strings.TrimSuffix(string(raw), "\n")
+	valid := id != ""
+	for _, r := range id {
+		valid = valid && (r == '-' || ('0' <= r && r <= '9') || ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z'))
+	}
+	if !valid {
+		return "", unavailablef(nil, "the boot id %q is not one word of letters, digits and dashes", id)
+	}
+	return id, nil
+}
 
 // processStart returns when pid started, by this system's method
 // (systemStart), or "" when no such process lives.
@@ -57,13 +80,14 @@ func (in *Installer) processStartLike(recorded string, pid int) (string, error) 
 }
 
 // parseProcStat reads the start time from content, the text of
-// /proc/<pid>/stat, labelled with procStartMethod, or "" for a process that
+// /proc/<pid>/stat in the boot boot, labelled with procStartMethod and
+// the boot, or "" for a process that
 // has exited but was not reaped yet (state Z or X): it holds no file and
 // writes nothing. The command name, field 2, is in parentheses and may
 // hold spaces and parentheses itself, so the fields are counted after the
 // last ")": the state, field 3, comes first, and the start time is field
 // 22.
-func parseProcStat(content string, pid int) (string, error) {
+func parseProcStat(content, boot string, pid int) (string, error) {
 	end := strings.LastIndexByte(content, ')')
 	if end < 0 {
 		return "", unavailablef(nil, "/proc/%d/stat names no command, so it gives no start time", pid)
@@ -79,7 +103,7 @@ func parseProcStat(content string, pid int) (string, error) {
 	if _, err := strconv.ParseUint(fields[start], 10, 64); err != nil {
 		return "", unavailablef(err, "/proc/%d/stat gives %q as the start time, not a number of clock ticks", pid, fields[start])
 	}
-	return procStartMethod + fields[start], nil
+	return procStartMethod + boot + ":" + fields[start], nil
 }
 
 // psStart asks ps when pid started, in the C locale so the answer is the

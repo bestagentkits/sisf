@@ -21,23 +21,27 @@ func procStatLine(pid, comm, state, start string) string {
 	return strings.Join(fields, " ") + "\n"
 }
 
+// bootSample is a boot id as /proc/sys/kernel/random/boot_id gives it.
+const bootSample = "6f1c2b9e-3a4d-4e5f-8a7b-9c0d1e2f3a4b"
+
 // The start time is field 22 of /proc/<pid>/stat, counted after the last
 // ")" so a command name holding spaces or parentheses cannot shift it; it
-// is labelled with the method that read it. A zombie or dead process is
-// gone, and a line that is not a stat line is refused.
+// is labelled with the method that read it and the boot it was read in. A
+// zombie or dead process is gone, and a line that is not a stat line is
+// refused.
 func TestTheProcStatParserReadsTheStartTimeAfterTheCommandName(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, line, want string
 	}{
-		{"plain", procStatLine("4242", "factoryd", "S", "987654"), "proc:987654"},
-		{"spaces", procStatLine("4242", "my unit name", "R", "12"), "proc:12"},
-		{"parentheses", procStatLine("4242", "a) S 1 2 3 (b", "S", "777"), "proc:777"},
-		{"closing parenthesis last", procStatLine("4242", "evil)", "D", "31337"), "proc:31337"},
+		{"plain", procStatLine("4242", "factoryd", "S", "987654"), "proc:" + bootSample + ":987654"},
+		{"spaces", procStatLine("4242", "my unit name", "R", "12"), "proc:" + bootSample + ":12"},
+		{"parentheses", procStatLine("4242", "a) S 1 2 3 (b", "S", "777"), "proc:" + bootSample + ":777"},
+		{"closing parenthesis last", procStatLine("4242", "evil)", "D", "31337"), "proc:" + bootSample + ":31337"},
 		{"zombie", procStatLine("4242", "factoryd", "Z", "5"), ""},
 		{"dead", procStatLine("4242", "factoryd", "X", "5"), ""},
 	} {
-		got, err := parseProcStat(tc.line, 4242)
+		got, err := parseProcStat(tc.line, bootSample, 4242)
 		if err != nil || got != tc.want {
 			t.Errorf("%s: parseProcStat = %q, %v; want %q", tc.name, got, err, tc.want)
 		}
@@ -48,8 +52,23 @@ func TestTheProcStatParserReadsTheStartTimeAfterTheCommandName(t *testing.T) {
 		"start not numeric": procStatLine("4242", "factoryd", "S", "soon"),
 		"empty":             "",
 	} {
-		if got, err := parseProcStat(line, 4242); err == nil {
+		if got, err := parseProcStat(line, bootSample, 4242); err == nil {
 			t.Errorf("%s: parseProcStat = %q, want an error", name, got)
+		}
+	}
+}
+
+// The boot id is read as the kernel writes it, one line; anything that is
+// not one word of letters, digits and dashes is refused, so a start time
+// can never be labelled with an empty or ambiguous boot.
+func TestTheBootIDIsOneWordOrRefused(t *testing.T) {
+	t.Parallel()
+	if got, err := parseBootID([]byte(bootSample + "\n")); err != nil || got != bootSample {
+		t.Fatalf("parseBootID = %q, %v; want %q", got, err, bootSample)
+	}
+	for _, raw := range []string{"", "\n", "a:b\n", "two words\n", "6f1c\n2b9e\n"} {
+		if got, err := parseBootID([]byte(raw)); err == nil {
+			t.Errorf("parseBootID(%q) = %q, want an error", raw, got)
 		}
 	}
 }
