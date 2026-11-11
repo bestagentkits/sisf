@@ -83,7 +83,7 @@ func clearRetry(ctx context.Context, tx state.KV, run core.RunID, attempt int) e
 	if err != nil || e.version == 0 {
 		return err
 	}
-	return tx.DeleteKV(ctx, handoff.BuildNamespace, handoff.BuildOutageKey(run, attempt), e.version)
+	return handoff.DeleteBuildOutage(ctx, tx, run, attempt, e.version)
 }
 
 // recordOutage counts one more outage of a patch's build and sets when it

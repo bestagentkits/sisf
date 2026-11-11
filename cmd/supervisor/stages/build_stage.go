@@ -55,6 +55,8 @@ type buildJob struct {
 	record core.StateRecord
 	patch  handoff.PatchDoc
 	retry  retryEntry
+	// listed is set when a held build is on the listing of held builds.
+	listed bool
 }
 
 // Pass builds the patches waiting in Developing.
@@ -79,7 +81,13 @@ func (s *BuildStage) Pass(ctx context.Context) BuildPassResult {
 				res.Errors = append(res.Errors, fmt.Errorf("%s: %w", r.IssueID, rerr))
 				continue
 			}
-			jobs = append(jobs, buildJob{record: r, patch: patch, retry: retry})
+			listed := false
+			if retry.Held {
+				if listed, rerr = handoff.HeldBuildListed(ctx, tx, r.RunID, r.Attempt); rerr != nil {
+					res.Errors = append(res.Errors, fmt.Errorf("%s: %w", r.IssueID, rerr))
+				}
+			}
+			jobs = append(jobs, buildJob{record: r, patch: patch, retry: retry, listed: listed})
 		}
 		return err
 	})
@@ -93,6 +101,9 @@ func (s *BuildStage) Pass(ctx context.Context) BuildPassResult {
 		// it: outages never spend compute without bound.
 		if j.retry.Held {
 			res.StillHeld = append(res.StillHeld, j.record.IssueID)
+			if err := s.listHeld(ctx, j); err != nil {
+				res.Errors = append(res.Errors, fmt.Errorf("%s: %w", j.record.IssueID, err))
+			}
 			continue
 		}
 		if j.retry.waiting(now) {
@@ -203,6 +214,17 @@ func (s *BuildStage) build(ctx context.Context, j buildJob) (failed bool, err er
 		}
 		_, err := tx.Transition(ctx, t)
 		return err
+	})
+}
+
+// listHeld puts a held build stored by a release that kept no listing of
+// held builds on that listing, so the Owner's views show it.
+func (s *BuildStage) listHeld(ctx context.Context, j buildJob) error {
+	if j.listed {
+		return nil
+	}
+	return s.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		return handoff.IndexHeldBuild(ctx, tx, j.retry.BuildOutage)
 	})
 }
 
