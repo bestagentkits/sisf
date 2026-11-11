@@ -72,7 +72,8 @@ type Config struct {
 	MaxClients int
 	// ClientKey names the network source of a registration: when MaxClients
 	// are registered, the unused clients of the source holding the most go
-	// first, and a new one is refused when no source holds more than one.
+	// first, and when no source holds more than one, a client chosen at
+	// random makes room for the new one.
 	// control.ClientAddress builds one that names an IPv6 client by its /64.
 	// Nil means the remote IP address.
 	ClientKey func(*http.Request) string
@@ -95,9 +96,12 @@ type Server struct {
 	// dynamic holds the bookkeeping of the dynamically registered clients.
 	dynamic   map[string]*clientUse
 	clientSeq uint64
-	pending   map[string]*pendingConsent // by digest of the consent ID
-	codes     map[string]*codeGrant      // by digest of the code
-	revoked   map[string]time.Time       // token ID -> its expiry
+	// pick chooses which of n registered clients to drop when every source
+	// holds one; nil means randomIndex.
+	pick    func(n int) (int, error)
+	pending map[string]*pendingConsent // by digest of the consent ID
+	codes   map[string]*codeGrant      // by digest of the code
+	revoked map[string]time.Time       // token ID -> its expiry
 }
 
 // New validates cfg and returns a server.

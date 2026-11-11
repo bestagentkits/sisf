@@ -55,7 +55,8 @@ type Config struct {
 	HoldsRole func(actorID string) bool
 	// ClientKey names the network source of a request: when every sign-in
 	// slot is taken, the flows of the source holding the most go first, and
-	// a new sign-in is refused when no source holds more than one.
+	// when no source holds more than one, a flow chosen at random makes room
+	// for the new sign-in.
 	// control.ClientAddress builds one that names an IPv6 client by its /64.
 	// Nil means the remote IP address.
 	ClientKey func(*http.Request) string
@@ -75,7 +76,10 @@ type Service struct {
 	tokenByID map[string]*token
 	flows     map[string]*flow // by digest of the state
 	flowSeq   uint64
-	accounts  map[string]identity.Identity
+	// pick chooses which of n flows to push out when every source holds
+	// one; nil means randomIndex.
+	pick     func(n int) (int, error)
+	accounts map[string]identity.Identity
 }
 
 // New validates cfg and returns a service.

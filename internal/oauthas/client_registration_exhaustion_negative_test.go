@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"testing"
 	"time"
@@ -134,11 +135,14 @@ func TestAClientInUseOutlastsARegistrationFlood(t *testing.T) {
 
 // A flood of one registration from each of ever new addresses holds one
 // client per source, so no source is busier than the person's. A newcomer
-// then never drops an older unused client of another source: it is refused
-// until clients lapse, and the person's client stays registered.
-func TestAFloodOfOneRegistrationPerAddressDoesNotDropAPersonsClient(t *testing.T) {
+// is still registered, so the flood locks nobody out: it drops an unused
+// client chosen at random, which the flood cannot aim at the person's.
+// Here the choice is seeded, so the outcome repeats.
+func TestAFloodOfOneRegistrationPerAddressIsAdmittedAndMissesAPersonsClient(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, registrationLimits(20))
+	rng := rand.New(rand.NewPCG(1, 1))
+	oauthas.SetEvictionPick(e.Server, func(n int) (int, error) { return rng.IntN(n), nil })
 	_, id := registerFrom(t, e, "192.0.2.10")
 	e.Clock.Advance(time.Second) // the person's client is the oldest one
 	refused := 0
@@ -151,8 +155,8 @@ func TestAFloodOfOneRegistrationPerAddressDoesNotDropAPersonsClient(t *testing.T
 			t.Fatalf("a registration from source %d: %d", s, status)
 		}
 	}
-	if refused == 0 {
-		t.Fatal("more registrations than slots were all accepted, so some client was dropped")
+	if refused != 0 {
+		t.Fatalf("%d registrations were refused because every slot held one client per address, want each admitted", refused)
 	}
 	if !registered(t, e, id) {
 		t.Fatal("a flood of one registration per address dropped a person's client")

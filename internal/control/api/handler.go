@@ -75,9 +75,10 @@ type Config struct {
 	Logger *slog.Logger
 	// ClientKey names the network source of a request: when every login
 	// request slot is taken, the waiting requests of the source holding the
-	// most go first, and a new one is refused when no source holds more than
-	// one. control.ClientAddress builds one that names an IPv6 client by its
-	// /64. Nil means the remote IP address.
+	// most go first, and when no source holds more than one, a waiting
+	// request chosen at random makes room for the new one.
+	// control.ClientAddress builds one that names an IPv6 client by its /64.
+	// Nil means the remote IP address.
 	ClientKey func(*http.Request) string
 }
 
@@ -89,7 +90,11 @@ type handler struct {
 
 // New returns the REST handler. Mount it at MountPath without stripping the
 // prefix.
-func New(cfg Config) (http.Handler, error) {
+func New(cfg Config) (http.Handler, error) { return newHandler(cfg, nil) }
+
+// newHandler is New with pick choosing which waiting login request to drop
+// when every source holds one; nil means crypto/rand.
+func newHandler(cfg Config, pick func(n int) (int, error)) (http.Handler, error) {
 	switch {
 	case cfg.Actions == nil || cfg.Identity == nil || cfg.Clock == nil:
 		return nil, core.NewError(core.CodeInvalidArgument, "the REST handler needs the action service, the authentication service and a clock")
@@ -115,6 +120,7 @@ func New(cfg Config) (http.Handler, error) {
 		return nil, core.NewError(core.CodeInvalidArgument, "the external URL must start with http:// or https://")
 	}
 	h := &handler{cfg: cfg, devices: newDeviceStore(cfg.Clock, cfg.DeviceCodeTTL, cfg.PollInterval)}
+	h.devices.pick = pick
 	h.cfg.ExternalURL = strings.TrimRight(cfg.ExternalURL, "/")
 	for _, spec := range cfg.Actions.Specs() {
 		for _, scope := range spec.Scopes {

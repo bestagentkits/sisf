@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"testing"
 	"time"
@@ -36,8 +37,8 @@ func startFrom(t *testing.T, b *browser, source string) (int, started) {
 func TestOpenLoginRequestsDoNotKeepAPersonFromStartingOne(t *testing.T) {
 	t.Parallel()
 	for name, flood := range map[string]struct{ sources, each int }{
-		"from one address":    {1, 300},
-		"from many addresses": {60, 6},
+		"from one address":    {1, 1100},
+		"from many addresses": {120, 10},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -82,7 +83,7 @@ func TestAFloodDropsItsOwnLoginRequestsBeforeAPersons(t *testing.T) {
 	}
 	e.clock.Advance(time.Second) // the person's requests are the oldest open ones
 	attacker := e.browser(t)
-	for s := range 40 {
+	for s := range 110 {
 		for range 10 {
 			startFrom(t, attacker, fmt.Sprintf("203.0.113.%d", s))
 		}
@@ -97,18 +98,20 @@ func TestAFloodDropsItsOwnLoginRequestsBeforeAPersons(t *testing.T) {
 }
 
 // A flood of one start from each of ever new addresses holds one request
-// per source, so no source is busier than the person's. A newcomer then
-// never drops an older waiting request of another source: it is refused
-// until requests lapse, and the person's request keeps waiting.
-func TestAFloodOfOneLoginRequestPerAddressDoesNotDropAPersonsRequest(t *testing.T) {
+// per source, so no source is busier than the person's. A newcomer is
+// still admitted, so the flood locks nobody out: it drops a waiting request
+// chosen at random, which the flood cannot aim at the person's. Here the
+// choice is seeded, so the outcome repeats.
+func TestAFloodOfOneLoginRequestPerAddressIsAdmittedAndMissesAPersonsRequest(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, sampleRegistry, keyedBySourceHeader)
+	rng := rand.New(rand.NewPCG(7, 7))
+	e := newEnvWithEvictionPick(t, sampleRegistry, func(n int) (int, error) { return rng.IntN(n), nil }, keyedBySourceHeader)
 	cli := e.browser(t)
 	_, open := startFrom(t, cli, "192.0.2.10")
 	e.clock.Advance(time.Second) // the person's request is the oldest open one
 	attacker := e.browser(t)
 	refused := 0
-	for s := range 300 {
+	for s := range 1100 {
 		switch status, _ := startFrom(t, attacker, fmt.Sprintf("203.0.%d.%d", s/250, s%250+1)); status {
 		case http.StatusOK:
 		case http.StatusTooManyRequests:
@@ -117,8 +120,8 @@ func TestAFloodOfOneLoginRequestPerAddressDoesNotDropAPersonsRequest(t *testing.
 			t.Fatalf("a start from source %d: %d", s, status)
 		}
 	}
-	if refused == 0 {
-		t.Fatal("more starts than slots were all accepted, so some request was dropped")
+	if refused != 0 {
+		t.Fatalf("%d starts were refused because every slot held one request per address, want each admitted", refused)
 	}
 	e.clock.Advance(time.Duration(open.Interval) * time.Second)
 	if r, p := cli.poll(t, open.DeviceCode); r.status != http.StatusAccepted || p.Status != "pending" {
@@ -135,7 +138,7 @@ func TestALoginFloodSharingThePersonsAddressTakesEverySlotToDropTheirRequest(t *
 	cli := e.browser(t)
 	_, open := startFrom(t, cli, "192.0.2.10")
 	attacker := e.browser(t)
-	for range 200 {
+	for range 1000 {
 		startFrom(t, attacker, "192.0.2.10")
 	}
 	e.clock.Advance(time.Duration(open.Interval) * time.Second)

@@ -1,10 +1,12 @@
 package api
 
 import (
+	"cmp"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"math/big"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,7 +22,12 @@ const (
 	// bits picks one uniformly and a code is easy to read aloud.
 	userCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 	userCodeLen      = 8
-	maxOpenGrants    = 256
+	// maxOpenGrants bounds the open login requests. When every slot is
+	// held by a source with one, a new start drops one chosen at random,
+	// so the table is sized for a person's request to outlast a flood: at
+	// 1.7 starts a second, one approved within a minute survives about
+	// nine times in ten.
+	maxOpenGrants = 1024
 )
 
 // grant is one login request. The device code stays with the CLI that
@@ -54,6 +61,9 @@ type deviceStore struct {
 	grants map[string]*grant // by digest of the device code
 	byUser map[string]string // user code to digest of the device code
 	seq    uint64
+	// pick chooses which of n waiting requests to drop when every source
+	// holds one; nil means randomIndex.
+	pick func(n int) (int, error)
 }
 
 func newDeviceStore(clock core.Clock, ttl, interval time.Duration) *deviceStore {
@@ -76,6 +86,15 @@ func formatUserCode(code string) string {
 		return code
 	}
 	return code[:userCodeLen/2] + "-" + code[userCodeLen/2:]
+}
+
+// randomIndex returns a uniformly random index below n from crypto/rand.
+func randomIndex(n int) (int, error) {
+	i, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		return 0, core.NewError(core.CodeInternal, "no randomness available").WithCause(err)
+	}
+	return int(i.Int64()), nil
 }
 
 func randomUserCode() (string, error) {
@@ -111,11 +130,12 @@ func (s *deviceStore) purgeLocked(now time.Time) {
 // oldest waiting request of the source holding the most, as long as that
 // source holds more than one: a flood from another address, or from a few,
 // does not reach a person's request, and one sharing the person's address
-// takes as many starts as there are slots. When no source holds more than
-// one, a newcomer never drops an older request of another source: start is
-// refused until requests lapse, so a flood of one start from each of many
-// addresses cannot drop a person's. A request being approved, or approved
-// and not yet collected, is never dropped.
+// takes as many starts as there are slots. When every source holds one, it
+// drops a waiting request chosen at random (crypto/rand): a flood of one
+// start from each of many addresses neither locks out a new start nor aims
+// at a person's request. A request being approved, or approved and not yet
+// collected, is never dropped; start is refused only when every open
+// request is one of those.
 func (s *deviceStore) start(name string, scopes []string, source string) (deviceCode string, g grant, err error) {
 	raw := make([]byte, 32)
 	if _, rerr := rand.Read(raw); rerr != nil {
@@ -153,9 +173,9 @@ func (s *deviceStore) start(name string, scopes []string, source string) (device
 // for one nor approved. Only such a request is dropped to make room.
 func (g *grant) waiting() bool { return !g.claimed && !g.approved }
 
-// makeRoomLocked drops waiting requests of sources holding more than one
-// until fewer than maxOpenGrants are open, and reports whether there is
-// room.
+// makeRoomLocked drops waiting requests until fewer than maxOpenGrants are
+// open, the oldest of the source holding the most while one holds more
+// than one and a random one otherwise, and reports whether there is room.
 func (s *deviceStore) makeRoomLocked() bool {
 	perSource := map[string]int{}
 	for _, g := range s.grants {
@@ -168,11 +188,50 @@ func (s *deviceStore) makeRoomLocked() bool {
 		for _, n := range perSource {
 			busiest = max(busiest, n)
 		}
-		if busiest <= 1 {
+		switch {
+		case busiest > 1:
+			s.dropOldestWaitingLocked(perSource, func(g *grant) bool { return perSource[g.source] == busiest })
+		case busiest == 1:
+			if !s.dropRandomWaitingLocked(perSource) {
+				return false
+			}
+		default:
 			return false
 		}
-		s.dropOldestWaitingLocked(perSource, func(g *grant) bool { return perSource[g.source] == busiest })
 	}
+	return true
+}
+
+// dropRandomWaitingLocked drops a waiting request chosen at random,
+// keeping perSource current, and reports whether one was dropped; without
+// randomness it drops none.
+func (s *deviceStore) dropRandomWaitingLocked(perSource map[string]int) bool {
+	type candidate struct {
+		key string
+		g   *grant
+	}
+	candidates := make([]candidate, 0, len(s.grants))
+	for k, g := range s.grants {
+		if g.waiting() {
+			candidates = append(candidates, candidate{k, g})
+		}
+	}
+	if len(candidates) == 0 {
+		return false
+	}
+	// Map order is neither uniform nor repeatable: the candidates are put
+	// in the order they started, so the choice is pick's alone.
+	slices.SortFunc(candidates, func(a, b candidate) int { return cmp.Compare(a.g.seq, b.g.seq) })
+	pick := s.pick
+	if pick == nil {
+		pick = randomIndex
+	}
+	i, err := pick(len(candidates))
+	if err != nil || i < 0 || i >= len(candidates) {
+		return false
+	}
+	s.dropLocked(candidates[i].key)
+	perSource[candidates[i].g.source]--
 	return true
 }
 

@@ -26,6 +26,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"math/big"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 )
@@ -37,6 +38,16 @@ func randomToken(n int) (string, error) {
 		return "", core.NewError(core.CodeInternal, "no randomness available").WithCause(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// randomIndex returns a uniformly random index below n from crypto/rand,
+// for choosing which entry of a full table to drop.
+func randomIndex(n int) (int, error) {
+	i, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		return 0, core.NewError(core.CodeInternal, "no randomness available").WithCause(err)
+	}
+	return int(i.Int64()), nil
 }
 
 // digest is the lookup key a secret is stored under, so the store never

@@ -1,8 +1,12 @@
 package oauthas
 
 import (
+	"cmp"
+	"crypto/rand"
+	"math/big"
 	"net"
 	"net/http"
+	"slices"
 	"time"
 )
 
@@ -51,18 +55,25 @@ func (s *Server) clientKey(r *http.Request) string {
 	return host
 }
 
-// addDynamicClient stores c, registered from source. It first drops expired
-// clients and then, while MaxClients are registered, the oldest unused
-// client of the source holding the most, as long as that source holds more
-// than one: a flood from another address, or from a few, does not reach a
-// person's client, and one sharing the person's address takes as many
-// registrations as there are slots. When no source holds more than one, a
-// newcomer never drops an older client of another source: c is refused
-// until unused clients lapse, so a flood of one registration from each of
-// many addresses cannot drop a person's. A client a person consented to, or
-// one a consent or code is pending for, is never dropped to make room. Only
-// a person who holds a scope reaches consent, so an account without a role
-// cannot pin a client this way.
+// addDynamicClient stores c, registered from source, and reports whether
+// it found room. It first drops expired clients and then, while MaxClients
+// are registered:
+//
+//   - when some source holds more than one unused client, the oldest unused
+//     client of the source holding the most: a flood from another address,
+//     or from a few, does not reach a person's client, and one sharing the
+//     person's address takes as many registrations as there are slots;
+//   - when every source holds one, an unused client chosen at random
+//     (crypto/rand): a flood of one registration from each of many
+//     addresses neither locks out a new registration nor aims at a
+//     person's client;
+//   - when no unused client is left, a client a person consented to,
+//     chosen at random: one is never dropped while an unused one remains.
+//
+// A client a consent or code is pending for is never dropped; c is refused
+// only when every registered client is one of those. Only a person who
+// holds a scope reaches consent, so an account without a role cannot pin a
+// client this way.
 func (s *Server) addDynamicClient(c Client, source string) bool {
 	now := s.cfg.Clock.Now()
 	s.mu.Lock()
@@ -82,17 +93,70 @@ func (s *Server) addDynamicClient(c Client, source string) bool {
 		for _, n := range unusedBySource {
 			busiest = max(busiest, n)
 		}
-		if busiest <= 1 {
-			return false
+		switch {
+		case busiest > 1:
+			s.dropOldestClientLocked(unusedBySource, func(id string, u *clientUse) bool {
+				return u.unused() && !inFlight[id] && unusedBySource[u.source] == busiest
+			})
+		case busiest == 1:
+			if !s.dropRandomClientLocked(unusedBySource, func(id string, u *clientUse) bool { return u.unused() && !inFlight[id] }) {
+				return false
+			}
+		default:
+			if !s.dropRandomClientLocked(unusedBySource, func(id string, _ *clientUse) bool { return !inFlight[id] }) {
+				return false
+			}
 		}
-		s.dropOldestClientLocked(unusedBySource, func(id string, u *clientUse) bool {
-			return u.unused() && !inFlight[id] && unusedBySource[u.source] == busiest
-		})
 	}
 	s.clientSeq++
 	s.clients[c.ID] = c
 	s.dynamic[c.ID] = &clientUse{source: source, seq: s.clientSeq, registered: now}
 	return true
+}
+
+// dropRandomClientLocked drops a registration among those eligible picks,
+// chosen at random, keeping unusedBySource current, and reports whether
+// one was dropped; without randomness it drops none.
+func (s *Server) dropRandomClientLocked(unusedBySource map[string]int, eligible func(string, *clientUse) bool) bool {
+	type candidate struct {
+		id string
+		u  *clientUse
+	}
+	var candidates []candidate
+	for id, u := range s.dynamic {
+		if eligible(id, u) {
+			candidates = append(candidates, candidate{id, u})
+		}
+	}
+	if len(candidates) == 0 {
+		return false
+	}
+	// Map order is neither uniform nor repeatable: the candidates are put
+	// in the order they registered, so the choice is pick's alone.
+	slices.SortFunc(candidates, func(a, b candidate) int { return cmp.Compare(a.u.seq, b.u.seq) })
+	pick := s.pick
+	if pick == nil {
+		pick = randomIndex
+	}
+	i, err := pick(len(candidates))
+	if err != nil || i < 0 || i >= len(candidates) {
+		return false
+	}
+	victim := candidates[i]
+	s.dropClientLocked(victim.id)
+	if victim.u.unused() {
+		unusedBySource[victim.u.source]--
+	}
+	return true
+}
+
+// randomIndex returns a uniformly random index below n from crypto/rand.
+func randomIndex(n int) (int, error) {
+	i, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		return 0, err
+	}
+	return int(i.Int64()), nil
 }
 
 // clientsInFlightLocked returns the clients a consent or an unredeemed code

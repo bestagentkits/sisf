@@ -102,12 +102,21 @@ type env struct {
 	clock *intaketest.Clock
 	fake  *fakeoidc.Server
 	auth  *auth.Service
-	rec   *recorder
-	base  string
-	logs  *strings.Builder
+	// api is the REST handler under test.
+	api  http.Handler
+	rec  *recorder
+	base string
+	logs *strings.Builder
 }
 
 func newEnv(t *testing.T, registry func(*recorder) (*actions.Registry, error), mutate ...func(*api.Config)) *env {
+	t.Helper()
+	return newEnvWithEvictionPick(t, registry, nil, mutate...)
+}
+
+// newEnvWithEvictionPick is newEnv with pick choosing which waiting login
+// request to drop when every source holds one; nil means crypto/rand.
+func newEnvWithEvictionPick(t *testing.T, registry func(*recorder) (*actions.Registry, error), pick func(n int) (int, error), mutate ...func(*api.Config)) *env {
 	t.Helper()
 	e := &env{clock: intaketest.NewClock(time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)), rec: &recorder{}, logs: &strings.Builder{}}
 	e.fake = fakeoidc.NewTestServer(t, fakeoidc.WithClock(e.clock))
@@ -152,7 +161,11 @@ func newEnv(t *testing.T, registry func(*recorder) (*actions.Registry, error), m
 	for _, m := range mutate {
 		m(&cfg)
 	}
-	handler, err := api.New(cfg)
+	build := api.New
+	if pick != nil {
+		build = func(cfg api.Config) (http.Handler, error) { return api.NewWithEvictionPick(cfg, pick) }
+	}
+	handler, err := build(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -76,25 +77,28 @@ func TestASignInFloodFromManyAddressesDoesNotEvictAPersonsSignIn(t *testing.T) {
 }
 
 // A flood of one sign-in from each of ever new addresses holds one flow per
-// source, so no source is busier than the person's. A newcomer then never
-// pushes out an older sign-in of another source: it is refused until flows
-// lapse, and the person's sign-in completes.
-func TestAFloodOfOneSignInPerAddressDoesNotEvictAPersonsSignIn(t *testing.T) {
+// source, so no source is busier than the person's. A newcomer is still
+// admitted, so the flood locks nobody out: it pushes out a flow chosen at
+// random, which the flood cannot aim at the person's. Here the choice is
+// seeded, so the outcome repeats.
+func TestAFloodOfOneSignInPerAddressIsAdmittedAndMissesAPersonsSignIn(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
+	rng := rand.New(rand.NewPCG(7, 7))
+	auth.SetEvictionPick(e.svc, func(n int) (int, error) { return rng.IntN(n), nil })
 	b := e.browser(t)
 	providerURL := b.toProvider(t, "google")
 	e.clock.Advance(time.Second) // the person's sign-in is the oldest open one
-	if refused := flood(t, e, 1100, 1); refused == 0 {
-		t.Fatal("more sign-ins than slots were all accepted, so some flow was pushed out")
+	if refused := flood(t, e, 1100, 1); refused != 0 {
+		t.Fatalf("%d sign-ins were refused because every slot held one flow per address, want each admitted", refused)
 	}
 	if resp, _ := b.hop(t, http.MethodGet, b.atProvider(t, "owner-sub", providerURL), nil); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("the Owner's sign-in after a flood of one sign-in per address: %d, want it completed", resp.StatusCode)
 	}
 }
 
-// Sign-ins refused while every slot is taken are accepted again once the
-// flood's flows lapse.
+// Once a flood's flows lapse, its slots are free again and a sign-in is
+// accepted without pushing anything out.
 func TestSignInsAreAcceptedAgainOnceAFloodsFlowsLapse(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
@@ -151,14 +155,14 @@ func TestAStepUpOutlastsAFloodOfUnauthenticatedSignIns(t *testing.T) {
 }
 
 // A person who holds a role can still start a step-up while a flood of one
-// sign-in per address has every slot taken and new sign-ins are refused.
+// sign-in per address has every slot taken.
 func TestAStepUpStartsWhileAFloodOfOneSignInPerAddressFillsEverySlot(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, ownerHoldsARole)
 	b := e.browser(t)
 	csrf := signedIn(t, b, "owner-sub")
-	if refused := flood(t, e, 1100, 1); refused == 0 {
-		t.Fatal("more sign-ins than slots were all accepted")
+	if refused := flood(t, e, 1100, 1); refused != 0 {
+		t.Fatalf("%d sign-ins were refused because every slot held one flow per address, want each admitted", refused)
 	}
 	target := auth.PATRequest{Name: "cli", Scopes: []string{"prs:write"}}.StepUpTarget()
 	_, providerURL := b.hop(t, http.MethodPost, "/auth/step-up/google"+stepUpQuery(target), map[string]string{auth.CSRFHeader: csrf})

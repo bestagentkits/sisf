@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -148,17 +149,25 @@ func (s *Service) completeFlow(ctx context.Context, providerName, state, code, b
 // room. Anyone may start a sign-in and any account can sign in and start
 // step-ups, so it drops expired flows, then the session's oldest step-up
 // while it holds maxStepUpsPerSession, and then, while all maxFlows are
-// taken, the oldest flow of the source holding the most, as long as that
-// source holds more than one: a flood from one address, or from a few,
-// pushes out its own flows before a person's single one, and one sharing the
-// person's address takes as many flows to reach theirs as it always did.
-// When no source holds more than one, a newcomer never pushes out an older
-// flow of another source: the new flow is refused until flows lapse, so a
-// flood of one sign-in from each of many addresses cannot evict a person's.
-// A step-up of a person who holds a role (Config.HoldsRole), protected, is
-// never counted against a source and always finds room: it pushes out the
-// oldest unprotected flow and, when nothing else is left, the oldest
-// protected one.
+// taken:
+//
+//   - when some source holds more than one unprotected flow, the oldest
+//     flow of the source holding the most: a flood from one address, or from
+//     a few, pushes out its own flows before a person's single one, and one
+//     sharing the person's address takes as many flows to reach theirs as
+//     there are slots;
+//   - when every source holds one, an unprotected flow chosen at random
+//     (crypto/rand): a new sign-in is never refused because the table is
+//     full of one flow from each of many addresses, so such a flood cannot
+//     lock everyone out, and it cannot aim at a person's flow either: at
+//     1.7 starts a second against 1,024 slots, a sign-in finished within a
+//     minute survives about nine times in ten.
+//
+// A step-up of a person who holds a role (Config.HoldsRole) is protected:
+// it is never counted against a source and never pushed out for an
+// unprotected flow. It always finds room: when nothing else is left, it
+// pushes out the oldest protected flow. An unprotected flow is refused only
+// when every flow left is protected.
 func (s *Service) pruneFlowsLocked(now time.Time, source, stepUpKey string, protected bool) bool {
 	perSource := map[string]int{}
 	stepUps := 0
@@ -182,19 +191,53 @@ func (s *Service) pruneFlowsLocked(now time.Time, source, stepUpKey string, prot
 		for _, n := range perSource {
 			busiest = max(busiest, n)
 		}
-		var eligible func(*flow) bool
+		var dropped bool
 		switch {
-		case busiest > 1 || protected && busiest == 1:
-			eligible = func(f *flow) bool { return !f.protected && perSource[f.source] == busiest }
+		case busiest > 1:
+			dropped = s.dropOldestFlowLocked(perSource, func(f *flow) bool { return !f.protected && perSource[f.source] == busiest })
+		case busiest == 1:
+			dropped = s.dropRandomFlowLocked(perSource)
 		case protected:
-			eligible = func(*flow) bool { return true }
-		default:
-			return false
+			dropped = s.dropOldestFlowLocked(perSource, func(*flow) bool { return true })
 		}
-		if !s.dropOldestFlowLocked(perSource, eligible) {
+		if !dropped {
 			return false
 		}
 	}
+	return true
+}
+
+// dropRandomFlowLocked drops an unprotected flow chosen at random, keeping
+// perSource current, and reports whether one was dropped; without
+// randomness it drops none.
+func (s *Service) dropRandomFlowLocked(perSource map[string]int) bool {
+	type candidate struct {
+		key string
+		f   *flow
+	}
+	candidates := make([]candidate, 0, len(s.flows))
+	for k, f := range s.flows {
+		if !f.protected {
+			candidates = append(candidates, candidate{k, f})
+		}
+	}
+	if len(candidates) == 0 {
+		return false
+	}
+	// Map order is neither uniform nor repeatable: the candidates are put
+	// in the order they started, so the choice is pick's alone.
+	slices.SortFunc(candidates, func(a, b candidate) int { return cmp.Compare(a.f.seq, b.f.seq) })
+	pick := s.pick
+	if pick == nil {
+		pick = randomIndex
+	}
+	i, err := pick(len(candidates))
+	if err != nil || i < 0 || i >= len(candidates) {
+		return false
+	}
+	victim := candidates[i]
+	delete(s.flows, victim.key)
+	perSource[victim.f.source]--
 	return true
 }
 
