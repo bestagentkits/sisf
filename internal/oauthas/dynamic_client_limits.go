@@ -53,13 +53,16 @@ func (s *Server) clientKey(r *http.Request) string {
 
 // addDynamicClient stores c, registered from source. It first drops expired
 // clients and then, while MaxClients are registered, the oldest unused
-// client of the source holding the most: a flood from another address, or
-// from many, does not reach a person's client, and one sharing the person's
-// address takes as many registrations as there are slots. A client a person
-// consented to, or one a consent or code is pending for, is never dropped
-// to make room; when nothing else is left, c is refused. Only a person who
-// holds a scope reaches consent, so an account without a role cannot pin a
-// client this way.
+// client of the source holding the most, as long as that source holds more
+// than one: a flood from another address, or from a few, does not reach a
+// person's client, and one sharing the person's address takes as many
+// registrations as there are slots. When no source holds more than one, a
+// newcomer never drops an older client of another source: c is refused
+// until unused clients lapse, so a flood of one registration from each of
+// many addresses cannot drop a person's. A client a person consented to, or
+// one a consent or code is pending for, is never dropped to make room. Only
+// a person who holds a scope reaches consent, so an account without a role
+// cannot pin a client this way.
 func (s *Server) addDynamicClient(c Client, source string) bool {
 	now := s.cfg.Clock.Now()
 	s.mu.Lock()
@@ -79,7 +82,7 @@ func (s *Server) addDynamicClient(c Client, source string) bool {
 		for _, n := range unusedBySource {
 			busiest = max(busiest, n)
 		}
-		if busiest == 0 {
+		if busiest <= 1 {
 			return false
 		}
 		s.dropOldestClientLocked(unusedBySource, func(id string, u *clientUse) bool {

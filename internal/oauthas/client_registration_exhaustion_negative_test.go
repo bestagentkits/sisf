@@ -132,6 +132,37 @@ func TestAClientInUseOutlastsARegistrationFlood(t *testing.T) {
 	}
 }
 
+// A flood of one registration from each of ever new addresses holds one
+// client per source, so no source is busier than the person's. A newcomer
+// then never drops an older unused client of another source: it is refused
+// until clients lapse, and the person's client stays registered.
+func TestAFloodOfOneRegistrationPerAddressDoesNotDropAPersonsClient(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, registrationLimits(20))
+	_, id := registerFrom(t, e, "192.0.2.10")
+	e.Clock.Advance(time.Second) // the person's client is the oldest one
+	refused := 0
+	for s := range 30 {
+		switch status, _ := registerFrom(t, e, fmt.Sprintf("203.0.113.%d", s)); status {
+		case http.StatusCreated:
+		case http.StatusServiceUnavailable:
+			refused++
+		default:
+			t.Fatalf("a registration from source %d: %d", s, status)
+		}
+	}
+	if refused == 0 {
+		t.Fatal("more registrations than slots were all accepted, so some client was dropped")
+	}
+	if !registered(t, e, id) {
+		t.Fatal("a flood of one registration per address dropped a person's client")
+	}
+	e.Clock.Advance(2 * time.Hour)
+	if status, _ := registerFrom(t, e, "192.0.2.11"); status != http.StatusCreated {
+		t.Fatalf("a registration once the flood's clients lapsed: %d, want it registered", status)
+	}
+}
+
 // A client counts as in use only through the consent of a person who holds
 // a scope: a signed-in account with no role reaches neither consent nor a
 // code, so it cannot pin registered clients against a flood.

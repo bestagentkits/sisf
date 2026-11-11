@@ -54,8 +54,10 @@ type Config struct {
 	// is called with the service's lock held. Nil means nobody does.
 	HoldsRole func(actorID string) bool
 	// ClientKey names the network source of a request: when every sign-in
-	// slot is taken, the flows of the source holding the most go first. Nil
-	// means the remote IP address.
+	// slot is taken, the flows of the source holding the most go first, and
+	// a new sign-in is refused when no source holds more than one.
+	// control.ClientAddress builds one that names an IPv6 client by its /64.
+	// Nil means the remote IP address.
 	ClientKey func(*http.Request) string
 }
 

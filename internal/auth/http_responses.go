@@ -26,6 +26,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case core.CodeNotFound:
 		status = http.StatusNotFound
+	case core.CodeRateLimited:
+		status = http.StatusTooManyRequests
 	case core.CodeUnavailable:
 		status = http.StatusBadGateway
 	case core.CodeNotSupported:

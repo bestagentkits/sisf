@@ -75,7 +75,9 @@ type Config struct {
 	Logger *slog.Logger
 	// ClientKey names the network source of a request: when every login
 	// request slot is taken, the waiting requests of the source holding the
-	// most go first. Nil means the remote IP address.
+	// most go first, and a new one is refused when no source holds more than
+	// one. control.ClientAddress builds one that names an IPv6 client by its
+	// /64. Nil means the remote IP address.
 	ClientKey func(*http.Request) string
 }
 

@@ -108,11 +108,14 @@ func (s *deviceStore) purgeLocked(now time.Time) {
 
 // start opens a login request from source and returns its device code.
 // Anyone may start one, so while all maxOpenGrants are taken it drops the
-// oldest waiting request of the source holding the most: a flood from
-// another address, or from many, does not reach a person's request, and one
-// sharing the person's address takes as many starts as there are slots. A
-// request being approved, or approved and not yet collected, is never
-// dropped; when nothing else is left, start is refused.
+// oldest waiting request of the source holding the most, as long as that
+// source holds more than one: a flood from another address, or from a few,
+// does not reach a person's request, and one sharing the person's address
+// takes as many starts as there are slots. When no source holds more than
+// one, a newcomer never drops an older request of another source: start is
+// refused until requests lapse, so a flood of one start from each of many
+// addresses cannot drop a person's. A request being approved, or approved
+// and not yet collected, is never dropped.
 func (s *deviceStore) start(name string, scopes []string, source string) (deviceCode string, g grant, err error) {
 	raw := make([]byte, 32)
 	if _, rerr := rand.Read(raw); rerr != nil {
@@ -150,8 +153,9 @@ func (s *deviceStore) start(name string, scopes []string, source string) (device
 // for one nor approved. Only such a request is dropped to make room.
 func (g *grant) waiting() bool { return !g.claimed && !g.approved }
 
-// makeRoomLocked drops waiting requests until fewer than maxOpenGrants are
-// open, and reports whether there is room.
+// makeRoomLocked drops waiting requests of sources holding more than one
+// until fewer than maxOpenGrants are open, and reports whether there is
+// room.
 func (s *deviceStore) makeRoomLocked() bool {
 	perSource := map[string]int{}
 	for _, g := range s.grants {
@@ -164,7 +168,7 @@ func (s *deviceStore) makeRoomLocked() bool {
 		for _, n := range perSource {
 			busiest = max(busiest, n)
 		}
-		if busiest == 0 {
+		if busiest <= 1 {
 			return false
 		}
 		s.dropOldestWaitingLocked(perSource, func(g *grant) bool { return perSource[g.source] == busiest })

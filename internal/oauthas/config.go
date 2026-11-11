@@ -72,7 +72,9 @@ type Config struct {
 	MaxClients int
 	// ClientKey names the network source of a registration: when MaxClients
 	// are registered, the unused clients of the source holding the most go
-	// first. Nil means the remote IP address.
+	// first, and a new one is refused when no source holds more than one.
+	// control.ClientAddress builds one that names an IPv6 client by its /64.
+	// Nil means the remote IP address.
 	ClientKey func(*http.Request) string
 	// SigningKey signs access tokens; nil generates one, so a restart voids
 	// every token, which is the safe failure.

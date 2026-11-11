@@ -8,24 +8,38 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/auth"
+	"github.com/bestagentkits/sisf/internal/control"
 )
 
 // flood starts sign-ins nobody finishes, perSource from each of sources
-// network addresses, as an unauthenticated caller can.
-func flood(t *testing.T, e *env, sources, perSource int) {
+// network addresses, as an unauthenticated caller can, and returns how many
+// were refused because every slot was taken.
+func flood(t *testing.T, e *env, sources, perSource int) int {
+	t.Helper()
+	return floodFrom(t, e, sources, perSource, func(s int) string { return fmt.Sprintf("203.0.%d.%d:4000", s/250, s%250+1) })
+}
+
+// floodFrom is flood with the address of source s given by address.
+func floodFrom(t *testing.T, e *env, sources, perSource int, address func(s int) string) int {
 	t.Helper()
 	handler := e.svc.Handler()
+	refused := 0
 	for s := range sources {
 		for range perSource {
 			req := httptest.NewRequest(http.MethodGet, "/auth/login/google?return_to=/", nil)
-			req.RemoteAddr = fmt.Sprintf("203.0.%d.%d:4000", s/250, s%250+1)
+			req.RemoteAddr = address(s)
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
-			if rec.Code != http.StatusFound {
+			switch rec.Code {
+			case http.StatusFound:
+			case http.StatusTooManyRequests:
+				refused++
+			default:
 				t.Fatalf("an unfinished sign-in from source %d: %d", s, rec.Code)
 			}
 		}
 	}
+	return refused
 }
 
 // Sign-ins are open to anyone, so one address starting thousands of them
@@ -36,7 +50,9 @@ func TestASignInFloodFromOneAddressDoesNotEvictAnotherAddressesSignIn(t *testing
 	b := e.browser(t)
 	providerURL := b.toProvider(t, "google")
 	e.clock.Advance(time.Second) // the person's sign-in is the oldest open one
-	flood(t, e, 1, 1100)
+	if refused := flood(t, e, 1, 1100); refused != 0 {
+		t.Fatalf("%d sign-ins from one address were refused, want its own oldest pushed out instead", refused)
+	}
 	if resp, _ := b.hop(t, http.MethodGet, b.atProvider(t, "owner-sub", providerURL), nil); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("the Owner's sign-in after a flood from one address: %d, want it completed", resp.StatusCode)
 	}
@@ -51,9 +67,60 @@ func TestASignInFloodFromManyAddressesDoesNotEvictAPersonsSignIn(t *testing.T) {
 	b := e.browser(t)
 	providerURL := b.toProvider(t, "google")
 	e.clock.Advance(time.Second) // the person's sign-in is the oldest open one
-	flood(t, e, 70, 20)
+	if refused := flood(t, e, 70, 20); refused != 0 {
+		t.Fatalf("%d sign-ins from addresses holding many were refused, want their own oldest pushed out instead", refused)
+	}
 	if resp, _ := b.hop(t, http.MethodGet, b.atProvider(t, "owner-sub", providerURL), nil); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("the Owner's sign-in after a flood from many addresses: %d, want it completed", resp.StatusCode)
+	}
+}
+
+// A flood of one sign-in from each of ever new addresses holds one flow per
+// source, so no source is busier than the person's. A newcomer then never
+// pushes out an older sign-in of another source: it is refused until flows
+// lapse, and the person's sign-in completes.
+func TestAFloodOfOneSignInPerAddressDoesNotEvictAPersonsSignIn(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	b := e.browser(t)
+	providerURL := b.toProvider(t, "google")
+	e.clock.Advance(time.Second) // the person's sign-in is the oldest open one
+	if refused := flood(t, e, 1100, 1); refused == 0 {
+		t.Fatal("more sign-ins than slots were all accepted, so some flow was pushed out")
+	}
+	if resp, _ := b.hop(t, http.MethodGet, b.atProvider(t, "owner-sub", providerURL), nil); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the Owner's sign-in after a flood of one sign-in per address: %d, want it completed", resp.StatusCode)
+	}
+}
+
+// Sign-ins refused while every slot is taken are accepted again once the
+// flood's flows lapse.
+func TestSignInsAreAcceptedAgainOnceAFloodsFlowsLapse(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	flood(t, e, 1100, 1)
+	e.clock.Advance(time.Hour)
+	b := e.browser(t)
+	providerURL := b.toProvider(t, "google")
+	if resp, _ := b.hop(t, http.MethodGet, b.atProvider(t, "owner-sub", providerURL), nil); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("a sign-in after the flood lapsed: %d, want it completed", resp.StatusCode)
+	}
+}
+
+// One IPv6 host holds a whole /64, so a flood rotating addresses inside it
+// counts as one source and pushes out only its own sign-ins.
+func TestAnIPv6FloodInsideOneSlash64CountsAsOneSource(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, func(_ *env, cfg *auth.Config) { cfg.ClientKey = control.ClientAddress(nil) })
+	b := e.browser(t)
+	providerURL := b.toProvider(t, "google")
+	e.clock.Advance(time.Second) // the person's sign-in is the oldest open one
+	refused := floodFrom(t, e, 1100, 1, func(s int) string { return fmt.Sprintf("[2001:db8:1:2::%x]:4000", s+1) })
+	if refused != 0 {
+		t.Fatalf("%d sign-ins from one /64 were refused, want its own oldest pushed out instead", refused)
+	}
+	if resp, _ := b.hop(t, http.MethodGet, b.atProvider(t, "owner-sub", providerURL), nil); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the Owner's sign-in after a flood from one /64: %d, want it completed", resp.StatusCode)
 	}
 }
 

@@ -96,6 +96,36 @@ func TestAFloodDropsItsOwnLoginRequestsBeforeAPersons(t *testing.T) {
 	}
 }
 
+// A flood of one start from each of ever new addresses holds one request
+// per source, so no source is busier than the person's. A newcomer then
+// never drops an older waiting request of another source: it is refused
+// until requests lapse, and the person's request keeps waiting.
+func TestAFloodOfOneLoginRequestPerAddressDoesNotDropAPersonsRequest(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, sampleRegistry, keyedBySourceHeader)
+	cli := e.browser(t)
+	_, open := startFrom(t, cli, "192.0.2.10")
+	e.clock.Advance(time.Second) // the person's request is the oldest open one
+	attacker := e.browser(t)
+	refused := 0
+	for s := range 300 {
+		switch status, _ := startFrom(t, attacker, fmt.Sprintf("203.0.%d.%d", s/250, s%250+1)); status {
+		case http.StatusOK:
+		case http.StatusTooManyRequests:
+			refused++
+		default:
+			t.Fatalf("a start from source %d: %d", s, status)
+		}
+	}
+	if refused == 0 {
+		t.Fatal("more starts than slots were all accepted, so some request was dropped")
+	}
+	e.clock.Advance(time.Duration(open.Interval) * time.Second)
+	if r, p := cli.poll(t, open.DeviceCode); r.status != http.StatusAccepted || p.Status != "pending" {
+		t.Fatalf("the person's open request after a flood of one start per address: %d %s, want it still pending", r.status, r.body)
+	}
+}
+
 // A flood from the address a person shares, as behind a proxy that forwards
 // no client address, reaches the person's waiting request only once it has
 // started as many as there are slots.

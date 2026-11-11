@@ -81,7 +81,9 @@ func (s *Service) beginFlow(providerName, returnTo, source, stepUpKey string, ta
 	if ss, ok := s.sessions[stepUpKey]; ok && s.cfg.HoldsRole != nil {
 		f.protected = s.cfg.HoldsRole(ss.actorID)
 	}
-	s.pruneFlowsLocked(now, source, stepUpKey)
+	if !s.pruneFlowsLocked(now, source, stepUpKey, f.protected) {
+		return "", "", core.NewError(core.CodeRateLimited, "too many sign-ins are open; try again in a few minutes")
+	}
 	s.flowSeq++
 	f.seq = s.flowSeq
 	s.flows[digest(state)] = f
@@ -142,16 +144,22 @@ func (s *Service) completeFlow(ctx context.Context, providerName, state, code, b
 }
 
 // pruneFlowsLocked makes room for a flow from source, a step-up of the
-// session under stepUpKey when that is set. Anyone may start a sign-in and
-// any account can sign in and start step-ups, so it drops expired flows,
-// then the session's oldest step-up while it holds maxStepUpsPerSession,
-// and then, while all maxFlows are taken, the oldest flow of the source
-// holding the most: a flood, from one address or from many, pushes out its
-// own flows before a person's single one, and one sharing the person's
-// address takes as many flows to reach theirs as it always did. A step-up
-// of a person who holds a role (Config.HoldsRole) is never counted against
-// a source and goes only when nothing else is left.
-func (s *Service) pruneFlowsLocked(now time.Time, source, stepUpKey string) {
+// session under stepUpKey when that is set, and reports whether there is
+// room. Anyone may start a sign-in and any account can sign in and start
+// step-ups, so it drops expired flows, then the session's oldest step-up
+// while it holds maxStepUpsPerSession, and then, while all maxFlows are
+// taken, the oldest flow of the source holding the most, as long as that
+// source holds more than one: a flood from one address, or from a few,
+// pushes out its own flows before a person's single one, and one sharing the
+// person's address takes as many flows to reach theirs as it always did.
+// When no source holds more than one, a newcomer never pushes out an older
+// flow of another source: the new flow is refused until flows lapse, so a
+// flood of one sign-in from each of many addresses cannot evict a person's.
+// A step-up of a person who holds a role (Config.HoldsRole), protected, is
+// never counted against a source and always finds room: it pushes out the
+// oldest unprotected flow and, when nothing else is left, the oldest
+// protected one.
+func (s *Service) pruneFlowsLocked(now time.Time, source, stepUpKey string, protected bool) bool {
 	perSource := map[string]int{}
 	stepUps := 0
 	for k, f := range s.flows {
@@ -174,13 +182,26 @@ func (s *Service) pruneFlowsLocked(now time.Time, source, stepUpKey string) {
 		for _, n := range perSource {
 			busiest = max(busiest, n)
 		}
-		s.dropOldestFlowLocked(perSource, func(f *flow) bool { return busiest == 0 || !f.protected && perSource[f.source] == busiest })
+		var eligible func(*flow) bool
+		switch {
+		case busiest > 1 || protected && busiest == 1:
+			eligible = func(f *flow) bool { return !f.protected && perSource[f.source] == busiest }
+		case protected:
+			eligible = func(*flow) bool { return true }
+		default:
+			return false
+		}
+		if !s.dropOldestFlowLocked(perSource, eligible) {
+			return false
+		}
 	}
+	return true
 }
 
 // dropOldestFlowLocked drops the oldest flow among those eligible picks,
-// keeping perSource, the count of unprotected flows by source, current.
-func (s *Service) dropOldestFlowLocked(perSource map[string]int, eligible func(*flow) bool) {
+// keeping perSource, the count of unprotected flows by source, current. It
+// reports whether one was dropped.
+func (s *Service) dropOldestFlowLocked(perSource map[string]int, eligible func(*flow) bool) bool {
 	var key string
 	var victim *flow
 	for k, f := range s.flows {
@@ -189,12 +210,13 @@ func (s *Service) dropOldestFlowLocked(perSource map[string]int, eligible func(*
 		}
 	}
 	if victim == nil {
-		return
+		return false
 	}
 	delete(s.flows, key)
 	if !victim.protected {
 		perSource[victim.source]--
 	}
+	return true
 }
 
 // stepUpUnsupported refuses a step-up through a provider that cannot force

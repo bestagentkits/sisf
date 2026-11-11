@@ -59,7 +59,9 @@ func (r *ReportRoute) handler(clock core.Clock, operational state.Store) (http.H
 // X-Forwarded-For when the request came from a trusted proxy, which sets
 // that header itself and drops any value the client sent, and the remote
 // address otherwise. Limits per client, such as those of the report route
-// and of sign-in, key on it.
+// and of sign-in, key on it. An IPv6 client is named by its /64, the block
+// one host is routinely given, so rotating addresses inside it does not
+// make it many clients; an IPv4 client is named by its address.
 func ClientAddress(trusted []netip.Prefix) func(*http.Request) string {
 	if len(trusted) == 0 {
 		trusted = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
@@ -67,20 +69,37 @@ func ClientAddress(trusted []netip.Prefix) func(*http.Request) string {
 	return func(r *http.Request) string {
 		remote := remoteAddr(r)
 		addr, err := netip.ParseAddr(remote)
-		if err != nil || !fromAny(addr.Unmap(), trusted) {
+		if err != nil {
 			return remote
+		}
+		if !fromAny(addr.Unmap(), trusted) {
+			return clientOf(addr)
 		}
 		values := r.Header.Values("X-Forwarded-For")
 		if len(values) == 0 {
-			return remote
+			return clientOf(addr)
 		}
 		hops := strings.Split(values[len(values)-1], ",")
 		client, err := netip.ParseAddr(strings.TrimSpace(hops[len(hops)-1]))
 		if err != nil {
-			return remote
+			return clientOf(addr)
 		}
-		return client.Unmap().String()
+		return clientOf(client)
 	}
+}
+
+// clientOf names the client at addr: its /64 for IPv6, its address for
+// IPv4 (an IPv4-mapped address included).
+func clientOf(addr netip.Addr) string {
+	addr = addr.Unmap().WithZone("")
+	if !addr.Is6() {
+		return addr.String()
+	}
+	block, err := addr.Prefix(64)
+	if err != nil {
+		return addr.String()
+	}
+	return block.String()
 }
 
 func remoteAddr(r *http.Request) string {
