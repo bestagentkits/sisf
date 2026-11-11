@@ -26,6 +26,44 @@ type FactoryStatus struct {
 	IssueCounts   []StateCount   `json:"issue_counts"`
 	Stopped       int            `json:"stopped"`
 	OpenApprovals int            `json:"open_approvals"`
+	// GitHub is how the factory keeps up with GitHub; nil when the
+	// surface was built without it.
+	GitHub *GitHubSync `json:"github,omitempty"`
+}
+
+// GitHubSync is how the factory keeps up with its repository on GitHub:
+// the reconciliation that finds the issue changes no webhook delivered and,
+// on an install acting with the operator's own token, that token's access.
+type GitHubSync struct {
+	// Position is the newest issue update stored, in GitHub's time.
+	Position time.Time `json:"position,omitzero"`
+	// LastPollAt is when GitHub last answered a reconciliation poll.
+	LastPollAt time.Time `json:"last_poll_at,omitzero"`
+	// Backlog is true when the last poll stopped at its bound with more
+	// changes waiting; the next polls continue with them.
+	Backlog bool `json:"backlog"`
+	// LastError is why the last poll failed; "" when it did not.
+	LastError string `json:"last_error,omitempty"`
+	// Retrying are issue changes that could not be stored and are read
+	// again; Skipped are those given up after a bounded number of polls.
+	Retrying []SyncIssue `json:"retrying,omitempty"`
+	Skipped  []SyncIssue `json:"skipped,omitempty"`
+	// TokenAccess is "confirmed" or "revoked" on an install that acts with
+	// the operator's token, "" on one with a GitHub App installation. While
+	// it is revoked the factory does nothing on GitHub.
+	TokenAccess string `json:"token_access,omitempty"`
+	// TokenAccessDetail says why access is revoked, or that the last check
+	// could not reach GitHub.
+	TokenAccessDetail string    `json:"token_access_detail,omitempty"`
+	TokenCheckedAt    time.Time `json:"token_checked_at,omitzero"`
+}
+
+// SyncIssue is one issue change reconciliation could not store.
+type SyncIssue struct {
+	Issue     int       `json:"issue"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Attempts  int       `json:"attempts"`
+	Reason    string    `json:"reason"`
 }
 
 // StateCount is how many issues are in one lifecycle state.
@@ -54,6 +92,13 @@ func (h handlers) factoryStatus(ctx context.Context, req core.ActionRequest) (co
 		Stopped: counts[core.StateBlocked] + counts[core.StateRolledBack], OpenApprovals: len(open)}
 	for _, st := range core.States() {
 		out.IssueCounts = append(out.IssueCounts, StateCount{State: st, Count: counts[st]})
+	}
+	if h.GitHub != nil {
+		sync, err := h.GitHub(ctx)
+		if err != nil {
+			return core.ActionResult{}, err
+		}
+		out.GitHub = &sync
 	}
 	return actions.JSONResult(out)
 }

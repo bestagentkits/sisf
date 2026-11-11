@@ -27,12 +27,20 @@ const targetSchema = `{"type":"object","additionalProperties":false,
 // Specs returns the specs of the actions this package serves.
 func Specs() []core.ActionSpec {
 	return []core.ActionSpec{
-		{Name: ActionFactoryStatus, Summary: "Overview of the factory: issues per lifecycle state, stopped issues and open approvals.",
+		{Name: ActionFactoryStatus, Summary: "Overview of the factory: issues per lifecycle state, stopped issues, open approvals and how it keeps up with GitHub.",
 			Sensitivity: core.SensitivityRead, Scopes: []string{"factory:read"}, Roles: readers,
 			Input: actions.Schema(`{"type":"object","additionalProperties":false}`),
 			Output: actions.Schema(`{"type":"object","properties":{"factory_id":{"type":"string"},"generated_at":{"type":"string","format":"date-time"},
 "issue_total":{"type":"integer"},"stopped":{"type":"integer"},"open_approvals":{"type":"integer"},
-"issue_counts":{"type":"array","items":{"type":"object","properties":{"state":{"type":"string"},"count":{"type":"integer"}}}}}}`)},
+"issue_counts":{"type":"array","items":{"type":"object","properties":{"state":{"type":"string"},"count":{"type":"integer"}}}},
+"github":{"type":"object","description":"How the factory keeps up with GitHub: reconciliation of lost webhooks and the operator token's access.",
+"properties":{"position":{"type":"string","format":"date-time"},"last_poll_at":{"type":"string","format":"date-time"},
+"backlog":{"type":"boolean","description":"The last poll stopped at its bound; more changes wait for the next polls."},
+"last_error":{"type":"string"},
+"retrying":{"type":"array","items":{"type":"object","properties":{"issue":{"type":"integer"},"updated_at":{"type":"string","format":"date-time"},"attempts":{"type":"integer"},"reason":{"type":"string"}}}},
+"skipped":{"type":"array","description":"Issue changes given up after repeated failures.","items":{"type":"object","properties":{"issue":{"type":"integer"},"updated_at":{"type":"string","format":"date-time"},"attempts":{"type":"integer"},"reason":{"type":"string"}}}},
+"token_access":{"type":"string","enum":["confirmed","revoked"]},"token_access_detail":{"type":"string"},
+"token_checked_at":{"type":"string","format":"date-time"}}}}}`)},
 		{Name: ActionIssuesList, Summary: "List tracked issues with their lifecycle record, most recently changed first.",
 			Sensitivity: core.SensitivityRead, Scopes: []string{"issues:read"}, Roles: readers,
 			Input: actions.Schema(`{"type":"object","additionalProperties":false,"properties":{

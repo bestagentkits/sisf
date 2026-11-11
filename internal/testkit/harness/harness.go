@@ -173,6 +173,7 @@ func New(t testing.TB, opts Options) *Factory {
 	}
 	f.host, f.GitHub, f.GitData = host, host.GitHub, host.GitData
 	if opts.OperatorToken {
+		m.Mode = manifest.ModeStandalone
 		m.Extensions = map[string]any{"profile": "default", "dev": true, "github_auth_via": "gh-cli", "github_api_url": host.URL}
 	}
 	if err := f.GitHub.AddRepo(f.Repo); err != nil {
@@ -341,6 +342,9 @@ func (f *Factory) dispatcherAlive(context.Context) error {
 	}
 	return nil
 }
+
+// APIURL is the address of the fake GitHub's API the factory talks to.
+func (f *Factory) APIURL() string { return f.host.URL }
 
 // Pass runs one round of the control zone's background work and fails the
 // test on an error.

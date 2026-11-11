@@ -103,9 +103,13 @@ type Result struct {
 // issue as GitHub shows it now, so a delivery that arrives twice or out of
 // order changes nothing.
 //
-// Events caused by the factory's own edits are skipped. The one event read
-// for itself is a person removing sisf:needs-info, which resumes a parked
-// issue.
+// Events caused by the factory's own edits are skipped. A parked issue
+// resumes when a person removed sisf:needs-info: the webhook of that
+// removal says so, and so does any other event, a reconciled change found
+// by polling included, whose issue no longer carries the label once the
+// factory's own label was confirmed on GitHub. Either way the issue is read
+// again and resumes only if the label is gone now; an event whose issue
+// still shows the label costs nothing.
 func (s *Service) HandleEvent(ctx context.Context, ev github.WebhookEvent) (Result, error) {
 	if err := ev.Validate(); err != nil {
 		return Result{}, err
@@ -132,17 +136,24 @@ func (s *Service) HandleEvent(ctx context.Context, ev github.WebhookEvent) (Resu
 		return result, nil
 	}
 	resume := ev.Type == "issues" && ev.Action == "unlabeled" && ev.Label != nil && ev.Label.Name == github.LabelNeedsInfo
-	return s.reconcile(ctx, ref, resume)
+	return s.reconcile(ctx, ref, resume, ev.Issue)
 }
 
 // Reconcile brings one issue as far as intake can take it right now. It is
 // what polling calls, and it is safe to call at any time and any number of
 // times: each lifecycle step is written at most once.
 func (s *Service) Reconcile(ctx context.Context, issue core.IssueRef) (Result, error) {
-	return s.reconcile(ctx, issue, false)
+	return s.reconcile(ctx, issue, false, nil)
 }
 
-func (s *Service) reconcile(ctx context.Context, ref core.IssueRef, resume bool) (Result, error) {
+// liftedIn reports whether shown, the issue as an event carried it, says
+// that a person removed the label of a parking the factory confirmed on
+// GitHub. It is a reason to read the issue again, not proof.
+func liftedIn(shown *github.Issue, ref core.IssueRef, doc issueDoc) bool {
+	return shown != nil && shown.Ref == ref && !doc.Clarify.LabelPending && !shown.HasLabel(github.LabelNeedsInfo)
+}
+
+func (s *Service) reconcile(ctx context.Context, ref core.IssueRef, resume bool, shown *github.Issue) (Result, error) {
 	result := Result{Issue: ref}
 	if err := ref.Validate(); err != nil {
 		return result, err
@@ -158,9 +169,12 @@ func (s *Service) reconcile(ctx context.Context, ref core.IssueRef, resume bool)
 	case snap.exists && !handles(snap.record.State):
 		result.Skipped = "intake is finished for this issue"
 		return result, nil
-	case snap.exists && snap.doc.Clarify.NeedsInfo && !resume:
+	case snap.exists && snap.doc.Clarify.NeedsInfo && !resume && !liftedIn(shown, ref, snap.doc):
 		result.Skipped = "the issue is parked until a person removes " + github.LabelNeedsInfo
 		return result, nil
+	case snap.exists && snap.doc.Clarify.NeedsInfo:
+		// Whatever the event, the issue read below decides.
+		resume = true
 	}
 
 	in, skipped, err := s.gather(ctx, ref, snap.exists)

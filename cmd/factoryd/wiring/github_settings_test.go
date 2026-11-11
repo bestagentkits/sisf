@@ -11,30 +11,33 @@ import (
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
-// Only a development install on the operator's gh login may name no GitHub
-// App installation, and it then takes no webhooks; every other real install
-// is still refused without one.
+// Only a development install on the operator's gh login, in Standalone
+// mode, may name no GitHub App installation, and it then takes no webhooks;
+// every other real install is still refused without one.
 func TestOnlyADevelopmentInstallOnTheOperatorsLoginGoesWithoutAnInstallation(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name       string
 		ext        map[string]any
+		mode       manifest.Mode
 		noWebhooks bool
 		refused    bool
 	}{
-		{"dev on gh-cli", map[string]any{"profile": "default", "dev": true, "github_auth_via": "gh-cli"}, true, false},
-		{"gh-cli without dev", map[string]any{"profile": "default", "github_auth_via": "gh-cli"}, false, true},
-		{"dev with a token from the environment", map[string]any{"profile": "default", "dev": true}, false, true},
-		{"production install", map[string]any{"profile": "default"}, false, true},
+		{"dev on gh-cli", map[string]any{"profile": "default", "dev": true, "github_auth_via": "gh-cli"}, manifest.ModeStandalone, true, false},
+		{"dev on gh-cli in Docker mode", map[string]any{"profile": "default", "dev": true, "github_auth_via": "gh-cli"}, manifest.ModeDocker, false, true},
+		{"dev on gh-cli naming no mode", map[string]any{"profile": "default", "dev": true, "github_auth_via": "gh-cli"}, "", false, true},
+		{"gh-cli without dev", map[string]any{"profile": "default", "github_auth_via": "gh-cli"}, manifest.ModeStandalone, false, true},
+		{"dev with a token from the environment", map[string]any{"profile": "default", "dev": true}, manifest.ModeStandalone, false, true},
+		{"production install", map[string]any{"profile": "default"}, manifest.ModeStandalone, false, true},
 		{"dev on gh-cli naming an installation but no account", map[string]any{"profile": "default", "dev": true,
-			"github_auth_via": "gh-cli", "github_installation_id": 7}, false, true},
+			"github_auth_via": "gh-cli", "github_installation_id": 7}, manifest.ModeStandalone, false, true},
 		{"production install with an app", map[string]any{"profile": "default", "github_installation_id": 7,
-			"github_app_login": "factory[bot]"}, false, false},
+			"github_app_login": "factory[bot]"}, manifest.ModeDocker, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s, err := GitHubSettingsOf(&manifest.Manifest{Extensions: tc.ext})
+			s, err := GitHubSettingsOf(&manifest.Manifest{Mode: tc.mode, Extensions: tc.ext})
 			if tc.refused != core.HasCode(err, core.CodeInvalidArgument) {
 				t.Fatalf("err = %v, want refused %v", err, tc.refused)
 			}

@@ -36,6 +36,33 @@ func TestFactoryStatusCountsIssuesStopsAndOpenApprovals(t *testing.T) {
 	}
 }
 
+// The overview shows how the factory keeps up with GitHub when the
+// surface has it, a reconciliation backlog and a revoked token included.
+func TestFactoryStatusShowsHowTheFactoryKeepsUpWithGitHub(t *testing.T) {
+	t.Parallel()
+	w := sampleWorld()
+	if got, err := call[runactions.FactoryStatus](t, w.action(t, runactions.ActionFactoryStatus), ``); err != nil || got.GitHub != nil {
+		t.Fatalf("a status without the GitHub view = %+v, %v", got.GitHub, err)
+	}
+	sync := runactions.GitHubSync{Backlog: true, Skipped: []runactions.SyncIssue{{Issue: 4, Attempts: 5, Reason: "INVALID_ARGUMENT"}},
+		TokenAccess: "revoked", TokenAccessDetail: "PERMISSION_DENIED: the GitHub token may not write"}
+	all, err := runactions.New(runactions.Deps{FactoryID: "acme-app", Records: w.records, Runs: w.runs, Approvals: w.inbox,
+		Clock: intaketest.NewClock(t0), GitHub: func(context.Context) (runactions.GitHubSync, error) { return sync, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range all {
+		if a.Spec.Name != runactions.ActionFactoryStatus {
+			continue
+		}
+		got, err := call[runactions.FactoryStatus](t, a, ``)
+		if err != nil || got.GitHub == nil || !got.GitHub.Backlog || got.GitHub.TokenAccess != "revoked" ||
+			len(got.GitHub.Skipped) != 1 || got.GitHub.Skipped[0].Issue != 4 {
+			t.Fatalf("status GitHub view = %+v, %v", got.GitHub, err)
+		}
+	}
+}
+
 func TestIssuesListFiltersSortsAndLimits(t *testing.T) {
 	t.Parallel()
 	list := sampleWorld().action(t, runactions.ActionIssuesList)

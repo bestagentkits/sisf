@@ -51,6 +51,10 @@ type clarifyState struct {
 	// NeedsInfo says the issue is parked: nothing more is asked, read or
 	// spent until a person removes the sisf:needs-info label.
 	NeedsInfo bool `json:"needs_info,omitempty"`
+	// LabelPending says the sisf:needs-info label of the current parking
+	// has not been confirmed on GitHub yet, so an issue seen without it has
+	// not been lifted by anyone.
+	LabelPending bool `json:"label_pending,omitempty"`
 }
 
 func issueKey(issue core.IssueRef) string { return "issue/" + issue.String() }

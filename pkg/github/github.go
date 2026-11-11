@@ -187,8 +187,12 @@ type ListIssuesOptions struct {
 	State  IssueState
 	// MaxPages bounds the pages of 100 issues one listing follows; zero
 	// or more than the client's own bound means the client's bound. A
-	// listing with more pages fails with LIMIT_EXCEEDED.
+	// listing with more pages fails with LIMIT_EXCEEDED, or for PollIssues
+	// is cut there and reported as IssuePage.More.
 	MaxPages int
+	// Page starts the listing at this page of 100 instead of the first;
+	// zero or one is the first.
+	Page int
 }
 
 // NewIssue is the content of an issue to create.

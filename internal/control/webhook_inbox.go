@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
@@ -64,8 +65,10 @@ func acceptEvent(ctx context.Context, tx state.Tx, ev github.WebhookEvent) (bool
 //
 // A change the inbox already holds is not stored again: when a webhook
 // about the issue at this update time, or a later one, was stored, the
-// issue's view records that time and nothing was missed. It reports
-// whether the entry was stored.
+// issue's view records that time and nothing was missed. Nor is the
+// factory's own edit (see RecordFactoryWrite): the issue's view takes it in
+// without an inbox entry, so intake is not run for what it wrote itself. It
+// reports whether the entry was stored.
 func AcceptReconciledIssue(ctx context.Context, store state.Store, ev github.WebhookEvent) (bool, error) {
 	if ev.Issue == nil || ev.Issue.UpdatedAt.IsZero() || ev.FromSelf {
 		return false, core.NewError(core.CodeInvalidArgument, "a reconciled change names an issue and its update time")
@@ -79,12 +82,56 @@ func AcceptReconciledIssue(ctx context.Context, store state.Store, ev github.Web
 		if err != nil {
 			return err
 		}
-		if !ev.Issue.UpdatedAt.After(seen.IssueAt) {
+		switch {
+		case !ev.Issue.UpdatedAt.After(seen.IssueAt):
 			accepted = false
 			return nil
+		case ev.Issue.UpdatedAt.Equal(seen.SelfAt):
+			accepted = false
+			return projectEvent(ctx, tx, ev)
 		}
 		accepted, err = acceptEvent(ctx, tx, ev)
 		return err
 	})
 	return accepted, err
+}
+
+// RecordFactoryWrite notes that the factory edited an issue: before is the
+// issue's update time GitHub showed just before the edit, after the one it
+// showed just after. The edit is recognized by a later poll only when
+// before is a change already taken in (the issue's view holds it, or it was
+// the factory's own previous edit): a person's change whose webhook was
+// lost before the edit is then still found, because the issue no longer
+// stands at an update time the factory caused alone. An issue with no view
+// yet has nothing taken in, and nothing is recorded.
+//
+// A person's change in the moment between the two reads, with its webhook
+// lost too, is taken in with the issue's next change instead.
+func RecordFactoryWrite(ctx context.Context, store state.Store, ref core.IssueRef, before, after time.Time) error {
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	if before.IsZero() || after.IsZero() || after.Before(before) {
+		return core.NewError(core.CodeInvalidArgument, "a factory edit needs the issue's update times before and after it, in order")
+	}
+	return store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		current, version, err := readProjection(ctx, tx, ref)
+		if err != nil || version == 0 {
+			return err
+		}
+		next := current
+		next.SelfAt = time.Time{}
+		if !before.After(current.IssueAt) || before.Equal(current.SelfAt) {
+			next.SelfAt = after
+		}
+		if next.SelfAt.Equal(current.SelfAt) {
+			return nil
+		}
+		value, err := json.Marshal(next)
+		if err != nil {
+			return core.NewError(core.CodeInternal, "the issue view could not be encoded").WithCause(err)
+		}
+		_, err = tx.PutKV(ctx, state.KVEntry{Namespace: issueViewNamespace, Key: ref.String(), Value: value, Version: version})
+		return err
+	})
 }

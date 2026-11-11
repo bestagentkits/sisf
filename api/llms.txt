@@ -46,7 +46,7 @@ An agent never acts as the Owner, even through an Owner's browser session.
   roles: owner, maintainer, reporter, viewer, agent; scopes: catalog:read; POST /api/v1/actions/docs.list
 - factory.emergency_stop [write] Stop the factory now: hold claims, cancel running runs, revoke their secrets and freeze publishing; Owner only.
   roles: owner; scopes: factory:stop; POST /api/v1/actions/factory.emergency_stop
-- factory.status [read] Overview of the factory: issues per lifecycle state, stopped issues and open approvals.
+- factory.status [read] Overview of the factory: issues per lifecycle state, stopped issues, open approvals and how it keeps up with GitHub.
   roles: owner, maintainer, reporter, viewer, agent; scopes: factory:read; POST /api/v1/actions/factory.status
 - features.list [read] List the feature catalog.
   roles: owner, maintainer, reporter, viewer, agent; scopes: catalog:read; POST /api/v1/actions/features.list

@@ -66,7 +66,7 @@ func (c *Control) projectLifecycle(ctx context.Context) error {
 		if shown {
 			continue
 		}
-		if err := c.show(ctx, r); err != nil {
+		if err := c.editIssue(ctx, r.IssueID, func(ctx context.Context) error { return c.show(ctx, r) }); err != nil {
 			failed = append(failed, fmt.Errorf("show %s on GitHub: %w", r.IssueID, err))
 			continue
 		}

@@ -59,8 +59,9 @@ func operatorTokenOnly(m *manifest.Manifest) bool {
 // profile defaults them to the fake GitHub's; a real install must state
 // them, because accepting a webhook of any installation or mistaking a
 // person for the factory's own account would let anyone drive it. The one
-// exception is a development install on the operator's gh login, which
-// has no installation to state: it takes no webhook at all.
+// exception is a development install on the operator's gh login, in
+// Standalone mode, which has no installation to state: it takes no webhook
+// at all.
 func GitHubSettingsOf(m *manifest.Manifest) (GitHubSettings, error) {
 	s := GitHubSettings{APIURL: github.DefaultBaseURL}
 	if url, ok := m.Extensions[extGitHubAPIURL].(string); ok && url != "" {
@@ -89,6 +90,14 @@ func GitHubSettingsOf(m *manifest.Manifest) (GitHubSettings, error) {
 		s.Self.ID = id
 	}
 	if !sim && operatorTokenOnly(m) {
+		// The installer makes such an install Standalone, where every
+		// listen address is loopback; a manifest that says otherwise was
+		// changed by hand and gets no exception.
+		if m.Mode != manifest.ModeStandalone {
+			return s, core.NewError(core.CodeInvalidArgument,
+				"a development install on the operator's gh login runs in Standalone mode only; this one is in mode "+fmt.Sprintf("%q", m.Mode)+
+					" and must name a GitHub App installation in extensions."+extInstallationID)
+		}
 		s.NoWebhooks = true
 		return s, nil
 	}

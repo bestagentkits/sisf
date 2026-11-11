@@ -2,8 +2,9 @@ package wiring
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/control"
@@ -21,7 +22,8 @@ const (
 	MinReconcileInterval     = 10 * time.Second
 	MaxReconcileInterval     = time.Hour
 	// DefaultReconcileMaxPages bounds one poll to this many pages of 100
-	// issues; MaxReconcileMaxPages is the GitHub client's own bound.
+	// issues, after which the next poll continues; MaxReconcileMaxPages is
+	// the GitHub client's own bound.
 	DefaultReconcileMaxPages = 10
 	MaxReconcileMaxPages     = 50
 	// DefaultReconcileTimeout bounds one poll, rate-limit waits included,
@@ -82,16 +84,23 @@ type reconciler struct {
 	installation int64
 	store        state.Store
 	clock        core.Clock
+	// accept stores one reconciled change; control.AcceptReconciledIssue
+	// on the store.
+	accept func(ctx context.Context, ev github.WebhookEvent) (bool, error)
 
 	poller *github.Poller
+	// state is the stored state, loaded with the poller.
+	state reconcileState
 	// next is when the next poll is due; zero means at once.
 	next time.Time
 }
 
-// reconcilePosition is the stored position: the newest update GitHub
-// reported, in GitHub's own time.
-type reconcilePosition struct {
-	Since time.Time `json:"since"`
+// newReconciler builds the reconciler of the factory's repository.
+func newReconciler(cfg ReconcileConfig, repo github.RepoRef, installation int64, store state.Store, clock core.Clock) *reconciler {
+	return &reconciler{cfg: cfg, repo: repo, installation: installation, store: store, clock: clock,
+		accept: func(ctx context.Context, ev github.WebhookEvent) (bool, error) {
+			return control.AcceptReconciledIssue(ctx, store, ev)
+		}}
 }
 
 // reconcileDue polls GitHub when the interval has passed since the last
@@ -109,10 +118,18 @@ func (c *Control) reconcileDue(ctx context.Context) error {
 // inbox does not already hold as an inbox entry, which the next drain hands
 // to intake like a webhook delivery. It writes nothing to GitHub.
 //
-// The poll is bounded by the configured timeout and page count. A listing
-// longer than the page bound cannot be read without skipping changes, so
-// the position moves to one interval before now and the skipped window is
-// logged; webhooks and redeliveries remain the primary path.
+// The changes are read oldest first and the poll is bounded by the
+// configured timeout and page count; a poll that stops at its bound marks
+// a backlog the Owner sees in the factory's status, and the next poll
+// continues where it stopped. The stored position advances only to the
+// last change actually stored, so nothing is skipped:
+//
+//   - a failure of the store stops the poll, and the next one reads the
+//     change that failed again;
+//   - a change that fails validation does not hold up the others, which
+//     are stored; it is read again by the next polls, up to
+//     maxReconcileAttempts, and then given up, logged and listed in the
+//     factory's status for the Owner.
 func (c *Control) ReconcileGitHub(ctx context.Context) error {
 	r := c.reconcile
 	if r == nil {
@@ -120,33 +137,59 @@ func (c *Control) ReconcileGitHub(ctx context.Context) error {
 	}
 	r.next = r.clock.Now().Add(r.cfg.Interval)
 	if r.poller == nil {
-		since, err := r.position(ctx)
+		st, err := r.loadState(ctx)
 		if err != nil {
 			return err
 		}
-		r.poller = github.NewPoller(r.cfg.Source, r.repo, since).LimitPages(r.cfg.MaxPages)
+		r.state = st
+		r.poller = github.NewPoller(r.cfg.Source, r.repo, st.Since).LimitPages(r.cfg.MaxPages)
 	}
 	pollCtx, cancel := context.WithTimeout(ctx, r.cfg.Timeout)
 	defer cancel()
-	before := r.poller.Since()
-	changed, err := r.poller.Poll(pollCtx)
-	if core.HasCode(err, core.CodeLimitExceeded) {
-		skipTo := r.clock.Now().Add(-r.cfg.Interval).UTC()
-		c.log.Warn("too many issues changed to reconcile; older changes are left to webhooks and redeliveries",
-			"since", before.Format(time.RFC3339), "resume_at", skipTo.Format(time.RFC3339))
-		r.poller = nil
-		return r.savePosition(ctx, skipTo)
-	}
-	if err != nil {
-		return core.NewError(core.CodeOf(err), "reconciling with GitHub failed").WithCause(err)
+	changes, pollErr := r.poller.Poll(pollCtx)
+	if pollErr != nil {
+		pollErr = core.NewError(core.CodeOf(pollErr), "reconciling with GitHub failed").WithCause(pollErr)
+		if len(changes.Issues) == 0 {
+			r.state.LastError = reasonOf(pollErr)
+			return errors.Join(pollErr, r.saveState(ctx, r.state))
+		}
 	}
 	now := r.clock.Now()
-	stored := 0
-	for _, issue := range changed {
+	stored, acked, storeErr := r.storeChanges(ctx, changes.Issues, now, c.log)
+	r.poller.Ack(changes, acked)
+	// A complete listing that names no retried issue any more means the
+	// issue is gone; an empty answer (304, or nothing new) says nothing.
+	if pollErr == nil && storeErr == nil && !changes.More && len(changes.Issues) > 0 {
+		r.state.keepListed(changes.Issues)
+	}
+	r.state.Since, r.state.Backlog, r.state.LastPollAt = r.poller.Since(), changes.More, now
+	r.state.LastError = ""
+	if err := errors.Join(pollErr, storeErr); err != nil {
+		r.state.LastError = reasonOf(err)
+	}
+	if stored > 0 {
+		c.log.Info("reconciliation found issue changes no webhook delivered", "issues", stored)
+	}
+	if changes.More {
+		c.log.Warn("more issues changed than one reconciliation reads; the next polls continue with the rest",
+			"position", r.state.Since.Format(time.RFC3339))
+	}
+	return errors.Join(pollErr, storeErr, r.saveState(ctx, r.state))
+}
+
+// storeChanges stores the changes of one poll, oldest first, and returns
+// how many were stored and how many lead the list without a gap: the
+// position may advance through those. A change that fails validation is
+// counted against its bound and the rest are still stored; any other
+// failure stops at the change it hit.
+func (r *reconciler) storeChanges(ctx context.Context, issues []github.Issue, now time.Time, log *slog.Logger) (stored, acked int, err error) {
+	acked = len(issues)
+	for i := range issues {
+		issue := issues[i]
 		if issue.Ref.Owner != r.repo.Owner || issue.Ref.Repo != r.repo.Name {
 			continue
 		}
-		ev := github.WebhookEvent{
+		accepted, err := r.accept(ctx, github.WebhookEvent{
 			DeliveryID:     fmt.Sprintf("reconcile-%d-%d", issue.Ref.Number, issue.UpdatedAt.UnixNano()),
 			Type:           "issues",
 			Action:         reconcileAction,
@@ -154,65 +197,21 @@ func (c *Control) ReconcileGitHub(ctx context.Context) error {
 			Repo:           r.repo,
 			Issue:          &issue,
 			ReceivedAt:     now,
-		}
-		accepted, err := control.AcceptReconciledIssue(ctx, r.store, ev)
-		if err != nil {
-			// The position is not saved, so the next poll of a restarted
-			// process reads this change again.
-			return err
-		}
-		if accepted {
-			stored++
-		}
-	}
-	if stored > 0 {
-		c.log.Info("reconciliation found issue changes no webhook delivered", "issues", stored)
-	}
-	if since := r.poller.Since(); !since.Equal(before) {
-		return r.savePosition(ctx, since)
-	}
-	return nil
-}
-
-// position reads the stored position; a factory that never polled starts
-// from the beginning, which reads its repository's issues once.
-func (r *reconciler) position(ctx context.Context) (time.Time, error) {
-	var pos reconcilePosition
-	err := r.store.View(ctx, func(ctx context.Context, tx state.Tx) error {
-		entry, err := tx.GetKV(ctx, reconcileNamespace, r.key())
-		if core.HasCode(err, core.CodeNotFound) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(entry.Value, &pos); err != nil {
-			return core.NewError(core.CodeInternal, "the stored reconciliation position is unreadable").WithCause(err)
-		}
-		return nil
-	})
-	return pos.Since, err
-}
-
-// savePosition stores since as the position a restarted process resumes at.
-func (r *reconciler) savePosition(ctx context.Context, since time.Time) error {
-	value, err := json.Marshal(reconcilePosition{Since: since})
-	if err != nil {
-		return core.NewError(core.CodeInternal, "the reconciliation position could not be encoded").WithCause(err)
-	}
-	return r.store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-		var version int64
-		entry, err := tx.GetKV(ctx, reconcileNamespace, r.key())
+		})
 		switch {
 		case err == nil:
-			version = entry.Version
-		case !core.HasCode(err, core.CodeNotFound):
-			return err
+			r.state.stored(issue.Ref.Number)
+			if accepted {
+				stored++
+			}
+		case !core.HasCode(err, core.CodeInvalidArgument):
+			return stored, min(acked, i), err
+		case r.state.failed(issue, reasonOf(err)):
+			log.Warn("gave up storing an issue change reconciliation found; it is listed in the factory's status",
+				"issue", issue.Ref.String(), "attempts", maxReconcileAttempts, "code", string(core.CodeOf(err)))
+		default:
+			acked = min(acked, i)
 		}
-		_, err = tx.PutKV(ctx, state.KVEntry{Namespace: reconcileNamespace, Key: r.key(), Value: value, Version: version})
-		return err
-	})
+	}
+	return stored, acked, nil
 }
-
-// key names the position of the factory's one repository.
-func (r *reconciler) key() string { return "github/" + r.repo.Owner + "/" + r.repo.Name }

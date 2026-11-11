@@ -114,6 +114,9 @@ type Control struct {
 	// reconcile polls GitHub for the changes no webhook delivered; on an
 	// install that takes no webhooks it is how issues arrive at all.
 	reconcile *reconciler
+	// access watches the operator token's write access on an install that
+	// acts with it; nil on one with a GitHub App installation.
+	access *operatorAccess
 }
 
 // retryAt is when a failed delivery is tried again, and how often it failed.
@@ -156,7 +159,7 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 	if reconcile.Source == nil {
 		reconcile.Source = cfg.GitHub
 	}
-	c.reconcile = &reconciler{cfg: reconcile, repo: repo, installation: settings.InstallationID, store: cfg.Store, clock: cfg.Clock}
+	c.reconcile = newReconciler(reconcile, repo, settings.InstallationID, cfg.Store, cfg.Clock)
 
 	signer, err := signing.NewSigner(cfg.ApprovalKey)
 	if err != nil {
@@ -210,6 +213,9 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 	// On an install that takes no webhooks the confirmed access stands for
 	// the installation, so reconciled changes carry it as a delivery would.
 	c.reconcile.installation = installation.ID
+	if settings.NoWebhooks {
+		c.access = newOperatorAccess(settings.APIURL, cfg.Surfaces.GitHubToken, installation, cfg.Clock)
+	}
 	surfaces, err := c.newSurfaces(ctx, *cfg.Surfaces, repo, installation)
 	if err != nil {
 		return nil, err
@@ -274,7 +280,16 @@ func (c *Control) Run(ctx context.Context, ln net.Listener, interval time.Durati
 // the decision layer reads the edge's counters. Once per reconciliation
 // interval it asks GitHub for the issue changes no webhook delivered. Each part runs even
 // when another failed; the error joins their failures.
+//
+// On an install acting with the operator's token, a pass whose check of
+// the token finds its write access revoked does none of this and returns
+// PERMISSION_DENIED.
 func (c *Control) Pass(ctx context.Context) error {
+	if c.access != nil {
+		if err := c.access.check(ctx); err != nil {
+			return err
+		}
+	}
 	return errors.Join(
 		c.publishPolicy(ctx),
 		c.drainInbox(ctx),

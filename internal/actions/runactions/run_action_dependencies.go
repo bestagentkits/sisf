@@ -37,6 +37,9 @@ type Deps struct {
 	Approvals ApprovalInbox
 	// Clock stamps the status overview; nil means the wall clock.
 	Clock core.Clock
+	// GitHub reports how the factory keeps up with GitHub for the status
+	// overview; nil leaves it out.
+	GitHub func(ctx context.Context) (GitHubSync, error)
 }
 
 // New returns the actions of this package over deps.

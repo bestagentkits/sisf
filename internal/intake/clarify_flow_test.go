@@ -237,3 +237,84 @@ func TestAPersonLiftsTheParkingByRemovingTheLabel(t *testing.T) {
 		t.Fatal("the new wait did not end with the issue parked again")
 	}
 }
+
+// Without the webhook of the label's removal, as on an install that takes
+// no webhooks or when that one delivery was lost, the parked issue resumes
+// from the next event that shows it without the label: a change found by
+// polling, or any other delivery. The issue is read again to confirm it.
+func TestAParkedIssueResumesWithoutTheRemovalWebhook(t *testing.T) {
+	t.Parallel()
+	parked := func() *factory {
+		f := asked(t)
+		f.clock.Advance(clarifyTimeout)
+		f.reconcile()
+		if !f.hasLabel(github.LabelNeedsInfo) {
+			t.Fatal("the issue was not parked")
+		}
+		return f
+	}
+	reconciled := func(f *factory) github.WebhookEvent { return f.event("issues", "reconciled", nil) }
+
+	f := parked()
+	f.github.unlabel(issueRef, github.LabelNeedsInfo)
+	f.github.comment(issueRef, member, criteria)
+	wantEvents(t, f.handle(reconciled(f)), core.EventClarificationCompleted, core.EventScopePermitted)
+	f.wantState(core.StateReady)
+
+	// A comment delivered after the lost removal resumes it as well.
+	g := parked()
+	g.github.unlabel(issueRef, github.LabelNeedsInfo)
+	g.github.comment(issueRef, member, "Still broken.")
+	wantEvents(t, g.handle(g.event("issue_comment", "created", nil)))
+	if g.count("More information needed") != 2 {
+		t.Fatalf("lifting the parking must ask once more: %q", g.github.factoryComments(issueRef))
+	}
+}
+
+// Until the factory's own sisf:needs-info label is confirmed on GitHub, an
+// issue seen without it was not lifted by anyone: it stays parked, and
+// finding that out reads nothing.
+func TestAParkingWhoseLabelIsNotOnGitHubYetIsNotLifted(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := asked(t)
+	f.clock.Advance(clarifyTimeout)
+	if parked, err := f.service.ExpireClarifications(ctx); err != nil || len(parked) != 1 {
+		t.Fatalf("ExpireClarifications = %v, %v", parked, err)
+	}
+	before := f.spent()
+	result, err := f.service.HandleEvent(ctx, f.event("issues", "reconciled", nil))
+	if err != nil || result.Skipped == "" || len(result.Events) != 0 {
+		t.Fatalf("an issue whose parking label is still queued resumed: %+v, %v", result, err)
+	}
+	if after := f.spent(); after.github != before.github+1 || after.effects != before.effects {
+		t.Fatalf("the event cost more than the look that built it: before %+v, after %+v", before, after)
+	}
+	f.deliver()
+	if !f.hasLabel(github.LabelNeedsInfo) {
+		t.Fatal("the parking label was not delivered")
+	}
+	wantEvents(t, f.handle(f.event("issues", "reconciled", nil)))
+	f.wantState(core.StateClarifying)
+	if f.count("More information needed") != 1 {
+		t.Fatalf("an issue still carrying the label was asked again: %q", f.github.factoryComments(issueRef))
+	}
+}
+
+// Every comment the factory writes carries a hidden "<!-- sisf:" marker.
+// On an install acting with the operator's own login such a comment is
+// written by a collaborator, and it is never an answer, whatever it says.
+func TestNoMarkedFactoryCommentCountsAsAnAnswer(t *testing.T) {
+	t.Parallel()
+	for _, mark := range []string{
+		"<!-- sisf:build-held run-1/1/1 -->",
+		"<!-- sisf:recovery run-1 -->",
+		"<!-- sisf:progress factory=acme-app -->",
+		"<!-- sisf:release run-1 -->",
+	} {
+		f := asked(t)
+		f.github.comment(issueRef, factoryAccount, criteria+"\n"+mark)
+		wantEvents(t, f.reconcile())
+		f.wantState(core.StateClarifying)
+	}
+}

@@ -153,6 +153,9 @@ type repo struct {
 	commits map[string]map[string][]byte
 	// entryKinds marks "commit:path" entries that are not plain files.
 	entryKinds map[string]string
+	// readOnly takes write access away from the token the fake answers
+	// for: the repository then reports no push permission.
+	readOnly bool
 }
 
 func repoKey(owner, name string) string { return strings.ToLower(owner + "/" + name) }

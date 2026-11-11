@@ -816,6 +816,60 @@ paths:
                       generated_at:
                         format: date-time
                         type: string
+                      github:
+                        description: 'How the factory keeps up with GitHub: reconciliation of lost webhooks and the operator token''s access.'
+                        properties:
+                          backlog:
+                            description: The last poll stopped at its bound; more changes wait for the next polls.
+                            type: boolean
+                          last_error:
+                            type: string
+                          last_poll_at:
+                            format: date-time
+                            type: string
+                          position:
+                            format: date-time
+                            type: string
+                          retrying:
+                            items:
+                              properties:
+                                attempts:
+                                  type: integer
+                                issue:
+                                  type: integer
+                                reason:
+                                  type: string
+                                updated_at:
+                                  format: date-time
+                                  type: string
+                              type: object
+                            type: array
+                          skipped:
+                            description: Issue changes given up after repeated failures.
+                            items:
+                              properties:
+                                attempts:
+                                  type: integer
+                                issue:
+                                  type: integer
+                                reason:
+                                  type: string
+                                updated_at:
+                                  format: date-time
+                                  type: string
+                              type: object
+                            type: array
+                          token_access:
+                            enum:
+                              - confirmed
+                              - revoked
+                            type: string
+                          token_access_detail:
+                            type: string
+                          token_checked_at:
+                            format: date-time
+                            type: string
+                        type: object
                       issue_counts:
                         items:
                           properties:
@@ -839,7 +893,7 @@ paths:
       security:
         - bearerAuth:
             - factory:read
-      summary: 'Overview of the factory: issues per lifecycle state, stopped issues and open approvals.'
+      summary: 'Overview of the factory: issues per lifecycle state, stopped issues, open approvals and how it keeps up with GitHub.'
       tags:
         - factory
       x-sisf-action: factory.status

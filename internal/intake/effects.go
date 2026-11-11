@@ -38,13 +38,19 @@ type effect struct {
 // markerPrefix opens the hidden marker every comment of intake ends with.
 const markerPrefix = "<!-- sisf:intake "
 
+// factoryMarkerPrefix opens the hidden marker of every comment the factory
+// writes: intake's, the supervisor's recovery reports and held build
+// notices, the progress comment and any later one.
+const factoryMarkerPrefix = "<!-- sisf:"
+
 // marker returns the hidden marker of the comment queued under key.
 func marker(key, token string) string { return markerPrefix + key + " " + token + " -->" }
 
-// IsFactoryComment reports whether a comment body carries the marker of an
-// intake comment. Such a comment is never read as an answer, whichever
-// account posted it.
-func IsFactoryComment(body string) bool { return strings.Contains(body, markerPrefix) }
+// IsFactoryComment reports whether a comment body carries the marker of a
+// comment the factory wrote. Such a comment is never read as an answer,
+// whichever account posted it: on an install that acts with the operator's
+// own login, the factory's comments are that person's comments to GitHub.
+func IsFactoryComment(body string) bool { return strings.Contains(body, factoryMarkerPrefix) }
 
 // commentEffect queues a comment. name must be unique per issue: it becomes
 // the outbox key, so the same comment is never queued twice.
@@ -66,7 +72,51 @@ func message(topic string, issue core.IssueRef, name string, e effect) (state.Ou
 	if err != nil {
 		return state.OutboxMessage{}, core.NewError(core.CodeInternal, "an intake effect cannot be encoded").WithCause(err)
 	}
-	return state.OutboxMessage{Topic: topic, Key: "intake/" + issue.String() + "/" + name, Payload: raw}, nil
+	return state.OutboxMessage{Topic: topic, Key: messageKey(issue, name), Payload: raw}, nil
+}
+
+// messageKey is the outbox key of the effect queued under name.
+func messageKey(issue core.IssueRef, name string) string {
+	return "intake/" + issue.String() + "/" + name
+}
+
+// parkLabelName names the label effect of the parking that follows the
+// asked-th question.
+func parkLabelName(asked int) string { return fmt.Sprintf("needs-info/%d/label", asked) }
+
+// Delivered records in tx that GitHub shows the outbox message m of intake:
+// it marks m sent and, when m put the label of an issue's current parking
+// on GitHub, notes that the label is there. From then on an issue seen
+// without sisf:needs-info was lifted by a person, whether or not the
+// webhook of that removal arrives. Call it in place of MarkOutboxSent once
+// Deliver returned nil.
+func Delivered(ctx context.Context, tx state.Tx, m state.OutboxMessage) error {
+	if err := tx.MarkOutboxSent(ctx, m.ID); err != nil || m.Topic != TopicLabels {
+		return err
+	}
+	var e effect
+	if err := json.Unmarshal(m.Payload, &e); err != nil {
+		return core.NewError(core.CodeInvalidArgument, "the outbox message of intake cannot be read").WithCause(err)
+	}
+	if err := e.Issue.Validate(); err != nil {
+		return err
+	}
+	entry, err := tx.GetKV(ctx, namespace, issueKey(e.Issue))
+	switch {
+	case core.HasCode(err, core.CodeNotFound):
+		return nil
+	case err != nil:
+		return err
+	}
+	var doc issueDoc
+	if err := decode(entry, &doc); err != nil {
+		return err
+	}
+	if !doc.Clarify.NeedsInfo || !doc.Clarify.LabelPending || m.Key != messageKey(e.Issue, parkLabelName(doc.Clarify.Asked)) {
+		return nil
+	}
+	doc.Clarify.LabelPending = false
+	return put(ctx, tx, issueKey(e.Issue), entry.Version, doc)
 }
 
 // IssueWriter is the part of the GitHub client Deliver needs.
