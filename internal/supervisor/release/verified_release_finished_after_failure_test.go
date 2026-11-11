@@ -120,10 +120,7 @@ func TestALastKnownGoodThatCouldNotBeRecordedIsRecordedOnALaterPass(t *testing.T
 	req := w.request(issue, run, firstBuild)
 	// A trust volume that cannot be written makes every write of the LKG
 	// fail, while what it holds can still be read.
-	if err := os.Chmod(w.trustDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(w.trustDir, 0o700) })
+	unlock := w.lockTrustVolume()
 
 	out, err := w.pipeline().Release(ctx, req)
 	if err == nil || out.Result != ResultHeld || out.State != core.StateVerified || out.Waits == "" {
@@ -132,9 +129,7 @@ func TestALastKnownGoodThatCouldNotBeRecordedIsRecordedOnALaterPass(t *testing.T
 	if lander.lands.Load() != 0 || len(w.publisher.entries) != 0 {
 		t.Fatal("a release whose LKG was not recorded was published or merged")
 	}
-	if err := os.Chmod(w.trustDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	unlock()
 	if out, err := w.pipeline().FinishVerified(ctx, req); err != nil || out.Result != ResultClosed {
 		t.Fatalf("FinishVerified = %+v, %v; want closed", out, err)
 	}
@@ -332,16 +327,11 @@ func TestTheLKGOfAVerifiedReleaseIsRecordedBeforeItIsAdoptedAgain(t *testing.T) 
 	issue, run := issueRef(78), core.RunID("run-78")
 	w.seedReleaseCandidate(issue, run, firstBuild)
 	req := w.request(issue, run, firstBuild)
-	if err := os.Chmod(w.trustDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(w.trustDir, 0o700) })
+	unlock := w.lockTrustVolume()
 	if out, err := w.pipeline().Release(ctx, req); err == nil || out.State != core.StateVerified {
 		t.Fatalf("Release = %+v, %v; want held in Verified on the LKG", out, err)
 	}
-	if err := os.Chmod(w.trustDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	unlock()
 	if lkg := w.lkg(); lkg.Digest != lkgDigest {
 		t.Fatalf("the LKG is %s before the restart, want the one before the release", lkg.Digest)
 	}

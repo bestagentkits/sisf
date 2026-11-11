@@ -24,10 +24,7 @@ func TestAVerifiedReleaseThatNoLongerServesBlocksItsIssueUntilTheOwnerRetriesIt(
 	t.Parallel()
 	ctx := context.Background()
 	f, number := greetingIssue(t)
-	if err := os.Chmod(f.Trust.Dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(f.Trust.Dir, 0o700) })
+	unlock := readOnlyDir(t, f.Trust.Dir)
 	for range 6 {
 		if f.Cycle(1); f.Record(number).State == core.StateVerified {
 			break
@@ -40,9 +37,7 @@ func TestAVerifiedReleaseThatNoLongerServesBlocksItsIssueUntilTheOwnerRetriesIt(
 	if err := f.Deploy.Rollback(ctx, deploy.Revision{Unit: "app", Digest: installed}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(f.Trust.Dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	unlock()
 	f.Cycle(2)
 
 	wantSurfaces(t, f, number, core.StateBlocked)
@@ -76,4 +71,35 @@ func TestAVerifiedReleaseThatNoLongerServesBlocksItsIssueUntilTheOwnerRetriesIt(
 	if f.GitData.Merges() != 0 || mainHolds(f) {
 		t.Fatal("the retry merged the pull request of the unjudged release")
 	}
+}
+
+// readOnlyDir makes dir read-only until the returned function restores it.
+// The harness's trust volume is a real directory, so its writes are held
+// back with file permissions. A user those permissions do not hold, such as
+// root in a container, can still write it: the directory is probed, and the
+// test is skipped rather than run without the failure it depends on.
+func readOnlyDir(t *testing.T, dir string) (unlock func()) {
+	t.Helper()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	restored := false
+	unlock = func() {
+		if !restored {
+			restored = true
+			if err := os.Chmod(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Cleanup(unlock)
+	probe, err := os.CreateTemp(dir, "write-probe-*")
+	if err == nil {
+		_ = probe.Close()
+		_ = os.Remove(probe.Name())
+		unlock()
+		t.Skip("the trust volume stays writable with its write permission removed (the tests run as a user file permissions do not hold, such as root), " +
+			"so its LKG write cannot be made to fail; run the tests as an ordinary user")
+	}
+	return unlock
 }

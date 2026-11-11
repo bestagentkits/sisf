@@ -3,7 +3,6 @@ package release
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -23,21 +22,14 @@ import (
 const installedBuild core.ReleaseDigest = "sha256:6666666666666666666666666666666666666666666666666666666666666666"
 
 // lockTrustVolume makes every write of the LKG fail until the returned
-// function unlocks it, while what the volume holds can still be read.
+// function unlocks it, while what the volume holds can still be read. It
+// fails the writes through the book's seam rather than with file
+// permissions, which a test run as root would not be held to.
 func (w *world) lockTrustVolume() (unlock func()) {
 	w.t.Helper()
-	if err := os.Chmod(w.trustDir, 0o500); err != nil {
-		w.t.Fatal(err)
-	}
-	unlocked := false
-	unlock = func() {
-		if !unlocked {
-			unlocked = true
-			if err := os.Chmod(w.trustDir, 0o700); err != nil {
-				w.t.Fatal(err)
-			}
-		}
-	}
+	book := w.book
+	book.failWrites = core.NewError(core.CodeUnavailable, "the trust volume cannot be written")
+	unlock = func() { book.failWrites = nil }
 	w.t.Cleanup(unlock)
 	return unlock
 }

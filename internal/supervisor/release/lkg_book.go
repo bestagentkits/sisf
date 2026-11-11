@@ -80,6 +80,10 @@ type LKGBook struct {
 	factory  core.FactoryID
 	manifest *supervisor.LKGStore
 	clock    core.Clock
+	// failWrites, when set, is the error every write of an LKG entry fails
+	// with: the seam through which this package's tests make the trust
+	// volume unwritable whatever user runs them. Production never sets it.
+	failWrites error
 }
 
 // OpenLKGBook returns the book kept in trustDir. manifest is the store of
@@ -177,6 +181,9 @@ func (b *LKGBook) record(v verifiedRelease) error {
 	data, err := json.MarshalIndent(entry, "", "  ")
 	if err != nil {
 		return invalid("the LKG entry cannot be encoded").WithCause(err)
+	}
+	if b.failWrites != nil {
+		return b.failWrites
 	}
 	return supervisor.WriteTrustFile(p, append(data, '\n'))
 }
