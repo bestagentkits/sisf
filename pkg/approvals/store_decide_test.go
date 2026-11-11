@@ -108,6 +108,10 @@ func TestASensitiveRequestNeedsAFreshHumanStepUp(t *testing.T) {
 			a.StepUpAt = now.Add(-approvals.DefaultStepUpMaxAge - time.Second)
 		},
 		"a confirmation from the future": func(a *approvals.Approval, now time.Time) { a.StepUpAt = now.Add(time.Second) },
+		"a confirmation made before the request": func(a *approvals.Approval, _ time.Time) {
+			a.StepUpAt = created.Add(-time.Second)
+		},
+		"a person deciding through WebMCP": func(a *approvals.Approval, _ time.Time) { a.Surface = core.SurfaceWebMCP },
 	}
 	for name, mutate := range cases {
 		f := newFixture(t)
