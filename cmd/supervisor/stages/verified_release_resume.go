@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
@@ -16,9 +15,9 @@ type VerifiedFinisher interface {
 	FinishVerified(ctx context.Context, req release.LandRequest) (release.Outcome, error)
 }
 
-// resumeVerified finishes the issues left Verified with their landing
-// pending: the supervisor restarted, or GitHub or an emergency stop held
-// the merge, after the release was verified. Nothing before the landing is
+// resumeVerified finishes the issues left Verified with their landing due:
+// the supervisor restarted, or GitHub or an emergency stop held the merge,
+// after the release was verified and published. Nothing before the landing is
 // done again, and the pull request is merged at most once.
 func (s *ReleaseStage) resumeVerified(ctx context.Context, res *ReleasePassResult) {
 	finisher, ok := s.Pipeline.(VerifiedFinisher)
@@ -39,18 +38,15 @@ func (s *ReleaseStage) resumeVerified(ctx context.Context, res *ReleasePassResul
 			if _, now := res.Outcomes[r.IssueID]; now {
 				continue // released in this pass: its landing is tried again in the next
 			}
-			pr, err := handoff.ReadCandidatePR(ctx, tx, r.RunID)
-			if err != nil || pr.State != handoff.LandingPending {
-				continue
-			}
-			qa, err := ReadQAResult(ctx, tx, r.RunID, r.Attempt)
-			if err != nil {
+			req, err := release.ReadLandingDue(ctx, tx, r.RunID)
+			switch {
+			case core.HasCode(err, core.CodeNotFound):
+				continue // held before its landing: not this resumption's to finish
+			case err != nil:
 				res.Errors = append(res.Errors, fmt.Errorf("%s: %w", r.IssueID, err))
 				continue
 			}
-			jobs = append(jobs, job{record: r, req: release.LandRequest{
-				IssueID: r.IssueID, RunID: r.RunID, Release: r.ReleaseDigest, Candidate: qa.Candidate, Receipt: qa.Receipt,
-			}})
+			jobs = append(jobs, job{record: r, req: req})
 		}
 		return nil
 	})

@@ -2,11 +2,46 @@ package release
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/qa"
+	"github.com/bestagentkits/sisf/pkg/state"
 )
+
+// LandingDueKey is the key, in RecoveryNamespace, of the landing a
+// verified release of the run still owes.
+func LandingDueKey(run core.RunID) string { return "landing-due/" + string(run) }
+
+func putLandingDue(ctx context.Context, tx state.Tx, req LandRequest) error {
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return invalid("the landing cannot be encoded").WithCause(err)
+	}
+	version := int64(0)
+	if existing, err := tx.GetKV(ctx, RecoveryNamespace, LandingDueKey(req.RunID)); err == nil {
+		version = existing.Version
+	} else if !core.HasCode(err, core.CodeNotFound) {
+		return err
+	}
+	_, err = tx.PutKV(ctx, state.KVEntry{Namespace: RecoveryNamespace, Key: LandingDueKey(req.RunID), Value: raw, Version: version})
+	return err
+}
+
+// ReadLandingDue reads the landing the verified release of the run owes;
+// NOT_FOUND when its landing was never reached.
+func ReadLandingDue(ctx context.Context, tx state.Tx, run core.RunID) (LandRequest, error) {
+	entry, err := tx.GetKV(ctx, RecoveryNamespace, LandingDueKey(run))
+	if err != nil {
+		return LandRequest{}, err
+	}
+	var req LandRequest
+	if err := json.Unmarshal(entry.Value, &req); err != nil || req.RunID != run {
+		return LandRequest{}, invalid("the landing due for %s cannot be read", run)
+	}
+	return req, nil
+}
 
 // LandRequest asks to land the change of a verified release on the
 // repository's default branch.
@@ -37,11 +72,17 @@ type Lander interface {
 	Land(ctx context.Context, req LandRequest) (Landing, error)
 }
 
-// land lands the change of a verified release before its issue closes. An
-// emergency stop holds it: nothing is merged while one is in force.
+// land lands the change of a verified release before its issue closes. It
+// first records that the landing is due, so an issue held here by an
+// emergency stop, an outage of GitHub or a restart is finished later by
+// FinishVerified. An emergency stop holds it: nothing is merged while one
+// is in force.
 func (p *Pipeline) land(ctx context.Context, req LandRequest) (Landing, error) {
 	if p.cfg.Lander == nil {
 		return Landing{}, nil
+	}
+	if err := p.cfg.State.Update(ctx, func(ctx context.Context, tx state.Tx) error { return putLandingDue(ctx, tx, req) }); err != nil {
+		return Landing{}, err
 	}
 	if p.frozen(ctx) {
 		return Landing{}, core.NewError(core.CodeFrozen, "an emergency stop froze publishing; the verified change is not merged")
@@ -63,9 +104,10 @@ func (p *Pipeline) closeLanded(ctx context.Context, h *holding, landing Landing,
 }
 
 // FinishVerified lands and closes an issue left Verified because its
-// landing could not be decided, for example after a restart or an outage
-// of GitHub between the verification and the merge. Only that case is
-// resumed: everything before the landing already happened.
+// landing could not be decided, for example after a restart, an emergency
+// stop or an outage of GitHub between the verification and the merge. Only
+// an issue whose landing is due (see ReadLandingDue) is resumed: everything
+// before the landing already happened.
 func (p *Pipeline) FinishVerified(ctx context.Context, req LandRequest) (Outcome, error) {
 	out := Outcome{Release: req.Release}
 	stop := func(result Result, err error) (Outcome, error) {
