@@ -137,7 +137,7 @@ func (in *Installer) standaloneControlEnv(o Options) []string {
 		wiring.EnvLocalStoreDir+"="+in.Layout.Data("control", "secrets"))
 	env = append(env, o.reconcileEnv()...)
 	docs := filepath.Join(in.SourceDir, "docs")
-	if info, err := os.Stat(docs); err == nil && info.IsDir() && pathPattern.MatchString(docs) {
+	if info, err := os.Stat(docs); err == nil && info.IsDir() && quotedPathPattern.MatchString(docs) {
 		env = append(env, wiring.EnvDocsDir+"="+docs)
 	}
 	return env

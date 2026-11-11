@@ -58,7 +58,11 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
-	report, err := newInstaller(env, abs, "", false).Doctor(ctx)
+	in, err := newInstaller(env, abs, "", false)
+	if err != nil {
+		return err
+	}
+	report, err := in.Doctor(ctx)
 	if err != nil {
 		return core.NewError(core.CodeUnavailable, "the doctor was interrupted").WithCause(err)
 	}

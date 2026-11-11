@@ -61,6 +61,7 @@ func buildManifest(o Options) *manifest.Manifest {
 	o.Identity.extensions(m.Extensions)
 	o.agentExtensions(m.Extensions)
 	o.reconcileExtensions(m.Extensions)
+	o.githubAppExtensions(m.Extensions)
 	if docker {
 		m.Storage.State = manifest.StateStore{Driver: manifest.StatePostgres, DSNRef: "env:SISF_STATE_DSN"}
 		m.Adapters.Execution, m.Adapters.Deploy = manifest.AdapterRef{Name: "docker"}, manifest.AdapterRef{Name: "compose"}

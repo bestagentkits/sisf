@@ -61,8 +61,9 @@ func (in *Installer) standaloneSupervisorArgs(m *manifest.Manifest, c LifecycleC
 func (in *Installer) writeAppLauncher() error {
 	l := in.Layout
 	for _, p := range []string{l.Bin("hello-app"), l.Data("app")} {
-		if !pathPattern.MatchString(p) {
-			return invalidf("the install path %q has characters a launcher script cannot carry; use letters, digits and . _ + - /", p)
+		// The script single-quotes both paths, so single spaces are safe.
+		if !quotedPathPattern.MatchString(p) {
+			return invalidf("the install path %q has characters a launcher script cannot carry; use letters, digits, single spaces and . _ + - /", p)
 		}
 	}
 	script := "#!/bin/sh\n" +

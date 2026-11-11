@@ -80,20 +80,34 @@ func readSecret(path string) (core.SecretValue, error) {
 var (
 	envKeyPattern   = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 	envValuePattern = regexp.MustCompile(`^[A-Za-z0-9_@:/.,=+?&%-]*$`)
+	// envLocalValuePattern also allows single spaces inside a value, as in
+	// a path below "/Users/me/My Factory". Only files that no program but
+	// this installer reads use it: Standalone's, which parseEnv reads, never
+	// Compose, whose env files stay strict.
+	envLocalValuePattern = regexp.MustCompile(`^([A-Za-z0-9_@:/.,=+?&%-]+( [A-Za-z0-9_@:/.,=+?&%-]+)*)?$`)
 )
 
 // formatEnv renders KEY=VALUE lines from alternating keys and values. Only
 // plain values are accepted: Compose would expand "$", strip quotes and cut
 // at "#", and a newline would start another variable. The error names the
 // key and never the value.
-func formatEnv(pairs ...string) ([]byte, error) {
+func formatEnv(pairs ...string) ([]byte, error) { return formatEnvWith(envValuePattern, pairs) }
+
+// formatLocalEnv is formatEnv for an env file that only this installer
+// reads (Standalone mode): a value may hold single spaces, such as an
+// install path with a space, and nothing else formatEnv refuses.
+func formatLocalEnv(pairs ...string) ([]byte, error) {
+	return formatEnvWith(envLocalValuePattern, pairs)
+}
+
+func formatEnvWith(values *regexp.Regexp, pairs []string) ([]byte, error) {
 	var b strings.Builder
 	for i := 0; i+1 < len(pairs); i += 2 {
 		key, value := pairs[i], pairs[i+1]
 		if !envKeyPattern.MatchString(key) {
 			return nil, invalidf("environment variable name %q is not valid", key)
 		}
-		if !envValuePattern.MatchString(value) {
+		if !values.MatchString(value) {
 			return nil, invalidf("the value of %s has a character an env file cannot carry safely", key)
 		}
 		fmt.Fprintf(&b, "%s=%s\n", key, value)

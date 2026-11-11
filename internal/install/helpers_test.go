@@ -31,6 +31,7 @@ func newTestInstaller(t *testing.T) (*Installer, *fakeExec, *bytes.Buffer) {
 	in := &Installer{
 		Layout: Layout{Dir: t.TempDir()}, Exec: exec, Clock: sqlstoretest.NewClock(fixedStart),
 		Out: out, SourceDir: source, Sisf: "/usr/local/bin/sisf",
+		LookPath: func(name string) (string, error) { return "/usr/local/go/bin/" + name, nil },
 	}
 	return in, exec, out
 }
@@ -49,6 +50,7 @@ func initOptions(in *Installer, mode manifest.Mode) Options {
 // acme/shop signing in at a real OpenID Connect provider.
 func production(o *Options) {
 	o.Sim, o.Repo = false, manifest.Repository{Owner: "acme", Repo: "shop"}
+	o.GitHubApp = GitHubApp{InstallationID: 7, Login: "acme-factory[bot]"}
 	o.Identity = Identity{
 		ExternalURL: "https://factory.example.com", Owners: []string{"https://accounts.example.com#owner-1"},
 		OIDCIssuer: "https://accounts.example.com", OIDCClientID: "sisf-factory",

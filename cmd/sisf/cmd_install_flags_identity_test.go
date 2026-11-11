@@ -68,7 +68,8 @@ func TestSignInFlagsReadClientSecretsFromAFileOrAVariableOnly(t *testing.T) {
 func TestAProductionInitWithoutSignInIsRefusedWithWhatToPass(t *testing.T) {
 	t.Parallel()
 	getenv := func(k string) string { return map[string]string{"GH_TOKEN": "gh-token"}[k] }
-	f := parsedInstallFlags(t, "--mode", "standalone", "--repo", "acme/app", "--github-token-env", "GH_TOKEN", "--confirm-unlimited", "--no-alert")
+	f := parsedInstallFlags(t, "--mode", "standalone", "--repo", "acme/app", "--github-token-env", "GH_TOKEN", "--confirm-unlimited", "--no-alert",
+		"--github-installation-id", "7", "--github-app-login", "acme-factory[bot]")
 	o, err := f.options(filepath.Join(t.TempDir(), "factory"), getenv)
 	if err != nil {
 		t.Fatalf("options: %v", err)

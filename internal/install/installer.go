@@ -36,6 +36,8 @@ type Installer struct {
 	Sisf string
 	// Debug publishes the state store on 127.0.0.1:7469 in Docker mode.
 	Debug bool
+	// LookPath finds a program on PATH; nil means exec.LookPath.
+	LookPath func(name string) (string, error)
 	// Signal sends a signal to a process; nil means syscall.Kill.
 	Signal func(pid int, sig syscall.Signal) error
 	// SupervisorStatus asks the supervisor on a loopback address for its

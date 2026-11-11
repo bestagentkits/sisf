@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/bestagentkits/sisf/internal/conformance"
 	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -37,33 +36,36 @@ const devWarning = "DEVELOPMENT INSTALL: the Owner signs in through the fake ide
 // touch a directory that already holds an install, so one directory is
 // exactly one factory_id for its whole life.
 func (in *Installer) Init(ctx context.Context, o Options) (InitResult, error) {
-	o, err := o.normalize()
+	o, err := in.Preflight(o)
 	if err != nil {
 		return InitResult{}, err
 	}
 	l := in.Layout
-	if l.Dir != o.Dir {
-		return InitResult{}, invalidf("the options and the installer name different directories")
-	}
-	if done, err := l.installed(); err != nil {
-		return InitResult{}, unavailablef(err, "cannot inspect %s", l.Dir)
-	} else if done {
-		return InitResult{}, core.NewError(core.CodeAlreadyExists, "an install already exists in "+l.Dir,
-			core.NextAction{Action: "sisf up", Description: "start the existing install"})
-	}
 	if o.GitHubCredential == GitHubCredentialGHCLI {
 		if o.GitHubToken, err = in.ghToken(ctx); err != nil {
 			return InitResult{}, err
 		}
 	}
+	// A failed init leaves nothing behind: what it created is removed, and
+	// a directory that held something before keeps exactly that.
+	created := beginCreate(l.Dir)
+	res, err := in.writeInstall(o)
+	if err != nil {
+		created.undo(l.Dir)
+		return InitResult{}, err
+	}
+	return res, nil
+}
+
+// writeInstall writes every file of a new install whose options passed
+// Preflight. The manifest is written last: its presence is what makes a
+// directory an install.
+func (in *Installer) writeInstall(o Options) (InitResult, error) {
+	l := in.Layout
 	if err := os.MkdirAll(l.Dir, secretDirMode); err != nil {
 		return InitResult{}, unavailablef(err, "cannot create %s", l.Dir)
 	}
 	if err := in.writeSecrets(o); err != nil {
-		return InitResult{}, err
-	}
-	m := buildManifest(o)
-	if err := conformance.Check(m).Err(); err != nil {
 		return InitResult{}, err
 	}
 	if rec, ok := o.Budget.confirmation(in.Clock.Now()); ok {
@@ -71,22 +73,37 @@ func (in *Installer) Init(ctx context.Context, o Options) (InitResult, error) {
 			return InitResult{}, err
 		}
 	}
-	if o.Mode == manifest.ModeStandalone {
-		if err := in.writeServiceUnits(o); err != nil {
-			return InitResult{}, err
-		}
-	}
-	// The manifest is written last: its presence is what makes a directory an install.
-	if err := writeManifest(l.Config(), m); err != nil {
+	if err := writeSourceRecord(l, in.SourceDir); err != nil {
 		return InitResult{}, err
 	}
 	res := InitResult{FactoryID: o.FactoryID, Options: o}
+	if o.Mode == manifest.ModeStandalone {
+		note, err := in.writeServiceUnits(o)
+		if err != nil {
+			return InitResult{}, err
+		}
+		if note != "" {
+			res.Warnings = append(res.Warnings, note)
+		}
+	}
+	if err := writeManifest(l.Config(), buildManifest(o)); err != nil {
+		return InitResult{}, err
+	}
 	res.Warnings = append(res.Warnings, fmt.Sprintf(rootKeyWarning, l.SecretsDir(areaControl)))
 	if o.Dev {
 		res.Warnings = append(res.Warnings, devWarning)
 	}
+	if !o.Sim && !o.Dev && o.Identity.OIDCIssuer != "" && o.Identity.OIDCClientSecret.IsZero() {
+		res.Warnings = append(res.Warnings, "No OpenID Connect client secret was given: the factory signs in at "+o.Identity.OIDCIssuer+
+			" as a public client (with PKCE). If the provider registered a confidential client, init again with --oidc-client-secret-file or --oidc-client-secret-env.")
+	}
+	if o.Mode == manifest.ModeDocker {
+		res.Warnings = append(res.Warnings, "The Compose file is rendered by `sisf up` into "+l.Compose()+
+			" once the images are built, because it pins each image by its digest; its template is templates/compose/compose.yaml in the source checkout.")
+	}
 	if !o.Budget.Confirmed {
-		res.Warnings = append(res.Warnings, "The unlimited budget is not confirmed: the factory takes in issues and starts no work until you confirm it.")
+		res.Warnings = append(res.Warnings, "The budget is not confirmed: the factory takes in issues and starts no work until you confirm it with "+
+			"`sisf up --confirm-unlimited --alert-threshold AMOUNT` (or --no-alert), or `sisf up --budget-cap AMOUNT`.")
 	}
 	return res, nil
 }

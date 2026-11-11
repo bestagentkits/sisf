@@ -55,6 +55,8 @@ type Options struct {
 	// GitHubToken is the installation token. Under Sim a random stand-in is
 	// generated, since the fake accepts any token.
 	GitHubToken core.SecretValue
+	// GitHubApp names the GitHub App installation a real install acts for.
+	GitHubApp GitHubApp
 	// GitHubAPIURL overrides the API root. It must be https, or http on a
 	// loopback host.
 	GitHubAPIURL string
@@ -110,6 +112,9 @@ func (o Options) normalize() (Options, error) {
 	}
 	if !ownerPattern.MatchString(o.Repo.Owner) || !namePattern.MatchString(o.Repo.Repo) || o.Repo.Repo == "." || o.Repo.Repo == ".." {
 		return o, invalidf("the repository must be given as owner/name")
+	}
+	if err := o.checkGitHubApp(); err != nil {
+		return o, err
 	}
 	if o.FactoryID == "" {
 		slug := strings.Trim(slugPattern.ReplaceAllString(strings.ToLower(o.Repo.Repo), "-"), "-")

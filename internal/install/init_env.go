@@ -123,9 +123,13 @@ func (in *Installer) runtimeEnvs(o Options, pw map[core.Zone]string, cs controlS
 	if o.Sim {
 		sets[l.RuntimeEnv(areaSim)] = []string{"SISF_SIM_WEBHOOK_SECRET", cs.webhook}
 	}
+	format := formatEnv
+	if o.Mode == manifest.ModeStandalone {
+		format = formatLocalEnv // read by this installer alone, never by Compose
+	}
 	out := map[string][]byte{}
 	for path, pairs := range sets {
-		data, err := formatEnv(pairs...)
+		data, err := format(pairs...)
 		if err != nil {
 			return nil, err
 		}

@@ -59,7 +59,9 @@ func setEnvValue(path, key, value string) error {
 	for _, k := range sortedKeys(vars) {
 		pairs = append(pairs, k, vars[k])
 	}
-	data, err := formatEnv(pairs...)
+	// The gh login is for a development install, which is Standalone: its
+	// env files are read by this installer alone.
+	data, err := formatLocalEnv(pairs...)
 	if err != nil {
 		return err
 	}

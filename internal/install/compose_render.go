@@ -104,11 +104,20 @@ func newComposeData(l Layout, o Options, images Images, bootstrap []string, host
 // or unit file would read as syntax.
 var pathPattern = regexp.MustCompile(`^/[A-Za-z0-9_./+-]*$`)
 
+// quotedPathPattern is what an install path may contain where every
+// template quotes it: a Compose file, a launcher script, a systemd unit or
+// a property list. Single spaces are allowed, as in "/Users/me/My Factory";
+// no quote, percent sign, dollar sign, backslash, XML character or control
+// character, which one of them would read as syntax.
+var quotedPathPattern = regexp.MustCompile(`^/[A-Za-z0-9_./+-]*( [A-Za-z0-9_./+-]+)*$`)
+
 // check refuses data that would let a value break out of its place in the file.
 func (d ComposeData) check() error {
+	// The template writes these paths inside double-quoted YAML strings, so
+	// single spaces are safe; quotes, "$", "#" and the rest are not.
 	for _, p := range []string{d.SecretsDir, d.ConfigFile, d.ReleaseFile, d.SimAgentDir} {
-		if !pathPattern.MatchString(p) {
-			return invalidf("the install path %q has characters Compose files cannot carry; use letters, digits and . _ + - /", p)
+		if !quotedPathPattern.MatchString(p) {
+			return invalidf("the install path %q has characters Compose files cannot carry; use letters, digits, single spaces and . _ + - /", p)
 		}
 	}
 	if err := checkGitHubURL(d.GitHubAPIURL); err != nil {

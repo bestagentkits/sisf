@@ -194,7 +194,10 @@ func TestInitGeneratesServiceUnitsOnlyForStandalone(t *testing.T) {
 		t.Fatalf("service units = %v, %v, want a launchd and a systemd unit", entries, err)
 	}
 	unit, _ := os.ReadFile(filepath.Join(in.Layout.ServiceDir(), "sh.sisf.sisf-hello-app.service"))
-	for _, want := range []string{"up --mode standalone --dir " + in.Layout.Dir, "UMask=0077"} {
+	// The unit builds from the recorded checkout, starts in it, finds Go,
+	// and quotes every path.
+	for _, want := range []string{`up --mode standalone --dir "` + in.Layout.Dir + `" --source "` + in.SourceDir + `"`,
+		"WorkingDirectory=" + in.SourceDir, `Environment="PATH=/usr/local/go/bin:`, `ExecStart="/usr/local/bin/sisf" up`, "UMask=0077"} {
 		if !strings.Contains(string(unit), want) {
 			t.Errorf("systemd unit lacks %q:\n%s", want, unit)
 		}

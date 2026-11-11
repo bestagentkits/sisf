@@ -24,6 +24,8 @@ var envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 type installFlags struct {
 	dir, mode, profile, repo, factoryID, source string
 	githubTokenEnv, githubAPIURL                string
+	githubAppLogin                              string
+	githubInstallationID, githubAppID           int64
 	reconcileInterval                           string
 	debug                                       bool
 	confirmUnlimited, noAlert                   bool
@@ -38,9 +40,12 @@ func bindInstallFlags(fs *flag.FlagSet, f *installFlags) {
 	fs.StringVar(&f.mode, "mode", "", "standalone or docker (default standalone for a new install)")
 	fs.StringVar(&f.profile, "profile", "", "\"sim\" runs against a fake GitHub")
 	fs.StringVar(&f.repo, "repo", "", "GitHub repository to serve, owner/name")
-	fs.StringVar(&f.factoryID, "factory-id", "", "factory id (default sisf-<repository name>)")
-	fs.StringVar(&f.source, "source", "", "source checkout to build from (default: the current directory)")
-	fs.StringVar(&f.githubTokenEnv, "github-token-env", "", "name of the environment variable holding the GitHub token")
+	fs.StringVar(&f.factoryID, "factory-id", "", "factory id (default sisf-<repository name>; give another one to a second install of a same-named repository)")
+	fs.StringVar(&f.source, "source", "", "source checkout of sisf to build from (default: the one init recorded, else the checkout holding the current directory)")
+	fs.StringVar(&f.githubTokenEnv, "github-token-env", "", "name of the environment variable holding the token of the factory's GitHub account; it is read once per start and never refreshed, so use a long-lived token")
+	fs.Int64Var(&f.githubInstallationID, "github-installation-id", 0, "installation of the factory's GitHub App on the repository owner, whose webhooks control accepts (required outside --profile sim and --dev with gh-cli)")
+	fs.StringVar(&f.githubAppLogin, "github-app-login", "", "login of the account the factory writes as, such as my-factory[bot]; the supervisor merges only its own pull requests (required with --github-installation-id)")
+	fs.Int64Var(&f.githubAppID, "github-app-id", 0, "numeric id of that account (optional)")
 	fs.StringVar(&f.githubAPIURL, "github-api-url", "", "GitHub API root (https, or http on loopback)")
 	fs.StringVar(&f.reconcileInterval, "github-reconcile-interval", "", "how often control asks GitHub for changed issues, 10s to 1h (default 1m)")
 	fs.BoolVar(&f.debug, "debug", false, "docker mode: publish the state store on 127.0.0.1:7469")
@@ -99,6 +104,10 @@ func (f installFlags) options(dir string, getenv func(string) string) (install.O
 	o := install.Options{
 		Dir: dir, Mode: manifest.Mode(f.mode), Sim: f.profile == "sim", FactoryID: core.FactoryID(f.factoryID),
 		GitHubAPIURL: f.githubAPIURL, Debug: f.debug, Dev: f.identity.dev, GitHubCredential: f.identity.githubCredential,
+		GitHubApp: install.GitHubApp{InstallationID: f.githubInstallationID, Login: f.githubAppLogin, AppID: f.githubAppID},
+	}
+	if f.repo == "" && f.profile != "sim" {
+		return o, usagef("--repo owner/name is required: the GitHub repository the factory serves (or use --profile sim)")
 	}
 	if f.reconcileInterval != "" {
 		d, err := time.ParseDuration(f.reconcileInterval)
@@ -145,9 +154,6 @@ func (f installFlags) options(dir string, getenv func(string) string) (install.O
 		o.GitHubToken = core.NewSecretValue([]byte(token))
 	case !o.Sim:
 		return o, usagef("a real GitHub repository needs --github-token-env NAME or, with --dev, --github-credential gh-cli (or use --profile sim)")
-	}
-	if o.Repo == (manifest.Repository{}) && !o.Sim {
-		return o, usagef("--repo owner/name is required")
 	}
 	return o, nil
 }
