@@ -19,7 +19,7 @@ Everything of a Standalone install lives below its install directory `<dir>` (`i
 | `data/app/`, `data/artifacts/`, `data/workspaces/`, `data/qa-workspaces/` | application data, build artifacts, agent workspaces | application data |
 | `bin/`, `logs/`, `run/`, `service/` | built programs, logs, the pid file, unit files | rebuilt or rewritten |
 
-A Docker install keeps `factory.yaml`, `budget-confirmation.json`, `source.json`, `secrets/`, `release/` and the rendered `compose.yaml` in `<dir>`, and its data in named volumes, each `<project>-<name>` where the project is `sisf-<repository name>` unless `--factory-id` said otherwise (`templates/compose/compose.yaml`): `state-data` (PostgreSQL), `control-data`, `trust`, `app-data`, `artifacts`, `workspaces`, `qa-workspaces`, and `supervisor-admin` (a socket only).
+A Docker install keeps `factory.yaml`, `budget-confirmation.json`, `source.json` (written by `init` in every mode), `secrets/`, `release/` and the rendered `compose.yaml` in `<dir>`, and its data in named volumes, each `<project>-<name>` where the project is `sisf-<repository name>` unless `--factory-id` said otherwise (`templates/compose/compose.yaml`): `state-data` (PostgreSQL), `control-data`, `trust`, `app-data`, `artifacts`, `workspaces`, `qa-workspaces`, and `supervisor-admin` (a socket only).
 
 The env files hold absolute paths (Standalone: the SQLite path; both modes: unit files), so restore an install to the same directory it was made in.
 

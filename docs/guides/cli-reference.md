@@ -1,6 +1,6 @@
 # CLI reference
 
-Every `sisf` command, its flags and where it is used. The command line is the authority: `sisf help` lists the commands and `sisf help <command>` (for a pair such as `runs explain`, `sisf help runs explain`) prints the full text, with the flags. This page groups them and adds the flags of `emergency-stop`, whose help names them only in its usage line, read from the flag definitions in `cmd/sisf/`.
+Every `sisf` command, its flags and where it is used. The command line is the authority: `sisf help` lists the commands and `sisf help <command>` (for a pair such as `runs explain`, `sisf help runs explain`) prints the full text. Some commands, such as `init` and `call`, print a list of their flags there; others, such as `emergency-stop`, `doctor` and `down`, name them only in their usage line. This page groups the commands and adds those flags, read from the flag definitions in `cmd/sisf/`.
 
 Conventions of every command (`cmd/sisf/main.go`): exit 0 on success, 1 on a failure, 2 on a wrong invocation. A wrong invocation (an unknown command or flag, a missing argument, an option `init` refuses) prints `sisf <command>: message` and the command's usage line. A failure prints `sisf: CODE: message`, often followed by `next:` lines. A few invalid values are noticed only later and exit 1 with `INVALID_ARGUMENT:`, for example `sisf up --mode docker` on a Standalone install. Secrets are never taken from a flag value and never printed.
 
@@ -8,7 +8,7 @@ Conventions of every command (`cmd/sisf/main.go`): exit 0 on success, 1 on a fai
 
 | Command | What it does |
 |---|---|
-| `sisf version [--json]`, `sisf --version`, `sisf -v` | Prints the version, the commit, the build date, the Go version and the platform of this `sisf`, for example `sisf f431fb2 (commit <sha>, built <date>, go1.25.14 darwin/arm64)`. `--json` prints one object with `version`, `commit`, `build_date`, `modified` (only when the build had local changes), `go_version` and `platform`. A `sisf` built by `make install` carries its version; one from a plain `go build` or `go install` reports `devel`. |
+| `sisf version [--json]`, `sisf --version`, `sisf -v` | Prints the version, the commit, the build date, the Go version and the platform of this `sisf`, for example `sisf <version> (commit <sha>, built <date>, <go version> <os>/<arch>)`. `--json` prints one object with `version`, `commit`, `build_date`, `modified` (only when the build had local changes), `go_version` and `platform`. A `sisf` built by `make install` carries its version; one from a plain `go build` or `go install` reports `devel`. |
 
 The top-level `-v` is the version; `sisf down -v` is the flag that removes data.
 
@@ -28,7 +28,7 @@ Owner: `cmd/sisf/cmd_install*.go`, `cmd/sisf/cmd_service_units.go`, `internal/in
 
 `--dir` defaults to `$SISF_HOME`, else `~/.sisf/factory`.
 
-On a factory that is not running, `stop`, `down` and `down -v` exit 0 and print `the factory in <dir> was not running; nothing to stop` (`down -v`: `...; its data is removed`). In Docker mode `up`, `stop` and `down` refuse a Compose project of this install's name that another install made, and change nothing.
+On a factory that is not running, `stop`, `down` and `down -v` exit 0 and print `the factory in <dir> was not running; nothing to stop` (`down -v`: `...; its data is removed`). In Docker mode `up`, `stop`, `restart` and `down` refuse a Compose project of this install's name that another install made, and change nothing.
 
 Flags of `init`, which `up` also accepts (`cmd/sisf/cmd_install_flags.go`):
 

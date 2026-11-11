@@ -31,7 +31,7 @@ The ports are fixed, so one machine runs one factory. `init` does not check this
 - `sisf call`, `sisf login` and the commands built on `call` send nothing to a server that does not say it is the factory of the install in `--dir` or `$SISF_HOME` (`cmd/sisf/cmd_call_factory_identity.go`).
 - `sisf emergency-stop` sends a stop only to a supervisor that proves it serves this factory, and a supervisor refuses a stop for any factory but its own (`internal/supervisor/admin_emergency_stop.go`).
 
-Two Docker installs of repositories with the same name share a Compose project name (`sisf-<repository name>`). The second one's `up`, `stop` and `down` refuse to touch a project another install made (`internal/install/docker_project_owner.go`); give the second install its own `--factory-id`.
+Two Docker installs of repositories with the same name share a Compose project name (`sisf-<repository name>`). The second one's `up`, `stop`, `restart` and `down` refuse to touch a project another install made (`internal/install/docker_project_owner.go`); give the second install its own `--factory-id`.
 
 ## Development install
 
@@ -121,7 +121,7 @@ Every port is bound to 127.0.0.1. Run a reverse proxy with TLS that forwards `<e
 ### 6. Start, check, approve the policy
 
 1. `sisf up --dir /srv/sisf/factory` (Standalone stays in the foreground; Docker returns). It builds from the checkout `init` recorded. It prints `factory <id> is up: control http://127.0.0.1:7463, app via edge http://127.0.0.1:7460`.
-2. `sisf doctor --dir /srv/sisf/factory`: every line `OK`, `SKIP` or an understood `WARN`.
+2. `sisf doctor --dir /srv/sisf/factory`: every line `OK` or an understood `WARN`. `SKIP` lines appear only after a failed `running` check.
 3. Commit the foundation files to the repository and [put the first policy in force](policy-and-approvals.md#putting-the-first-policy-in-force).
 4. Sign in at the external URL as the Owner, and `sisf login --url https://factory.example.com` for the CLI.
 
