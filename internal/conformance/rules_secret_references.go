@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -49,9 +50,12 @@ func (h secretHolder) secret() string {
 	return h.label
 }
 
-// secretHolders lists every reference to a secret the typed part of the
-// manifest holds: the credential set of each zone, the credential set a unit
-// names for itself, the state connection secret and the root public key.
+// secretHolders lists every reference to a secret the manifest holds: the
+// credential set of each zone, the credential set a unit names for itself,
+// the state connection secret, the root public key, and each reference in
+// an adapter's config, held by the zone that runs the adapter. The coding,
+// QA and execution adapters run in Zone 2; the deployment adapter is run by
+// the supervisor in Zone 3.
 func (c *checker) secretHolders() []secretHolder {
 	var holders []secretHolder
 	for _, zone := range core.Zones() {
@@ -74,7 +78,63 @@ func (c *checker) secretHolders() []secretHolder {
 	if c.m.Supervisor != nil {
 		holders = append(holders, secretHolder{path: "supervisor.root_key_ref", ref: c.m.Supervisor.RootKeyRef, label: "the root public key"})
 	}
+	for _, adapter := range []struct {
+		name   string
+		config map[string]any
+		zone   core.Zone
+	}{
+		{"coder", c.m.Adapters.Coder.Config, core.ZoneAgent},
+		{"qa", c.m.Adapters.QA.Config, core.ZoneAgent},
+		{"execution", c.m.Adapters.Execution.Config, core.ZoneAgent},
+		{"deploy", c.m.Adapters.Deploy.Config, core.ZoneControl},
+	} {
+		at := "adapters." + adapter.name + ".config"
+		label := fmt.Sprintf("the %s adapter of %s", adapter.name, zoneLabel(adapter.zone))
+		for _, found := range configReferences(at, adapter.config) {
+			holders = append(holders, secretHolder{path: found.path, ref: found.ref, zone: adapter.zone, label: label})
+		}
+	}
 	return holders
+}
+
+// configReference is one reference to a secret found in free-form config.
+type configReference struct{ path, ref string }
+
+// configReferences lists, in key order, the references a free-form config
+// holds: text that is a reference, and the value of an assignment such as
+// TOKEN=env:NAME.
+func configReferences(path string, value any) []configReference {
+	var found []configReference
+	switch v := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			found = append(found, configReferences(path+"."+key, v[key])...)
+		}
+	case map[any]any:
+		named := map[string]any{}
+		for key, inner := range v {
+			if text, ok := key.(string); ok {
+				named[text] = inner
+			}
+		}
+		found = configReferences(path, named)
+	case []any:
+		for i, item := range v {
+			found = append(found, configReferences(fmt.Sprintf("%s[%d]", path, i), item)...)
+		}
+	case string:
+		if manifest.IsSecretRef(v) {
+			found = append(found, configReference{path, v})
+		} else if _, assigned, ok := strings.Cut(v, "="); ok && manifest.IsSecretRef(assigned) {
+			found = append(found, configReference{path, assigned})
+		}
+	}
+	return found
 }
 
 // checkSecretReferences rejects one reference standing for two secrets that
@@ -84,8 +144,8 @@ func (c *checker) secretHolders() []secretHolder {
 //   - a credential set is never the state connection secret or the root
 //     public key, and those two are never one secret either.
 //
-// Units of one zone may share that zone's credential set; whether the
-// qa-runner has one of its own is the QA rule's question. A finding names the
+// Units and adapters of one zone may share that zone's credential set;
+// whether the qa-runner has one of its own is the QA rule's question. A finding names the
 // two places and never the reference, which may be a secret pasted where a
 // reference belongs.
 func (c *checker) checkSecretReferences() {
