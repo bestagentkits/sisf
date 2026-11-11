@@ -114,7 +114,7 @@ func TestConformanceCheckRefusesAWrongInvocation(t *testing.T) {
 			t.Errorf("%v: status %d, stderr %q", args, status, stderr)
 		}
 	}
-	if status, _, stderr := sisf(t, "conformance"); status != exitUsage || !strings.Contains(stderr, "conformance check [file]") {
+	if status, _, stderr := sisf(t, "conformance"); status != exitUsage || !strings.Contains(stderr, "conformance check") {
 		t.Errorf("the group alone: status %d, stderr %q", status, stderr)
 	}
 	if status, stdout, _ := sisf(t, "help", "conformance", "check"); status != exitOK || !strings.Contains(stdout, "all three zones") {

@@ -71,7 +71,7 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 		if err == flag.ErrHelp {
 			return err
 		}
-		return usagef("%v", err)
+		return usagef("%s", flagMessage(err))
 	}
 	if fs.NArg() > 0 {
 		return usagef("unexpected argument %q", fs.Arg(0))

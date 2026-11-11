@@ -99,7 +99,7 @@ func TestHelpListsCommandsInOrderAndDescribesOne(t *testing.T) {
 			t.Fatalf("%v: status %d, stderr %q, ran %v", args, status, stderr, ran)
 		}
 		var previous int
-		for _, name := range []string{"crash", "doctor", "down [-v]", "explain", "probe", "sim github", "sim oidc", "status", "up [--mode mode]"} {
+		for _, name := range []string{"crash", "doctor", "down", "explain", "probe", "sim github", "sim oidc", "status", "up"} {
 			at := strings.Index(stdout, "  "+name)
 			if at < previous {
 				t.Fatalf("%v: %q is missing or out of order in:\n%s", args, name, stdout)

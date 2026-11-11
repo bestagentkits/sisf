@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -78,7 +79,8 @@ docker-filter --role runner) --exec-docker-network NET (internal)
 --egress-proxy http://HOST:PORT (on NET) --runner-image NAME@sha256:DIGEST
 --build-command CMD, and --qa-agent-binary LAUNCHER, an absolute launcher
 that runs the QA agent in a sandbox (--qa-home is then refused).`,
-		Run: runInit,
+		Flags: func(fs *flag.FlagSet) { bindInstallFlags(fs, &installFlags{}) },
+		Run:   runInit,
 	})
 	register(Command{
 		Path:    []string{"up"},
@@ -93,7 +95,8 @@ starts every unit.
 Standalone mode stays in the foreground and supervises the units until
 interrupted; SIGHUP restarts them. Docker mode starts one Compose project and
 returns. Ports used: 7460-7469 on 127.0.0.1, nothing else.`,
-		Run: runUp,
+		Flags: func(fs *flag.FlagSet) { bindInstallFlags(fs, &installFlags{}) },
+		Run:   runUp,
 	})
 	register(Command{
 		Path: []string{"stop"}, Args: "[--dir path]", Summary: "Stop the factory and keep everything it made",

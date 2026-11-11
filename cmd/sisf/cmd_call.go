@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -27,14 +28,14 @@ func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 
 // parseInterspersed parses flags that may follow the positional arguments
 // and returns the positional ones, exactly want of them.
-func parseInterspersed(fs *flag.FlagSet, args []string, want int) ([]string, error) {
+func parseInterspersed(fs *flag.FlagSet, args []string, want int, what string) ([]string, error) {
 	var positional []string
 	for {
 		if err := fs.Parse(args); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return nil, err
 			}
-			return nil, usagef("%v", err)
+			return nil, usagef("%s", flagMessage(err))
 		}
 		if fs.NArg() == 0 {
 			break
@@ -42,8 +43,11 @@ func parseInterspersed(fs *flag.FlagSet, args []string, want int) ([]string, err
 		positional = append(positional, fs.Arg(0))
 		args = fs.Args()[1:]
 	}
-	if len(positional) != want {
-		return nil, usagef("expected %d argument(s), got %d", want, len(positional))
+	switch {
+	case len(positional) < want:
+		return nil, usagef("missing %s", what)
+	case len(positional) > want:
+		return nil, usagef("unexpected argument %q", positional[want])
 	}
 	return positional, nil
 }
@@ -163,45 +167,65 @@ func callAction(ctx context.Context, env *Env, conn *connFlags, action string, i
 func init() {
 	register(Command{
 		Path:    []string{"call"},
-		Args:    "<action> [--input json|-] [--dry-run] [--approval id] [--idempotency-key key] [--url url]",
+		Args:    "<action> [--input json|-] [--dry-run] [--approval id] [--idempotency-key key] [--url url] | --list [--json]",
 		Summary: "Call any action of the running factory over its REST surface",
 		Help: `
 Calls one action, for example "sisf call runs.explain --input '{"issue":"acme/app#12"}'",
 and prints the JSON result. --input is a JSON object, or - to read it from
 standard input. A failure prints the typed error code, the message and the
-next valid steps, and exits non-zero.
+next valid steps, and exits non-zero. "sisf call --list" lists every action
+with its guard and summary, without a running factory.
 
-The control URL and the token come from --url / $` + controlURLEnv + ` and $` + tokenEnv + `, else from the
+Before the token is sent, the server must say it is the factory of the install
+in --dir or $SISF_HOME, when there is one there. The control URL and the token come from --url / $` + controlURLEnv + ` and $` + tokenEnv + `, else from the
 login stored by "sisf login". The token is sent only to the URL it was issued for.`,
-		Run: func(ctx context.Context, env *Env, args []string) error {
-			fs := flag.NewFlagSet("call", flag.ContinueOnError)
-			fs.SetOutput(env.Stderr)
-			var conn connFlags
-			var opts callOptions
-			conn.register(fs)
-			opts.register(fs, true)
-			input := fs.String("input", "", "JSON input of the action, or - for standard input")
-			pos, err := parseInterspersed(fs, args, 1)
-			if err != nil {
-				return err
-			}
-			raw := strings.TrimSpace(*input)
-			if raw == "-" {
-				data, rerr := io.ReadAll(io.LimitReader(env.Stdin, maxResponseBytes))
-				if rerr != nil {
-					return core.NewError(core.CodeUnavailable, "the input could not be read from standard input").WithCause(rerr)
-				}
-				raw = strings.TrimSpace(string(data))
-			}
-			if raw == "" {
-				raw = "{}"
-			}
-			if !json.Valid([]byte(raw)) {
-				return usagef("--input is not valid JSON")
-			}
-			return callAction(ctx, env, &conn, pos[0], json.RawMessage(raw), opts)
-		},
+		Flags: func(fs *flag.FlagSet) { bindCallFlags(fs, &connFlags{}, &callOptions{}) },
+		Run:   runCall,
 	})
+}
+
+// bindCallFlags registers the flags of sisf call and returns where --input
+// and --list land.
+func bindCallFlags(fs *flag.FlagSet, conn *connFlags, opts *callOptions) (input *string, list *bool, asJSON *bool) {
+	conn.register(fs)
+	opts.register(fs, true)
+	input = fs.String("input", "", "JSON input of the action, or - for standard input")
+	list = fs.Bool("list", false, "list the actions this sisf knows, with one line each, and call nothing")
+	asJSON = fs.Bool("json", false, "with --list: print the actions as JSON")
+	return input, list, asJSON
+}
+
+func runCall(ctx context.Context, env *Env, args []string) error {
+	fs := newFlagSet("call")
+	var conn connFlags
+	var opts callOptions
+	input, list, asJSON := bindCallFlags(fs, &conn, &opts)
+	want := 1
+	if slices.ContainsFunc(args, func(a string) bool { return a == "--list" || a == "-list" }) {
+		want = 0
+	}
+	pos, err := parseInterspersed(fs, args, want, "the action name, such as runs.explain; sisf call --list shows them")
+	if err != nil {
+		return err
+	}
+	if *list {
+		return listActions(env, *asJSON)
+	}
+	raw := strings.TrimSpace(*input)
+	if raw == "-" {
+		data, rerr := io.ReadAll(io.LimitReader(env.Stdin, maxResponseBytes))
+		if rerr != nil {
+			return core.NewError(core.CodeUnavailable, "the input could not be read from standard input").WithCause(rerr)
+		}
+		raw = strings.TrimSpace(string(data))
+	}
+	if raw == "" {
+		raw = "{}"
+	}
+	if !json.Valid([]byte(raw)) {
+		return usagef("--input is not valid JSON")
+	}
+	return callAction(ctx, env, &conn, pos[0], json.RawMessage(raw), opts)
 }
 
 // alias is a friendly command that builds the input of one action and calls
@@ -213,20 +237,29 @@ type alias struct {
 	action  string
 	// positional is how many arguments follow the path.
 	positional int
+	// help is said before the action it calls.
+	help string
 	// flags registers the alias's own flags and returns the input builder.
 	flags func(fs *flag.FlagSet, opts *callOptions) func(pos []string) (any, error)
 }
 
 func (a alias) register() {
-	register(Command{Path: a.path, Args: a.args, Summary: a.summary, Help: "Same as: sisf call " + a.action,
+	help := "Same as: sisf call " + a.action + ". The control URL and the token are chosen as for sisf call."
+	if a.help != "" {
+		help = a.help + "\n\n" + help
+	}
+	register(Command{Path: a.path, Args: a.args, Summary: a.summary, Help: help,
+		Flags: func(fs *flag.FlagSet) {
+			(&connFlags{}).register(fs)
+			a.flags(fs, &callOptions{})
+		},
 		Run: func(ctx context.Context, env *Env, args []string) error {
-			fs := flag.NewFlagSet(strings.Join(a.path, " "), flag.ContinueOnError)
-			fs.SetOutput(env.Stderr)
+			fs := newFlagSet(strings.Join(a.path, " "))
 			var conn connFlags
 			var opts callOptions
 			conn.register(fs)
 			build := a.flags(fs, &opts)
-			pos, err := parseInterspersed(fs, args, a.positional)
+			pos, err := parseInterspersed(fs, args, a.positional, "an issue (owner/name#12) or a run id")
 			if err != nil {
 				return err
 			}
@@ -314,11 +347,12 @@ func init() {
 		{path: []string{"runs", "explain"}, args: "<issue|run-id>", summary: "Explain why a run is stopped or blocked", action: "runs.explain",
 			positional: 1, flags: noFlags(idOf)},
 		{path: []string{"approvals", "list"}, args: "[--status s]... [--limit n]", summary: "List approval requests", action: "approvals.list",
-			flags: listFlags("status", "request status to keep (repeatable)")},
+			flags: listFlags("status", "request status to keep (repeatable): pending, approved, rejected, changes_requested, expired or consumed")},
 		{path: []string{"approvals", "get"}, args: "<id>", summary: "Show an approval request with its evidence and decision", action: "approvals.get",
 			positional: 1, flags: noFlags(func(pos []string) (any, error) { return map[string]string{"id": pos[0]}, nil })},
 		{path: []string{"approvals", "decide"}, args: "<id> --decision d --nonce n --subject-digest d --policy-revision r [--reason text] [--dry-run]",
-			summary: "Approve, reject or request changes on an approval request", action: "approvals.decide", positional: 1, flags: decideFlags},
+			summary: "Approve, reject or request changes on an approval request", action: "approvals.decide", positional: 1, flags: decideFlags,
+			help: "Deciding needs a fresh step-up, which only the dashboard's approval page gives, so the CLI is refused with STEP_UP_REQUIRED except for --dry-run; decide on the dashboard at /approvals/<id>."},
 	} {
 		a.register()
 	}

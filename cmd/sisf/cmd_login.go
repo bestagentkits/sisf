@@ -194,14 +194,13 @@ Approving needs a recent identity confirmation; the page offers it.`,
 }
 
 func runLogin(ctx context.Context, env *Env, args []string) error {
-	fs := flag.NewFlagSet("login", flag.ContinueOnError)
-	fs.SetOutput(env.Stderr)
+	fs := newFlagSet("login")
 	var conn connFlags
 	conn.register(fs)
 	name := fs.String("name", "sisf-cli", "label shown on the approval page")
 	var scopes stringList
 	fs.Var(&scopes, "scope", "scope the token may carry (repeatable; default: all)")
-	if _, err := parseInterspersed(fs, args, 0); err != nil {
+	if _, err := parseInterspersed(fs, args, 0, ""); err != nil {
 		return err
 	}
 	client, path, err := conn.client(false)

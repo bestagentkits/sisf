@@ -16,6 +16,7 @@ directory, for when init could not write them (sisf ran from a temporary
 ` + "`go run`" + ` build, or go was not on PATH) or after sisf or the source checkout
 moved. The units run this sisf binary, so run it from where it stays installed.
 Nothing else in the install changes.`,
+		Flags: bindServiceUnitsFlags(new(string), new(string)),
 		Run: func(_ context.Context, env *Env, args []string) error {
 			var dir, source string
 			fs := newFlagSet("service units")
