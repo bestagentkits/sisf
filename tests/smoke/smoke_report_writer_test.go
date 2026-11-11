@@ -31,6 +31,8 @@ const (
 	statusPass       = "pass"
 	statusFail       = "fail"
 	statusNotChecked = "not checked"
+	// statusInfo is a note for the reader that passes or fails nothing.
+	statusInfo = "info"
 )
 
 type namedValue struct{ Name, Value string }

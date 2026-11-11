@@ -4,6 +4,7 @@ package smoke
 
 import (
 	"bufio"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -16,10 +17,35 @@ import (
 // further secrets: the gh token, the CLI token the operator's sign-in stored, the values
 // of the install's env files and its other secret files.
 type secretScrubber struct {
-	mu      sync.Mutex
-	env     []string
-	secrets []string
-	r       *redact.Redactor
+	mu       sync.Mutex
+	env      []string
+	secrets  []string
+	personal []personalValue
+	r        *redact.Redactor
+}
+
+// personalValue is personal data the run knows of, such as the gh login or
+// the operator's home directory, and the placeholder that stands in for it.
+type personalValue struct {
+	re          *regexp.Regexp
+	placeholder string
+}
+
+// notNameChar is what must border a personal value for it to be that value
+// rather than part of a longer name.
+const notNameChar = `[^A-Za-z0-9_.-]`
+
+// addPersonal replaces value, matched case-insensitively as a whole name or
+// path, with placeholder from now on. Empty values are ignored.
+func (s *secretScrubber) addPersonal(value, placeholder string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	re := regexp.MustCompile(`(?i)(^|` + notNameChar + `)` + regexp.QuoteMeta(value) + `($|` + notNameChar + `)`)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.personal = append(s.personal, personalValue{re: re, placeholder: strings.ReplaceAll(placeholder, "$", "$$")})
 }
 
 func newSecretScrubber(env []string, secrets ...string) *secretScrubber {
@@ -60,9 +86,17 @@ func (s *secretScrubber) addEnvFile(content string) {
 // personal data.
 func (s *secretScrubber) clean(text string) string {
 	s.mu.Lock()
-	r := s.r
+	r, personal := s.r, s.personal
 	s.mu.Unlock()
-	return r.Redact(text)
+	text = r.Redact(text)
+	for _, p := range personal {
+		// A match takes the boundary after it, so a second pass catches a
+		// value that directly follows another.
+		for range 2 {
+			text = p.re.ReplaceAllString(text, "${1}"+p.placeholder+"${2}")
+		}
+	}
+	return text
 }
 
 func (s *secretScrubber) addLocked(value string) bool {

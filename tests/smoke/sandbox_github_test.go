@@ -12,8 +12,8 @@ import (
 )
 
 // The run's own GitHub calls, all through the gh login and all aimed at
-// the sandbox, except one read of the account's public activity that
-// proves nothing else was touched.
+// the sandbox, except one read of the account's public activity that is
+// reported as a count (see assertSandboxScope).
 
 const ghLimit = time.Minute
 
@@ -96,33 +96,6 @@ func pullRequestLinks(ctx context.Context, r *commandRunner, url string, number 
 		}
 	}
 	return strings.Contains(pr.Body, "#"+strconv.Itoa(number)), pr.State, nil
-}
-
-// activityOutsideSandbox lists the account's public events since start
-// that name a repository other than the sandbox. GitHub publishes events
-// with a delay of up to a few minutes, and the check assumes nobody else
-// works with the same account during the run.
-func activityOutsideSandbox(ctx context.Context, r *commandRunner, login string, start time.Time) ([]string, error) {
-	out, err := r.run(ctx, ghLimit, nil, "gh", "api", "users/"+login+"/events?per_page=100",
-		"--jq", `.[] | [.created_at, .repo.name, .type] | @tsv`)
-	if err != nil {
-		return nil, err
-	}
-	var outside []string
-	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
-		fields := strings.Split(line, "\t")
-		if len(fields) != 3 {
-			continue
-		}
-		at, err := time.Parse(time.RFC3339, fields[0])
-		if err != nil || at.Before(start.Add(-time.Minute)) {
-			continue
-		}
-		if fields[1] != sandboxRepo {
-			outside = append(outside, strings.Join(fields, " "))
-		}
-	}
-	return outside, nil
 }
 
 // defaultBranchRevision is the commit the policy is approved at.

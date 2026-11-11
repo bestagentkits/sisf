@@ -18,7 +18,7 @@ const firstPort, lastPort = 7460, 7469
 
 // preflightFacts is what the preflight learned and the run needs later.
 type preflightFacts struct {
-	login   string // the gh account, to check its activity stays in the sandbox
+	login   string // the gh account, to count its activity elsewhere; never reported
 	ghToken string // never logged; seeds the scrubber
 }
 
@@ -77,6 +77,8 @@ func preflight(ctx context.Context, r *commandRunner) preflightFacts {
 		r.fatalf("preflight: the gh account cannot be read: %v", err)
 	}
 	facts.login = strings.TrimSpace(login)
+	// The login is personal data: the log and the report name a placeholder.
+	r.scrub.addPersonal(facts.login, "<gh-login>")
 
 	for _, tool := range [][]string{{"gh", "--version"}, {"claude", "--version"}, {"codex", "--version"}, {"docker", "version", "--format", "{{.Server.Version}}"}, {"go", "version"}, {"git", "rev-parse", "HEAD"}} {
 		out, err := r.run(ctx, limit, nil, tool[0], tool[1:]...)

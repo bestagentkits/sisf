@@ -155,9 +155,7 @@ func assertOutcome(ctx context.Context, r *commandRunner, o *factoryObserver, lo
 		rep.deviate("the budget mode is %q, not capped", b.Output.Mode)
 	}
 
-	outside, err := activityOutsideSandbox(ctx, r, login, start)
-	result(r, "nothing outside the sandbox touched", err == nil && len(outside) == 0,
-		fmt.Sprintf("events naming another repository since the start: %q, error %v", outside, err))
+	assertSandboxScope(ctx, r, o, login, start)
 }
 
 // result records a check and fails the test when it did not pass.

@@ -39,6 +39,10 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	home, upLog := filepath.Join(root, "factory"), filepath.Join(root, "up.log")
 	rep := &smokeReport{Started: time.Now(), Repo: os.Getenv(repoEnv)}
 	scrub := newSecretScrubber(os.Environ())
+	// The operator's home names the person; the report is public.
+	if h, err := os.UserHomeDir(); err == nil && filepath.IsAbs(h) && h != "/" {
+		scrub.addPersonal(h, "~")
+	}
 	r := &commandRunner{t: t, dir: repoRoot(), scrub: scrub, report: rep}
 	stage := "preflight (no side effect)"
 	t.Cleanup(func() {
