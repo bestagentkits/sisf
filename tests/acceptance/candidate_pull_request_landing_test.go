@@ -81,6 +81,10 @@ func TestAVerifiedCandidateIsMergedByTheSupervisorBeforeTheIssueCloses(t *testin
 	if seen := f.Inspect(number); seen.PullRequest == nil || seen.PullRequest.Number != pr.Number || seen.PullRequest.State != string(handoff.LandingMerged) {
 		t.Errorf("runs.inspect shows the pull request %+v", seen.PullRequest)
 	}
+	// QA's pass closed the run's budget reservation.
+	if _, reservation := ledgerOf(t, f, f.Runs(number)[0].ReservationID); reservation.Status == core.ReservationHeld {
+		t.Errorf("the reservation of a run QA passed is still %s", reservation.Status)
+	}
 }
 
 // When GitHub refuses the merge because the branch moved, the change is
