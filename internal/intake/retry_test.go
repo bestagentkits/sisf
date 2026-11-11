@@ -322,3 +322,26 @@ func TestIntakeRetriesOnlyIssuesItBlockedForWantOfAnApproval(t *testing.T) {
 	wantCode(t, err, core.CodePolicyHold, "a retry under a policy hold")
 	g.wantState(core.StateBlocked)
 }
+
+func TestAScopeTheOwnerRefusedIsNotRetriedOnADelegationUnderTheSamePolicy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFactory(t)
+	// A bug report by someone without write access waits for the Owner,
+	// who refuses it.
+	f.open(outsider, completeBody, github.LabelReady, github.LabelKindBug)
+	f.reconcile()
+	f.decide(f.waiting(), approvals.DecisionReject)
+	f.reconcile()
+	f.wantState(core.StateBlocked)
+	f.clock.Advance(time.Hour)
+	queued := len(f.state.Outbox())
+
+	// The author is given write access, so the policy in force would now let
+	// the same scope proceed on its own. The Owner's refusal of exactly that
+	// scope under exactly that policy still stands.
+	f.github.edit(issueRef, func(issue *github.Issue) { issue.AuthorAssociation = github.AssociationMember })
+	_, err := f.service.Retry(ctx, f.retryBy(f.owner()))
+	wantCode(t, err, core.CodeGuardFailed, "a retry of the refused scope on a delegation")
+	f.wantStillBlocked("a refused scope retried on a delegation", queued)
+}

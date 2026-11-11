@@ -46,6 +46,14 @@ type RetryProof struct {
 	// request to retry.
 	Cause     BlockCause
 	BlockedAt time.Time
+	// DeniedScope and DeniedPolicy are the scope digest and the policy
+	// revision of the approval request that was not given, read from the
+	// same record. A delegation lifts a block over a denied approval only
+	// for another scope or under another policy revision: the policy that
+	// sent the scope to the Owner, and the Owner who refused it, had the
+	// last word on exactly that pair.
+	DeniedScope  core.Digest
+	DeniedPolicy core.CommitSHA
 	// Actor is the authenticated party asking for the retry, as the
 	// authentication layer built it. It must be the actor the transition
 	// names. An agent cannot retry.
@@ -119,7 +127,8 @@ func checkRetry(t core.Transition, p RetryProof, now time.Time) error {
 
 // checkRetriedScope requires, for an issue blocked over its approval, an
 // approval decided after the block or proof of delegation. Whatever is
-// presented must hold by the rule of its own guard.
+// presented must hold by the rule of its own guard, and a delegation alone
+// lifts a denied approval only for another scope or policy revision.
 func checkRetriedScope(t core.Transition, p RetryProof, now time.Time) error {
 	switch {
 	case p.BlockedAt.IsZero() || p.BlockedAt.After(now):
@@ -141,6 +150,30 @@ func checkRetriedScope(t core.Transition, p RetryProof, now time.Time) error {
 		if err := checkDelegation(t, *p.Delegation); err != nil {
 			return refuseAs(GuardRetry, t, err)
 		}
+		if p.Approval == nil && p.Cause == BlockApprovalDenied {
+			return checkDelegationAfterDenial(t, p)
+		}
+	}
+	return nil
+}
+
+// checkDelegationAfterDenial requires a delegation that lifts a denied
+// approval to be about another scope, or judged under another policy
+// revision, than the request that was denied. The same pair would be the
+// very question the Owner already answered with no; only the Owner's own
+// later approval undoes that. A denied request that is not known by its
+// full digest and commit cannot be told apart, so it is refused.
+func checkDelegationAfterDenial(t core.Transition, p RetryProof) error {
+	refusal := func(message string) error {
+		refused := refuse(GuardRetry, t, "%s", message)
+		refused.Details["cause"] = string(p.Cause)
+		return refused
+	}
+	switch {
+	case p.DeniedScope.Validate() != nil || p.DeniedPolicy.Validate() != nil:
+		return refusal("it is not known which scope and policy the Owner refused, so a delegation cannot lift the refusal")
+	case p.Delegation.ScopeDigest == p.DeniedScope && p.Delegation.PolicyRevision == p.DeniedPolicy:
+		return refusal("the Owner refused this scope under this policy; only a new approval lifts that refusal")
 	}
 	return nil
 }

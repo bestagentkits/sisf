@@ -90,7 +90,7 @@ func (s *Service) planRetry(ctx context.Context, in input, snap snapshot, req Re
 	p.transition.ActorID = req.Actor.ID
 	p.transition.IdempotencyKey = fmt.Sprintf("intake/%s/%s/%d", sow.Issue, core.EventRetryAuthorized, snap.record.Version)
 	p.retry = &statemachine.RetryProof{IssueID: sow.Issue, Cause: denial.Cause(), BlockedAt: denial.At,
-		Actor: req.Actor, Decision: req.Decision}
+		DeniedScope: denial.ScopeDigest, DeniedPolicy: denial.PolicyRevision, Actor: req.Actor, Decision: req.Decision}
 
 	approval, found, err := s.approvalSince(ctx, in, sow)
 	switch {
