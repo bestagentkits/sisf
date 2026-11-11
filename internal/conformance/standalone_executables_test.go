@@ -1,6 +1,7 @@
 package conformance
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -258,10 +259,17 @@ func TestNoOtherUnitNamesTheSupervisorExecutableInItsCommand(t *testing.T) {
 		{"stdbuf", "-o0", "bin/sisf-supervisor"},
 		{"python3", "bin/sisf-supervisor"},
 		{"/usr/bin/runner", "--exec=./bin/../bin/sisf-supervisor"},
-		{"bin/factoryd", "control", "/opt/elsewhere/sisf-supervisor"},
+		// Run by its name, found wherever the search path leads.
+		{"bin/factoryd", "control", "sisf-supervisor"},
+		// The pinned binary under a factory root written out in full.
+		{"python3", "/opt/factory/bin/sisf-supervisor"},
+		// One file where the file system ignores case.
+		{"python3", "BIN/SISF-Supervisor"},
+		// The first word is what runs, from whatever directory.
+		{"/opt/elsewhere/sisf-supervisor", "control"},
 	}
 	for _, command := range commands {
-		t.Run(command[0], func(t *testing.T) {
+		t.Run(strings.Join(command, " "), func(t *testing.T) {
 			t.Parallel()
 			m := standalone(t)
 			editUnit(m, manifest.UnitControl, func(u *manifest.Unit) { u.Command = command })
@@ -271,6 +279,23 @@ func TestNoOtherUnitNamesTheSupervisorExecutableInItsCommand(t *testing.T) {
 				t.Error("a unit that can start the supervisor's executable disables self-update")
 			}
 		})
+	}
+
+	// A later word that merely ends in the supervisor's name names another
+	// file: a log directory, or a route of a URL.
+	allowed := [][]string{
+		{"bin/factoryd", "control", "--log-dir", "logs/sisf-supervisor"},
+		{"bin/factoryd", "control", "--log-dir=logs/sisf-supervisor"},
+		{"bin/factoryd", "control", "--upstream=http://127.0.0.1:7464/sisf-supervisor"},
+		{"bin/factoryd", "control", "--upstream", "http://127.0.0.1:7464/bin/sisf-supervisor"},
+		{"bin/factoryd", "control", "/opt/elsewhere/sisf-supervisor"},
+	}
+	for _, command := range allowed {
+		m := standalone(t)
+		editUnit(m, manifest.UnitControl, func(u *manifest.Unit) { u.Command = command })
+		if report := Check(m); !report.Conformant() || !report.SelfUpdate {
+			t.Errorf("%q names no file the supervisor starts, got %+v", command, report.Findings)
+		}
 	}
 
 	// A Docker unit without an image of its own is what it starts.
