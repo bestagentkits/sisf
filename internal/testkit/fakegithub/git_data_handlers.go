@@ -125,6 +125,9 @@ func (g *GitData) createCommit(w http.ResponseWriter, r *http.Request) {
 	}
 	g.mu.Lock()
 	g.commitTree[strings.ToLower(repoName(r))+"@"+sha] = in.Tree
+	if key := strings.ToLower(repoName(r)) + "@" + sha; g.parents[key] == nil {
+		g.parents[key] = in.Parents
+	}
 	g.mu.Unlock()
 	writeJSON(w, http.StatusCreated, map[string]any{"sha": sha, "tree": jObject{SHA: in.Tree}})
 }
