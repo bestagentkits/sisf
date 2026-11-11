@@ -39,7 +39,10 @@ type CandidatePRs struct {
 	Clock  core.Clock
 
 	selfMu sync.Mutex
-	self   github.User // the factory's own account, learned once
+	self   github.User // the factory's own account, as the install names it or learned once
+	// selfAsked: self is the account GitHub named when asked, its ID the
+	// account's own user ID.
+	selfAsked bool
 }
 
 // CandidatePRPassResult is what one pass did.

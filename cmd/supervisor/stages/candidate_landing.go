@@ -69,10 +69,12 @@ func (c *CandidatePRs) Land(ctx context.Context, req release.LandRequest) (relea
 		return release.Landing{}, err
 	}
 	switch {
+	case self.Login == "":
+		return c.leave(ctx, pr, noLogin)
 	case !ok:
 		return c.leave(ctx, pr, "the pull request is no longer on GitHub")
-	case !c.opened(self, req.RunID, live):
-		return c.leave(ctx, pr, "the pull request is no longer the one the factory opened for this run")
+	case c.notOpened(self, req.RunID, live) != "":
+		return c.leave(ctx, pr, "the pull request is no longer the one the factory opened for this run: "+c.notOpened(self, req.RunID, live))
 	case live.Merged:
 		return c.leave(ctx, pr, "the pull request was merged at another commit than the candidate")
 	case live.State != github.IssueOpen:

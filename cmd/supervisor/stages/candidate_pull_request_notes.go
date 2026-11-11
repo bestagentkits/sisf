@@ -42,7 +42,7 @@ func (c *CandidatePRs) note(ctx context.Context, pr handoff.CandidatePR, text st
 		return err
 	}
 	for _, cm := range comments {
-		if sameAccount(self, cm.Author) && strings.Contains(cm.Body, marker) {
+		if self.wrote(cm.Author) && strings.Contains(cm.Body, marker) {
 			return nil
 		}
 	}

@@ -60,98 +60,126 @@ func (c *CandidatePRs) ensure(ctx context.Context, issue core.IssueRef, run core
 		IssueID: issue, RunID: run, Attempt: attempt, Branch: doc.Branch, Base: c.Base,
 		Commit: qa.Candidate.CommitSHA, State: handoff.LandingOpen, OpenedAt: c.Clock.Now().UTC(),
 	}
-	pr, foreign, err := c.openOnGitHub(ctx, issue, run, attempt, scope, qa, doc.Branch)
+	self, err := c.factoryAccount(ctx)
+	switch {
+	case err != nil && !transient(err):
+		return c.record(ctx, c.decided(record, fmt.Sprintf("GitHub refused to name the factory's own account (status %d, %s)",
+			github.ErrorStatus(err), core.CodeOf(err))))
+	case err != nil:
+		return handoff.CandidatePR{}, err
+	case self.Login == "":
+		return c.record(ctx, c.decided(record, noLogin+" and opens none"))
+	}
+	pr, foreign, err := c.openOnGitHub(ctx, self, issue, run, attempt, scope, qa, doc.Branch)
 	switch {
 	case err != nil && !transient(err):
 		return c.record(ctx, c.decided(record, fmt.Sprintf("GitHub refused to find or open the candidate's pull request (status %d, %s)",
 			github.ErrorStatus(err), core.CodeOf(err))))
 	case err != nil:
 		return handoff.CandidatePR{}, err
-	case foreign != 0:
-		return c.record(ctx, c.decided(record, fmt.Sprintf("pull request #%d on the candidate branch was not opened by the factory for this run; "+
-			"the factory neither adopts nor merges it", foreign)))
+	case foreign.Number != 0:
+		return c.record(ctx, c.decided(record, fmt.Sprintf("pull request #%d on the candidate branch was not opened by the factory for this run (%s); "+
+			"the factory neither adopts nor merges it", foreign.Number, c.notOpened(self, run, foreign))))
 	}
 	record.Number, record.URL = pr.Number, pr.URL
 	return c.record(ctx, record)
 }
 
 // openOnGitHub finds the factory's pull request for run on branch, or
-// opens it; foreign is the number of another one open or merged there, in
-// which case none is opened. Every error is GitHub's.
-func (c *CandidatePRs) openOnGitHub(ctx context.Context, issue core.IssueRef, run core.RunID, attempt int, scope core.Digest,
-	qa QAResult, branch string) (pr github.PullRequest, foreign int, err error) {
+// opens it; foreign is another one open or merged there, in which case
+// none is opened. Every error is GitHub's.
+func (c *CandidatePRs) openOnGitHub(ctx context.Context, self account, issue core.IssueRef, run core.RunID, attempt int, scope core.Digest,
+	qa QAResult, branch string) (pr, foreign github.PullRequest, err error) {
 	existing, err := c.GitHub.FindPullRequests(ctx, c.Repo, branch)
 	if err != nil {
-		return github.PullRequest{}, 0, err
+		return github.PullRequest{}, github.PullRequest{}, err
 	}
-	pr, ours, foreign, err := c.sortOut(ctx, run, existing)
-	if err != nil || ours || foreign != 0 {
-		return pr, foreign, err
+	pr, ours, foreign := c.sortOut(self, run, existing)
+	if ours || foreign.Number != 0 {
+		return pr, foreign, nil
 	}
 	title, err := c.title(ctx, issue)
 	if err != nil {
-		return github.PullRequest{}, 0, err
+		return github.PullRequest{}, github.PullRequest{}, err
 	}
 	pr, err = c.GitHub.CreatePullRequest(ctx, c.Repo, github.NewPullRequest{
 		Title: title, Body: prBody(issue, run, attempt, scope, qa), HeadRef: branch, BaseRef: c.Base,
 	})
-	return pr, 0, err
+	return pr, github.PullRequest{}, err
 }
 
 // sortOut finds, among the pull requests on a candidate's branch, the one
-// the factory opened for run, and the number of any other that is open or
+// the factory opened for run, and the first other one that is open or
 // merged.
-func (c *CandidatePRs) sortOut(ctx context.Context, run core.RunID, prs []github.PullRequest) (github.PullRequest, bool, int, error) {
-	if len(prs) == 0 {
-		return github.PullRequest{}, false, 0, nil
-	}
-	self, err := c.factoryAccount(ctx)
-	if err != nil {
-		return github.PullRequest{}, false, 0, err
-	}
-	foreign := 0
+func (c *CandidatePRs) sortOut(self account, run core.RunID, prs []github.PullRequest) (github.PullRequest, bool, github.PullRequest) {
+	var foreign github.PullRequest
 	for _, pr := range prs {
-		if c.opened(self, run, pr) {
-			return pr, true, 0, nil
+		if c.notOpened(self, run, pr) == "" {
+			return pr, true, github.PullRequest{}
 		}
-		if foreign == 0 && (pr.State == github.IssueOpen || pr.Merged) {
-			foreign = pr.Number
+		if foreign.Number == 0 && (pr.State == github.IssueOpen || pr.Merged) {
+			foreign = pr
 		}
 	}
-	return github.PullRequest{}, false, foreign, nil
+	return github.PullRequest{}, false, foreign
 }
 
-// opened reports whether pr is the one the factory opened for run: its
-// own account is the author, it targets the default branch and its body
-// carries the run's marker.
-func (c *CandidatePRs) opened(self github.User, run core.RunID, pr github.PullRequest) bool {
-	return sameAccount(self, pr.Author) && pr.BaseRef == c.Base && strings.Contains(pr.Body, candidateMarker(run))
+// notOpened says why pr is not the one the factory opened for run, "" when
+// it is: its own account is the author, it targets the default branch and
+// its body carries the run's marker. An author other than the configured
+// account is named with it, so a wrong login in the install shows as one.
+func (c *CandidatePRs) notOpened(self account, run core.RunID, pr github.PullRequest) string {
+	switch {
+	case !self.wrote(pr.Author):
+		return fmt.Sprintf("its author `%s` is not the factory's configured account `%s`", pr.Author.Login, self.Login)
+	case pr.BaseRef != c.Base:
+		return "it does not target " + c.Base
+	case !strings.Contains(pr.Body, candidateMarker(run)):
+		return "it does not carry this run's marker"
+	}
+	return ""
 }
 
-// sameAccount reports whether author is the factory's account self, by
-// the rule every other check of the factory's own account uses
-// (github.Identity.Matches): the numeric ID, or the login without case, as
-// an install may name the App's ID where GitHub shows its bot user's.
-func sameAccount(self, author github.User) bool {
-	return github.Identity{ID: self.ID, Login: self.Login}.Matches(author)
+// noLogin is why an install that names the factory's account by an ID
+// alone merges nothing.
+const noLogin = "the install names no login for the factory's GitHub account (extensions.github_app_login), " +
+	"so the factory cannot tell its own pull request from anyone else's"
+
+// account is the factory's own GitHub account as the supervisor knows it.
+type account struct {
+	github.User
+	// userID: User.ID is the account's own user ID, as GitHub named it
+	// when asked. An ID the install wrote down may be the App's instead.
+	userID bool
+}
+
+// wrote reports whether author is this account. The login decides, and
+// without one nothing matches: an install may name the App's numeric ID,
+// and some other user's ID can equal it, so an ID never stands in for the
+// login. An ID GitHub itself named only narrows the match.
+func (a account) wrote(author github.User) bool {
+	if a.Login == "" || !strings.EqualFold(author.Login, a.Login) {
+		return false
+	}
+	return !a.userID || a.ID == 0 || author.ID == a.ID
 }
 
 // factoryAccount is the factory's own account: the one the install names
 // (Config.Self), else the one the supervisor's token acts as, learned from
 // GitHub once. An installation token of a GitHub App cannot ask GitHub
 // this, so an App install must name its account.
-func (c *CandidatePRs) factoryAccount(ctx context.Context) (github.User, error) {
+func (c *CandidatePRs) factoryAccount(ctx context.Context) (account, error) {
 	c.selfMu.Lock()
 	defer c.selfMu.Unlock()
 	if c.self.ID != 0 || c.self.Login != "" {
-		return c.self, nil
+		return account{User: c.self, userID: c.selfAsked}, nil
 	}
 	u, err := c.GitHub.Viewer(ctx)
 	if err != nil {
-		return github.User{}, err
+		return account{}, err
 	}
-	c.self = u
-	return u, nil
+	c.self, c.selfAsked = u, true
+	return account{User: u, userID: true}, nil
 }
 
 // decided is record left for the Owner for reason, with no pull request
