@@ -235,6 +235,8 @@ func runFullLifecycle(t *testing.T, d releaseDeployment) {
 	if gh.commentsWith(t, number, "Release rolled back") != 0 {
 		t.Fatal("a rollback was reported on a release that succeeded")
 	}
+	// The supervisor merged the candidate's pull request before the close.
+	requireLanded(t, gh, number, "app/main.go")
 	if !strings.HasPrefix(candidate, "sha256:") {
 		t.Fatalf("the candidate digest is %q", candidate)
 	}

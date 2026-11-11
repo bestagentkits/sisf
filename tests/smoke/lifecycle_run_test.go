@@ -101,6 +101,9 @@ func assertOutcome(ctx context.Context, r *commandRunner, o *factoryObserver, lo
 	v, inspectErr := o.inspect(ctx, issue)
 	rec := v.Output.Record
 	rep.RunIDs = addUnique(rep.RunIDs, rec.RunID)
+	if pr := v.Output.PullRequest; inspectErr == nil && pr != nil && pr.URL != "" {
+		rep.PullRequests = addUnique(rep.PullRequests, pr.URL) // a poll during the run may have missed it
+	}
 
 	ghState, ghErr := issueState(ctx, r, number)
 	lastJournal := ""
