@@ -1,7 +1,7 @@
 # Self-improvement Software Factory (SISF)
 
 > **Decision brief & implementation contract**  
-> Date: 2026-11-10 · Status: **Product decisions fixed, implementation proposed**  
+> Date: 2026-11-10 · Status: **Product decisions fixed; implemented in this repository** (what is proven: [README](../README.md#status) and the [acceptance matrix](acceptance-matrix.md))  
 > Origin: `saasvn/tose-app`, HHP decision #574, and the architecture sketch provided by the Owner.  
 > Purpose: to be handed to a coding agent in a **fresh context** so it can implement the system slice by slice, with verification at each slice.  
 > Do **not** treat this document as authority to change production or to widen an agent's permissions.

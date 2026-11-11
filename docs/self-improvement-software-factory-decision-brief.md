@@ -1,7 +1,7 @@
 # Self-improvement Software Factory (SISF)
 
 > **Decision brief & implementation contract**  
-> Ngày: 2026-11-10 · Trạng thái: **Product decisions fixed, implementation proposed**  
+> Ngày: 2026-11-10 · Trạng thái: **Product decisions fixed; đã triển khai trong repository này** (phần đã được chứng minh: [README](../README.md#status) và [acceptance matrix](acceptance-matrix.md))  
 > Nguồn xuất phát: `saasvn/tose-app`, HHP decision #574, kiến trúc phác thảo do Owner cung cấp.  
 > Mục đích: đưa cho coding agent trong **fresh context** để triển khai theo từng lát cắt có kiểm chứng.  
 > **Không** tự coi tài liệu này là quyền thay đổi production hay làm rộng quyền của agent.
