@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,7 +9,6 @@ import (
 	"github.com/bestagentkits/sisf/cmd/supervisor/runcontrol"
 	"github.com/bestagentkits/sisf/pkg/agent/agentenv"
 	"github.com/bestagentkits/sisf/pkg/core"
-	"github.com/bestagentkits/sisf/pkg/state"
 )
 
 // paths returns the QA root, HOME and TMPDIR. The root and the private
@@ -73,12 +71,4 @@ func (l *lifecycleFlags) protectedDirs(trustDir, dsnEnv string, lookupEnv func(s
 		dirs = append(dirs, wiring.StateStoreDir(dsn))
 	}
 	return dirs
-}
-
-// storeUsage records the QA agent's usage in the budget ledger of the
-// operational store, as the control zone may.
-type storeUsage struct{ store state.Store }
-
-func (s storeUsage) AppendUsage(ctx context.Context, u core.Usage) error {
-	return s.store.Update(ctx, func(ctx context.Context, tx state.Tx) error { return tx.AppendUsage(ctx, u) })
 }

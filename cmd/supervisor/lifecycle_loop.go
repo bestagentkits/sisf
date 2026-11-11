@@ -14,25 +14,40 @@ import (
 func runStages(ctx context.Context, st *stages.Stages, l *lifecycleFlags, clock core.Clock, log *slog.Logger) {
 	for {
 		res := st.Pass(ctx)
-		for _, err := range res.Errors() {
-			if ctx.Err() == nil {
-				log.Warn("a lifecycle stage failed", "code", string(core.CodeOf(err)), "error", err.Error())
-			}
-		}
-		for _, issue := range res.Build.Submitted {
-			log.Info("candidate built and submitted", "issue", issue.String())
-		}
-		for _, issue := range res.Build.Unbuildable {
-			log.Info("patch refused by the builder; the run's next attempt follows", "issue", issue.String())
-		}
-		for _, issue := range res.Build.Held {
-			log.Warn("candidate build held: it failed repeatedly on GitHub, the image builder or the configuration; no attempt was spent and it waits for the Owner's retry of the issue", "issue", issue.String())
+		if ctx.Err() == nil {
+			logPass(log, res)
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-clock.After(l.interval):
 		}
+	}
+}
+
+// logPass logs what one round of the stages did: every failure, every
+// candidate built, and every QA verdict with its reason.
+func logPass(log *slog.Logger, res stages.PassResult) {
+	for _, err := range res.Errors() {
+		log.Warn("a lifecycle stage failed", "code", string(core.CodeOf(err)), "error", err.Error())
+	}
+	for _, issue := range res.Build.Submitted {
+		log.Info("candidate built and submitted", "issue", issue.String())
+	}
+	for _, issue := range res.Build.Unbuildable {
+		log.Info("patch refused by the builder; the run's next attempt follows", "issue", issue.String())
+	}
+	for _, issue := range res.Build.Held {
+		log.Warn("candidate build held: it failed repeatedly on GitHub, the image builder or the configuration; no attempt was spent and it waits for the Owner's retry of the issue", "issue", issue.String())
+	}
+	for _, issue := range res.QA.Passed {
+		log.Info("candidate passed QA", "issue", issue.String())
+	}
+	for _, issue := range res.QA.Failed {
+		log.Info("candidate failed QA; the run's next attempt follows", "issue", issue.String(), "reason", res.QA.Reasons[issue])
+	}
+	for _, issue := range res.QA.Held {
+		log.Warn("candidate held after QA: the issue waits in QAEvaluation for the Owner", "issue", issue.String(), "reason", res.QA.Reasons[issue])
 	}
 }
 

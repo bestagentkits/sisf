@@ -8,6 +8,7 @@ import (
 	"github.com/bestagentkits/sisf/adapters/agent/fake"
 	"github.com/bestagentkits/sisf/cmd/factoryd/lifecycle"
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
+	"github.com/bestagentkits/sisf/internal/budget"
 	"github.com/bestagentkits/sisf/internal/redact"
 	"github.com/bestagentkits/sisf/internal/supervisor/killswitch"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
@@ -81,6 +82,7 @@ func (f *Factory) startLifecycle(client *github.RESTClient) {
 		QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
 		QASigner: f.Trust.QA, ArtifactSigner: f.Trust.Artifact, Verifier: f.Trust.Verifier, ApprovalVerifier: f.Trust.Verifier,
 		Redactor: redact.New(redact.Config{}), MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: clock,
+		Budget: budget.NewGate(budget.Config{Clock: f.Clock}),
 		Release: release.Config{
 			Backend: f.Deploy, LKG: f.Trust.LKG, Freeze: f.Freeze,
 			Monitor: release.MonitorConfig{Window: ReleaseWindow, MinSamples: minSamples},

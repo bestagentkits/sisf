@@ -2,6 +2,7 @@ package runactions
 
 import (
 	"context"
+	"time"
 
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/pkg/approvals"
@@ -29,7 +30,24 @@ type ApprovalInbox interface {
 	Decision(ctx context.Context, requestID string) (approvals.Approval, error)
 }
 
-// Deps is what the actions read from. Every field but Clock is required.
+// QAHold is a held QA verdict as runs.explain cites it.
+type QAHold struct {
+	// AwaitsApproval is set when QA passed and the Owner must approve the
+	// release; otherwise the run's last attempt failed QA.
+	AwaitsApproval bool      `json:"awaits_approval"`
+	Summary        string    `json:"summary"`
+	Ref            string    `json:"ref"`
+	At             time.Time `json:"at"`
+}
+
+// QAHolds reads the hold of one evaluator attempt of a run, NOT_FOUND when
+// QA did not hold it.
+type QAHolds interface {
+	QAHold(ctx context.Context, run core.RunID, attempt int) (QAHold, error)
+}
+
+// Deps is what the actions read from. Every field but Clock, GitHub and
+// QAHolds is required.
 type Deps struct {
 	FactoryID core.FactoryID
 	Records   Records
@@ -40,6 +58,8 @@ type Deps struct {
 	// GitHub reports how the factory keeps up with GitHub for the status
 	// overview; nil leaves it out.
 	GitHub func(ctx context.Context) (GitHubSync, error)
+	// QAHolds reads the supervisor's QA holds; nil leaves them out.
+	QAHolds QAHolds
 }
 
 // New returns the actions of this package over deps.

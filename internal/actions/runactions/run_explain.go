@@ -91,6 +91,10 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 			pending = req.ID
 		}
 	}
+	hold, err := h.qaHold(ctx, r)
+	if err != nil {
+		return Explanation{}, err
+	}
 	about := map[string]string{"issue": issue}
 	inspect := core.NextAction{Action: ActionRunsInspect, Description: "read the full records", Params: about}
 	switch {
@@ -110,6 +114,14 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 		out.Stopped, out.Cause = true, CauseAwaitingInformation
 		out.Reason = "The issue waits for the reporter to answer the clarifying questions on GitHub."
 		out.NextActions = []core.NextAction{inspect}
+	case hold != nil:
+		out.Stopped, out.Cause = true, CauseAttemptsExhausted
+		if hold.AwaitsApproval {
+			out.Cause = CauseAwaitingApproval
+		}
+		out.Reason = hold.Summary + " The lifecycle has no step out of a held evaluation yet, so an Owner retry is refused."
+		out.Evidence = append(out.Evidence, Evidence{Kind: "qa_hold", Ref: hold.Ref, Summary: hold.Summary, At: hold.At})
+		out.NextActions = []core.NextAction{inspect}
 	case exhausted:
 		out.Stopped, out.Cause = true, CauseAttemptsExhausted
 		out.Reason = fmt.Sprintf("The run used all %d attempts it was allowed; nothing more is started for it.", t.Run.Attempt)
@@ -121,6 +133,22 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 		out.NextActions = []core.NextAction{inspect}
 	}
 	return out, nil
+}
+
+// qaHold reads the QA hold of an issue in QAEvaluation, nil when QA did
+// not hold its current attempt or no reader is wired.
+func (h handlers) qaHold(ctx context.Context, r core.StateRecord) (*QAHold, error) {
+	if h.QAHolds == nil || r.State != core.StateQAEvaluation || r.RunID == "" {
+		return nil, nil
+	}
+	hold, err := h.QAHolds.QAHold(ctx, r.RunID, r.Attempt)
+	switch {
+	case core.HasCode(err, core.CodeNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, err
+	}
+	return &hold, nil
 }
 
 func approvalSteps(pending string, inspect core.NextAction) []core.NextAction {

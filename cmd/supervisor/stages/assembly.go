@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/bestagentkits/sisf/internal/catalog"
+	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/internal/policy"
 	iqa "github.com/bestagentkits/sisf/internal/qa"
 	"github.com/bestagentkits/sisf/internal/redact"
@@ -56,6 +57,9 @@ type Config struct {
 	// BuildRetry bounds the retries of a build that met outages;
 	// DefaultBuildRetry where zero.
 	BuildRetry BuildRetry
+	// Budget closes the reservation of a run QA passed or held; nil leaves
+	// it held until the dispatcher stops the run.
+	Budget dispatcher.ReservationCloser
 	// Release carries the release parameters and dependencies the pipeline
 	// is built from (Backend, LKG, Freeze, Synthetic, Approvals, Audit and
 	// the tuning); the rest is filled in here.
@@ -131,7 +135,7 @@ func New(cfg Config) (*Stages, error) {
 		},
 		QA: &QAStage{
 			FactoryID: cfg.FactoryID, Owner: "supervisor-qa", State: cfg.State, Evaluator: evaluator, Tree: tree, Policy: refs,
-			MaxAttempts: cfg.MaxAttempts, PassScore: passScore(rc.PassScore), ExtraGates: rc.ExtraGates, Clock: cfg.Clock,
+			MaxAttempts: cfg.MaxAttempts, PassScore: passScore(rc.PassScore), ExtraGates: rc.ExtraGates, Budget: cfg.Budget, Clock: cfg.Clock,
 		},
 		Release: &ReleaseStage{FactoryID: cfg.FactoryID, State: cfg.State, Pipeline: pipeline, ArtifactSigner: cfg.ArtifactSigner, Clock: cfg.Clock},
 	}, nil

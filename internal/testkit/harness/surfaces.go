@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+
+	"github.com/bestagentkits/sisf/internal/actions/runactions"
 )
 
 // shownState finds the state field of the dashboard's issue page.
@@ -104,4 +106,21 @@ func (f *Factory) SurfaceStates(number int) (api, dashboard string) {
 		f.t.Fatalf("harness: %v", err)
 	}
 	return api, dashboard
+}
+
+// Explain asks runs.explain about issue number through the REST API, as
+// the Owner signed in to the dashboard.
+func (f *Factory) Explain(number int) runactions.Explanation {
+	f.t.Helper()
+	f.ownerOnce.Do(func() { f.owner = f.SignInOwner() })
+	input, _ := json.Marshal(map[string]any{"input": map[string]string{"issue": f.Issue(number).String()}})
+	resp := f.owner.Do(http.MethodPost, "/api/v1/actions/runs.explain", bytes.NewReader(input),
+		http.Header{"Content-Type": {"application/json"}, "X-Csrf-Token": {f.owner.CSRF()}})
+	var out struct {
+		Output runactions.Explanation `json:"output"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusOK {
+		f.t.Fatalf("harness: runs.explain answered %d: %v", resp.StatusCode, err)
+	}
+	return out.Output
 }

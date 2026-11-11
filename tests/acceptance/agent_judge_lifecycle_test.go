@@ -119,7 +119,8 @@ func agentFactory(t *testing.T, judgments []clitest.Script) *harness.Factory {
 	}
 	judges := make([]qa.Judge, 0, len(judgments))
 	return harness.New(t, harness.Options{
-		Coder:          &lifecycle.FreshWorkspaces{Backend: finished{coder}, Root: t.TempDir(), Provision: seedRepository},
+		Coder: usageOf{Backend: &lifecycle.FreshWorkspaces{Backend: finished{coder}, Root: t.TempDir(), Provision: seedRepository},
+			usage: coder},
 		CoderArtifacts: lifecycle.FileArtifacts{Root: artifacts},
 		QAJudge: func(materials agentjudge.MaterialsSource) (qa.Judge, error) {
 			for _, script := range judgments {
@@ -129,7 +130,7 @@ func agentFactory(t *testing.T, judgments []clitest.Script) *harness.Factory {
 					return nil, err
 				}
 				judge, err := agentjudge.New(agentjudge.Config{Agent: backend, Materials: materials, WorkspaceRoot: t.TempDir(),
-					Timeout: time.Minute})
+					Timeout: time.Minute, Usage: stages.JudgeUsage{State: materials.(stages.CandidateMaterials).State}})
 				if err != nil {
 					return nil, err
 				}
@@ -207,6 +208,17 @@ func (j *inTurn) Score(ctx context.Context, req qa.JudgeRequest) (qa.Scorecard, 
 	j.next++
 	j.mu.Unlock()
 	return judge.Score(ctx, req)
+}
+
+// usageOf is the wrapped coder that still reports its adapter's usage, as
+// the agent zone wires a real coding agent.
+type usageOf struct {
+	agent.Backend
+	usage agent.UsageReporter
+}
+
+func (u usageOf) Usage(ctx context.Context, ref agent.RunRef) ([]core.Usage, error) {
+	return u.usage.Usage(ctx, ref)
 }
 
 // finished starts a run and returns once it has ended, so the harness's

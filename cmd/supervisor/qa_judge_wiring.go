@@ -11,6 +11,7 @@ import (
 	"github.com/bestagentkits/sisf/adapters/agent/codex"
 	"github.com/bestagentkits/sisf/adapters/agent/fake"
 	"github.com/bestagentkits/sisf/adapters/agent/pi"
+	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/qa/agentjudge"
 	"github.com/bestagentkits/sisf/pkg/agent"
 	"github.com/bestagentkits/sisf/pkg/agent/agentenv"
@@ -164,6 +165,6 @@ func (q *qaFlags) agentJudge(ctx context.Context, d judgeDeps, exec string) (*ag
 	return agentjudge.New(agentjudge.Config{
 		Agent: backend, Materials: d.materials, WorkspaceRoot: filepath.Join(root, "workspaces"),
 		EvidenceDir: filepath.Join(root, "evidence"), Model: q.model, Timeout: q.timeout,
-		Usage: storeUsage{store: d.store}, FactoryID: d.manifest.FactoryID, Clock: d.clock,
+		Usage: stages.JudgeUsage{State: d.store}, FactoryID: d.manifest.FactoryID, Clock: d.clock,
 	})
 }

@@ -81,12 +81,13 @@ type world struct {
 	records records
 	runs    runs
 	inbox   inbox
+	holds   runactions.QAHolds
 }
 
 func (w world) action(t *testing.T, name string) core.Action {
 	t.Helper()
 	all, err := runactions.New(runactions.Deps{FactoryID: "acme-app", Records: w.records, Runs: w.runs,
-		Approvals: w.inbox, Clock: intaketest.NewClock(t0)})
+		Approvals: w.inbox, QAHolds: w.holds, Clock: intaketest.NewClock(t0)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,74 @@
+package stages
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
+	"github.com/bestagentkits/sisf/internal/dispatcher"
+	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/state"
+)
+
+// JudgeUsage books what the QA agent reported in the budget ledger, as the
+// control zone may, and tallies it per run, so that the run's reservation
+// is closed knowing whether its judgments stated a cost.
+type JudgeUsage struct{ State state.Store }
+
+// AppendUsage books one usage record of a judgment.
+func (j JudgeUsage) AppendUsage(ctx context.Context, u core.Usage) error {
+	if u.Step == "" {
+		u.Step = core.StepQA
+	}
+	return j.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		if err := tx.AppendUsage(ctx, u); err != nil || u.RunID == "" {
+			return err
+		}
+		spend, err := judgeSpend(ctx, tx, u.RunID)
+		if err != nil {
+			return err
+		}
+		spend.Add([]core.Usage{u}, true)
+		return put(ctx, tx, judgeSpendKey(u.RunID), spend)
+	})
+}
+
+func judgeSpendKey(run core.RunID) string { return "spend/" + string(run) }
+
+// judgeSpend reads the tally of a run's judgments; none yet is zero.
+func judgeSpend(ctx context.Context, kv state.KV, run core.RunID) (dispatcher.RunSpend, error) {
+	var spend dispatcher.RunSpend
+	err := get(ctx, kv, judgeSpendKey(run), &spend)
+	if core.HasCode(err, core.CodeNotFound) {
+		return dispatcher.RunSpend{}, nil
+	}
+	return spend, err
+}
+
+// closeRun closes the reservation of a run that QA passed or held: either
+// way it starts no more coding attempts. What its coding attempts and its
+// judgments reported is counted together.
+func (s *QAStage) closeRun(ctx context.Context, run core.RunID) error {
+	if s.Budget == nil {
+		return nil
+	}
+	return s.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		entry, err := tx.GetKV(ctx, handoff.Namespace, "run/"+string(run))
+		if err != nil {
+			return err
+		}
+		var record dispatcher.RunRecord
+		if json.Unmarshal(entry.Value, &record) != nil || record.RunID != run || record.ReservationID == "" {
+			return core.NewError(core.CodeTampered, "the dispatcher's record of run "+string(run)+" names no reservation")
+		}
+		judged, err := judgeSpend(ctx, tx, run)
+		if err != nil {
+			return err
+		}
+		spend := dispatcher.RunSpend{
+			ReportedCost: record.Spend.ReportedCost + judged.ReportedCost,
+			Unpriced:     record.Spend.Unpriced || judged.Unpriced,
+		}
+		return dispatcher.CloseRunReservation(ctx, s.Budget, tx, record.ReservationID, spend)
+	})
+}
