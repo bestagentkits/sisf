@@ -125,3 +125,35 @@ func TestACandidateWhoseChangesMayBeListedInPartIsLeftForTheOwner(t *testing.T) 
 	out, err := w.pipeline().Release(context.Background(), req)
 	requireRefusedUntouched(t, w, issue, out, err, core.CodeApprovalRequired)
 }
+
+// A changed path is judged only in the exact spelling the builder commits:
+// one that cleaning would change, such as a name that starts with a
+// no-break space, names another file than the one the rules would see, so
+// it is refused for the Owner rather than judged as its clean form.
+func TestAChangedPathThatIsNotItsOwnCleanFormIsRefused(t *testing.T) {
+	t.Parallel()
+	inputs, err := NewUnitInputs(map[string][]string{appUnit: {"*.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, raw := range map[string]string{
+		"a leading no-break space":  " app.go",
+		"a trailing no-break space": "app.go ",
+		"a leading space":           " app.go",
+		"a dot segment":             "./app.go",
+		"a doubled slash":           "examples//hello-app/main.go",
+		"a trailing slash":          "examples/hello-app/main.go/",
+		"a backslash":               "examples\\hello-app\\main.go",
+		"a climb back in":           "examples/hello-app/../../app.go",
+	} {
+		if err := checkGovernance(DefaultProtectedPaths(), inputs, appUnit, []string{raw}); !core.HasCode(err, core.CodeApprovalRequired) {
+			t.Errorf("%s (%q): %v, want APPROVAL_REQUIRED", name, raw, err)
+		}
+		if unit, ok := inputs.UnitOf(raw); ok {
+			t.Errorf("%s (%q) is routed as an input of %s", name, raw, unit)
+		}
+	}
+	if err := checkGovernance(DefaultProtectedPaths(), inputs, appUnit, []string{"app.go"}); err != nil {
+		t.Fatalf("a clean input of the unit was refused: %v", err)
+	}
+}

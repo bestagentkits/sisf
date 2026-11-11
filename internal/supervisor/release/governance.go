@@ -128,15 +128,18 @@ func checkGovernance(protected []string, inputs UnitInputs, unit string, changed
 	return checkUnitInputs(inputs, unit, changed)
 }
 
-// repoPath cleans a repository-relative path. A path that is absolute or
-// climbs out of the repository is refused.
+// repoPath accepts a repository-relative path only in its own clean form:
+// the builder commits the path exactly as it is spelled, so a path that
+// trimming or cleaning would change (surrounding white space, a no-break
+// space included, a "." segment, a doubled or trailing slash, a backslash)
+// names another file than the one the rules would judge, and is refused.
+// A path that is absolute or climbs out of the repository is refused too.
 func repoPath(raw string) (string, bool) {
-	p := strings.ReplaceAll(strings.TrimSpace(raw), "\\", "/")
-	if p == "" || strings.HasPrefix(p, "/") {
+	if raw == "" || strings.ContainsRune(raw, '\\') || strings.HasPrefix(raw, "/") {
 		return "", false
 	}
-	clean := path.Clean(p)
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+	clean := path.Clean(strings.TrimSpace(raw))
+	if clean != raw || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", false
 	}
 	return clean, true

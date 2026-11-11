@@ -157,16 +157,15 @@ func TestPathsNoObservedUnitConsumesNeedApproval(t *testing.T) {
 func TestTheInputsOfEachUnit(t *testing.T) {
 	t.Parallel()
 	for p, want := range map[string]string{
-		"examples/hello-app/main.go":       appUnit,
-		"examples/hello-app/new_file.go":   appUnit,
-		"build/hello-app.Dockerfile":       appUnit,
-		"BUILD/Hello-App.dockerfile":       appUnit,
-		"ui/templates/dash-runs.html":      controlUnit,
-		"UI/x.html":                        controlUnit,
-		"ui/x.html":                        controlUnit,
-		"ui/static/app.css":                controlUnit,
-		"Ui/Static/New.JS":                 controlUnit,
-		"examples/hello-app/../../ui/a.js": controlUnit,
+		"examples/hello-app/main.go":     appUnit,
+		"examples/hello-app/new_file.go": appUnit,
+		"build/hello-app.Dockerfile":     appUnit,
+		"BUILD/Hello-App.dockerfile":     appUnit,
+		"ui/templates/dash-runs.html":    controlUnit,
+		"UI/x.html":                      controlUnit,
+		"ui/x.html":                      controlUnit,
+		"ui/static/app.css":              controlUnit,
+		"Ui/Static/New.JS":               controlUnit,
 	} {
 		if unit, ok := DefaultUnitInputs().UnitOf(p); !ok || unit != want {
 			t.Errorf("%s is an input of %q (%v), want %s", p, unit, ok, want)
