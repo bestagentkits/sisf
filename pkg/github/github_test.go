@@ -149,3 +149,17 @@ func TestClientIsTheUnionOfItsNarrowRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// GitHub compares label names without regard to case, so an issue carries a
+// label under any casing, and only under the whole name.
+func TestHasLabelIgnoresCase(t *testing.T) {
+	t.Parallel()
+	issue := github.Issue{Labels: []github.Label{{Name: "SISF:Needs-Info"}, {Name: "Kind:bug"}}}
+	for name, want := range map[string]bool{
+		github.LabelNeedsInfo: true, "sisf:needs-info ": false, "sisf:needs": false, github.LabelKindBug: true, github.LabelReady: false,
+	} {
+		if got := issue.HasLabel(name); got != want {
+			t.Errorf("HasLabel(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

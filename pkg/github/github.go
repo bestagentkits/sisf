@@ -11,6 +11,7 @@ package github
 import (
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -115,9 +116,10 @@ type Issue struct {
 	UpdatedAt         time.Time         `json:"updated_at"`
 }
 
-// HasLabel reports whether the issue carries the label.
+// HasLabel reports whether the issue carries the label. GitHub compares
+// label names without regard to case, and so does HasLabel.
 func (i Issue) HasLabel(name string) bool {
-	return slices.ContainsFunc(i.Labels, func(l Label) bool { return l.Name == name })
+	return slices.ContainsFunc(i.Labels, func(l Label) bool { return strings.EqualFold(l.Name, name) })
 }
 
 // Comment is a comment on an issue or pull request.
