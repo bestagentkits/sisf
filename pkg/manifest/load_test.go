@@ -69,7 +69,7 @@ func TestParseRejectsWhatItCannotAcceptAsWritten(t *testing.T) {
 		"a value of the wrong type":        {strings.Replace(valid, "port: 7461", "port: eighty", 1), "eighty"},
 		"a duration that is not a span":    {strings.Replace(valid, "run_timeout: 30m", "run_timeout: soon", 1), "duration"},
 		"a negative duration":              {strings.Replace(valid, "run_timeout: 30m", "run_timeout: -5m", 1), "duration"},
-		"a repeated key":                   {valid + "\nmode: standalone\n", "already defined"},
+		"a repeated key":                   {valid + "\nmode: standalone\n", "is repeated"},
 		"a second document":                {valid + "\n---\nmode: standalone\n", "exactly one"},
 		"an empty file":                    {"", "empty"},
 		"text that is not YAML":            {"units: [unclosed", "decoded"},

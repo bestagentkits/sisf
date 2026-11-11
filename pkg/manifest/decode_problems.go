@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -20,12 +21,20 @@ import (
 var (
 	unknownKeyProblem = regexp.MustCompile(`^(line \d+: )field (.+) not found in type \S+$`)
 	wrongKindProblem  = regexp.MustCompile("^(line \\d+: )cannot unmarshal !!(\\w+)(?: `(.*)`)? into .+$")
+	// repeatedKeyProblem is a key given twice in one mapping; the decoder
+	// quotes the key as Go does.
+	repeatedKeyProblem = regexp.MustCompile(`^(line \d+: )mapping key (".*") already defined at line (\d+)$`)
 	// urlWithUserInfo is a URL whose authority carries a user part, where a
 	// password or a token is written, as in a connection string.
 	urlWithUserInfo = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s/?#@]*@`)
 	// keyForm is the form of every key of the manifest; a key outside it is
 	// not a mistyped key name but something else pasted there.
 	keyForm = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	// plainValue is the form of a value a problem may quote: a number, a
+	// true/false value, a duration, or a lowercase word such as one of the
+	// manifest's choices. Anything else, a short password included, is
+	// withheld.
+	plainValue = regexp.MustCompile(`^(?:[-+]?[0-9]+(?:\.[0-9]+)?|true|false|(?:[0-9]+(?:\.[0-9]+)?(?:ns|us|ms|s|m|h|d))+|[a-z]+(?:[_-][a-z]+)*)$`)
 )
 
 // maxQuotedValue is the longest value a problem quotes: the decoder itself
@@ -38,12 +47,16 @@ const (
 
 // quotable reports whether a value from the file may be quoted in a problem.
 // A value pasted in the wrong place may be a credential, so only a short
-// value without the shape of a secret (pkg/agent/redact's shapes, or a URL
-// with a user part) is quoted; a prefix the decoder cut short is not,
-// since it may be the start of a secret.
+// plain value (plainValue) without the shape of a secret (pkg/agent/redact's
+// shapes, or a URL with a user part) is quoted; a prefix the decoder cut
+// short is not, since it may be the start of a secret.
 func quotable(value string) bool {
-	return len(value) <= maxQuotedValue && !strings.HasSuffix(value, truncatedMark) && notSecretShaped(value)
+	return len(value) <= maxQuotedValue && !strings.HasSuffix(value, truncatedMark) &&
+		plainValue.MatchString(value) && notSecretShaped(value)
 }
+
+// withheldValue is said in place of a value that is not quotable.
+const withheldValue = "its value is withheld"
 
 // quotableKey reports whether an unknown key may be quoted: it has the form
 // of a manifest key and no secret shape.
@@ -99,10 +112,20 @@ func plainProblem(problem string) string {
 		if !known {
 			kind = "this value"
 		}
-		if m[3] != "" && quotable(m[3]) {
+		switch {
+		case m[3] != "" && quotable(m[3]):
 			kind += " (" + m[3] + ")"
+		case m[3] != "":
+			kind += " (" + withheldValue + ")"
 		}
 		return m[1] + kind + " does not fit here"
+	}
+	if m := repeatedKeyProblem.FindStringSubmatch(problem); m != nil {
+		key, err := strconv.Unquote(m[2])
+		if err != nil || !quotableKey(key) {
+			return m[1] + "a key is repeated (its name is withheld: it has the shape of a secret); it was first given at line " + m[3]
+		}
+		return m[1] + `key "` + key + `" is repeated; it was first given at line ` + m[3]
 	}
 	return problem
 }
@@ -130,7 +153,7 @@ func textProblem(data []byte) string {
 		reason = typed.Message
 	}
 	if !quotable(node.Value) {
-		return fmt.Sprintf("line %d: %s", node.Line, reason)
+		return fmt.Sprintf("line %d: %s (%s)", node.Line, reason, withheldValue)
 	}
 	return fmt.Sprintf("line %d: %q: %s", node.Line, node.Value, reason)
 }

@@ -54,3 +54,50 @@ func TestParseNeverQuotesAValueShapedLikeASecret(t *testing.T) {
 		})
 	}
 }
+
+// A short value can be a password as well as a long one can be a token, so
+// a mistyped value is quoted only when it reads as a number, a true/false
+// value, a duration or a lowercase word such as a manifest choice; any
+// other is said to be withheld. A repeated key is held to the rule of an
+// unknown key. The fixtures are built at run time and obviously fake.
+func TestParseQuotesOnlyPlainValuesAndKeys(t *testing.T) {
+	t.Parallel()
+	valid := exampleYAML(t)
+	shortSecret := "Zq" + "7!" + "Lx"
+	token := "ghp_" + strings.Repeat("Ab1", 12)
+	cases := map[string]struct {
+		yaml   string
+		hidden []string
+		want   []string
+	}{
+		"a short mixed value for a number": {strings.Replace(valid, "port: 7461", "port: "+shortSecret, 1),
+			[]string{shortSecret, "Zq7"}, []string{"text (its value is withheld) does not fit here"}},
+		"a short mixed value for a span": {strings.Replace(valid, "run_timeout: 30m", "run_timeout: "+shortSecret, 1),
+			[]string{shortSecret, "Zq7"}, []string{"line 199"}},
+		"a token repeated as a key": {strings.Replace(valid, "mode: docker", "mode: docker\nextensions:\n  "+token+": 1\n  "+token+": 2", 1),
+			[]string{"ghp_", token}, []string{"is repeated", "withheld"}},
+		"a plain word for a number": {strings.Replace(valid, "port: 7461", "port: eighty", 1), nil, []string{"text (eighty) does not fit here"}},
+		"a plain key repeated": {strings.Replace(valid, "mode: docker", "mode: docker\nextensions:\n  tracing: 1\n  tracing: 2", 1),
+			nil, []string{`key "tracing" is repeated`}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := manifest.Parse([]byte(tc.yaml))
+			if err == nil {
+				t.Fatal("Parse accepted the input")
+			}
+			message := err.Error()
+			for _, secret := range tc.hidden {
+				if strings.Contains(message, secret) {
+					t.Errorf("error %q quotes %q", message, secret)
+				}
+			}
+			for _, part := range tc.want {
+				if !strings.Contains(message, part) {
+					t.Errorf("error %q does not say %q", message, part)
+				}
+			}
+		})
+	}
+}
