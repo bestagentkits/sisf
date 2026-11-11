@@ -66,7 +66,7 @@ func (c *Control) projectLifecycle(ctx context.Context) error {
 		if shown {
 			continue
 		}
-		if err := c.editIssue(ctx, r.IssueID, func(ctx context.Context) error { return c.show(ctx, r) }); err != nil {
+		if err := c.editIssue(ctx, r.IssueID, c.showIntent(r), func(ctx context.Context) error { return c.show(ctx, r) }); err != nil {
 			failed = append(failed, fmt.Errorf("show %s on GitHub: %w", r.IssueID, err))
 			continue
 		}
@@ -75,6 +75,20 @@ func (c *Control) projectLifecycle(ctx context.Context) error {
 		c.mu.Unlock()
 	}
 	return errors.Join(failed...)
+}
+
+// showIntent is what show changes on the issue of r.
+func (c *Control) showIntent(r core.StateRecord) editIntent {
+	want := labelOf(r.State)
+	intent := editIntent{add: []string{want}}
+	for _, label := range lifecycleLabels {
+		if label != want {
+			intent.remove = append(intent.remove, label)
+		}
+	}
+	_, closer := c.cfg.GitHub.(IssueCloser)
+	intent.close = closer && r.State == core.StateClosed
+	return intent
 }
 
 // show sets the issue's lifecycle label, removes the others, and closes a

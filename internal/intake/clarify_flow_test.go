@@ -147,12 +147,12 @@ func TestTheTimerParksOverdueIssuesWithoutReadingGitHub(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := asked(t)
-	if parked, err := f.service.ExpireClarifications(ctx); err != nil || len(parked) != 0 {
+	if parked, err := f.service.ExpireClarifications(ctx, f.clock.Now()); err != nil || len(parked) != 0 {
 		t.Fatalf("an issue inside its wait was parked: %v, %v", parked, err)
 	}
 	f.clock.Advance(clarifyTimeout)
 	before := f.spent()
-	parked, err := f.service.ExpireClarifications(ctx)
+	parked, err := f.service.ExpireClarifications(ctx, f.clock.Now())
 	if err != nil || len(parked) != 1 || parked[0] != issueRef {
 		t.Fatalf("ExpireClarifications = %v, %v", parked, err)
 	}
@@ -164,7 +164,7 @@ func TestTheTimerParksOverdueIssuesWithoutReadingGitHub(t *testing.T) {
 		t.Fatal("the overdue issue was not parked on GitHub")
 	}
 	// A second tick finds nothing left to do.
-	if again, err := f.service.ExpireClarifications(ctx); err != nil || len(again) != 0 {
+	if again, err := f.service.ExpireClarifications(ctx, f.clock.Now()); err != nil || len(again) != 0 {
 		t.Fatalf("the issue was parked twice: %v, %v", again, err)
 	}
 	if f.count("Parked") != 1 {
@@ -279,7 +279,7 @@ func TestAParkingWhoseLabelIsNotOnGitHubYetIsNotLifted(t *testing.T) {
 	ctx := context.Background()
 	f := asked(t)
 	f.clock.Advance(clarifyTimeout)
-	if parked, err := f.service.ExpireClarifications(ctx); err != nil || len(parked) != 1 {
+	if parked, err := f.service.ExpireClarifications(ctx, f.clock.Now()); err != nil || len(parked) != 1 {
 		t.Fatalf("ExpireClarifications = %v, %v", parked, err)
 	}
 	before := f.spent()

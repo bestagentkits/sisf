@@ -35,7 +35,8 @@ type FactoryStatus struct {
 // the reconciliation that finds the issue changes no webhook delivered and,
 // on an install acting with the operator's own token, that token's access.
 type GitHubSync struct {
-	// Position is the newest issue update stored, in GitHub's time.
+	// Position is where the next poll reads from, in GitHub's time: the
+	// newest issue update stored, or the start of a second read again.
 	Position time.Time `json:"position,omitzero"`
 	// LastPollAt is when GitHub last answered a reconciliation poll.
 	LastPollAt time.Time `json:"last_poll_at,omitzero"`

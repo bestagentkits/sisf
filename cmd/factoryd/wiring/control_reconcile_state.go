@@ -26,7 +26,8 @@ const (
 // restarted process resumes at, and what the Owner sees of how it goes.
 // A position stored before this document had more fields reads as is.
 type reconcileState struct {
-	// Since is the newest update stored in the inbox, in GitHub's time.
+	// Since is where the next poll reads from, in GitHub's time: the newest
+	// update stored in the inbox, or the start of a second read again.
 	Since time.Time `json:"since"`
 	// LastPollAt is when GitHub last answered a poll, by the factory's clock.
 	LastPollAt time.Time `json:"last_poll_at,omitzero"`

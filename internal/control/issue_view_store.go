@@ -42,10 +42,12 @@ type issueProjection struct {
 	IssueAt     time.Time          `json:"issue_updated_at"`
 	Comments    []projectedComment `json:"comments,omitempty"`
 	// SelfAt is the update time GitHub gave the issue for the factory's own
-	// latest edit. It is kept only while every change before that edit was
-	// taken in, so a poll that finds the issue at exactly this time finds
-	// nothing a person did.
-	SelfAt time.Time `json:"self_updated_at,omitzero"`
+	// latest edit, SelfDigest the content it showed then and SelfSince its
+	// update time just before the edit (see RecordFactoryWrite). They are
+	// kept only while every change before that edit was taken in.
+	SelfAt     time.Time `json:"self_updated_at,omitzero"`
+	SelfDigest string    `json:"self_digest,omitempty"`
+	SelfSince  time.Time `json:"self_since,omitzero"`
 }
 
 // readProjection returns the stored document of an issue and its version,

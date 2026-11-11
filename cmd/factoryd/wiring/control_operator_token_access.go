@@ -47,9 +47,17 @@ func operatorTokenAccess(ctx context.Context, apiURL string, token core.SecretVa
 	}
 	defer func() { _ = resp.Body.Close() }()
 	name := repo.Owner + "/" + repo.Name
-	switch resp.StatusCode {
-	case http.StatusOK:
-	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return identity.Installation{}, core.NewError(core.CodeUnavailable, "GitHub's answer for "+name+" cannot be read").WithCause(err)
+	}
+	switch {
+	case resp.StatusCode == http.StatusOK:
+	case github.IsRateLimit(resp.StatusCode, resp.Header, body):
+		// A rate limit says nothing about the token's access.
+		return identity.Installation{}, core.NewError(core.CodeUnavailable,
+			"GitHub rate-limited the check of the token's access to "+name+" (answer "+strconv.Itoa(resp.StatusCode)+")")
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound:
 		return identity.Installation{}, core.NewError(core.CodePermissionDenied,
 			"the GitHub token cannot see "+name+" (answer "+strconv.Itoa(resp.StatusCode)+")")
 	default:
@@ -60,7 +68,7 @@ func operatorTokenAccess(ctx context.Context, apiURL string, token core.SecretVa
 		ID          int64           `json:"id"`
 		Permissions map[string]bool `json:"permissions"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&reply); err != nil {
+	if err := json.Unmarshal(body, &reply); err != nil {
 		return identity.Installation{}, core.NewError(core.CodeUnavailable, "GitHub's answer for "+name+" cannot be read").WithCause(err)
 	}
 	switch {
@@ -91,7 +99,8 @@ const (
 // nothing on GitHub until a later check confirms the access again, and the
 // factory's status says why. The surfaces stay up so the Owner can read
 // that; GitHub itself refuses what the token may no longer do. A check that
-// cannot reach GitHub changes nothing: an outage is not a revocation.
+// cannot reach GitHub, or is rate-limited, changes nothing: neither is a
+// revocation.
 type operatorAccess struct {
 	apiURL string
 	token  core.SecretValue

@@ -159,7 +159,7 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 	if reconcile.Source == nil {
 		reconcile.Source = cfg.GitHub
 	}
-	c.reconcile = newReconciler(reconcile, repo, settings.InstallationID, cfg.Store, cfg.Clock)
+	c.reconcile = newReconciler(reconcile, repo, settings.InstallationID, cfg.Store, cfg.Clock, c.confirmOwnEdit)
 
 	signer, err := signing.NewSigner(cfg.ApprovalKey)
 	if err != nil {
@@ -276,7 +276,8 @@ func (c *Control) Run(ctx context.Context, ln net.Listener, interval time.Durati
 // Pass does one round of the control zone's background work: it publishes
 // the references of a newly approved policy, hands the stored webhook
 // deliveries and the decided approvals to intake, performs the effects intake queued on GitHub and
-// parks the issues whose wait for an answer is over; when it is configured,
+// parks the issues whose wait for an answer is over, polling GitHub first
+// when an answer may not be known yet; when it is configured,
 // the decision layer reads the edge's counters. Once per reconciliation
 // interval it asks GitHub for the issue changes no webhook delivered. Each part runs even
 // when another failed; the error joins their failures.
@@ -302,13 +303,4 @@ func (c *Control) Pass(ctx context.Context) error {
 		// finds is drained by the next pass.
 		c.reconcileDue(ctx),
 	)
-}
-
-// expireClarifications parks the issues nobody answered in time.
-func (c *Control) expireClarifications(ctx context.Context) error {
-	parked, err := c.Intake.ExpireClarifications(ctx)
-	for _, issue := range parked {
-		c.log.Info("parked an issue that was not answered in time", "issue", issue.String())
-	}
-	return err
 }

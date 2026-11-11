@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/bestagentkits/sisf/internal/testkit/fakegithub"
 )
@@ -84,5 +85,40 @@ func TestForkPullRequestWebhookNamesTheForkAsTheHead(t *testing.T) {
 	}
 	if got := actions(e.hook.deliveries()); !slices.Equal(got, []string{"pull_request.opened", "pull_request.closed"}) {
 		t.Fatalf("webhooks = %v", got)
+	}
+}
+
+// A held clock stamps every change with the same second, as GitHub does
+// for changes within one second; released, it moves on again. By default
+// every change gets its own second.
+func TestAHeldClockStampsChangesWithinOneSecond(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	alice := e.fake.Person("alice", "MEMBER")
+	updated := func(n int) time.Time {
+		t.Helper()
+		view, err := e.fake.Issue(testRepo, n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return view.UpdatedAt
+	}
+	first, _ := e.fake.OpenIssue(testRepo, alice, "one", "")
+	second, _ := e.fake.OpenIssue(testRepo, alice, "two", "")
+	if !updated(second).After(updated(first)) {
+		t.Fatal("by default every change must get its own second")
+	}
+	e.fake.HoldClock(true)
+	third, _ := e.fake.OpenIssue(testRepo, alice, "three", "")
+	if err := e.fake.AddLabels(testRepo, second, alice, "kind:bug"); err != nil {
+		t.Fatal(err)
+	}
+	if !updated(third).Equal(updated(second)) || !updated(second).Equal(updated(first).Add(time.Second)) {
+		t.Fatalf("held changes must share the last second: %s, %s", updated(second), updated(third))
+	}
+	e.fake.HoldClock(false)
+	fourth, _ := e.fake.OpenIssue(testRepo, alice, "four", "")
+	if !updated(fourth).After(updated(third)) {
+		t.Fatal("a released clock must move on again")
 	}
 }

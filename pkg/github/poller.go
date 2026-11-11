@@ -32,11 +32,16 @@ type Poller struct {
 	labels   []string
 	maxPages int
 
-	mu       sync.Mutex
+	mu sync.Mutex
+	// since and page are the position: the next poll asks for the listing
+	// from since at page. The page is 1 except while more updates within
+	// since's second than a page holds are stepped through.
 	since    time.Time
+	page     int
 	etag     string
 	etagFor  time.Time
 	lastSeen map[int]time.Time
+	walk     pageWalk
 }
 
 // Changes is what one Poll found. Hand it back to Ack once its issues
@@ -44,13 +49,15 @@ type Poller struct {
 type Changes struct {
 	// Issues are the changes not reported before, oldest update first.
 	Issues []Issue
-	// More is true when the poll stopped at its page bound before the end
-	// of the listing; the next Poll continues after what was acknowledged.
+	// More is true when the poll stopped before the end of the listing; the
+	// next Poll continues after what was acknowledged.
 	More bool
 
-	// from is the position the poll started at, through the newest update
-	// it read, pull requests included.
-	from, through time.Time
+	// from is the position the poll started at; next is where the listing
+	// continues after everything it read.
+	from, next listPosition
+	// readAt is the position of the request that listed each issue.
+	readAt []listPosition
 	// etag is the ETag of a listing read whole in one request at from.
 	etag string
 }
@@ -59,7 +66,7 @@ type Changes struct {
 // first, which is how a fresh factory reconciles. labels, if any, restrict
 // the listing to issues carrying all of them.
 func NewPoller(src IssueSource, repo RepoRef, since time.Time, labels ...string) *Poller {
-	return &Poller{src: src, repo: repo, since: since, labels: labels, lastSeen: map[int]time.Time{}}
+	return &Poller{src: src, repo: repo, since: since, page: 1, labels: labels, lastSeen: map[int]time.Time{}, walk: newPageWalk()}
 }
 
 // LimitPages bounds the requests of 100 issues one Poll makes; a listing
@@ -73,6 +80,9 @@ func (p *Poller) LimitPages(n int) *Poller {
 }
 
 // Since is the position to persist, so a restart resumes without a gap.
+// A poller started at it reads its second from the first page: what pages
+// of that second were read is not kept, so a restart reads them again
+// rather than risk skipping an issue that moved between them.
 func (p *Poller) Since() time.Time {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -85,17 +95,19 @@ func (p *Poller) Since() time.Time {
 // It reads page by page, each request continuing from the newest update the
 // previous one returned, so an issue that changes while the poll runs
 // cannot shift another out of the pages read. Only a full page of updates
-// within one second is stepped through by page number. A failure after some
-// pages were read returns what was read, marked More, with the error.
+// within one second is stepped through by page number, and the page is kept
+// with the position, so the next poll goes on where this one stopped (see
+// pageWalk for how a change during that walk is caught). A failure after
+// some pages were read returns what was read, marked More, with the error.
 func (p *Poller) Poll(ctx context.Context) (Changes, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	out := Changes{from: p.since, through: p.since}
+	at := listPosition{since: p.since, page: max(p.page, 1)}
+	out := Changes{from: at, next: at}
 	limit := p.maxPages
 	if limit <= 0 {
 		limit = defaultPollRequests
 	}
-	cursor, page := p.since, 1
 	reported := map[int]time.Time{}
 	for request := 0; ; request++ {
 		if request == limit {
@@ -103,10 +115,13 @@ func (p *Poller) Poll(ctx context.Context) (Changes, error) {
 			return out, nil
 		}
 		etag := ""
-		if request == 0 && p.etag != "" && p.etagFor.Equal(p.since) {
+		if request == 0 && at.page == 1 && p.etag != "" && p.etagFor.Equal(p.since) {
 			etag = p.etag
 		}
-		got, err := p.src.PollIssues(ctx, p.repo, ListIssuesOptions{Since: cursor, Labels: p.labels, MaxPages: 1, Page: page}, etag)
+		if at.page > 1 {
+			p.walk.stepped(at.since)
+		}
+		got, err := p.src.PollIssues(ctx, p.repo, ListIssuesOptions{Since: at.since, Labels: p.labels, MaxPages: 1, Page: at.page}, etag)
 		if err != nil {
 			if request == 0 {
 				return Changes{}, err
@@ -117,7 +132,12 @@ func (p *Poller) Poll(ctx context.Context) (Changes, error) {
 		if got.NotModified {
 			return out, nil
 		}
+		left := false
+		for _, pull := range got.pulls {
+			left = p.walk.read(at.since, pull) || left
+		}
 		for _, issue := range got.Issues {
+			left = p.walk.read(at.since, issue) || left
 			// GitHub's since is inclusive and has a precision of one
 			// second, so updates already reported come back; each is
 			// reported once.
@@ -129,28 +149,29 @@ func (p *Poller) Poll(ctx context.Context) (Changes, error) {
 			}
 			reported[issue.Ref.Number] = issue.UpdatedAt
 			out.Issues = append(out.Issues, issue)
+			out.readAt = append(out.readAt, at)
 		}
-		if got.Through.After(out.through) {
-			out.through = got.Through
+		at = at.after(got)
+		out.next = at
+		if left || !p.walk.rewind.IsZero() {
+			// An issue left a second walked by page: Ack starts it over.
+			out.More = true
+			return out, nil
 		}
 		if !got.More {
-			if request == 0 {
+			if request == 0 && out.from.page == 1 {
 				out.etag = got.ETag
 			}
 			return out, nil
 		}
-		if got.Through.Truncate(time.Second).After(cursor.Truncate(time.Second)) {
-			cursor, page = got.Through, 1
-		} else {
-			page++
-		}
 	}
 }
 
-// Ack records that the first n issues of c were stored. The position moves
-// to the newest of them, or, when every issue of c was stored, through
-// everything the poll read; an issue not acknowledged, and everything after
-// it, is read again by the next Poll.
+// Ack records that the first n issues of c were stored. When every issue of
+// c was stored, the position moves past everything the poll read, or back
+// to the first page of a second an issue left while it was walked by page.
+// Otherwise it moves to the newest issue stored, and the issue not
+// acknowledged, and everything after it, is read again by the next Poll.
 func (p *Poller) Ack(c Changes, n int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -160,16 +181,24 @@ func (p *Poller) Ack(c Changes, n int) {
 			p.lastSeen[issue.Ref.Number] = issue.UpdatedAt
 		}
 	}
-	to := c.through
-	if n < len(c.Issues) {
-		to = c.from
-		if n > 0 {
-			to = c.Issues[n-1].UpdatedAt
+	complete := n == len(c.Issues) && !c.More
+	switch {
+	case n == len(c.Issues) && !p.walk.rewind.IsZero():
+		p.since, p.page = p.walk.rewind, 1
+		p.walk.rewind = time.Time{}
+	case n == len(c.Issues):
+		p.since, p.page = c.next.since, c.next.page
+	case n > 0:
+		// The issue not stored is read again from the request that
+		// listed it, or from the newest update stored when that is in a
+		// later second.
+		to := listPosition{since: c.Issues[n-1].UpdatedAt, page: 1}
+		if retry := c.readAt[n]; !to.since.Truncate(time.Second).After(retry.since.Truncate(time.Second)) {
+			to = retry
 		}
+		p.since, p.page = to.since, to.page
 	}
-	if to.After(p.since) {
-		p.since = to
-	}
+	p.walk.forget(p.since, complete)
 	// An update older than the second the next request starts at is never
 	// listed again.
 	floor := p.since.Truncate(time.Second)
@@ -180,7 +209,7 @@ func (p *Poller) Ack(c Changes, n int) {
 	}
 	// The ETag stands for a listing read whole at a position; it is sent
 	// again only when the next poll asks from that same position.
-	if n == len(c.Issues) && !c.More && c.etag != "" {
-		p.etag, p.etagFor = c.etag, c.from
+	if complete && c.etag != "" {
+		p.etag, p.etagFor = c.etag, c.from.since
 	}
 }

@@ -1,6 +1,9 @@
 package fakegithub
 
-import "slices"
+import (
+	"slices"
+	"time"
+)
 
 func issueJSON(is *issue) jIssue {
 	out := jIssue{
@@ -39,6 +42,8 @@ type IssueView struct {
 	State  string
 	Labels []string
 	Author User
+	// UpdatedAt is the issue's update time, as GitHub lists it.
+	UpdatedAt time.Time
 }
 
 // Issue returns a copy of an issue or pull request.
@@ -49,7 +54,7 @@ func (s *Server) Issue(repoName string, number int) (IssueView, error) {
 	if err != nil {
 		return IssueView{}, err
 	}
-	return IssueView{Number: is.number, Title: is.title, Body: is.body, State: is.state, Labels: slices.Clone(is.labels), Author: is.author}, nil
+	return IssueView{Number: is.number, Title: is.title, Body: is.body, State: is.state, Labels: slices.Clone(is.labels), Author: is.author, UpdatedAt: is.updated}, nil
 }
 
 // CommentView is a read-only copy of a comment for assertions.

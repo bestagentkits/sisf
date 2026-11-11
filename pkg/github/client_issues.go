@@ -47,6 +47,10 @@ type IssuePage struct {
 	// Through is the newest update time of anything read, pull requests
 	// included, so a caller can continue the listing after them.
 	Through time.Time
+
+	// pulls are the pull requests the listing held, which take places in
+	// it like issues do.
+	pulls []Issue
 }
 
 // ListIssues reads every issue matching opts, oldest update first. Pull
@@ -106,7 +110,9 @@ func (c *RESTClient) PollIssues(ctx context.Context, repo RepoRef, opts ListIssu
 			if issue.UpdatedAt.After(out.Through) {
 				out.Through = issue.UpdatedAt
 			}
-			if !w.isPullRequest() {
+			if w.isPullRequest() {
+				out.pulls = append(out.pulls, issue)
+			} else {
 				out.Issues = append(out.Issues, issue)
 			}
 		}

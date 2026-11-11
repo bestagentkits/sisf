@@ -186,7 +186,7 @@ func (c *Control) deliverOutbox(ctx context.Context) error {
 		default:
 			continue
 		}
-		sendErr := c.editIssue(ctx, outboxIssue(m), deliver)
+		sendErr := c.editIssue(ctx, outboxIssue(m), outboxIntent(m), deliver)
 		now := c.cfg.Clock.Now()
 		err := c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 			if sendErr == nil {

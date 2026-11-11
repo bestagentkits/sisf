@@ -50,7 +50,7 @@ func TestAFailedSaveKeepsThePositionAtTheLastStoredChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := newReconciler(cfg, repo, 7, store, clock)
+	r := newReconciler(cfg, repo, 7, store, clock, nil)
 	stored := map[int]int{}
 	failOn := 2
 	r.accept = func(_ context.Context, ev github.WebhookEvent) (bool, error) {

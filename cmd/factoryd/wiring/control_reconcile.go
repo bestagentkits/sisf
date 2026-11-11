@@ -93,13 +93,20 @@ type reconciler struct {
 	state reconcileState
 	// next is when the next poll is due; zero means at once.
 	next time.Time
+	// attempted is when the last poll started, and complete when the last
+	// one that read the listing to its end and stored all of it started,
+	// by the factory's clock: every change on GitHub before complete is in
+	// the inbox.
+	attempted, complete time.Time
 }
 
 // newReconciler builds the reconciler of the factory's repository.
-func newReconciler(cfg ReconcileConfig, repo github.RepoRef, installation int64, store state.Store, clock core.Clock) *reconciler {
+// confirm tells the factory's own edits from a person's change in the
+// same second (see control.AcceptReconciledIssue).
+func newReconciler(cfg ReconcileConfig, repo github.RepoRef, installation int64, store state.Store, clock core.Clock, confirm control.ConfirmOwnEdit) *reconciler {
 	return &reconciler{cfg: cfg, repo: repo, installation: installation, store: store, clock: clock,
 		accept: func(ctx context.Context, ev github.WebhookEvent) (bool, error) {
-			return control.AcceptReconciledIssue(ctx, store, ev)
+			return control.AcceptReconciledIssue(ctx, store, ev, confirm)
 		}}
 }
 
@@ -135,7 +142,8 @@ func (c *Control) ReconcileGitHub(ctx context.Context) error {
 	if r == nil {
 		return nil
 	}
-	r.next = r.clock.Now().Add(r.cfg.Interval)
+	start := r.clock.Now()
+	r.attempted, r.next = start, start.Add(r.cfg.Interval)
 	if r.poller == nil {
 		st, err := r.loadState(ctx)
 		if err != nil {
@@ -161,6 +169,9 @@ func (c *Control) ReconcileGitHub(ctx context.Context) error {
 	// issue is gone; an empty answer (304, or nothing new) says nothing.
 	if pollErr == nil && storeErr == nil && !changes.More && len(changes.Issues) > 0 {
 		r.state.keepListed(changes.Issues)
+	}
+	if pollErr == nil && storeErr == nil && !changes.More && acked == len(changes.Issues) {
+		r.complete = start
 	}
 	r.state.Since, r.state.Backlog, r.state.LastPollAt = r.poller.Since(), changes.More, now
 	r.state.LastError = ""
