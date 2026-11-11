@@ -28,7 +28,8 @@ var endStates = map[string]bool{"RolledBack": true, "Blocked": true}
 
 // waitForClose polls until the factory closes the issue, the run ends in a
 // failure state, `sisf up` or one of its units dies, the factory's records
-// show the run cannot finish (see factoryCannotFinish), or the deadline
+// show the run cannot finish (see factoryCannotFinish), QA held the
+// candidate or the run stalled in a state (see qaStopped), or the deadline
 // passes. A failure ends the wait at once; the test's cleanup adds the
 // unit log tails to the report.
 func waitForClose(ctx context.Context, r *commandRunner, o *factoryObserver, proc *factoryProcess, issue string, number int) error {
@@ -41,10 +42,11 @@ func waitForClose(ctx context.Context, r *commandRunner, o *factoryObserver, pro
 		if !proc.running() {
 			return fmt.Errorf("sisf up exited during the run")
 		}
-		runStatus := ""
+		runStatus, runID := "", ""
 		if v, err := o.inspect(ctx, issue); err == nil {
 			rec := v.Output.Record
 			r.report.RunIDs = addUnique(r.report.RunIDs, rec.RunID)
+			runID = rec.RunID
 			if v.Output.Run != nil {
 				runStatus = v.Output.Run.Status
 				for _, pr := range v.Output.Run.PullRequests {
@@ -66,7 +68,11 @@ func waitForClose(ctx context.Context, r *commandRunner, o *factoryObserver, pro
 		} else {
 			r.logf("runs.inspect %s: %v", issue, err) // not tracked yet, or the factory is busy
 		}
-		if reason := factoryCannotFinish(o, proc.log, runStatus); reason != "" {
+		reason := factoryCannotFinish(o, proc.log, runStatus)
+		if reason == "" {
+			reason = qaStopped(ctx, o, issue, runID, time.Now())
+		}
+		if reason != "" {
 			return fmt.Errorf("the factory cannot finish the run, last state %q: %s", last, reason)
 		}
 		if state, err := issueState(ctx, r, number); err == nil && strings.HasPrefix(state, "CLOSED") {

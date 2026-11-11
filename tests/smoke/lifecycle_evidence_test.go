@@ -31,10 +31,16 @@ const (
 // qaRecord is the part of one QA verdict the run reads.
 type qaRecord struct {
 	Verdict string `json:"verdict"`
+	Reason  string `json:"reason"`
 	Receipt struct {
 		CandidateDigest string `json:"candidate_digest"`
 		Score           int    `json:"score"`
-		Signature       struct {
+		Checks          []struct {
+			Name   string `json:"name"`
+			Kind   string `json:"kind"`
+			Passed bool   `json:"passed"`
+		} `json:"checks"`
+		Signature struct {
 			KeyID     string `json:"key_id"`
 			Algorithm string `json:"algorithm"`
 			Value     []byte `json:"value"`
@@ -91,14 +97,37 @@ func passingReceipt(records map[string][]byte) (bool, string) {
 			seen = append(seen, key+": unreadable")
 			continue
 		}
-		sig := r.Receipt.Signature
-		signed := sig.KeyID != "" && sig.Algorithm != "" && len(sig.Value) > 0
-		seen = append(seen, fmt.Sprintf("%s: verdict %s, score %d, signed %t by %q", key, r.Verdict, r.Receipt.Score, signed, sig.KeyID))
-		if r.Verdict == "passed" && signed && r.Receipt.Score >= passScore {
+		seen = append(seen, describeQARecord(key, r))
+		if r.Verdict == "passed" && r.signed() && r.Receipt.Score >= passScore {
 			return true, strings.Join(seen, "; ")
 		}
 	}
 	return false, strings.Join(seen, "; ")
+}
+
+func (r qaRecord) signed() bool {
+	sig := r.Receipt.Signature
+	return sig.KeyID != "" && sig.Algorithm != "" && len(sig.Value) > 0
+}
+
+// describeQARecord says what one QA verdict decided and why: its score, its
+// signature, the hard gates its receipt records as failed and the
+// supervisor's reason, so a failure reads without the install.
+func describeQARecord(key string, r qaRecord) string {
+	var failed []string
+	for _, c := range r.Receipt.Checks {
+		if c.Kind == "hard_gate" && !c.Passed {
+			failed = append(failed, c.Name)
+		}
+	}
+	out := fmt.Sprintf("%s: verdict %s, score %d, signed %t by %q", key, r.Verdict, r.Receipt.Score, r.signed(), r.Receipt.Signature.KeyID)
+	if len(failed) > 0 {
+		out += ", failed hard gates " + strings.Join(failed, ", ")
+	}
+	if r.Reason != "" {
+		out += fmt.Sprintf(", reason %q", truncate(r.Reason, 300))
+	}
+	return out
 }
 
 // completedRelease finds, among the release records of one run, one the

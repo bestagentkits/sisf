@@ -33,6 +33,8 @@ type factoryObserver struct {
 	factoryID string
 	// maxAttempts is the manifest's limit of coding attempts per run.
 	maxAttempts int
+	// runTimeout is the manifest's limit of one coding attempt.
+	runTimeout time.Duration
 	// signIn signs the operator in through the browser; keepSignedIn calls
 	// it again before the stored login lapses.
 	signIn func(context.Context)
@@ -151,7 +153,8 @@ func newFactoryObserver(r *commandRunner, sisf, home string) (*factoryObserver, 
 	}
 	o := &factoryObserver{
 		r: r, sisf: sisf, home: home, stateDB: l.StateDB(), factoryID: string(m.FactoryID), maxAttempts: m.Limits.MaxAttempts,
-		env: sisfEnv("SISF_HOME="+home, "SISF_URL="+loopbackURL(install.PortControl, "")),
+		runTimeout: m.Limits.RunTimeout.Std(),
+		env:        sisfEnv("SISF_HOME="+home, "SISF_URL="+loopbackURL(install.PortControl, "")),
 	}
 	o.signIn = func(ctx context.Context) { signInOperator(ctx, r, sisf, home, o.env) }
 	return o, nil
