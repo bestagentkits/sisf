@@ -62,7 +62,7 @@ func Validate(m *Manifest) []Violation {
 		return found
 	}
 	// A value the schema already refused is reported once, by the schema.
-	for _, extra := range decisionViolations(m) {
+	for _, extra := range slices.Concat(decisionViolations(m), unitInputViolations(m)) {
 		if !slices.ContainsFunc(found, func(v Violation) bool { return within(v.Path, extra.Path) }) {
 			found = append(found, extra)
 		}

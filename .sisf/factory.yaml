@@ -177,6 +177,14 @@ release:
   policy: B
   strategy: canary
   canary_steps: [5, 25, 100]
+  # A candidate the factory publishes by itself may change only paths its
+  # unit consumes. app consumes its own package directories and
+  # build/hello-app.Dockerfile, control the non-Go files under ui/. For an
+  # application laid out otherwise, declare its inputs as patterns matched
+  # against whole paths (* never crosses /); they replace the built-in ones
+  # and may not reach a protected path:
+  #   unit_inputs:
+  #     app: ["*.go", "web/*.html"]
   units: [app]
   rollback:
     error_rate: 0.02

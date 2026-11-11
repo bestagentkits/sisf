@@ -1,6 +1,7 @@
 package manifest_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -65,6 +66,9 @@ func TestParseQuotesOnlyPlainValuesAndKeys(t *testing.T) {
 	valid := exampleYAML(t)
 	shortSecret := "Zq" + "7!" + "Lx"
 	token := "ghp_" + strings.Repeat("Ab1", 12)
+	// The line of the span the case replaces, counted rather than written
+	// down, so a comment added to the example does not break the case.
+	spanLine := "line " + strconv.Itoa(strings.Count(valid[:strings.Index(valid, "run_timeout: 30m")], "\n")+1)
 	cases := map[string]struct {
 		yaml   string
 		hidden []string
@@ -73,7 +77,7 @@ func TestParseQuotesOnlyPlainValuesAndKeys(t *testing.T) {
 		"a short mixed value for a number": {strings.Replace(valid, "port: 7461", "port: "+shortSecret, 1),
 			[]string{shortSecret, "Zq7"}, []string{"text (its value is withheld) does not fit here"}},
 		"a short mixed value for a span": {strings.Replace(valid, "run_timeout: 30m", "run_timeout: "+shortSecret, 1),
-			[]string{shortSecret, "Zq7"}, []string{"line 199"}},
+			[]string{shortSecret, "Zq7"}, []string{spanLine}},
 		"a token repeated as a key": {strings.Replace(valid, "mode: docker", "mode: docker\nextensions:\n  "+token+": 1\n  "+token+": 2", 1),
 			[]string{"ghp_", token}, []string{"is repeated", "withheld"}},
 		"a plain word for a number": {strings.Replace(valid, "port: 7461", "port: eighty", 1), nil, []string{"text (eighty) does not fit here"}},

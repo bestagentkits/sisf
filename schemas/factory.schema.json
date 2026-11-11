@@ -405,6 +405,67 @@
           ],
           "type": "string"
         },
+        "unit_inputs": {
+          "additionalProperties": false,
+          "description": "Per unit of release.units, the repository paths it consumes, as patterns matched against whole paths without regard to case: * never crosses /. A self-published candidate may change only inputs of the unit it releases. A unit left out keeps its built-in inputs; an entry replaces them.",
+          "properties": {
+            "app": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "artifacts": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "control": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "dispatcher": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "edge": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "qa-runner": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "runner": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "state": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "supervisor": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "units": {
           "description": "Units the factory may publish by itself. The supervisor is never one of them.",
           "items": {

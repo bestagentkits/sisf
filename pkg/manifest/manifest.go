@@ -408,9 +408,15 @@ type Release struct {
 	// CanarySteps are traffic percentages, used only with a traffic split.
 	CanarySteps []int `json:"canary_steps,omitempty" yaml:"canary_steps,omitempty"`
 	// Units lists the units the factory may publish by itself.
-	Units      []UnitName `json:"units" yaml:"units"`
-	Rollback   Rollback   `json:"rollback" yaml:"rollback"`
-	LowTraffic LowTraffic `json:"low_traffic" yaml:"low_traffic"`
+	Units []UnitName `json:"units" yaml:"units"`
+	// UnitInputs declares, per unit of Units, the repository paths that
+	// unit consumes, as patterns (UnitInputPatternProblem says which are
+	// accepted). A candidate the factory publishes by itself may change only
+	// inputs of the unit it releases. A unit without an entry keeps the
+	// built-in inputs; an entry replaces them entirely.
+	UnitInputs map[UnitName][]string `json:"unit_inputs,omitempty" yaml:"unit_inputs,omitempty"`
+	Rollback   Rollback              `json:"rollback" yaml:"rollback"`
+	LowTraffic LowTraffic            `json:"low_traffic" yaml:"low_traffic"`
 }
 
 // Rollback holds the automatic rollback thresholds. A rollback needs the

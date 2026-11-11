@@ -141,8 +141,10 @@ var fieldRules = map[string]map[string]any{
 	"ArtifactStore.location": nonEmpty,
 	"AdapterRef.name":        {"pattern": `^[a-z0-9][a-z0-9_-]*$`},
 
-	"Release.canary_steps":         {"items": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}},
-	"Release.units":                described("Units the factory may publish by itself. The supervisor is never one of them.", map[string]any{"uniqueItems": true}),
+	"Release.canary_steps": {"items": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}},
+	"Release.units":        described("Units the factory may publish by itself. The supervisor is never one of them.", map[string]any{"uniqueItems": true}),
+	"Release.unit_inputs": described("Per unit of release.units, the repository paths it consumes, as patterns matched against whole paths without regard to case: * never crosses /. "+
+		"A self-published candidate may change only inputs of the unit it releases. A unit left out keeps its built-in inputs; an entry replaces them.", nil),
 	"Rollback.error_rate":          {"exclusiveMinimum": 0, "maximum": 1},
 	"Rollback.baseline_delta":      {"minimum": 0, "maximum": 1},
 	"Rollback.min_samples":         atLeastOne,
