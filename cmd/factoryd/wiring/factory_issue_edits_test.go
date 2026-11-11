@@ -34,6 +34,9 @@ func TestAFactoryEditExplainsOnlyWhatItDid(t *testing.T) {
 		{"the parking label and a person's removal", park, issue("t", github.IssueOpen, "sisf:ready", github.LabelNeedsInfo), false},
 		{"closing", closeIt, issue("t", github.IssueClosed, "kind:bug", "sisf:closed"), true},
 		{"a person closing", editIntent{}, issue("t", github.IssueClosed, "sisf:ready", "kind:bug"), false},
+		// GitHub applies a repository's label under its own casing.
+		{"the parking label as the repository spells it", park, issue("t", github.IssueOpen, "sisf:ready", "kind:bug", "SISF:Needs-Info"), true},
+		{"closing a label spelled otherwise", closeIt, issue("t", github.IssueClosed, "kind:bug", "Sisf:Closed"), true},
 	}
 	for _, tc := range cases {
 		if got := tc.intent.explains(before, tc.after); got != tc.want {

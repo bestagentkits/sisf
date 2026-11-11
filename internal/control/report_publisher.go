@@ -203,7 +203,7 @@ func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (p
 			return false, false, nil, err
 		}
 		if found {
-			return true, issue.HasLabel(report.IssueLabel), nil, p.markPublished(ctx, entry.Key, stored, issue.Ref.Number)
+			return true, report.HasIssueLabel(issue), nil, p.markPublished(ctx, entry.Key, stored, issue.Ref.Number)
 		}
 	}
 	attempt := stored
@@ -227,7 +227,7 @@ func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (p
 	case err != nil:
 		return false, false, nil, err
 	}
-	return true, issue.HasLabel(report.IssueLabel), nil, p.markPublished(ctx, entry.Key, stored, issue.Ref.Number)
+	return true, report.HasIssueLabel(issue), nil, p.markPublished(ctx, entry.Key, stored, issue.Ref.Number)
 }
 
 // findIssue looks for the issue an unanswered attempt to publish r may have

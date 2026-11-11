@@ -1,6 +1,7 @@
 package report
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/github"
@@ -8,8 +9,9 @@ import (
 
 // IssueLabel is the one label of the GitHub issue the control zone opens
 // for a stored report, so a person can find the reports to triage. It
-// asks for nothing: it is not sisf:ready, and as a sisf: label no ready
-// alias can name it, so intake never takes such an issue up by itself.
+// asks for nothing: it is not sisf:ready, and as a sisf: label, under any
+// casing, no ready alias can name it, so intake never takes such an issue
+// up by itself.
 const IssueLabel = "sisf:report"
 
 // IssueMarkerPrefix opens the first line of the body of an issue opened for
@@ -27,5 +29,11 @@ func IssueMarker(id string) string { return IssueMarkerPrefix + id + " -->" }
 // GitHub, so a person asking for work on it does not make that text the
 // request of anyone with access to the repository.
 func IsReportIssue(issue github.Issue) bool {
-	return issue.HasLabel(IssueLabel) || strings.HasPrefix(issue.Body, IssueMarkerPrefix)
+	return HasIssueLabel(issue) || strings.HasPrefix(issue.Body, IssueMarkerPrefix)
+}
+
+// HasIssueLabel reports whether issue carries IssueLabel under any casing,
+// as GitHub compares label names.
+func HasIssueLabel(issue github.Issue) bool {
+	return slices.ContainsFunc(issue.Labels, func(l github.Label) bool { return strings.EqualFold(l.Name, IssueLabel) })
 }

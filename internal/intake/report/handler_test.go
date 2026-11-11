@@ -14,6 +14,7 @@ import (
 
 	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/internal/redact"
+	"github.com/bestagentkits/sisf/pkg/github"
 )
 
 type clock struct {
@@ -267,5 +268,18 @@ func TestInvisibleCharactersAreDroppedBeforeRedaction(t *testing.T) {
 	}
 	if rec := post(h, "198.51.100.3", jsonType, `{"title":"\u200b\ufeff","body":"b"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("a title of invisible characters only: %d, want refused", rec.Code)
+	}
+}
+
+// GitHub compares label names without regard to case, so an issue carrying
+// the report label in any casing is a report issue.
+func TestTheReportLabelIsMatchedWithoutRegardToCase(t *testing.T) {
+	t.Parallel()
+	issue := github.Issue{Labels: []github.Label{{Name: "SISF:Report"}}}
+	if !report.IsReportIssue(issue) || !report.HasIssueLabel(issue) {
+		t.Fatal("an issue labelled SISF:Report was not taken for a report issue")
+	}
+	if report.HasIssueLabel(github.Issue{Labels: []github.Label{{Name: "sisf:reports"}}}) {
+		t.Fatal("a label that only starts like the report label was taken for it")
 	}
 }

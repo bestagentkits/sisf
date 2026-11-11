@@ -137,7 +137,7 @@ func (s *Service) HandleEvent(ctx context.Context, ev github.WebhookEvent) (Resu
 	if result.Skipped != "" {
 		return result, nil
 	}
-	resume := ev.Type == "issues" && ev.Action == "unlabeled" && ev.Label != nil && ev.Label.Name == github.LabelNeedsInfo
+	resume := ev.Type == "issues" && ev.Action == "unlabeled" && ev.Label != nil && sameLabel(ev.Label.Name, github.LabelNeedsInfo)
 	return s.reconcile(ctx, ref, resume, ev.Issue)
 }
 
@@ -152,7 +152,7 @@ func (s *Service) Reconcile(ctx context.Context, issue core.IssueRef) (Result, e
 // that a person removed the label of a parking the factory confirmed on
 // GitHub. It is a reason to read the issue again, not proof.
 func liftedIn(shown *github.Issue, ref core.IssueRef, doc issueDoc) bool {
-	return shown != nil && shown.Ref == ref && doc.Clarify.LabelConfirmed && !shown.HasLabel(github.LabelNeedsInfo)
+	return shown != nil && shown.Ref == ref && doc.Clarify.LabelConfirmed && !HasLabel(shown.Labels, github.LabelNeedsInfo)
 }
 
 // unconfirmedParking is why an issue parked with a label not confirmed on
@@ -166,7 +166,7 @@ const unconfirmedParking = "the issue is parked and its " + github.LabelNeedsInf
 // label is delivered or the label is seen on the issue.
 func (s *Service) confirmStoredParking(ctx context.Context, ref core.IssueRef, snap snapshot) error {
 	issue, err := s.cfg.Issues.GetIssue(ctx, ref)
-	if err != nil || !issue.HasLabel(github.LabelNeedsInfo) {
+	if err != nil || !HasLabel(issue.Labels, github.LabelNeedsInfo) {
 		return err
 	}
 	doc := snap.doc
@@ -219,7 +219,7 @@ func (s *Service) reconcile(ctx context.Context, ref core.IssueRef, resume bool,
 		result.Skipped = skipped
 		return result, err
 	}
-	if resume && in.issue.HasLabel(github.LabelNeedsInfo) {
+	if resume && HasLabel(in.issue.Labels, github.LabelNeedsInfo) {
 		// The label is on the issue now, whatever the event said: nobody
 		// lifted the parking.
 		if resume = false; snap.doc.Clarify.NeedsInfo {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/control"
@@ -35,19 +36,21 @@ func (e editIntent) explains(before, after github.Issue) bool {
 	if after.State != state {
 		return false
 	}
+	// GitHub compares label names without regard to case and applies a
+	// repository's label under its own casing, so names are compared folded.
 	want := map[string]bool{}
 	for _, l := range before.Labels {
-		want[l.Name] = true
+		want[strings.ToLower(l.Name)] = true
 	}
 	for _, name := range e.add {
-		want[name] = true
+		want[strings.ToLower(name)] = true
 	}
 	for _, name := range e.remove {
-		delete(want, name)
+		delete(want, strings.ToLower(name))
 	}
 	got := map[string]bool{}
 	for _, l := range after.Labels {
-		got[l.Name] = true
+		got[strings.ToLower(l.Name)] = true
 	}
 	if len(got) != len(want) {
 		return false
