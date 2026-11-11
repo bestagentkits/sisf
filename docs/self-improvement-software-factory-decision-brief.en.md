@@ -188,6 +188,8 @@ stateDiagram-v2
   ApprovalPending --> Blocked: rejected/expired
   Ready --> Claimed: atomic lease + budget reservation
   Claimed --> Developing
+  Claimed --> Blocked: run stopped before an attempt started / waits for the Owner
+  Developing --> Blocked: run stopped without a candidate / waits for the Owner
   Developing --> QAEvaluation: patch + tests + artifacts
   QAEvaluation --> Developing: not pass / retry allowed
   QAEvaluation --> ReleaseCandidate: score + hard gates pass

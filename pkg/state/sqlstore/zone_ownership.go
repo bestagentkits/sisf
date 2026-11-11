@@ -19,6 +19,10 @@ import (
 // Ready issue under its lease and a budget reservation and starts
 // development, and the run submits the candidate it built.
 //
+// Stopping a run is not among them either. A run that could block its own
+// issue could take it out of the queue; the control zone blocks an issue
+// whose run stopped, from what the run recorded.
+//
 // A failed evaluation is not among them. It is the verdict of the
 // independent QA, which the supervisor's QA stage writes in the control
 // zone; a run that could write it could discard an evaluation in progress
@@ -43,8 +47,8 @@ var runEvents = []core.Event{
 var controlEvents = []core.Event{
 	core.EventIssueReceived, core.EventInfoMissing, core.EventClarificationCompleted, core.EventInfoSufficient,
 	core.EventApprovalRequired, core.EventScopePermitted, core.EventOwnerApproved, core.EventApprovalDenied,
-	core.EventClaimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted, core.EventQAFailed,
-	core.EventQAPassed, core.EventRolloutStarted, core.EventRolloutHealthy, core.EventErrorThresholdExceeded,
+	core.EventClaimed, core.EventDevelopmentStarted, core.EventClaimStopped, core.EventDevelopmentStopped,
+	core.EventCandidateSubmitted, core.EventQAFailed, core.EventQAPassed, core.EventRolloutStarted, core.EventRolloutHealthy, core.EventErrorThresholdExceeded,
 	core.EventPostDeployVerified, core.EventRegressionDetected, core.EventIssueClosed, core.EventRecoveryReported,
 	core.EventRetryAuthorized,
 }

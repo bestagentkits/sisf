@@ -52,7 +52,7 @@ type briefEdge struct {
 	to    core.State
 }
 
-// briefEdges lists the creation arrow and the twenty arrows between states.
+// briefEdges lists the creation arrow and the twenty-two arrows between states.
 // Anything absent from this list must be rejected.
 var briefEdges = []briefEdge{
 	{"", core.EventIssueReceived, core.StateIntake},
@@ -65,6 +65,8 @@ var briefEdges = []briefEdge{
 	{core.StateApprovalPending, core.EventApprovalDenied, core.StateBlocked},
 	{core.StateReady, core.EventClaimed, core.StateClaimed},
 	{core.StateClaimed, core.EventDevelopmentStarted, core.StateDeveloping},
+	{core.StateClaimed, core.EventClaimStopped, core.StateBlocked},
+	{core.StateDeveloping, core.EventDevelopmentStopped, core.StateBlocked},
 	{core.StateDeveloping, core.EventCandidateSubmitted, core.StateQAEvaluation},
 	{core.StateQAEvaluation, core.EventQAFailed, core.StateDeveloping},
 	{core.StateQAEvaluation, core.EventQAPassed, core.StateReleaseCandidate},

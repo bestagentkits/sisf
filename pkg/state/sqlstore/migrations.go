@@ -85,6 +85,17 @@ var releaseMigrations = []migration{
 		file:      "0007_record_step_trigger.sql",
 		postgres:  recordStepScript,
 	},
+	{
+		// The lifecycle gains the two steps that block an issue whose run
+		// stopped, written by the control zone only. The trigger and the
+		// zones' policies are written afresh for them; no data moves and no
+		// column changes. The previous release never writes the new steps,
+		// every step it does write is still an edge, and it knows Blocked,
+		// so it keeps working on the schema.
+		Migration: state.Migration{Version: 8, Name: "steps that block an issue whose run stopped", BackwardCompatible: true},
+		file:      "0008_run_stop_steps.sql",
+		postgres:  recordStepScript,
+	},
 }
 
 // Migrations lists the migrations this release ships, for callers that must

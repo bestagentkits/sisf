@@ -29,8 +29,8 @@ import (
 //
 // A policy sees each row on its own, never the change from the old row to
 // the new one, so it cannot say that an update is one step of the
-// lifecycle. A trigger on the records says it (migration 7,
-// recordStepTrigger): for every session the policies hold, a record moves
+// lifecycle. A trigger on the records says it (migration 7, and again
+// migration 8 for the steps added since; recordStepTrigger): for every session the policies hold, a record moves
 // from one state to the next only along an edge of the lifecycle, to the
 // next version, and stays the record of its factory and issue. With the
 // policy of a zone on the states its steps start and end in, that admits

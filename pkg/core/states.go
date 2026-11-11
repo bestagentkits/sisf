@@ -76,6 +76,12 @@ const (
 	EventClaimed Event = "claimed"
 	// EventDevelopmentStarted moves Claimed to Developing.
 	EventDevelopmentStarted Event = "development_started"
+	// EventClaimStopped moves Claimed to Blocked: the run stopped before any
+	// agent attempt started working, and the issue waits for the Owner.
+	EventClaimStopped Event = "claim_stopped"
+	// EventDevelopmentStopped moves Developing to Blocked: the run stopped
+	// without a candidate to evaluate, and the issue waits for the Owner.
+	EventDevelopmentStopped Event = "development_stopped"
 	// EventCandidateSubmitted moves Developing to QAEvaluation: patch, tests
 	// and artifacts exist.
 	EventCandidateSubmitted Event = "candidate_submitted"
@@ -106,8 +112,8 @@ const (
 var allEvents = []Event{
 	EventIssueReceived, EventInfoMissing, EventClarificationCompleted, EventInfoSufficient,
 	EventApprovalRequired, EventScopePermitted, EventOwnerApproved, EventApprovalDenied,
-	EventClaimed, EventDevelopmentStarted, EventCandidateSubmitted, EventQAFailed,
-	EventQAPassed, EventRolloutStarted, EventRolloutHealthy, EventErrorThresholdExceeded,
+	EventClaimed, EventDevelopmentStarted, EventClaimStopped, EventDevelopmentStopped,
+	EventCandidateSubmitted, EventQAFailed, EventQAPassed, EventRolloutStarted, EventRolloutHealthy, EventErrorThresholdExceeded,
 	EventPostDeployVerified, EventRegressionDetected, EventIssueClosed, EventRecoveryReported,
 	EventRetryAuthorized,
 }
