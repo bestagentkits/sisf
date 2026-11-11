@@ -58,9 +58,15 @@ type clarifyState struct {
 	// spent until a person removes the sisf:needs-info label.
 	NeedsInfo bool `json:"needs_info,omitempty"`
 	// LabelPending says the sisf:needs-info label of the current parking
-	// has not been confirmed on GitHub yet, so an issue seen without it has
-	// not been lifted by anyone.
+	// is queued and has not reached GitHub yet.
 	LabelPending bool `json:"label_pending,omitempty"`
+	// LabelConfirmed says the sisf:needs-info label of the current parking
+	// is known to have reached GitHub. Until it is, an issue seen without
+	// the label, a removal webhook included, was not lifted by anyone: the
+	// removal may be of an earlier parking. A parking stored before this
+	// was recorded has neither mark and is confirmed when its queued label
+	// is delivered or the issue is seen carrying it.
+	LabelConfirmed bool `json:"label_confirmed,omitempty"`
 }
 
 func issueKey(issue core.IssueRef) string { return "issue/" + issue.String() }

@@ -101,7 +101,7 @@ func (s *Service) ask(in input, snap snapshot, draft Draft, fromIntake bool) (*p
 	doc.Clarify.Asked++
 	doc.Clarify.Deadline = in.now.Add(timeout)
 	doc.Clarify.SeenReply = latestReply(in.issue, in.comments)
-	doc.Clarify.NeedsInfo, doc.Clarify.LabelPending = false, false
+	doc.Clarify.NeedsInfo, doc.Clarify.LabelPending, doc.Clarify.LabelConfirmed = false, false, false
 	p := &plan{doc: doc}
 	if fromIntake {
 		var err error
@@ -118,7 +118,7 @@ func (s *Service) ask(in input, snap snapshot, draft Draft, fromIntake bool) (*p
 // and from then on intake neither asks, reads nor spends anything for it.
 func park(snap snapshot, why string) (*plan, error) {
 	doc := snap.doc
-	doc.Clarify.NeedsInfo, doc.Clarify.LabelPending = true, true
+	doc.Clarify.NeedsInfo, doc.Clarify.LabelPending, doc.Clarify.LabelConfirmed = true, true, false
 	return (&plan{doc: doc}).with(
 		func() (state.OutboxMessage, error) {
 			return labelEffect(doc.Issue, parkLabelName(doc.Clarify.Asked), []string{github.LabelNeedsInfo}, nil)

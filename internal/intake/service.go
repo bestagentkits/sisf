@@ -106,10 +106,12 @@ type Result struct {
 // Events caused by the factory's own edits are skipped. A parked issue
 // resumes when a person removed sisf:needs-info: the webhook of that
 // removal says so, and so does any other event, a reconciled change found
-// by polling included, whose issue no longer carries the label once the
-// factory's own label was confirmed on GitHub. Either way the issue is read
-// again and resumes only if the label is gone now; an event whose issue
-// still shows the label costs nothing.
+// by polling included, whose issue no longer carries the label. Either way
+// that counts only once the factory's own label of the current parking was
+// confirmed on GitHub: before, a removal webhook may be a late one of an
+// earlier parking, and an issue seen without the label was not lifted by
+// anyone. The issue is then read again and resumes only if the label is
+// gone now; an event whose issue still shows the label costs nothing.
 func (s *Service) HandleEvent(ctx context.Context, ev github.WebhookEvent) (Result, error) {
 	if err := ev.Validate(); err != nil {
 		return Result{}, err
@@ -150,7 +152,26 @@ func (s *Service) Reconcile(ctx context.Context, issue core.IssueRef) (Result, e
 // that a person removed the label of a parking the factory confirmed on
 // GitHub. It is a reason to read the issue again, not proof.
 func liftedIn(shown *github.Issue, ref core.IssueRef, doc issueDoc) bool {
-	return shown != nil && shown.Ref == ref && !doc.Clarify.LabelPending && !shown.HasLabel(github.LabelNeedsInfo)
+	return shown != nil && shown.Ref == ref && doc.Clarify.LabelConfirmed && !shown.HasLabel(github.LabelNeedsInfo)
+}
+
+// unconfirmedParking is why an issue parked with a label not confirmed on
+// GitHub is left parked.
+const unconfirmedParking = "the issue is parked and its " + github.LabelNeedsInfo + " label is not confirmed on GitHub yet"
+
+// confirmStoredParking looks once at an issue parked before the factory
+// recorded whether its label reached GitHub. Seen carrying the label, the
+// parking is confirmed; seen without it, nothing tells a label still
+// queued from one a person removed, so it stays parked until its queued
+// label is delivered or the label is seen on the issue.
+func (s *Service) confirmStoredParking(ctx context.Context, ref core.IssueRef, snap snapshot) error {
+	issue, err := s.cfg.Issues.GetIssue(ctx, ref)
+	if err != nil || !issue.HasLabel(github.LabelNeedsInfo) {
+		return err
+	}
+	doc := snap.doc
+	doc.Clarify.LabelPending, doc.Clarify.LabelConfirmed = false, true
+	return s.apply(ctx, snap, &plan{doc: doc})
 }
 
 func (s *Service) reconcile(ctx context.Context, ref core.IssueRef, resume bool, shown *github.Issue) (Result, error) {
@@ -179,6 +200,12 @@ func (s *Service) reconcile(ctx context.Context, ref core.IssueRef, resume bool,
 	case snap.exists && !handles(snap.record.State):
 		result.Skipped = "intake is finished for this issue"
 		return result, nil
+	case snap.exists && snap.doc.Clarify.NeedsInfo && !snap.doc.Clarify.LabelConfirmed:
+		result.Skipped = unconfirmedParking
+		if snap.doc.Clarify.LabelPending {
+			return result, nil
+		}
+		return result, s.confirmStoredParking(ctx, ref, snap)
 	case snap.exists && snap.doc.Clarify.NeedsInfo && !resume && !liftedIn(shown, ref, snap.doc):
 		result.Skipped = "the issue is parked until a person removes " + github.LabelNeedsInfo
 		return result, nil

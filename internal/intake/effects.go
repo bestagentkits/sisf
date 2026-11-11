@@ -88,8 +88,9 @@ func parkLabelName(asked int) string { return fmt.Sprintf("needs-info/%d/label",
 // it marks m sent and, when m put the label of an issue's current parking
 // on GitHub, notes that the label is there. From then on an issue seen
 // without sisf:needs-info was lifted by a person, whether or not the
-// webhook of that removal arrives. Call it in place of MarkOutboxSent once
-// Deliver returned nil.
+// webhook of that removal arrives. A parking stored before labels were
+// confirmed is confirmed the same way. Call it in place of MarkOutboxSent
+// once Deliver returned nil.
 func Delivered(ctx context.Context, tx state.Tx, m state.OutboxMessage) error {
 	if err := tx.MarkOutboxSent(ctx, m.ID); err != nil || m.Topic != TopicLabels {
 		return err
@@ -112,10 +113,10 @@ func Delivered(ctx context.Context, tx state.Tx, m state.OutboxMessage) error {
 	if err := decode(entry, &doc); err != nil {
 		return err
 	}
-	if !doc.Clarify.NeedsInfo || !doc.Clarify.LabelPending || m.Key != messageKey(e.Issue, parkLabelName(doc.Clarify.Asked)) {
+	if !doc.Clarify.NeedsInfo || doc.Clarify.LabelConfirmed || m.Key != messageKey(e.Issue, parkLabelName(doc.Clarify.Asked)) {
 		return nil
 	}
-	doc.Clarify.LabelPending = false
+	doc.Clarify.LabelPending, doc.Clarify.LabelConfirmed = false, true
 	return put(ctx, tx, issueKey(e.Issue), entry.Version, doc)
 }
 
