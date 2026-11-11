@@ -133,7 +133,7 @@ func TestAnOversizedOrEmptyProgramIsNotKept(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.maxBytes = 8
+	s.MaxBytes = 8
 	in, err := s.Receive()
 	if err != nil {
 		t.Fatal(err)

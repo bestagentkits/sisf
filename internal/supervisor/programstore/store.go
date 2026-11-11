@@ -50,8 +50,10 @@ var sha256Digest = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 // Store is the program store of one supervisor.
 type Store struct {
 	// root is the resolved trust volume.
-	root     string
-	maxBytes int64
+	root string
+	// MaxBytes is the largest program the store receives; MaxProgramBytes
+	// unless a caller lowers it.
+	MaxBytes int64
 }
 
 // Open returns the store on the trust volume trustDir, which must exist
@@ -62,7 +64,7 @@ func Open(trustDir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{root: filepath.Dir(probe), maxBytes: MaxProgramBytes}, nil
+	return &Store{root: filepath.Dir(probe), MaxBytes: MaxProgramBytes}, nil
 }
 
 // dir returns the store's directory, made when create is set. A directory
@@ -131,7 +133,7 @@ func (in *Intake) Write(p []byte) (int, error) {
 	if in.done {
 		return 0, core.NewError(core.CodeInvalidArgument, "the program was already committed or aborted")
 	}
-	if in.over || in.size+int64(len(p)) > in.store.maxBytes {
+	if in.over || in.size+int64(len(p)) > in.store.MaxBytes {
 		in.over = true
 		return 0, core.NewError(core.CodeLimitExceeded, "the program is larger than the store receives")
 	}
