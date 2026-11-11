@@ -76,7 +76,7 @@ type Config struct {
 
 type handler struct {
 	cfg     Config
-	limiter *limiter
+	limiter *Limiter
 }
 
 // NewHandler validates cfg, fills in the defaults and returns the handler.
@@ -101,10 +101,7 @@ func NewHandler(cfg Config) (http.Handler, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	return &handler{cfg: cfg, limiter: &limiter{
-		perClient: cfg.PerClientLimit, overall: cfg.GlobalLimit, window: cfg.Window,
-		maxClients: cfg.MaxClients, clients: map[string]*counter{},
-	}}, nil
+	return &handler{cfg: cfg, limiter: NewLimiter(cfg.PerClientLimit, cfg.GlobalLimit, cfg.Window, cfg.MaxClients)}, nil
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -115,8 +112,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	now := h.cfg.Clock.Now()
 	client := h.cfg.ClientKey(r)
-	if ok, wait := h.limiter.take(client, now); !ok {
-		w.Header().Set("Retry-After", retryAfter(wait))
+	if ok, wait := h.limiter.Take(client, now); !ok {
+		w.Header().Set("Retry-After", RetryAfter(wait))
 		reply(w, http.StatusTooManyRequests, "error", "too many reports; try again later")
 		return
 	}
@@ -146,7 +143,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.cfg.Logger.Error("report could not be stored", "code", string(core.CodeOf(err)))
 		if core.HasCode(err, core.CodeLimitExceeded) {
 			// The store is full until reports are published or lapse.
-			w.Header().Set("Retry-After", retryAfter(fullStoreRetry))
+			w.Header().Set("Retry-After", RetryAfter(fullStoreRetry))
 		}
 		reply(w, http.StatusServiceUnavailable, "error", "the report could not be stored; try again later")
 		return
@@ -251,12 +248,7 @@ func storeRetryAfter(err error) string {
 			return strconv.Itoa(seconds)
 		}
 	}
-	return retryAfter(fullStoreRetry)
-}
-
-func retryAfter(d time.Duration) string {
-	seconds := int64((d + time.Second - 1) / time.Second)
-	return strconv.FormatInt(max(seconds, 1), 10)
+	return RetryAfter(fullStoreRetry)
 }
 
 func orDefault[T int | int64 | time.Duration](v, def T) T {

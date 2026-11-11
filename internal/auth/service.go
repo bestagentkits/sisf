@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/pkg/approvals"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/identity"
@@ -76,6 +77,9 @@ type Service struct {
 	tokenByID map[string]*token
 	flows     map[string]*flow // by digest of the state
 	flowSeq   uint64
+	// starts limits how often sign-ins and step-ups are started; made on
+	// first use (admitStart).
+	starts *report.Limiter
 	// pick chooses which of n flows to push out when every source holds
 	// one; nil means randomIndex.
 	pick     func(n int) (int, error)

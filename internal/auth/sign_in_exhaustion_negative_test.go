@@ -48,6 +48,7 @@ func floodFrom(t *testing.T, e *env, sources, perSource int, address func(s int)
 func TestASignInFloodFromOneAddressDoesNotEvictAnotherAddressesSignIn(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
+	auth.LiftStartLimits(e.svc) // this test is about the table behind the start limits
 	b := e.browser(t)
 	providerURL := b.toProvider(t, "google")
 	e.clock.Advance(time.Second) // the person's sign-in is the oldest open one
@@ -65,6 +66,7 @@ func TestASignInFloodFromOneAddressDoesNotEvictAnotherAddressesSignIn(t *testing
 func TestASignInFloodFromManyAddressesDoesNotEvictAPersonsSignIn(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
+	auth.LiftStartLimits(e.svc) // this test is about the table behind the start limits
 	b := e.browser(t)
 	providerURL := b.toProvider(t, "google")
 	e.clock.Advance(time.Second) // the person's sign-in is the oldest open one
@@ -84,6 +86,7 @@ func TestASignInFloodFromManyAddressesDoesNotEvictAPersonsSignIn(t *testing.T) {
 func TestAFloodOfOneSignInPerAddressIsAdmittedAndMissesAPersonsSignIn(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
+	auth.LiftStartLimits(e.svc) // this test is about the table behind the start limits
 	rng := rand.New(rand.NewPCG(7, 7))
 	auth.SetEvictionPick(e.svc, func(n int) (int, error) { return rng.IntN(n), nil })
 	b := e.browser(t)
@@ -102,6 +105,7 @@ func TestAFloodOfOneSignInPerAddressIsAdmittedAndMissesAPersonsSignIn(t *testing
 func TestSignInsAreAcceptedAgainOnceAFloodsFlowsLapse(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
+	auth.LiftStartLimits(e.svc) // this test is about the table behind the start limits
 	flood(t, e, 1100, 1)
 	e.clock.Advance(time.Hour)
 	b := e.browser(t)
@@ -116,6 +120,7 @@ func TestSignInsAreAcceptedAgainOnceAFloodsFlowsLapse(t *testing.T) {
 func TestAnIPv6FloodInsideOneSlash64CountsAsOneSource(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, func(_ *env, cfg *auth.Config) { cfg.ClientKey = control.ClientAddress(nil) })
+	auth.LiftStartLimits(e.svc) // this test is about the table behind the start limits
 	b := e.browser(t)
 	providerURL := b.toProvider(t, "google")
 	e.clock.Advance(time.Second) // the person's sign-in is the oldest open one
@@ -140,6 +145,7 @@ func ownerHoldsARole(e *env, cfg *auth.Config) {
 func TestAStepUpOutlastsAFloodOfUnauthenticatedSignIns(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, ownerHoldsARole)
+	auth.LiftStartLimits(e.svc) // this test is about the table behind the start limits
 	b := e.browser(t)
 	csrf := signedIn(t, b, "owner-sub")
 	target := auth.PATRequest{Name: "cli", Scopes: []string{"prs:write"}}.StepUpTarget()
@@ -159,6 +165,7 @@ func TestAStepUpOutlastsAFloodOfUnauthenticatedSignIns(t *testing.T) {
 func TestAStepUpStartsWhileAFloodOfOneSignInPerAddressFillsEverySlot(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, ownerHoldsARole)
+	auth.LiftStartLimits(e.svc) // this test is about the table behind the start limits
 	b := e.browser(t)
 	csrf := signedIn(t, b, "owner-sub")
 	if refused := flood(t, e, 1100, 1); refused != 0 {
@@ -180,6 +187,7 @@ func TestAStepUpStartsWhileAFloodOfOneSignInPerAddressFillsEverySlot(t *testing.
 func TestStepUpsOfARoleLessAccountPushOutNobodyElse(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, ownerHoldsARole)
+	auth.LiftStartLimits(e.svc) // this test is about the table behind the start limits
 	owner := e.browser(t)
 	csrf := signedIn(t, owner, "owner-sub")
 	target := auth.PATRequest{Name: "cli", Scopes: []string{"prs:write"}}.StepUpTarget()
@@ -206,6 +214,7 @@ func TestStepUpsOfARoleLessAccountPushOutNobodyElse(t *testing.T) {
 func TestASignInFloodSharingThePersonsAddressTakesEverySlotToEvictIt(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
+	auth.LiftStartLimits(e.svc) // this test is about the table behind the start limits
 	b := e.browser(t)
 	providerURL := b.toProvider(t, "google")
 	e.clock.Advance(time.Second)
@@ -225,6 +234,7 @@ func TestASignInFloodSharingThePersonsAddressTakesEverySlotToEvictIt(t *testing.
 func TestSessionsOfAPersonWithARoleOutlastRoleLessSignIns(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, ownerHoldsARole, func(_ *env, cfg *auth.Config) { cfg.MaxSessions = 4 })
+	auth.LiftStartLimits(e.svc) // this test is about the table behind the start limits
 	owner := e.browser(t)
 	owner.signIn(t, "google", "owner-sub")
 	e.clock.Advance(time.Second) // the Owner's session is the closest to expiry
@@ -242,6 +252,7 @@ func TestSessionsOfAPersonWithARoleOutlastRoleLessSignIns(t *testing.T) {
 func TestOneAccountSigningInRepeatedlyCannotSignOthersOut(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, func(_ *env, cfg *auth.Config) { cfg.MaxSessions = 4 })
+	auth.LiftStartLimits(e.svc) // this test is about the table behind the start limits
 	alice := e.browser(t)
 	alice.signIn(t, "google", "alice-sub")
 	e.clock.Advance(time.Second) // alice's session is the closest to expiry

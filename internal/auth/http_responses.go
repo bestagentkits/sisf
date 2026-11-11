@@ -28,6 +28,9 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case core.CodeRateLimited:
 		status = http.StatusTooManyRequests
+		if after := typed.Details["retry_after_seconds"]; after != "" {
+			w.Header().Set("Retry-After", after)
+		}
 	case core.CodeUnavailable:
 		status = http.StatusBadGateway
 	case core.CodeNotSupported:

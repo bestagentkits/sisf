@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/identity"
 )
@@ -54,6 +55,9 @@ func (s *Service) beginFlow(providerName, returnTo, source, stepUpKey string, ta
 	if !ok {
 		return "", "", core.NewError(core.CodeNotFound, "no login provider is named "+providerName)
 	}
+	if err := s.admitStart(source, stepUpKey); err != nil {
+		return "", "", err
+	}
 	var state, nonce, verifier string
 	for _, v := range []*string{&state, &nonce, &verifier, &binding} {
 		if *v, err = randomToken(32); err != nil {
@@ -79,9 +83,7 @@ func (s *Service) beginFlow(providerName, returnTo, source, stepUpKey string, ta
 		returnTo: returnTo, started: now, expires: now.Add(flowTTL), source: source, stepUpKey: stepUpKey, stepUpFor: target}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if ss, ok := s.sessions[stepUpKey]; ok && s.cfg.HoldsRole != nil {
-		f.protected = s.cfg.HoldsRole(ss.actorID)
-	}
+	f.protected = s.protectedStepUpLocked(stepUpKey)
 	if !s.pruneFlowsLocked(now, source, stepUpKey, f.protected) {
 		return "", "", core.NewError(core.CodeRateLimited, "too many sign-ins are open; try again in a few minutes")
 	}
@@ -89,6 +91,41 @@ func (s *Service) beginFlow(providerName, returnTo, source, stepUpKey string, ta
 	f.seq = s.flowSeq
 	s.flows[digest(state)] = f
 	return authURL, binding, nil
+}
+
+// admitStart takes a start from source off the start limits
+// (report.NewStartLimiter): StartsPerSource a minute from one source and,
+// from all together, the rate at which a flood rotating through new
+// sources pushes out a person's sign-in finished within a minute with
+// probability at most 15%. A start beyond them is refused with
+// RATE_LIMITED and the seconds until it may be tried again. A step-up of a
+// person who holds a role is exempt: it is bounded per session
+// (maxStepUpsPerSession), needs that person's session, and must start
+// while a flood holds the limits.
+func (s *Service) admitStart(source, stepUpKey string) error {
+	s.mu.Lock()
+	if s.starts == nil {
+		s.starts = report.NewStartLimiter(maxFlows)
+	}
+	protected, starts := s.protectedStepUpLocked(stepUpKey), s.starts
+	s.mu.Unlock()
+	if protected {
+		return nil
+	}
+	ok, wait := starts.Take(source, s.cfg.Clock.Now())
+	if ok {
+		return nil
+	}
+	err := core.NewError(core.CodeRateLimited, "too many sign-ins are being started; try again shortly")
+	err.Details = map[string]string{"retry_after_seconds": report.RetryAfter(wait)}
+	return err
+}
+
+// protectedStepUpLocked reports whether a step-up of the session under
+// stepUpKey is protected: its person holds a role (Config.HoldsRole).
+func (s *Service) protectedStepUpLocked(stepUpKey string) bool {
+	ss, ok := s.sessions[stepUpKey]
+	return ok && stepUpKey != "" && s.cfg.HoldsRole != nil && s.cfg.HoldsRole(ss.actorID)
 }
 
 // completeFlow finishes the flow named by state. The flow is consumed before
@@ -169,7 +206,13 @@ func (s *Service) completeFlow(ctx context.Context, providerName, state, code, b
 // pushes out the oldest protected flow. An unprotected flow is refused only
 // when every flow left is protected.
 func (s *Service) pruneFlowsLocked(now time.Time, source, stepUpKey string, protected bool) bool {
+	// The newcomer's source is counted as if its new flow were in the
+	// table already, so a source that holds a flow loses its own oldest
+	// before any other source's flow is touched.
 	perSource := map[string]int{}
+	if !protected {
+		perSource[source]++
+	}
 	stepUps := 0
 	for k, f := range s.flows {
 		switch {
