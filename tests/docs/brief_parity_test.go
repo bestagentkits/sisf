@@ -118,12 +118,12 @@ func TestADRSetIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 21 {
-		t.Fatalf("want 21 ADR files, got %d: %v", len(files), files)
+	if len(files) != 22 {
+		t.Fatalf("want 22 ADR files, got %d: %v", len(files), files)
 	}
 	// laterProposed are the ADRs after the open points that await the
 	// Owner's acceptance.
-	laterProposed := map[int]bool{21: true}
+	laterProposed := map[int]bool{21: true, 22: true}
 	nameRe := regexp.MustCompile(`^(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`)
 	required := []string{"## Status", "## Context", "## Decision", "## Consequences", "## Acceptance test"}
 	for i, f := range files {
