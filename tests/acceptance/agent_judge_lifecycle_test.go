@@ -211,9 +211,15 @@ func (j *inTurn) Score(ctx context.Context, req qa.JudgeRequest) (qa.Scorecard, 
 
 // finished starts a run and returns once it has ended, so the harness's
 // next dispatcher round sees it done without waiting on the wall clock.
+//
+// The fake GitHub's commit IDs are content hashes, not git objects, so
+// seedRepository cannot check the workspace out at the base the dispatcher
+// names; its seed commit, which holds the same files, stands in for it and
+// the agent's patch is taken against the workspace's HEAD.
 type finished struct{ agentjudge.Runner }
 
 func (f finished) Start(ctx context.Context, task agent.Task, ws agent.WorkspaceRef, scopes []string) (agent.RunRef, error) {
+	ws.BaseSHA = ""
 	ref, err := f.Runner.Start(ctx, task, ws, scopes)
 	if err != nil {
 		return ref, err
