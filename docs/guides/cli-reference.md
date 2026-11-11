@@ -1,23 +1,34 @@
 # CLI reference
 
-Every `sisf` command, its flags and where it is used. The command line is the authority: `sisf help` lists the commands and `sisf help <command>` (for a pair such as `runs explain`, `sisf help runs explain`) prints the full text. This page adds the flags the help text does not print yet, read from the flag definitions in `cmd/sisf/`.
+Every `sisf` command, its flags and where it is used. The command line is the authority: `sisf help` lists the commands and `sisf help <command>` (for a pair such as `runs explain`, `sisf help runs explain`) prints the full text, with the flags. This page groups them and adds the flags of `emergency-stop`, whose help names them only in its usage line, read from the flag definitions in `cmd/sisf/`.
 
-Conventions of every command (`cmd/sisf/main.go`): exit 0 on success, 1 on a failure, 2 on a wrong invocation (an unknown command or flag, a missing argument). Some invalid flag values still exit 1 with an `INVALID_ARGUMENT:` message instead of 2. A failure prints `sisf: CODE: message`, often followed by `next:` lines. Secrets are never taken from a flag value and never printed.
+Conventions of every command (`cmd/sisf/main.go`): exit 0 on success, 1 on a failure, 2 on a wrong invocation. A wrong invocation (an unknown command or flag, a missing argument, an option `init` refuses) prints `sisf <command>: message` and the command's usage line. A failure prints `sisf: CODE: message`, often followed by `next:` lines. A few invalid values are noticed only later and exit 1 with `INVALID_ARGUMENT:`, for example `sisf up --mode docker` on a Standalone install. Secrets are never taken from a flag value and never printed.
 
-## Install and lifecycle
-
-Owner: `cmd/sisf/cmd_install*.go`, `internal/install`. Procedures: [installing](install.md), [maintenance](maintenance.md).
+## Version
 
 | Command | What it does |
 |---|---|
-| `sisf init --repo owner/name (--github-token-env NAME \| --profile sim \| --dev --github-credential gh-cli) [sign-in flags] [--mode standalone\|docker] [--dir path]` | Creates an install: `factory.yaml`, one credential set per zone, a root signing key, the budget confirmation and, in Standalone mode, service unit files. Builds and starts nothing. |
+| `sisf version [--json]`, `sisf --version`, `sisf -v` | Prints the version, the commit, the build date, the Go version and the platform of this `sisf`, for example `sisf f431fb2 (commit <sha>, built <date>, go1.25.14 darwin/arm64)`. `--json` prints one object with `version`, `commit`, `build_date`, `modified` (only when the build had local changes), `go_version` and `platform`. A `sisf` built by `make install` carries its version; one from a plain `go build` or `go install` reports `devel`. |
+
+The top-level `-v` is the version; `sisf down -v` is the flag that removes data.
+
+## Install and lifecycle
+
+Owner: `cmd/sisf/cmd_install*.go`, `cmd/sisf/cmd_service_units.go`, `internal/install`. Procedures: [installing](install.md), [maintenance](maintenance.md).
+
+| Command | What it does |
+|---|---|
+| `sisf init --repo owner/name (--github-token-env NAME --github-installation-id N --github-app-login LOGIN \| --profile sim \| --dev --github-credential gh-cli) [sign-in flags] [--mode standalone\|docker] [--dir path]` | Creates an install in a new or empty directory: `factory.yaml`, one credential set per zone, a root signing key, the budget confirmation, `source.json` (the source checkout) and, in Standalone mode, service unit files. Builds and starts nothing. Refuses a directory that holds other files, and refuses without a source checkout of sisf (`--source`, else the checkout holding the current directory). Every option is checked before anything is written; a refused one exits 2 and leaves nothing behind. It asks for the budget only when standard input is a terminal. |
 | `sisf up [--dir path] [init flags]` | Builds the programs or images from the source checkout, signs the release manifest, checks isolation, prepares the state store and starts every unit. Creates the install first when the directory holds none. Standalone stays in the foreground; Docker starts one Compose project and returns. |
 | `sisf stop [--dir path]` | Stops the factory and keeps everything (`docker compose stop` in Docker mode). |
-| `sisf restart [--dir path]` | Restarts every unit (Standalone: the same as sending SIGHUP to `sisf up`). |
-| `sisf down [--dir path] [-v]` | Stops the factory; Docker mode also removes the project's containers and networks. `-v` (or `--volumes`) also removes the data: the project's volumes in Docker mode (`docker compose down --volumes`), `<dir>/data` in Standalone. Secrets and `factory.yaml` are never removed. On a Standalone install that is not running, `stop`, `down` and `down -v` answer `NOT_FOUND` and change nothing. |
-| `sisf doctor [--dir path]` | Checks the install end to end and changes nothing. Prints one `OK`, `WARN` or `FAIL` line per check and exits 1 on any failure. |
+| `sisf restart [--dir path]` | Restarts every unit (Standalone: the same as sending SIGHUP to `sisf up`). On a stopped Standalone install it answers `NOT_FOUND` and exits 1. |
+| `sisf down [--dir path] [-v]` | Stops the factory; Docker mode also removes the project's containers and networks. `-v` (or `--volumes`) also removes the data: the project's volumes in Docker mode (`docker compose down --volumes`), `<dir>/data` in Standalone. Secrets and `factory.yaml` are never removed. |
+| `sisf doctor [--dir path] [--json]` | Checks the install end to end and changes nothing. Prints `sisf <version>, install <dir>`, then one `OK`, `WARN`, `FAIL` or `SKIP` line per check and a summary; exits 1 on any failure. Its `running` check proves the factory answering on the fixed ports is this install's; when it is not running, or another factory answers, the live checks are skipped. `--json` prints the same report as one object: `dir`, `sisf_version`, `ok`, `counts`, `checks`. |
+| `sisf service units [--dir path] [--source path]` | Writes the systemd and launchd units of an existing Standalone install again, into `<dir>/service/`, for when `init` skipped them or after `sisf` or the checkout moved. The units run the `sisf` that wrote them. |
 
 `--dir` defaults to `$SISF_HOME`, else `~/.sisf/factory`.
+
+On a factory that is not running, `stop`, `down` and `down -v` exit 0 and print `the factory in <dir> was not running; nothing to stop` (`down -v`: `...; its data is removed`). In Docker mode `up`, `stop` and `down` refuse a Compose project of this install's name that another install made, and change nothing.
 
 Flags of `init`, which `up` also accepts (`cmd/sisf/cmd_install_flags.go`):
 
@@ -28,8 +39,9 @@ Flags of `init`, which `up` also accepts (`cmd/sisf/cmd_install_flags.go`):
 | `--profile sim` | run against the fake GitHub and the fake identity provider |
 | `--repo` | GitHub repository the factory serves, `owner/name` |
 | `--factory-id` | factory id; default `sisf-<repository name>` (also the Compose project name) |
-| `--source` | source checkout to build from; default the current directory |
-| `--github-token-env` | name of the environment variable holding the GitHub token |
+| `--source` | source checkout to build from; default the one `init` recorded, else the checkout holding the current directory |
+| `--github-token-env` | name of the environment variable holding the GitHub token; the factory reads it once per start and never refreshes it, so it must be long-lived |
+| `--github-installation-id`, `--github-app-login`, `--github-app-id` | the GitHub App installation whose webhooks control accepts, the account the factory writes as (`name[bot]`) and, optionally, that account's numeric id. The first two are required outside `--profile sim` and `--dev --github-credential gh-cli`, and refused with `--profile sim`. |
 | `--github-api-url` | GitHub API root (https, or http on loopback) |
 | `--github-reconcile-interval` | how often control asks GitHub for changed issues, 10s to 1h (default 1m) |
 | `--debug` | Docker mode: publish the state store on 127.0.0.1:7469 for this `up` |
@@ -42,7 +54,7 @@ Agent and build flags (`cmd/sisf/cmd_install_flags_agents.go`): `--coder-agent f
 
 ## Inspecting and operating a running factory
 
-These commands call the running factory's REST surface (`cmd/sisf/cmd_call.go`). Each takes the connection flags `--url` (default `$SISF_URL`, the stored login, or `http://127.0.0.1:7463`), `--dir` (where the stored login is) and `--allow-insecure-http` (send credentials over plain http to a non-loopback host). The token comes from `$SISF_TOKEN`, else from `sisf login`.
+These commands call the running factory's REST surface (`cmd/sisf/cmd_call.go`). Each takes the connection flags `--url` (default `$SISF_URL`, the stored login, or `http://127.0.0.1:7463`), `--dir` (where the stored login is) and `--allow-insecure-http` (send credentials over plain http to a non-loopback host). The token comes from `$SISF_TOKEN`, else from `sisf login`. When `--dir` or `$SISF_HOME` holds an install, they first ask the server which factory it is and send nothing, the token included, to one that is not this install's: the answer is `CONFLICT: the server at <url> is factory <id>, not <id> of the install in <dir>; nothing was sent to it` (`cmd/sisf/cmd_call_factory_identity.go`).
 
 | Command | Same as | Notes |
 |---|---|---|
@@ -55,16 +67,29 @@ These commands call the running factory's REST surface (`cmd/sisf/cmd_call.go`).
 | `sisf approvals get <id>` | `sisf call approvals.get` | shows the nonce, subject digest and policy revision a decision must name |
 | `sisf approvals decide <id> --decision d --nonce n --subject-digest d --policy-revision r [--reason text] [--dry-run]` | `sisf call approvals.decide` | Also takes `--budget-cap` (micros) and `--expires-at` (RFC 3339) as conditions, and `--idempotency-key`. Without `--dry-run` it answers `STEP_UP_REQUIRED`: a decision runs only from the dashboard form. See [approvals](policy-and-approvals.md#deciding-an-approval). |
 | `sisf call <action> [--input json\|-] [--dry-run] [--approval id] [--idempotency-key key] [--url url]` | | Calls any action and prints its JSON result. The actions are the operations of [`api/openapi.yaml`](../../api/openapi.yaml) (`/api/v1/actions/<action>`). |
+| `sisf call --list [--json]` | | Lists every action this `sisf` knows, with its guard (`read`, `write`, `sensitive`, `step-up`) and summary, without a running factory. |
 
-Actions with no shortcut today: `budget.get`, `budget.set`, `secrets.list_refs`, `factory.emergency_stop`, `deployments.rollback`, `setup.sample_issue`, `telemetry.search`, `features.list`, `changelog.list`, `docs.list`, `decisions.propose_update`. Call them with `sisf call`, for example `sisf call budget.get`.
+Actions without a shortcut, such as `budget.get` or `setup.sample_issue`, are called with `sisf call`; `sisf call --list` names them all.
 
 ## Emergency stop
 
 | Command | What it does |
 |---|---|
-| `sisf emergency-stop --factory-id id --reason text [--actor id] [--admin addr] [--state-dsn-env NAME] [--status \| --lift]` | Records the stop in the state store (from `$SISF_STATE_DSN` or the variable `--state-dsn-env` names), then asks the supervisor on `--admin` (default `127.0.0.1:7464`; `unix:/path` or a loopback `host:port`; empty skips it) to cancel runs and revoke their secrets. Prints JSON; exits 1 when a route it was given failed. |
+| `sisf emergency-stop --reason text [--dir path \| --factory-id id] [--actor id] [--admin addr] [--state-dsn-env NAME] [--status \| --lift]` | Records the stop in the state store, then asks the supervisor on its admin address to cancel runs and revoke their secrets. Prints what each route did as JSON; exits 1 when a route it was given failed. |
 
-`--actor` defaults to `user:$USER`. `--status` asks the supervisor only and needs neither `--factory-id` nor `--reason`. `--lift` uses the store only. The procedure, per mode, is in the [incident runbook](incident.md#1-stop-the-damage).
+Flags (`cmd/sisf/cmd_emergency_stop.go`):
+
+| Flag | Meaning |
+|---|---|
+| `--dir` | install to stop (default `$SISF_HOME`, else `~/.sisf/factory`). The factory id comes from its `factory.yaml`, the state store from the control zone's secrets, and the admin address is `127.0.0.1:7464`. A Docker install is refused with `NOT_SUPPORTED`: its store and admin socket are inside the Compose project, so use `sisf call factory.emergency_stop` or the dashboard. |
+| `--factory-id` | factory to stop when it is not installed on this host; then the store comes from `$SISF_STATE_DSN` (or the variable `--state-dsn-env` names) and the admin address from `--admin`. Beside `--dir`, it must match the install's id. |
+| `--admin` | supervisor admin address: `unix:/absolute/path` or a loopback `host:port`; `none` skips the supervisor route |
+| `--actor` | who asks, for the audit log (default `user:$USER`) |
+| `--reason` | why the factory is stopped or the stop is lifted |
+| `--status` | ask the supervisor only whether a stop is in force; needs no `--reason` |
+| `--lift` | lift the stop through the store; the supervisor socket cannot lift one |
+
+Before anything is sent to the supervisor, it must prove that it serves this factory (and, with an install, this install's root key); otherwise the answer is `CONFLICT: the supervisor that answers serves factory "<id>", not "<id>"; nothing was sent to it`. A supervisor also refuses a stop for a factory other than its own. The procedure, per mode, is in the [incident runbook](incident.md#1-stop-the-damage).
 
 ## Manifests
 

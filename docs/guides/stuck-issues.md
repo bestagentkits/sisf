@@ -49,6 +49,12 @@ docker exec sisf-hello-supervisor supervisor status --admin=unix:/run/sisf/admin
 
 The Docker form is the container's own health check (`templates/compose/compose.yaml`).
 
+## An issue that stays in ReleaseCandidate
+
+The factory publishes by itself only the units that `release.units` in the install's `<dir>/factory.yaml` names, which is the manifest the supervisor reads (`cmd/supervisor/self_publishable_units.go`). The manifest `sisf init` writes names `app` alone (`internal/install/manifest_build.go`). A candidate that builds any other unit, such as a change to the factory's own control unit, is refused before anything is deployed, with `APPROVAL_REQUIRED` and a reason that names `release.units`, and the issue waits in ReleaseCandidate for a person to decide (`tests/acceptance/release_units_owner_choice_test.go`).
+
+In this release `sisf runs explain` reports such an issue as `in_progress`, and the refusal is kept only in the run's release record in the state store; no CLI command or log line shows it. When an issue stays in ReleaseCandidate, compare the unit its change builds with `release.units`. Which units the factory may publish by itself is the Owner's choice; this release has no tested procedure to move a refused candidate on.
+
 ## Retrying a Blocked issue
 
 A Blocked issue moves again only through the Owner's retry, which sends it back to Ready (`cmd/factoryd/roles.go`). Run it on the host with the control zone's environment, as for the policy commands ([how, per mode](policy-and-approvals.md#running-owner-commands-on-the-host)):

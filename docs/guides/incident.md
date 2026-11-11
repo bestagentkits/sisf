@@ -13,16 +13,16 @@ An emergency stop freezes publishing, holds every issue so nothing is claimed, c
 
 ### Standalone
 
-Prerequisites: a shell on the factory's host as the user who owns the install directory. The factory id is the `factory_id:` line of `<dir>/factory.yaml`; the state store is the SQLite file `<dir>/data/state/factory.db`; the supervisor listens on `127.0.0.1:7464`, the command's default.
+Prerequisites: a shell on the factory's host as the user who owns the install directory. Name the install and nothing else: the command reads the factory id from `<dir>/factory.yaml`, the state store from the control zone's secrets and uses the supervisor's admin address `127.0.0.1:7464` (`internal/install/emergency_stop_target.go`). Without `--dir` it uses `$SISF_HOME`, else `~/.sisf/factory`.
 
 ```sh
 D=$HOME/.sisf/factory                                   # your install directory
-ID=$(sed -n 's/^factory_id: //p' "$D/factory.yaml")
-SISF_STATE_DSN="$D/data/state/factory.db" \
-  sisf emergency-stop --factory-id "$ID" --reason "<why>" --actor "<your name>"
+sisf emergency-stop --dir "$D" --reason "<why>"
 ```
 
-Expected output, when both routes answered: a JSON object with a `store` and a `supervisor` part, each holding `stop_id`, `stopped_at` and `"publishing_frozen": true`, the supervisor's part also `claims_held`, `runs_cancelled` and `secrets_revoked`. When the supervisor does not answer, the store part is still printed, followed by (observed):
+Before anything is sent to the supervisor, it must prove it serves this factory and this install's root key; another factory on the same host may hold the admin address. A supervisor also refuses a stop that names another factory.
+
+Expected output, when both routes answered: a JSON object with a `store` and a `supervisor` part, each holding `stop_id`, `stopped_at` and `"publishing_frozen": true`, the supervisor's part also `claims_held`, `runs_cancelled` and `secrets_revoked`. When the supervisor does not answer, the store part is still printed, followed by:
 
 ```text
   "failures": [
@@ -31,24 +31,25 @@ Expected output, when both routes answered: a JSON object with a `store` and a `
 sisf: UNAVAILABLE: the emergency stop could not use every route it was given
 ```
 
-The publishing freeze and the claim hold are in force then, but only the supervisor route cancels runs in flight: run the same command again once the supervisor answers.
+The publishing freeze and the claim hold are in force then, but only the supervisor route cancels runs in flight: run the same command again once the supervisor answers. `--admin none` uses the store route alone.
 
-Verify: `sisf emergency-stop --status` asks the supervisor and prints `"frozen": true` with the stop's id, actor and reason.
+Verify: `sisf emergency-stop --dir "$D" --status` asks the supervisor and prints `"frozen": true` with the stop's id, actor and reason.
 
 Undo, once the cause is fixed: lift it through the store. Cancelled runs stay cancelled and revoked secrets stay revoked; the held issues are let go and can be claimed again.
 
 ```sh
-SISF_STATE_DSN="$D/data/state/factory.db" \
-  sisf emergency-stop --factory-id "$ID" --reason "<what was fixed>" --actor "<your name>" --lift
+sisf emergency-stop --dir "$D" --reason "<what was fixed>" --lift
 ```
 
-Expected: `emergency stop lifted`. Lifting when no stop is in force answers `NOT_FOUND: no emergency stop is in force`; lifting without `SISF_STATE_DSN` answers `INVALID_ARGUMENT: no state store connection was given; set SISF_STATE_DSN` (observed).
+Expected: `emergency stop of <factory id> lifted`. Lifting when no stop is in force answers `NOT_FOUND: no emergency stop is in force`.
 
-`--actor` is optional when `$USER` is set (it then defaults to `user:$USER`); in cron, a container or a service without `$USER` the command refuses with `--factory-id, --reason and an actor (--actor or $USER) are required`.
+`--actor` is optional when `$USER` is set (it then defaults to `user:$USER`); in cron, a container or a service without `$USER` the command refuses with `missing who asks: pass --actor, since $USER is not set` (observed).
+
+For a factory that is not installed on this host, name it with `--factory-id`, give the store connection in `$SISF_STATE_DSN` and the admin address with `--admin`. Flags and messages: [CLI reference](cli-reference.md#emergency-stop), [troubleshooting](troubleshooting.md#policy-and-emergency-stop).
 
 ### Docker Compose
 
-In Docker mode the host has no route to either one by default: the state store is on the project's internal `factory` network, and the supervisor's admin socket is a Unix socket on the `<project>-supervisor-admin` volume (`templates/compose/compose.yaml`). Use the supervisor route through the control plane instead. It is the `factory.emergency_stop` action: Owner only, no approval and no step-up (`internal/actions/operationsactions`), served by every surface; `tests/acceptance/step_up_and_write_limits_test.go` drives it as a signed-in Owner over REST with no approval and checks that the supervisor recorded each stop:
+`sisf emergency-stop --dir` refuses a Docker install with `NOT_SUPPORTED` and names the routes below. In Docker mode the host has no route to either one by default: the state store is on the project's internal `factory` network, and the supervisor's admin socket is a Unix socket on the `<project>-supervisor-admin` volume (`templates/compose/compose.yaml`). Use the supervisor route through the control plane instead. It is the `factory.emergency_stop` action: Owner only, no approval and no step-up (`internal/actions/operationsactions`), served by every surface; `tests/acceptance/step_up_and_write_limits_test.go` drives it as a signed-in Owner over REST with no approval and checks that the supervisor recorded each stop:
 
 ```sh
 sisf login                                  # once, as the Owner

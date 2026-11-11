@@ -60,7 +60,7 @@ policy revision <sha> is in force (content sha256:<digest>)
 
 Verify: running the same command again prints the same line; the control zone takes in issues from its next pass. A failure names the cause, for example `POLICY_HOLD: AGENTS.md could not be read at <sha>` when a file is missing at that commit or GitHub cannot be reached.
 
-Undo: a revision in force can only be replaced by another approved one (below). To start over on a test install, remove the state, which holds the policy record: `sisf down -v` while the factory runs, or delete `<dir>/data` once a Standalone factory is stopped.
+Undo: a revision in force can only be replaced by another approved one (below). To start over on a test install, remove the state, which holds the policy record: `sisf down -v`, whether or not the factory runs.
 
 ## Changing the policy
 

@@ -2,45 +2,52 @@
 
 Real messages of `sisf`, `sisf doctor` and `factoryd`, what causes them and what fixes them. Messages marked (observed) were produced by running the command; the others are quoted from the code that prints them. For an issue that does not move, start with [Why is my issue stuck?](stuck-issues.md); for an outage, the [incident runbook](incident.md).
 
-`sisf doctor` prints one line per check: `OK`, `WARN` or `FAIL`, the check's name and the detail. After a report with failures it also prints `sisf: INTERNAL: the install has failing checks` and exits 1; that line only repeats the summary and is not a fault in `sisf`. Read the `FAIL` lines above it.
+`sisf doctor` starts with `sisf <version>, install <dir>`, then prints one line per check: `OK`, `WARN`, `FAIL` or `SKIP`, the check's name and the detail, and a summary of the form `<n> ok, <n> warnings, <n> failures, <n> skipped`. It exits 1 when any check failed and prints nothing more. A `SKIP` follows from an earlier failure, usually `running`: fix that one first. Name the first line in a bug report; `sisf version` prints the same build.
 
 ## Installing and starting
 
 | Message | Cause | Fix |
 |---|---|---|
-| `sisf: INVALID_ARGUMENT: the value of SISF_STATE_DSN has a character an env file cannot carry safely` | the install directory's path contains a space, which cannot be written to an env file (`init` names the derived variable, not the path) | use a path without spaces; delete the empty directory the failed `init` left |
+| `the value of SISF_STATE_DSN has a character an env file cannot carry safely` | the install directory's path has a character the env files cannot carry (`internal/install/secrets.go`; a Standalone install accepts single spaces); the message names the derived variable, not the path | use a plain path; a failed `init` leaves nothing behind |
+| `sisf init: the install directory <dir> already holds N other entries (...); choose a new or empty directory with --dir` (observed, exit 2) | `init` in a directory that holds other files | choose a new or empty directory |
+| ``sisf init: no source checkout of sisf was found: run sisf from the checkout, or pass --source with its path; every `sisf up` builds the factory from it`` (observed, exit 2) | `init` ran outside a checkout of this repository | run it from the checkout, or pass `--source` |
+| `sisf init: a real install acts for a GitHub App and cannot start without it; pass --github-installation-id N (...) and --github-app-login LOGIN (...)` (observed, exit 2) | a real install without its GitHub App installation and account | pass both flags ([create the install](install.md#4-create-the-install)) |
 | `sisf: ALREADY_EXISTS: an install already exists in <dir>` (observed) | `init` on an existing install; nothing was changed | `sisf up --dir <dir>` starts it; to start over, `sisf down -v` and delete `<dir>` |
-| `<path> is not a source checkout (no go.mod); pass --source` | `sisf up` builds from the current directory, which is not a checkout of this repository (for example under a service manager) | run it from the checkout, or pass `--source <checkout>` ([service units](install.md#running-standalone-as-a-service)) |
+| `<path> is not a source checkout (no go.mod); pass --source` | the checkout `sisf up` builds from (`--source`, the one recorded in `<dir>/source.json`, else the current directory) is gone or is not a checkout of this repository | pass `--source <checkout>`; for the service units, `sisf service units --dir <dir> --source <checkout>` ([service units](install.md#running-standalone-as-a-service)) |
 | `this install is already running (process N)` | a Standalone `sisf up` for this directory is running | use that one, or `sisf stop` first |
 | `this install runs in <mode> mode; the mode is fixed when it is created`, `the simulation profile is fixed when the install is created` | `up` was given a `--mode` or `--profile` other than the install's | drop the flag; make a new install for another mode |
 | `the budget is already confirmed; it is confirmed once` | a second budget confirmation at `up` | change it through the dashboard ([budget](policy-and-approvals.md#budget)) |
-| `init` prints `Type "unlimited" to confirm it:` and then `Not confirmed. The factory will only take in issues.` | no budget flag was given; the prompt also appears when standard input is not a terminal, and before other errors | pass `--confirm-unlimited --no-alert` (or `--alert-threshold`), or `--budget-cap` |
-| `--dev and --profile sim are different profiles; choose one`, `--budget-cap and --confirm-unlimited are two different budgets; choose one` | contradictory flags | follow the message |
+| `init` prints `warning: The budget is not confirmed: the factory takes in issues and starts no work until you confirm it ...` (observed), or at a terminal asks `Type "unlimited" to confirm it:` | no budget flag was given; `init` asks only when standard input is a terminal | pass `--confirm-unlimited --no-alert` (or `--alert-threshold`), or `--budget-cap`, now or at the first `sisf up` |
+| `warning: Service units were not written: ...` from `init` (observed for a missing `go`) | `init` ran from a temporary `go run` build, or `go` was not on `PATH` | build `sisf` with `make install`, then `sisf service units --dir <dir>` |
+| `sisf: CONFLICT: the Compose project <name> belongs to another install ...; nothing was changed` | Docker mode: another install of the same factory id runs on this host | make this install again with `--factory-id` |
+| `--dev and --profile sim are different profiles; choose one`, `--budget-cap and --confirm-unlimited are two different budgets; choose one` (observed, exit 2) | contradictory flags | follow the message |
 | the supervisor refuses with `PERMISSION_DENIED`, reported by `sisf up` | a Standalone install outside the simulation with `--exec local`: candidate builds are held by design | add a [Docker build sandbox](install.md#building-in-a-docker-sandbox) |
 
 ## Stopping and removing
 
 | Message | Cause | Fix |
 |---|---|---|
-| `sisf: NOT_FOUND: no running standalone factory was found for <dir>` (observed, from `stop`, `down` and `down -v`) | the Standalone factory is not running; `down -v` then removes nothing | nothing to stop. To remove the data of a stopped Standalone install, delete `<dir>/data` yourself |
+| `the factory in <dir> was not running; nothing to stop` (observed, from `stop` and `down`, exit 0) | the factory is already stopped | nothing to do; `down -v` on a stopped install still removes the data and says `...; its data is removed` |
+| `sisf: NOT_FOUND: the factory in <dir> is not running` (observed, from `restart`, exit 1) | `restart` acts only on a running factory | `sisf up --dir <dir>` |
+| `sisf: NOT_FOUND: <dir> holds no install (no factory.yaml)` (observed) | wrong `--dir` or `$SISF_HOME` | point at the install |
 
 ## doctor
 
 | Line | Cause | Fix |
 |---|---|---|
-| `FAIL manifest  <dir> has no readable factory manifest: run sisf init first` | wrong `--dir` or `$SISF_HOME`, or no install yet | point at the install, or create one |
-| `FAIL release manifest  no usable signed release manifest: run sisf up to build and sign one` | the install was never started | `sisf up` |
-| `FAIL zones  the control plane does not answer on 127.0.0.1:7463: start the factory with sisf up`; `FAIL state store  no state database at <dir>/data/state/factory.db: ...` | the factory is not running (Standalone) | `sisf up` |
-| `FAIL containers  Docker Compose does not answer for project <project>: ...`; several `edge admin`, `docker filters` failures | Docker mode and the project is not running, or `docker` is not on `PATH` | check `docker compose version`, then `sisf up` |
-| `OK zone ...` and `OK rollback ... last known good release recorded` next to `FAIL state store  no state database` | another factory on this machine answers on the fixed ports; `doctor` reports its health | run one factory per machine ([why](install.md#one-factory-per-machine)) |
-| `FAIL github events  control and the supervisor refuse to start: INVALID_ARGUMENT: the manifest must name the GitHub installation in extensions.github_installation_id` | a real install without its installation id or account | [name them in factory.yaml](install.md#5-name-the-github-installation-and-account) |
+| ``FAIL manifest  <dir> holds no install (no factory.yaml): run `sisf init --dir <dir>` first`` (observed) | wrong `--dir` or `$SISF_HOME`, or no install yet | point at the install, or create one |
+| ``FAIL running  the factory is not running (no `sisf up` process of this install): start it with `sisf up --dir <dir>` ``, followed by `SKIP` lines | the factory is not running; in Docker mode the reason names the Compose project or a missing `docker` | `sisf up`; in Docker mode check `docker compose version` first |
+| `FAIL running  this install is not running (...), yet port 7463 is answered by factory <id>, not this install's <id>; ...` | another factory on this machine holds the fixed ports | stop that factory first; one factory per machine ([why](install.md#one-factory-per-machine)) |
+| `FAIL running  this install runs, but ... is answered by factory <id> ...` | this install's `sisf up` runs, yet another factory answers on the ports | stop the other one, then `sisf restart --dir <dir>` |
+| ``WARN running  the `sisf up` process of this install runs, but not every unit answered with this install's identity; see the lines below`` | Standalone: a unit is down | read the `zones` and `rollback` lines |
+| `FAIL state store  no state database at <dir>/data/state/factory.db: ...` | the factory runs but its store is missing | `sisf stop`, then `sisf up` |
+| `FAIL github events  control and the supervisor refuse to start: INVALID_ARGUMENT: the manifest must name the GitHub installation in extensions.github_installation_id` | an install made before `init` took the GitHub App flags, or a hand-edited `factory.yaml` | make the install again with `--github-installation-id` and `--github-app-login` ([create the install](install.md#4-create-the-install)) |
 | `FAIL github  the token was refused: it is wrong, expired or revoked` | the GitHub token no longer works | replace the token; an App installation token expires after an hour and nothing renews it in this release ([real install](install.md#1-github-an-app-and-the-token-the-factory-acts-as)) |
 | `FAIL github  the token cannot see <repo>: grant the app access to the repository (answer 404)` | the account has no access to the repository | grant it |
 | `FAIL github  the token can read <repo> but not write: ...` | read-only access | give the account write access to issues, contents and pull requests |
 | `WARN github token scope  the token carries the workflow scope, ...` | a classic token with `workflow` | issue a token without it |
 | `WARN budget  not confirmed: the factory takes in issues but starts no work; ...` | no budget confirmation | `sisf up --confirm-unlimited --no-alert`, or `--budget-cap` |
 | `FAIL delegated keys  the <purpose> key expired at <time>; run sisf up to issue new ones` | the supervisor's delegated keys expired | stop the factory, `sisf up` |
-| `FAIL compose isolation  the Compose file is missing: run sisf up to render it` | Docker mode before the first `up` | `sisf up` renders it |
 | `FAIL sandbox network  ... is not internal: ...` | the build sandbox network is an ordinary bridge | recreate it with `docker network create --internal` |
 | `FAIL fake identity  sign-in points at the fake identity provider on 127.0.0.1:7468, ...` | a real install signs in at the simulation's fake | create the install again with a real provider |
 
@@ -50,6 +57,8 @@ Real messages of `sisf`, `sisf doctor` and `factoryd`, what causes them and what
 |---|---|---|
 | `sisf: UNAUTHENTICATED: no login for http://127.0.0.1:7463; run sisf login or set SISF_TOKEN` (observed, for another URL) | no stored login for that URL | `sisf login` (with the same `--url` and `--dir`) |
 | `sisf: UNAVAILABLE: the factory at <url> cannot be reached` | the factory is not running, or `--url` / `$SISF_URL` is wrong | `sisf up`; check the URL |
+| `sisf: CONFLICT: the server at <url> is factory <id>, not <id> of the install in <dir>; nothing was sent to it` | `call`, `login` or a shortcut reached another factory than the install in `--dir` or `$SISF_HOME`; no token or login request was sent | name this factory's URL with `--url`, or stop the other factory; `sisf doctor` shows who answers |
+| `sisf: CONFLICT: the server at <url> does not say which factory it is (HTTP <code>), so nothing was sent to it` | what answers on that URL is not a factory of this release | check the URL; `sisf doctor` |
 | `STEP_UP_REQUIRED` from `approvals decide`, `deployments.rollback` or `budget.set` | these run only from their dashboard forms after a fresh sign-in | use the dashboard ([approvals](policy-and-approvals.md#deciding-an-approval)) |
 | `NOT_SUPPORTED` on a step-up | the person signed in with GitHub, which cannot confirm a step-up | sign in through the OpenID Connect provider |
 | `sisf approvals decide: --decision, --nonce, --subject-digest and --policy-revision are required; "sisf approvals get <id>" shows the last three` (observed) | missing flags | read them with `sisf approvals get <id>` |
@@ -63,5 +72,15 @@ Real messages of `sisf`, `sisf doctor` and `factoryd`, what causes them and what
 | `APPROVAL_REQUIRED: replacing the policy in force needs an approval of the new revision` (observed) | a second revision without an approval | [changing the policy](policy-and-approvals.md#changing-the-policy) |
 | `INVALID_ARGUMENT: commit "<sha>" must be a full 40- or 64-character lowercase hash` (observed) | a short SHA | pass the full SHA |
 | `sisf: UNAVAILABLE: the emergency stop could not use every route it was given` (observed) | one route failed; the JSON above names it under `failures` | see the [incident runbook](incident.md#1-stop-the-damage) |
-| `sisf: INVALID_ARGUMENT: no state store connection was given; set SISF_STATE_DSN` (observed) | `--lift` without the store | set `SISF_STATE_DSN` as the runbook shows |
-| `sisf emergency-stop: --factory-id, --reason and an actor (--actor or $USER) are required` (observed) | one of the three is missing; with `$USER` unset, the actor is | pass `--actor` |
+| ``store: UNAVAILABLE: the state store is not prepared; run `sisf up`, which migrates it`` (observed, under `failures`) | the install was never started, so it has no state store | nothing to stop yet |
+| `sisf emergency-stop: missing the reason: pass --reason`, `missing who asks: pass --actor, since $USER is not set`, `missing the state store, which a lift needs: pass --dir of the install or set $SISF_STATE_DSN` (observed, exit 2) | an input is missing; the message names each one | pass what it names |
+| `sisf emergency-stop: --factory-id <id> does not match the install in --dir, which is factory <id>` (observed, exit 2) | `--factory-id` and `--dir` name different factories | drop one |
+| `sisf: INVALID_ARGUMENT: an emergency stop needs the state store, the supervisor socket or both` (observed) | `--factory-id` with `--admin none` and no `$SISF_STATE_DSN` | give the store or the admin address |
+| `sisf: NOT_SUPPORTED: the install in <dir> runs in Docker mode: ...` | `emergency-stop` cannot reach a Docker install's store and admin socket from the host | `sisf call factory.emergency_stop`, or the dashboard ([incident runbook](incident.md#docker-compose)) |
+| `supervisor: CONFLICT: the supervisor that answers serves factory "<id>", not "<id>"; nothing was sent to it` | another factory's supervisor holds the admin address | stop the right factory; one factory per machine ([why](install.md#one-factory-per-machine)) |
+
+## Releases
+
+| Message | Cause | Fix |
+|---|---|---|
+| `APPROVAL_REQUIRED: unit "<unit>" is not one release.units lets the factory publish by itself; a governance change needs human approval in a separate update cycle` | the candidate is a build of a unit that `release.units` in the install's `factory.yaml` does not name; the manifest `sisf init` writes names `app` alone (`internal/supervisor/release/governance.go`) | nothing is deployed and the issue waits in ReleaseCandidate; see [Why is my issue stuck?](stuck-issues.md#an-issue-that-stays-in-releasecandidate). The message is kept in the run's release record in the state store; this release prints it on no CLI command or log line |
