@@ -74,8 +74,8 @@ func TestOnlyDiagramEdgesPassTheEdgeCheckAcrossEverySourceTargetAndEvent(t *test
 			}
 		}
 	}
-	if tried != 16*17*26 || accepted != 24 {
-		t.Fatalf("tried %d steps and accepted %d, want 7072 tried and 24 accepted", tried, accepted)
+	if tried != 16*17*27 || accepted != 25 {
+		t.Fatalf("tried %d steps and accepted %d, want 7344 tried and 25 accepted", tried, accepted)
 	}
 }
 

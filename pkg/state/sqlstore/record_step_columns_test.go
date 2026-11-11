@@ -204,6 +204,13 @@ func TestPostgresEveryZoneTakesEveryLegalStepThroughItsOwnRole(t *testing.T) {
 		if rec.State != core.StateBlocked {
 			t.Fatalf("the rolled back release left %+v", rec)
 		}
+		// It blocks a verified release that can no longer be judged.
+		rec = walk(control, created(issue(96)), core.EventInfoSufficient, core.EventScopePermitted)
+		rec = walk(control, claimFor(control, rec, "run-1"), core.EventDevelopmentStarted, core.EventCandidateSubmitted,
+			core.EventQAPassed, core.EventRolloutStarted, core.EventRolloutHealthy, core.EventPostDeployVerified, core.EventVerifiedReleaseUnjudged)
+		if rec.State != core.StateBlocked {
+			t.Fatalf("the unjudged verified release left %+v", rec)
+		}
 		// It refuses a release, which blocks the issue.
 		rec = walk(control, created(issue(95)), core.EventInfoSufficient, core.EventScopePermitted)
 		rec = walk(control, claimFor(control, rec, "run-1"), core.EventDevelopmentStarted, core.EventCandidateSubmitted,

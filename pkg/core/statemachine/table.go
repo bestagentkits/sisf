@@ -2,7 +2,7 @@
 // leads to, and which proof a step needs before it may be taken.
 //
 // The transition table is the single list of legal steps. It holds the edge
-// that creates a record in Intake and the twenty-three edges between the fifteen
+// that creates a record in Intake and the twenty-four edges between the fifteen
 // states; a step that is not in the table is refused with INVALID_TRANSITION,
 // so no component can add a state or a shortcut by writing one. Ten edges are
 // guarded: a guard supplies the facts and the machine judges them, and a step
@@ -144,6 +144,13 @@ var lifecycle = []Edge{
 	// Verified is entered only on the post-deploy proof, which is the proof
 	// that the issue may close; closing records it and adds nothing.
 	{core.StateVerified, core.EventIssueClosed, core.StateClosed, GuardNone},
+	// A verified release that can no longer be judged to be what serves,
+	// healthy, and that no later release replaced, cannot be finished, and
+	// must be able to block its issue rather than wait in Verified for good.
+	// Blocked starts no work, spends nothing and releases nothing, and the
+	// way out of it is guarded. Only the control zone, where the supervisor
+	// writes, takes this step, under the issue lease.
+	{core.StateVerified, core.EventVerifiedReleaseUnjudged, core.StateBlocked, GuardNone},
 	// The recovery report is evidence for people, not a permission: Blocked
 	// grants nothing and the way out of it is guarded.
 	{core.StateRolledBack, core.EventRecoveryReported, core.StateBlocked, GuardNone},

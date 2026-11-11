@@ -125,6 +125,18 @@ var releaseMigrations = []migration{
 		file:      "0010_release_refusal_and_lease_steps.sql",
 		postgres:  releaseRefusalScript,
 	},
+	{
+		// The lifecycle gains the step that blocks an issue whose verified
+		// release can no longer be judged to be what serves, healthy, and
+		// that no later release replaced, written by the control zone only.
+		// The trigger and the zones' policies are written afresh for it; no
+		// data moves and no column changes. The previous release never
+		// writes the new step, and every step it does write is still an
+		// edge, so it keeps working on the schema.
+		Migration: state.Migration{Version: 11, Name: "a verified release that can no longer be judged blocks its issue", BackwardCompatible: true},
+		file:      "0011_verified_release_unjudged_step.sql",
+		postgres:  recordStepScript,
+	},
 }
 
 // Migrations lists the migrations this release ships, for callers that must

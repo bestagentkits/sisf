@@ -107,6 +107,11 @@ const (
 	EventRegressionDetected Event = "regression_detected"
 	// EventIssueClosed moves Verified to Closed.
 	EventIssueClosed Event = "issue_closed"
+	// EventVerifiedReleaseUnjudged moves Verified to Blocked: the verified
+	// release can no longer be judged to be what serves, healthy, and was
+	// not replaced by a later release, so it cannot be finished; the issue
+	// waits for the Owner.
+	EventVerifiedReleaseUnjudged Event = "verified_release_unjudged"
 	// EventRecoveryReported moves RolledBack to Blocked with evidence.
 	EventRecoveryReported Event = "recovery_reported"
 	// EventRetryAuthorized moves Blocked to Ready: a safe, authorized retry.
@@ -118,8 +123,8 @@ var allEvents = []Event{
 	EventApprovalRequired, EventScopePermitted, EventOwnerApproved, EventApprovalDenied,
 	EventClaimed, EventDevelopmentStarted, EventClaimStopped, EventDevelopmentStopped,
 	EventCandidateSubmitted, EventQAFailed, EventQAPassed, EventReleaseRefused, EventRolloutStarted, EventRolloutHealthy,
-	EventErrorThresholdExceeded, EventPostDeployVerified, EventRegressionDetected, EventIssueClosed, EventRecoveryReported,
-	EventRetryAuthorized,
+	EventErrorThresholdExceeded, EventPostDeployVerified, EventRegressionDetected, EventIssueClosed, EventVerifiedReleaseUnjudged,
+	EventRecoveryReported, EventRetryAuthorized,
 }
 
 // Events returns every lifecycle event in lifecycle order. The caller owns
