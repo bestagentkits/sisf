@@ -56,6 +56,12 @@ type inspectView struct {
 			Status       string   `json:"status"`
 			PullRequests []string `json:"pull_requests"`
 		} `json:"run"`
+		// PullRequest is the candidate's pull request the supervisor opened
+		// once QA passed it; nil before.
+		PullRequest *struct {
+			URL   string `json:"url"`
+			State string `json:"state"`
+		} `json:"pull_request"`
 	} `json:"output"`
 }
 

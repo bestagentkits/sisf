@@ -32,3 +32,15 @@ func TestThePaidRunRefusesASandboxWithOpenFactoryWork(t *testing.T) {
 		})
 	}
 }
+
+// Candidate branches earlier runs left are reported, never deleted.
+func TestLeftoverCandidateBranchesAreReported(t *testing.T) {
+	t.Parallel()
+	if got := leftoverCandidateBranches(""); got != "none" {
+		t.Fatalf("no branches: %q", got)
+	}
+	got := leftoverCandidateBranches("refs/heads/sisf/f1/run-a-1\nrefs/heads/sisf/f1/run-b-2\n")
+	if !strings.Contains(got, "2 from earlier runs") || !strings.Contains(got, "sisf/f1/run-a-1, sisf/f1/run-b-2") {
+		t.Fatalf("leftoverCandidateBranches = %q", got)
+	}
+}

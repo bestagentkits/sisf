@@ -34,6 +34,43 @@ func requireIdleSandbox(ctx context.Context, r *commandRunner) {
 		r.fatalf("preflight: %s has open factory work a fresh install would take up (%s); close it before a paid run", sandboxRepo, busy)
 	}
 	r.report.check("sandbox has no open factory work", statusPass, "no open issue with a "+factoryLabelPrefix+" label and no open pull request")
+	reportLeftoverCandidateBranches(ctx, r)
+}
+
+// candidateBranchPrefix starts every branch the supervisor commits a
+// candidate to: sisf/<factory>/<run>-<attempt>.
+const candidateBranchPrefix = "sisf/"
+
+// reportLeftoverCandidateBranches notes the candidate branches earlier runs
+// left in the sandbox. A new run commits to branches of its own run id, so
+// they do not stop it, but they accumulate: the Owner deletes the ones
+// whose pull request is merged or abandoned. The run reads them and
+// deletes nothing.
+func reportLeftoverCandidateBranches(ctx context.Context, r *commandRunner) {
+	r.t.Helper()
+	out, err := r.run(ctx, ghLimit, nil, "gh", "api", "--paginate",
+		"repos/"+sandboxRepo+"/git/matching-refs/heads/"+candidateBranchPrefix, "--jq", ".[].ref")
+	if err != nil {
+		r.report.check("leftover candidate branches", statusInfo, "the sandbox's branches cannot be listed: "+err.Error())
+		return
+	}
+	r.report.check("leftover candidate branches", statusInfo, leftoverCandidateBranches(out))
+}
+
+// leftoverCandidateBranches describes, from the refs `gh api` lists one per
+// line, the candidate branches of earlier runs.
+func leftoverCandidateBranches(refs string) string {
+	var names []string
+	for ref := range strings.FieldsSeq(refs) {
+		if name, ok := strings.CutPrefix(ref, "refs/heads/"); ok && strings.HasPrefix(name, candidateBranchPrefix) {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return "none"
+	}
+	return fmt.Sprintf("%d from earlier runs, left in place (delete them by hand once their pull requests are merged or closed): %s",
+		len(names), strings.Join(names, ", "))
 }
 
 // openFactoryWork lists, from the JSON of `gh issue list` and `gh pr list`,

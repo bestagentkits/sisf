@@ -53,6 +53,9 @@ func waitForClose(ctx context.Context, r *commandRunner, o *factoryObserver, pro
 					r.report.PullRequests = addUnique(r.report.PullRequests, pr)
 				}
 			}
+			if pr := v.Output.PullRequest; pr != nil && pr.URL != "" {
+				r.report.PullRequests = addUnique(r.report.PullRequests, pr.URL)
+			}
 			if rec.State != last {
 				r.logf("%s is %s", issue, rec.State)
 				last = rec.State
