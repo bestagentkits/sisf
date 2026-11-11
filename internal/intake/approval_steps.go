@@ -187,7 +187,8 @@ func (s *Service) rerequest(ctx context.Context, in input, snap snapshot, sow So
 	}
 	doc := snap.doc
 	doc.ApprovalID, doc.NotedRequest = request.ID, ""
-	p := &plan{doc: doc, supersedes: snap.doc.ApprovalID}
+	doc.Closing = owesClose(snap.doc.Closing, snap.doc.ApprovalID, request.ID)
+	p := &plan{doc: doc}
 	effects := []func() (state.OutboxMessage, error){waitingEffect(sow, request.ID, verdict)}
 	if edited {
 		doc.SoWVersion, doc.SoWDigest = sow.Version, sow.Digest

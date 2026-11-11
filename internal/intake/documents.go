@@ -35,6 +35,12 @@ type issueDoc struct {
 	// Denial is set when the issue was blocked because its scope did not get
 	// the approval it needed.
 	Denial *Denial `json:"denial,omitempty"`
+	// Closing lists the approval requests the issue stopped waiting on that
+	// are still to be closed, each with the request that replaced it. An
+	// entry is written with the step that replaced the request and removed
+	// once the request is closed, so a close that failed is owed until a
+	// later pass makes it.
+	Closing []replacedRequest `json:"closing,omitempty"`
 }
 
 // clarifyState tracks the questions asked on an issue.

@@ -162,6 +162,16 @@ func (s *Service) reconcile(ctx context.Context, ref core.IssueRef, resume bool,
 	if err != nil {
 		return result, err
 	}
+	if len(snap.doc.Closing) > 0 {
+		// A request a written step replaced is closed before anything else,
+		// whatever the issue's state: closing it once failed.
+		if err := s.closeReplaced(ctx, snap.doc); err != nil {
+			return result, err
+		}
+		if snap, err = s.load(ctx, ref); err != nil {
+			return result, err
+		}
+	}
 	result.State = snap.record.State
 	// An issue that is parked or past intake is left alone before anything
 	// is read from policy or GitHub: it costs nothing.
