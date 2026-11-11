@@ -65,7 +65,10 @@ func (c *CandidatePRs) Land(ctx context.Context, req release.LandRequest) (relea
 		return c.leave(ctx, pr, reason)
 	}
 	self, err := c.factoryAccount(ctx)
-	if err != nil {
+	switch {
+	case err != nil && !transient(err):
+		return c.leave(ctx, pr, fmt.Sprintf("GitHub refused to name the factory's own account (status %d, %s)", github.ErrorStatus(err), core.CodeOf(err)))
+	case err != nil:
 		return release.Landing{}, err
 	}
 	switch {

@@ -142,3 +142,20 @@ func TestALostAnswerToOpeningThePullRequestStillAdoptsIt(t *testing.T) {
 		}
 	})
 }
+
+// When GitHub refuses for good to say which account the factory's token is,
+// as for a token that may not read its user, the landing is decided: the
+// candidate is left for the Owner with that reason and the issue can
+// close, rather than staying verified for ever.
+func TestAPermanentRefusalToNameTheFactorysAccountLeavesTheCandidate(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		ctx := context.Background()
+		w := newLandingWorld(t, db.Open(t, core.ZoneControl))
+		w.data.FailOn(http.MethodGet, "/user", http.StatusForbidden, "Resource not accessible by integration")
+		landing, err := w.prs.Land(ctx, w.req)
+		if err != nil || landing.Merged || w.data.Merges() != 0 || !strings.Contains(landing.Summary, "refused to name the factory's own account (status 403") {
+			t.Fatalf("Land = %+v, %v after %d merges", landing, err, w.data.Merges())
+		}
+	})
+}
