@@ -103,6 +103,9 @@ func TestTypedTextFieldsAreSearchedForSecrets(t *testing.T) {
 			m.Storage.Artifacts.Kind = manifest.ArtifactsObjectStore
 			m.Storage.Artifacts.Location = "s3://" + fakeAccessKeyID + ":opaque-example-value@bucket/sisf"
 		},
+		"egress.allow[0]": func(m *manifest.Manifest) {
+			m.Egress.Allow[0] = "https://u:opaque-example-value@proxy.example.com"
+		},
 		"release.low_traffic.synthetic_suite": func(m *manifest.Manifest) {
 			m.Release.LowTraffic.SyntheticSuite = "https://suite.example.com/run?api_key=opaque-example-value"
 		},
@@ -124,8 +127,11 @@ func TestTypedTextFieldsAreSearchedForSecrets(t *testing.T) {
 		})
 	}
 
-	// What these fields usually hold passes.
+	// What these fields usually hold passes, names that merely start like
+	// a provider's key prefix included.
 	m := docker(t)
+	m.Components.Control.Source = "apps/sk-inventory-management-service"
+	editUnit(m, manifest.UnitApp, func(u *manifest.Unit) { u.Image = "ghcr.io/acme/sk-learn-notebook-runtime-server" })
 	m.Components.Agent.Source = "ssh://git@github.com/acme/factory.git"
 	m.Components.Application.Source = "git@github.com:acme/hello-app.git"
 	editUnit(m, manifest.UnitControl, func(u *manifest.Unit) {

@@ -145,6 +145,26 @@ func TestSettingsThatDescribeASecretAreAccepted(t *testing.T) {
 		}
 	}
 
+	// A switch is a switch wherever its name stands: as a variable, a flag
+	// or a query parameter.
+	switches := map[string]any{
+		"env":  []any{"ENABLE_PASSWORD=true", "USE_CREDENTIALS=0"},
+		"args": []any{"--require-password", "yes", "--use-credentials=false"},
+		"url":  "https://idp.example.com/x?use_credentials=true",
+	}
+	if report := Check(inCoderConfig(t, switches)); !report.Conformant() {
+		t.Errorf("switches that hold a yes or a no hold no secret, got %+v", report.Findings)
+	}
+	switchHeld := map[string]map[string]any{
+		"env[0]":  {"env": []any{"ENABLE_PASSWORD=opaque-example-value"}},
+		"args[1]": {"args": []any{"--require-password", "opaque-example-value"}},
+		"args[0]": {"args": []any{"--use-credentials=opaque-example-value"}},
+		"url":     {"url": "https://idp.example.com/x?enable_password=opaque-example-value"},
+	}
+	for at, config := range switchHeld {
+		wantOnly(t, Check(inCoderConfig(t, config)), RuleSecretInline, "adapters.coder.config."+at)
+	}
+
 	// Its value is still judged by its shape, and a switch holds only a
 	// yes or a no.
 	refused := map[string]any{

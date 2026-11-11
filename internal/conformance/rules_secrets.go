@@ -112,7 +112,7 @@ func (c *checker) flagValueIsSecret(at string, items []any, i int) bool {
 	}
 	flag, isText := items[i-1].(string)
 	value, alsoText := items[i].(string)
-	if !isText || !alsoText || !takesSecret(flag) || !givenSecret(value) {
+	if !isText || !alsoText || !secretGivenToFlag(flag, value) {
 		return false
 	}
 	c.add(RuleSecretInline, at, "store the secret with a secret provider and pass "+manifest.SecretRefForm+" to the flag, or a file that holds it",
@@ -120,9 +120,9 @@ func (c *checker) flagValueIsSecret(at string, items []any, i int) bool {
 	return true
 }
 
-// assignsSecret reports whether text is NAME=value with a name that says
-// the value is a secret and a value that is not a reference.
+// assignsSecret reports whether text is NAME=value with a value that is a
+// secret written in place of a reference (see holdsSecret).
 func assignsSecret(text string) bool {
 	name, value, assigned := strings.Cut(text, "=")
-	return assigned && value != "" && !manifest.IsSecretRef(value) && namesSecret(strings.TrimSpace(name))
+	return assigned && holdsSecret(strings.TrimSpace(name), value)
 }

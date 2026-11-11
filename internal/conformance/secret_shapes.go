@@ -34,6 +34,10 @@ var (
 	// API keys and cloud access key IDs.
 	providerToken = regexp.MustCompile(`\b(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{22,}|glpat-[A-Za-z0-9_-]{20,}|` +
 		`xox[abposr]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}|(AKIA|ASIA)[0-9A-Z]{16})`)
+	// keyTail tells a model provider's key, whose random tail mixes digits
+	// and capitals, from a name that merely starts with sk-, such as
+	// sk-inventory-service.
+	keyTailDigit, keyTailCapital = regexp.MustCompile(`[0-9]`), regexp.MustCompile(`[A-Z]`)
 	// secretFlag is a command-line flag that names a secret and is given its
 	// value after "=", as --token=VALUE is.
 	secretFlag = regexp.MustCompile(`(^|\s)--?([A-Za-z][A-Za-z0-9_.-]*)=(\S+)`)
@@ -56,12 +60,24 @@ func secretShape(value string) string {
 		return "a URL with a token in it"
 	case authorizationHeader.MatchString(value) || carriesSchemeCredential(value):
 		return "an Authorization credential"
-	case providerToken.MatchString(value):
+	case hasProviderToken(value):
 		return "a token in the form its provider issues"
 	case flagSetsSecret(value):
 		return "a command-line flag that sets a secret"
 	}
 	return ""
+}
+
+// hasProviderToken reports whether text holds a credential in the form its
+// provider issues.
+func hasProviderToken(text string) bool {
+	for _, token := range providerToken.FindAllString(text, -1) {
+		tail, isKey := strings.CutPrefix(token, "sk-")
+		if !isKey || (keyTailDigit.MatchString(tail) && keyTailCapital.MatchString(tail)) {
+			return true
+		}
+	}
+	return false
 }
 
 // carriesSchemeCredential reports whether text holds a credential after an
@@ -87,7 +103,7 @@ func urlCarriesToken(text string) bool {
 		if err != nil {
 			continue
 		}
-		if parsed.User != nil && providerToken.MatchString(parsed.User.Username()) {
+		if parsed.User != nil && hasProviderToken(parsed.User.Username()) {
 			return true
 		}
 	}
@@ -96,44 +112,58 @@ func urlCarriesToken(text string) bool {
 		if unescaped, err := url.QueryUnescape(value); err == nil {
 			value = unescaped
 		}
-		if queryNamesSecret(name) && !manifest.IsSecretRef(value) {
+		if queryHoldsSecret(name, value) {
 			return true
 		}
 	}
 	return false
 }
 
-// queryNamesSecret reports whether a URL query parameter holds a secret by
-// its name: one a config key would be refused under, or a signature.
-func queryNamesSecret(name string) bool {
-	if namesSecret(name) {
-		return true
-	}
+// queryHoldsSecret reports whether a URL query parameter holds a secret: a
+// value that is not a reference under a name a config key would be refused
+// under or a signature's, or text other than a yes or a no under a switch.
+func queryHoldsSecret(name, value string) bool {
 	words := keyWords(name)
-	return len(words) > 0 && slices.Contains(signatureParams, words[len(words)-1])
+	if len(words) > 0 && slices.Contains(signatureParams, words[len(words)-1]) {
+		return !manifest.IsSecretRef(value)
+	}
+	return holdsSecret(name, value)
+}
+
+// holdsSecret reports whether value, given under name as a variable, a flag
+// or a parameter, is a secret written in place of a reference: a value that
+// is not a reference under a name that names a secret, or text other than a
+// yes or a no under a name that turns a secret on or off.
+func holdsSecret(name, value string) bool {
+	switch {
+	case value == "":
+		return false
+	case namesSecret(name):
+		return !manifest.IsSecretRef(value)
+	case namesSecretSwitch(name):
+		return !isBooleanWord(value)
+	}
+	return false
 }
 
 // flagSetsSecret reports whether text holds a flag named like a secret and
 // given a value that is not a reference, such as --token=VALUE.
 func flagSetsSecret(text string) bool {
 	for _, match := range secretFlag.FindAllStringSubmatch(text, -1) {
-		if namesSecret(match[2]) && !manifest.IsSecretRef(match[3]) {
+		if holdsSecret(match[2], match[3]) {
 			return true
 		}
 	}
 	return false
 }
 
-// takesSecret reports whether a word is a flag named like a secret that
-// takes its value from the next word, as "--token VALUE" does.
-func takesSecret(word string) bool {
-	name, isFlag := strings.CutPrefix(word, "-")
-	return isFlag && !strings.Contains(word, "=") && namesSecret(strings.TrimLeft(name, "-"))
-}
-
-// givenSecret reports whether a word that follows a flag named like a
-// secret is a value written in place of a reference: neither another flag
-// nor a reference.
-func givenSecret(word string) bool {
-	return word != "" && !strings.HasPrefix(word, "-") && !manifest.IsSecretRef(word)
+// secretGivenToFlag reports whether value, the word after flag, is a secret
+// written in place of a reference, as in "--token VALUE": flag is named like
+// a secret, or turns one on or off, and value is not another flag.
+func secretGivenToFlag(flag, value string) bool {
+	name, isFlag := strings.CutPrefix(flag, "-")
+	if !isFlag || strings.Contains(flag, "=") || strings.HasPrefix(value, "-") {
+		return false
+	}
+	return holdsSecret(strings.TrimLeft(name, "-"), value)
 }

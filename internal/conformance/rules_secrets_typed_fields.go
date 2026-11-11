@@ -9,8 +9,9 @@ import (
 
 // checkTypedTextSecrets searches the typed fields that hold free text for a
 // value shaped like a secret: what each unit runs and its image, where each
-// zone's source and health check are, where artifacts are kept, the
-// supervisor's image and the synthetic suite. Such a field names a place or
+// zone's source and health check are, where artifacts and the state store
+// are kept, the supervisor's image, the synthetic suite and the hosts egress
+// allows. Such a field names a place or
 // a program; a credential pasted into it, as in a URL with a token, would be
 // read by everyone who reads the manifest. The words of a command are also
 // held to the flag and assignment forms a secret takes there.
@@ -25,7 +26,7 @@ func (c *checker) checkTypedTextSecrets() {
 		for i, word := range unit.Command {
 			place := fmt.Sprintf("%s.command[%d]", at, i)
 			switch {
-			case i > 0 && takesSecret(unit.Command[i-1]) && givenSecret(word):
+			case i > 0 && secretGivenToFlag(unit.Command[i-1], word):
 				c.add(RuleSecretInline, place, "store the secret with a secret provider and pass "+manifest.SecretRefForm+" to the flag, or a file that holds it",
 					"%s follows a flag named like a secret, so it is that secret written in the manifest (the value is not shown)", place)
 			case assignsSecret(word):
@@ -48,6 +49,9 @@ func (c *checker) checkTypedTextSecrets() {
 	c.refuseSecretShape("storage.artifacts.location", c.m.Storage.Artifacts.Location)
 	c.refuseSecretShape("storage.state.path", c.m.Storage.State.Path)
 	c.refuseSecretShape("release.low_traffic.synthetic_suite", c.m.Release.LowTraffic.SyntheticSuite)
+	for i, host := range c.m.Egress.Allow {
+		c.refuseSecretShape(fmt.Sprintf("egress.allow[%d]", i), host)
+	}
 	if c.m.Supervisor != nil {
 		c.refuseSecretShape("supervisor.image", c.m.Supervisor.Image)
 	}
