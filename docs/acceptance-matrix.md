@@ -52,8 +52,19 @@ Status meanings: **present** means the file exists in this branch and its packag
 | The Owner's retry returns a refused, interrupted, unjudged or rolled-back release to Ready | `pkg/core/statemachine/retry_guard_test.go`, `tests/acceptance/exhausted_run_blocked_test.go` | present |
 | A run that used its attempts, or whose policy was superseded, blocks its issue | `tests/acceptance/exhausted_run_blocked_test.go`, `tests/acceptance/policy_superseded_mid_run_test.go` | present |
 | A process an earlier supervisor left is stopped by pid and start time before the LKG starts | `adapters/deploy/local/slot_records_test.go`, `cmd/supervisor/lkg_adoption_test.go` | present |
+| A verified release whose publication failed, or that an emergency stop held, is finished on a later pass | `internal/supervisor/release/verified_release_finished_after_failure_test.go` (`TestAVerifiedReleaseWhosePublicationFailedIsFinishedOnALaterPass`), `tests/acceptance/verified_release_publication_outage_test.go` | present |
+| An unwatched release is rolled back even when another holder keeps its issue lease | `internal/supervisor/release/recovery_without_the_issue_lease_test.go` (`TestAnUnwatchedReleaseIsRolledBackEvenWhenAnotherHolderKeepsItsLease`) | present |
+| A candidate that changes only identity or access code is refused for approval | `internal/supervisor/release/identity_and_access_protected_test.go` (`TestACandidateThatChangesOnlyIdentityOrAccessCodeIsRefusedForApproval`) | present |
+| The edge and the module's dependencies are protected | `internal/supervisor/release/edge_and_dependencies_protected_test.go` (`TestTheEdgeAndTheModulesDependenciesAreProtected`) | present |
 | A held build is listed and its Owner reminded | `tests/acceptance/held_build_listing_test.go`, `tests/acceptance/held_build_reminder_test.go` | present |
 | A sandboxed build that reports no SBOM or provenance is held before QA | `tests/acceptance/candidate_build_without_supply_chain_refs_test.go` | present |
+
+## Standalone run lock and units
+
+| Behaviour | Test file | Status |
+|---|---|---|
+| A unit that outlives a killed `sisf up` keeps the install running until it is stopped | `internal/install/orphaned_units_test.go` (`TestAUnitThatOutlivesAKilledUpKeepsTheInstallRunningUntilStopped`) | present |
+| A Standalone unit starts only its own binary from the install's `bin/` directory | `internal/conformance/launcher_commands_test.go` (`TestAStandaloneUnitStartsOnlyItsOwnBinaryFromTheInstallsBinDirectory`) | present |
 
 ## Public bug reports
 
@@ -64,7 +75,11 @@ Status meanings: **present** means the file exists in this branch and its packag
 | Reports are published one batch a minute, and never by an install that names the factory by its ID only | `cmd/factoryd/wiring/control_report_publish_test.go`, `cmd/factoryd/wiring/control_report_publish_id_only_test.go` | present |
 | `factory.status` counts reports waiting and given up | `cmd/factoryd/wiring/control_report_status_test.go` | present |
 | A report issue is never taken up alone, and when asked for it is the request of someone without access | `internal/intake/report_issue_requester_test.go` | present |
+| A report flood opens at most the daily budget of issues, in receipt order, and nothing waiting is dropped | `internal/control/report_flood_test.go` (`TestAReportFloodOpensAtMostTheDailyBudgetInReceiptOrder`) | present |
+| A flood that fills the report store does not stop a person's report | `internal/control/report_store_fairness_test.go` (`TestAFloodFillingTheStoreDoesNotStopAPersonsReport`) | present |
+| A secret split by invisible characters is not published | `internal/control/report_hidden_secret_test.go` (`TestASecretSplitByInvisibleCharactersIsNotPublished`) | present |
 | Floods of sign-ins, device logins and client registrations, one request per source, are refused rather than evicting a person's | `internal/auth/sign_in_exhaustion_negative_test.go`, `internal/control/api/device_start_exhaustion_negative_test.go`, `internal/oauthas/client_registration_exhaustion_negative_test.go` | present |
+| A one-per-source flood rarely evicts a person's sign-in, login request or client, which a random pick among the unprotected entries keeps unaimed | `internal/auth/login_flow_eviction_test.go` (`TestAOnePerSourceFloodRarelyEvictsAPersonsSignIn`), `internal/control/api/device_grants_eviction_test.go` (`TestAOnePerSourceFloodRarelyDropsAPersonsLoginRequest`), `internal/oauthas/dynamic_client_eviction_test.go` (`TestAOnePerSourceFloodRarelyDropsAPersonsClient`) | present |
 
 ## Additional security requirements (brief §7)
 
