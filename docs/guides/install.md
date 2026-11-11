@@ -1,0 +1,169 @@
+# Installing a factory
+
+How to install a factory beyond the simulation of the [quickstart](quickstart.md): on your own machine against a real repository (development install), and for real (a GitHub App or account, a real sign-in provider, an HTTPS origin). Day-to-day operation is in the [operations guide](operations.md); upgrades and backups in [maintenance](maintenance.md).
+
+## Before you choose
+
+| | Standalone | Docker Compose |
+|---|---|---|
+| Runs as | local processes under one foreground `sisf up` | one Compose project of containers; `sisf up` returns |
+| Trust model | trusted code only: agents and units run as your user, unconfined ([security guide](security.md#trust-model-of-each-mode)) | one container per unit with per-zone networks and credentials; no container sandboxing of untrusted code in this release |
+| State store | SQLite file in `<dir>/data/state/factory.db` | PostgreSQL container, data in the `<project>-state-data` volume |
+| Real coding agents | yes, as local processes | no |
+| `--dev` install | yes | refused |
+
+Both are supported operating modes; nothing else is ([capability matrix](../capability-matrix.md)).
+
+Requirements for every install:
+
+- Linux or macOS. `sisf` does not build for Windows (`internal/install/exec.go` uses Unix process groups).
+- A checkout of this repository and Go 1.25: `sisf up` builds the factory from source every time it starts.
+- `sisf` built once and kept at a stable path, for example `go install ./cmd/sisf` (into `$(go env GOPATH)/bin`). Do not run the factory with `go run`: the service unit files `init` writes name the running executable.
+- Docker mode, or a Standalone build sandbox: Docker with Compose.
+- Free ports 7460-7469 on 127.0.0.1 (`internal/install/options.go`).
+
+### One factory per machine
+
+The ports are fixed, so one machine runs one factory. `init` does not check this. A second install's units cannot bind the ports, and its `sisf doctor` probes reach the first factory and report that one's health. `sisf emergency-stop` with its default `--admin 127.0.0.1:7464` reaches whichever supervisor listens there: the admin socket's stop request names no factory (`internal/supervisor/admin_emergency_stop.go`).
+
+Two Docker installs of repositories with the same name also share a Compose project name (`sisf-<repository name>`), so their containers and volumes collide. Pass `--factory-id` to tell them apart.
+
+## Development install
+
+`--dev` is a Standalone install on loopback for one person on their own machine, against a real repository, signing in at the fake identity provider. It needs a GitHub CLI login with write access to the repository:
+
+```sh
+sisf init --dev --mode standalone --dir "$HOME/.sisf/dev" --repo owner/app \
+  --github-credential gh-cli --budget-cap 5
+```
+
+Expected output (observed, paths shortened):
+
+```text
+factory sisf-app created in <dir>
+sign in at http://127.0.0.1:7463 as the Owner http://127.0.0.1:7468#owner
+warning: The root signing key is stored in <dir>/secrets/control. ...
+warning: DEVELOPMENT INSTALL: the Owner signs in through the fake identity provider on 127.0.0.1:7468, without a password; ...
+next: sisf up --dir <dir>
+```
+
+Then, from the checkout, `sisf up --dir "$HOME/.sisf/dev"`, and in another terminal `sisf doctor --dir "$HOME/.sisf/dev"`.
+
+- `--github-credential gh-cli` takes the token from `gh auth token` at `init` and at every `up`; it is accepted only with `--dev`.
+- Such an install has no GitHub App installation: the factory acts as your gh login, takes no webhooks (`/webhooks/github` is not served) and learns of issues only through the control zone's reconciliation with GitHub (`cmd/factoryd/wiring/control_reconcile.go`; default every minute; `--github-reconcile-interval 15s` sets it, 10s to 1h). This exception holds in Standalone mode only. Control starts only if GitHub confirms the token may write to the repository, and that access stands in for the installation in role checks. Control checks the access again every 5 minutes (`cmd/factoryd/wiring/control_operator_token_access.go`). If it is revoked or downgraded to read, control's passes do nothing on GitHub and `sisf status` shows `github.token_access: revoked` until a later check confirms it again. A check that cannot reach GitHub, or that GitHub rate-limits, changes nothing. The release supervisor does not run this check and keeps using the token.
+- Sign-in is locked, because real agents run as local processes beside the fake identity provider and can reach every loopback port. Each `sisf up` writes a new secret to `<dir>/secrets/control/dev-sign-in` (owner-only, never in a unit's environment, command line or log) and prints where it is; open `http://127.0.0.1:7468/_sim/unlock` and enter it once per browser, then sign in at `http://127.0.0.1:7463`. Without it the fake refuses every sign-in and every `/_sim` endpoint (`cmd/sisf/cmd_sim_oidc_sign_in_gate.go`). The browser keeps an HMAC of the secret in an HttpOnly, `SameSite=Strict` cookie, never the secret, and the fake takes a POST to `/_sim` only with an `Origin` naming its own origin. Use `127.0.0.1` for both the factory and the fake, as printed: the Strict cookie is not sent when a sign-in starts from another site such as `localhost`. The simulation profile stays unlocked.
+- `--dev` is refused in Docker mode, with `--profile sim`, with a sign-in provider and with an external URL off loopback. `init` and `doctor` print a loud warning: anyone who can read the sign-in secret, which includes an agent running as your user under `trusted_code_only`, signs in as the Owner.
+- Nothing runs until the policy is in force: [put the first policy in force](policy-and-approvals.md#putting-the-first-policy-in-force) from a commit of your repository's foundation files.
+
+## A real install
+
+A real install serves a repository through a GitHub account the factory acts as, signs people in at a real provider, and is reached over HTTPS. A real GitHub App and real Google sign-in have been tested only against fakes so far ([README status](../../README.md#status)); verify each step on your install.
+
+### 1. GitHub: the account and token the factory acts as
+
+The factory reads one GitHub token at `init`, from the environment variable `--github-token-env` names, stores it owner-only in `<dir>/secrets/control/github-token` and in the control and supervisor env files, and sends it as a bearer token. It never mints, refreshes or rotates the token (no installation-token exchange exists in `pkg/github` or `cmd/factoryd/wiring`). The token therefore has to stay valid for as long as the factory runs; a GitHub App installation token, which GitHub expires after an hour, does not.
+
+What the token must allow, as `sisf doctor` and the supervisor check it (`internal/install/doctor_live.go`):
+
+- read and write the repository: issues (comments, labels, closing), contents (the supervisor pushes candidate branches `sisf/<factory>/<run>-<attempt>` and merges), pull requests (it opens and merges the candidate's pull request);
+- a classic token should not carry the `workflow` scope: `sisf doctor` warns `the token carries the workflow scope, so code pushed with it can change CI workflows`.
+
+### 2. GitHub: webhooks
+
+GitHub delivers events to `/webhooks/github` on the control zone (`internal/control/routes.go`); the edge on 127.0.0.1:7460 routes the same path to control. Configure the webhook of the App (or repository) with:
+
+- URL: `<external URL>/webhooks/github`, through the reverse proxy below;
+- secret: the content of `<dir>/secrets/control/webhook-secret`, which `init` generates;
+- events: Issues, Issue comments and Pull requests (`pkg/github/webhook_normalize.go`).
+
+A lost delivery is still picked up by reconciliation within one interval ([Reconciliation with GitHub](operations.md#reconciliation-with-github)).
+
+### 3. Sign-in provider
+
+Register the factory as a client at an OpenID Connect provider (or a GitHub OAuth app for GitHub sign-in) with the redirect URI `<external URL>/auth/callback/google` for OpenID Connect, `<external URL>/auth/callback/github` for GitHub (`cmd/factoryd/wiring/control_identity.go`). An Owner who decides approvals must sign in through OpenID Connect: GitHub sign-in cannot confirm a step-up ([security guide](security.md#limits-to-know)).
+
+### 4. Create the install
+
+```sh
+export GITHUB_TOKEN=...      # the token of step 1, only in this shell
+sisf init --dir /srv/sisf/factory --repo owner/app --github-token-env GITHUB_TOKEN \
+  --external-url https://factory.example.com \
+  --owner 'https://accounts.google.com#1234567890' \
+  --oidc-issuer https://accounts.google.com --oidc-client-id <client id> \
+  --oidc-client-secret-file /path/to/client-secret \
+  --budget-cap 50 --alert-threshold 40
+```
+
+- GitHub sign-in instead of, or besides, OpenID Connect: `--github-login-client-id` with `--github-login-client-secret-file` or `--github-login-client-secret-env` (`--github-login-url` and `--github-login-api-url` for GitHub Enterprise).
+- A client secret is read from the file or the variable the flag names, never from a flag value, is never printed, and lands only in the control zone's env file. Without a secret flag `init` accepts the client silently and control signs in without a client secret, so register a public client at the provider in that case.
+- `--external-url` must be an `https` origin unless it is a loopback address. The fake identity provider (any loopback address on port 7468) is refused outside the simulation, by `init` and by `doctor`.
+- `--owner` is repeatable; each is `issuer#subject` as the provider reports it.
+- `--mode docker` makes a Docker install; the rest is the same.
+
+### 5. Name the GitHub installation and account
+
+`init` has no flags for these yet. Add both under `extensions:` in `<dir>/factory.yaml`:
+
+```yaml
+extensions:
+  github_installation_id: 12345678      # the installation whose webhooks are accepted
+  github_app_login: my-factory[bot]     # the login GitHub shows as author of what the token writes
+```
+
+Without them control and the supervisor refuse to start and `sisf doctor` fails: `github events  control and the supervisor refuse to start: INVALID_ARGUMENT: the manifest must name the GitHub installation in extensions.github_installation_id` (`cmd/factoryd/wiring/github_settings.go`). Without the login they refuse too (`... must name the factory's GitHub account in extensions.github_app_login`). The login is how the factory recognises its own pull requests and comments; an install that names only a numeric `github_app_id` instead starts but merges nothing and leaves every candidate for the Owner ([operations](operations.md#progress-on-the-issue-and-the-candidates-pull-request)). Check the file afterwards: `sisf conformance check <dir>/factory.yaml` (a file edited this way was observed to report `conformant`). `sisf up` keeps the extensions when it pins digests.
+
+### 6. HTTPS origin
+
+Every port is bound to 127.0.0.1. Run a reverse proxy with TLS that forwards `<external URL>` to `127.0.0.1:7463` (control: dashboard, REST, MCP, sign-in and `/webhooks/github`). Browsers send the Fetch Metadata the dashboard's forms require only to an https or loopback origin, so a plain http origin off loopback refuses those forms ([Signing in](operations.md#signing-in)).
+
+### 7. Start, check, approve the policy
+
+1. From the checkout: `sisf up --dir /srv/sisf/factory` (Standalone stays in the foreground; Docker returns). It prints `factory <id> is up: control http://127.0.0.1:7463, app via edge http://127.0.0.1:7460`.
+2. `sisf doctor --dir /srv/sisf/factory`: every line `OK` or an understood `WARN`.
+3. Commit the foundation files to the repository and [put the first policy in force](policy-and-approvals.md#putting-the-first-policy-in-force).
+4. Sign in at the external URL as the Owner, and `sisf login --url https://factory.example.com` for the CLI.
+
+Undo: `sisf down -v --dir /srv/sisf/factory` stops it and removes its data; then delete the directory, which holds the secrets and `factory.yaml`.
+
+## Running Standalone as a service
+
+`init` writes a systemd user unit and a launchd agent to `<dir>/service/`, each with copy-and-enable instructions in its header. In this release they do not start the factory as written: they run `sisf up --mode standalone --dir <dir>` with no `--source` and no working directory, and `sisf up` builds from the current directory, which under systemd is your home and under launchd is `/`. Before you enable one, add `--source <absolute path of the checkout>` to `ExecStart` (systemd) or to `ProgramArguments` (launchd), make sure Go is on the service's `PATH`, and for launchd create `<dir>/logs`, where it writes `service.log`.
+
+## Real agents in Standalone
+
+A Standalone install may run claude or codex as local processes under `trusted_code_only`:
+
+```sh
+sisf init --dir /srv/sisf/factory --repo owner/app --github-token-env GITHUB_TOKEN ... \
+  --coder-agent claude --coder-model <model> --agent-home "$HOME" \
+  --qa-judge agent --qa-agent codex --qa-model <model> --qa-home "$HOME" \
+  --exec local --build-command 'go build ./...'
+```
+
+- `--agent-home` and `--qa-home` let an agent use an existing login, such as the one in your own home. They are refused when the directory is, holds or lies inside the factory's secrets, state or trust directories, and the installer refuses an install directory inside that home (or that home inside it). The default install directory `~/.sisf/factory` lies inside your home, so pass `--dir` elsewhere.
+- `--coder-model` and `--qa-model` replace the tier names of the policy's model routes, which the real tools do not accept.
+- With `--exec local` candidate builds are held: the supervisor builds code an agent wrote only in a sandbox of an isolating backend, and the local backend is not one (`cmd/supervisor/stages/execution_policy.go`). Outside the simulation, a Standalone supervisor then refuses to start its lifecycle stages with `PERMISSION_DENIED` rather than run an agent's code on the host, and `sisf up` reports it. To build, judge and release, give the install a Docker build sandbox (below).
+
+### Building in a Docker sandbox
+
+The agents keep running as local processes under `trusted_code_only`; only the builds move into Docker, and the QA agent, which reads those untrusted candidates, then runs through a sandboxing launcher, as the supervisor requires under `--exec docker` (`cmd/supervisor/qa_judge_wiring.go`). You provide the sandbox:
+
+- an internal Docker network for the runners (`docker network create --internal NET`);
+- an egress proxy on that network as its only way out, for example the edge's (`edge --egress-listen=egress:3128 --allow-non-loopback ...` in a container attached to `NET` with the alias `egress` and to an outbound network);
+- a runner image that holds the build command and reports `sisf-tests:`, `sisf-image-digest:`, `sisf-image:`, `sisf-sbom:` and `sisf-provenance:` lines (`cmd/supervisor/stages/image_builders.go`; `tests/smoke/sandbox/build-candidate.sh` is an example). A build that names no SBOM and provenance fails the observed-build hard gate on every attempt, whatever QA scores it, and one that does not report its tests as passed fails the tests gate. Pin it as `name@sha256:...` by a registry digest: the docker backend runs no image by tag or local image ID, so push a locally built image to a registry first, such as one on loopback;
+- the runner Docker request filter: `sisf docker-filter --role runner --listen 127.0.0.1:PORT --factory-id ID --network NET --image IMAGE --socket SOCKET`, started before `sisf up`;
+- a launcher that runs the QA agent in a sandbox and keeps its standard input and output.
+
+```sh
+sisf init --dir /srv/sisf/factory --repo owner/app ... \
+  --coder-agent claude --coder-model <model> --agent-home "$HOME" \
+  --qa-judge agent --qa-agent codex --qa-model <model> --qa-agent-binary /srv/sisf/qa-launcher \
+  --exec docker --exec-docker-endpoint http://127.0.0.1:PORT --exec-docker-network NET \
+  --egress-proxy http://egress:3128 --runner-image registry/runner@sha256:... --build-command /usr/local/bin/build
+```
+
+- `init` refuses a partial sandbox, a filter off loopback, an image not pinned by digest, a sandbox without `--build-command` or `--qa-agent-binary`, and `--qa-home` with it: the launcher owns the QA agent's home (`internal/install/standalone_build_sandbox.go`).
+- The supervisor reads `NET` through the runner filter (`GET /networks/NET`, the one network read the runner filter allows) and builds nothing unless Docker reports it internal: on an ordinary bridge a runner would reach the internet around the egress proxy (`adapters/exec/docker/backend.go`). `sisf doctor` fails the `sandbox network` check for the same reason, in Docker mode for the Compose project's `-sandbox` network as well.
+- A build holds no secret, so the build command fetches the candidate's commit (`SISF_COMMIT`) without one: through the egress proxy from a public repository, or from a mirror you serve on the sandbox network.
+- Standalone's local deployment backend starts the installed application for every release; the sandboxed build is tested and digested, not deployed.
+- The smoke run (`tests/smoke`) provisions all of this for itself, with a git mirror of the private sandbox repository and a launcher that runs codex in a container (`tests/smoke/sandbox/`).
