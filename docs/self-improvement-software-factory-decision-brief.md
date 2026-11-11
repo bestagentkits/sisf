@@ -194,6 +194,7 @@ stateDiagram-v2
   QAEvaluation --> Developing: not pass / retry allowed
   QAEvaluation --> ReleaseCandidate: score + hard gates pass
   ReleaseCandidate --> Canary
+  ReleaseCandidate --> Blocked: release bị từ chối trước khi deploy / chờ Owner
   Canary --> Monitoring: rollout healthy
   Canary --> RolledBack: error threshold exceeded
   Monitoring --> Verified: post-deploy DoD + observation

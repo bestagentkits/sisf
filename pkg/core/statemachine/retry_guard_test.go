@@ -256,3 +256,23 @@ func TestARetryAfterASupersededPolicyNeedsTheScopeProvedAgain(t *testing.T) {
 		t.Errorf("a scope inside the delegation of the policy in force was refused: %v", err)
 	}
 }
+
+// A release that was refused, rolled back, interrupted or could not be
+// judged was coded on a scope that was approved and still is, so its retry
+// needs the authorization alone, and only an outright allow.
+func TestABlockedReleaseIsRetriedOnTheAuthorizationAlone(t *testing.T) {
+	t.Parallel()
+	for _, cause := range []BlockCause{BlockReleaseRefused, BlockRolledBack, BlockReleaseInterrupted, BlockReleaseUnjudged} {
+		if !cause.Valid() || cause.NeedsScopeProof() {
+			t.Errorf("%s: want a known cause that needs no scope proof", cause)
+		}
+		allowedRetry := checkRetryProof(retryDecided(allowed()), func(p *RetryProof) {
+			p.Cause, p.Approval, p.Delegation = cause, nil, nil
+		})
+		if allowedRetry != nil {
+			t.Errorf("%s: an authorized retry was refused: %v", cause, allowedRetry)
+		}
+		denied := checkRetryProof(retryDecided(core.AuthzDecision{Effect: core.EffectDeny}), func(p *RetryProof) { p.Cause = cause })
+		requireGuardFailed(t, string(cause)+" retried without authorization", denied, GuardRetry)
+	}
+}

@@ -39,8 +39,8 @@ func TestEveryStateAndEventPairLeadsOnlyWhereTheDiagramLeads(t *testing.T) {
 			}
 		}
 	}
-	if cells != 16*23 || legal != 23 {
-		t.Fatalf("checked %d cells with %d legal, want 368 cells with 23 legal", cells, legal)
+	if cells != 16*24 || legal != 24 {
+		t.Fatalf("checked %d cells with %d legal, want 384 cells with 24 legal", cells, legal)
 	}
 }
 
@@ -71,8 +71,8 @@ func TestOnlyDiagramEdgesAreAcceptedAcrossEverySourceTargetAndEvent(t *testing.T
 			}
 		}
 	}
-	if tried != 16*15*23 || accepted != 23 {
-		t.Fatalf("tried %d steps and accepted %d, want 5520 tried and 23 accepted", tried, accepted)
+	if tried != 16*15*24 || accepted != 24 {
+		t.Fatalf("tried %d steps and accepted %d, want 5760 tried and 24 accepted", tried, accepted)
 	}
 }
 

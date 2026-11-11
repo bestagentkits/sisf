@@ -63,8 +63,8 @@ func TestEveryStepOfARunMustCarryALease(t *testing.T) {
 			}
 		}
 	}
-	if needing != 12 {
-		t.Fatalf("%d steps need a lease, want the claim and the eleven steps out of a state a run holds", needing)
+	if needing != 13 {
+		t.Fatalf("%d steps need a lease, want the claim and the twelve steps out of a state a run holds", needing)
 	}
 }
 
@@ -84,8 +84,8 @@ func TestTheMachineRefusesAStepOfARunThatCarriesNoLease(t *testing.T) {
 			t.Errorf("%s --%s--> %s without a lease: want %s, got %v", e.From, e.Event, e.To, core.CodeStaleFencingToken, err)
 		}
 	}
-	if checked != 11 {
-		t.Fatalf("%d steps leave a state a run holds, want 11", checked)
+	if checked != 12 {
+		t.Fatalf("%d steps leave a state a run holds, want 12", checked)
 	}
 }
 

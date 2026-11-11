@@ -90,6 +90,10 @@ const (
 	// EventQAPassed moves QAEvaluation to ReleaseCandidate: the score and
 	// every hard gate pass.
 	EventQAPassed Event = "qa_passed"
+	// EventReleaseRefused moves ReleaseCandidate to Blocked: the supervisor
+	// refused to release the candidate before anything was deployed, and the
+	// issue waits for the Owner.
+	EventReleaseRefused Event = "release_refused"
 	// EventRolloutStarted moves ReleaseCandidate to Canary.
 	EventRolloutStarted Event = "rollout_started"
 	// EventRolloutHealthy moves Canary to Monitoring.
@@ -113,8 +117,8 @@ var allEvents = []Event{
 	EventIssueReceived, EventInfoMissing, EventClarificationCompleted, EventInfoSufficient,
 	EventApprovalRequired, EventScopePermitted, EventOwnerApproved, EventApprovalDenied,
 	EventClaimed, EventDevelopmentStarted, EventClaimStopped, EventDevelopmentStopped,
-	EventCandidateSubmitted, EventQAFailed, EventQAPassed, EventRolloutStarted, EventRolloutHealthy, EventErrorThresholdExceeded,
-	EventPostDeployVerified, EventRegressionDetected, EventIssueClosed, EventRecoveryReported,
+	EventCandidateSubmitted, EventQAFailed, EventQAPassed, EventReleaseRefused, EventRolloutStarted, EventRolloutHealthy,
+	EventErrorThresholdExceeded, EventPostDeployVerified, EventRegressionDetected, EventIssueClosed, EventRecoveryReported,
 	EventRetryAuthorized,
 }
 

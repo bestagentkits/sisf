@@ -29,7 +29,7 @@ go test ./internal/actions/... -count=1
 
 ## Change the issue lifecycle
 
-The fifteen states and twenty-two edges of brief §5.2 are fixed by the brief, so a new state or transition is a change to the contract, not only to code. It touches, in one PR:
+The fifteen states and twenty-three edges of brief §5.2 are fixed by the brief, so a new state or transition is a change to the contract, not only to code. It touches, in one PR:
 
 - the state diagram in both languages of the brief (§5.2 of [English](../self-improvement-software-factory-decision-brief.en.md) and [Vietnamese](../self-improvement-software-factory-decision-brief.md));
 - the states and events in [pkg/core/states.go](../../pkg/core/states.go);

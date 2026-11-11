@@ -30,8 +30,8 @@ import (
 // A policy sees each row on its own, never the change from the old row to
 // the new one, so it cannot say that an update is one step of the
 // lifecycle. A trigger on the records says it (migration 7, again migration
-// 8 for the steps added since, and migration 9 for what each step may
-// change; recordStepTrigger): for every session the policies hold, a record
+// 8 and migration 10 for the steps added since, and migration 9 for what
+// each step may change; recordStepTrigger): for every session the policies hold, a record
 // moves from one state to the next only along an edge of the lifecycle, to
 // the next version, stays the record of its factory and issue, and changes
 // its run, attempt, candidate, release and lease only as that step does in

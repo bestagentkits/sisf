@@ -8,9 +8,10 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// BlockCause says why an issue is in Blocked. The lifecycle has three ways
-// in: a scope the Owner did not approve, a release that was rolled back,
-// and a run that stopped without a candidate.
+// BlockCause says why an issue is in Blocked. The lifecycle has four ways
+// in: a scope the Owner did not approve, a run that stopped without a
+// candidate, a release the supervisor refused, and a release that was
+// rolled back.
 type BlockCause string
 
 const (
@@ -20,9 +21,23 @@ const (
 	// BlockApprovalExpired means the approval request lapsed undecided, or
 	// the approval lapsed unused.
 	BlockApprovalExpired BlockCause = "approval_expired"
-	// BlockRolledBack means a release of the issue was rolled back and its
-	// recovery was reported.
+	// BlockRolledBack means a release of the issue was judged unhealthy, was
+	// rolled back to the last known good release and its recovery was
+	// reported.
 	BlockRolledBack BlockCause = "rolled_back"
+	// BlockReleaseRefused means the supervisor refused to release the
+	// issue's candidate before anything was deployed: it could not be
+	// verified, or it is not one the factory may publish by itself.
+	BlockReleaseRefused BlockCause = "release_refused"
+	// BlockReleaseInterrupted means a release of the issue stopped being
+	// watched before it was judged, because the supervisor stopped or could
+	// not go on with it, so the last known good release was restored.
+	BlockReleaseInterrupted BlockCause = "release_interrupted"
+	// BlockReleaseUnjudged means a release of the issue could not be judged
+	// while it served traffic, because the synthetic suite that judges a
+	// release under low traffic could not be run, so the last known good
+	// release was restored.
+	BlockReleaseUnjudged BlockCause = "release_unjudged"
 	// BlockRunExhausted means the run of the issue used every coding
 	// attempt it was allowed without producing a candidate.
 	BlockRunExhausted BlockCause = "run_exhausted"
@@ -35,7 +50,8 @@ const (
 // Valid reports whether c is a known cause.
 func (c BlockCause) Valid() bool {
 	switch c {
-	case BlockApprovalDenied, BlockApprovalExpired, BlockRolledBack, BlockRunExhausted, BlockPolicySuperseded:
+	case BlockApprovalDenied, BlockApprovalExpired, BlockRolledBack, BlockRunExhausted, BlockPolicySuperseded,
+		BlockReleaseRefused, BlockReleaseInterrupted, BlockReleaseUnjudged:
 		return true
 	}
 	return false
@@ -81,9 +97,9 @@ type RetryProof struct {
 	// was permitted under was superseded: an approval the Owner gave after
 	// the block, or the policy's answer that the scope now lies within the
 	// delegation. One of them is required for such an issue, each one
-	// presented must hold, and neither is needed after a rollback or for a
-	// run that used its attempts: the scope of such an issue was approved
-	// and still is.
+	// presented must hold, and neither is needed after a release that was
+	// refused, rolled back or interrupted, or for a run that used its
+	// attempts: the scope of such an issue was approved and still is.
 	Approval   *ApprovalProof
 	Delegation *DelegationProof
 }

@@ -31,7 +31,7 @@ func TestEveryLifecycleEdgeHasOneNamedEvent(t *testing.T) {
 		EventInfoSufficient, EventApprovalRequired, EventScopePermitted,
 		EventOwnerApproved, EventApprovalDenied, EventClaimed,
 		EventDevelopmentStarted, EventClaimStopped, EventDevelopmentStopped,
-		EventCandidateSubmitted, EventQAFailed, EventQAPassed, EventRolloutStarted, EventRolloutHealthy,
+		EventCandidateSubmitted, EventQAFailed, EventQAPassed, EventReleaseRefused, EventRolloutStarted, EventRolloutHealthy,
 		EventErrorThresholdExceeded, EventPostDeployVerified,
 		EventRegressionDetected, EventIssueClosed, EventRecoveryReported,
 		EventRetryAuthorized,

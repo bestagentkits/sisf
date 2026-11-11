@@ -2,7 +2,7 @@
 // leads to, and which proof a step needs before it may be taken.
 //
 // The transition table is the single list of legal steps. It holds the edge
-// that creates a record in Intake and the twenty-two edges between the fifteen
+// that creates a record in Intake and the twenty-three edges between the fifteen
 // states; a step that is not in the table is refused with INVALID_TRANSITION,
 // so no component can add a state or a shortcut by writing one. Ten edges are
 // guarded: a guard supplies the facts and the machine judges them, and a step
@@ -124,6 +124,14 @@ var lifecycle = []Edge{
 	{core.StateDeveloping, core.EventCandidateSubmitted, core.StateQAEvaluation, GuardCandidate},
 	{core.StateQAEvaluation, core.EventQAFailed, core.StateDeveloping, GuardAttempts},
 	{core.StateQAEvaluation, core.EventQAPassed, core.StateReleaseCandidate, GuardQAPass},
+	// A release the supervisor refuses before anything is deployed, because
+	// the candidate cannot be verified or is not one the factory may publish
+	// by itself, must always be able to block its issue rather than leave it
+	// waiting for a release that never comes. Blocked starts no work, spends
+	// nothing and releases nothing, and the way out of it is guarded. Only
+	// the control zone, where the supervisor writes, takes this step, under
+	// the issue lease, for the run the record names.
+	{core.StateReleaseCandidate, core.EventReleaseRefused, core.StateBlocked, GuardNone},
 	{core.StateReleaseCandidate, core.EventRolloutStarted, core.StateCanary, GuardRollout},
 	{core.StateCanary, core.EventRolloutHealthy, core.StateMonitoring, GuardCanaryHealth},
 	// A rollback is the safe direction and must never wait for a proof that

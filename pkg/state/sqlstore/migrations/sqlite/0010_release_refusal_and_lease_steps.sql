@@ -1,0 +1,11 @@
+-- The lifecycle gains the step from ReleaseCandidate to Blocked, for an
+-- issue whose release the supervisor refused, SQLite dialect. On PostgreSQL
+-- the migration writes the trigger that holds a record to one step of the
+-- lifecycle and the zones' row policies afresh, and adds a trigger that
+-- holds every change of a lease by a zone role to the writes of the store's
+-- lease API; its script is built from the store's rules
+-- (lease_step_trigger.go), so it has no file.
+--
+-- SQLite has no roles and no row policies. The store checks the same rules
+-- on every step and lease it writes, and the schema does not change.
+SELECT 1;

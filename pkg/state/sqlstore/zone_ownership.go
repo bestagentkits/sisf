@@ -33,9 +33,11 @@ import (
 // conversation about the issue; every way into Ready rests on the Owner's
 // approval, a delegation of the policy in force or an authorized retry;
 // passing QA rests on a signed receipt the control zone verifies; and the
-// rollout, its observation and rollback and the closing of the issue belong
-// to the release supervisor. A run that could write any of them could start
-// unapproved work or release its own candidate.
+// refusal of a release, the rollout, its observation and rollback and the
+// closing of the issue belong to the release supervisor, which writes as
+// the control zone. A run that could write any of them could start
+// unapproved work, release its own candidate or take a candidate it does
+// not like out of the release queue.
 var runEvents = []core.Event{
 	core.EventClaimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted,
 }
@@ -48,8 +50,8 @@ var controlEvents = []core.Event{
 	core.EventIssueReceived, core.EventInfoMissing, core.EventClarificationCompleted, core.EventInfoSufficient,
 	core.EventApprovalRequired, core.EventScopePermitted, core.EventOwnerApproved, core.EventApprovalDenied,
 	core.EventClaimed, core.EventDevelopmentStarted, core.EventClaimStopped, core.EventDevelopmentStopped,
-	core.EventCandidateSubmitted, core.EventQAFailed, core.EventQAPassed, core.EventRolloutStarted, core.EventRolloutHealthy, core.EventErrorThresholdExceeded,
-	core.EventPostDeployVerified, core.EventRegressionDetected, core.EventIssueClosed, core.EventRecoveryReported,
+	core.EventCandidateSubmitted, core.EventQAFailed, core.EventQAPassed, core.EventReleaseRefused, core.EventRolloutStarted,
+	core.EventRolloutHealthy, core.EventErrorThresholdExceeded, core.EventPostDeployVerified, core.EventRegressionDetected, core.EventIssueClosed, core.EventRecoveryReported,
 	core.EventRetryAuthorized,
 }
 
