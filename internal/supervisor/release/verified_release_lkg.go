@@ -195,9 +195,10 @@ func evidenceJudged(err error) bool {
 }
 
 // blockVerified blocks the issue of a verified release that cannot be
-// finished (lkgUnjudged). When the release may still be what serves, and
-// another release is the LKG, the unit is first switched back to it, so no
-// release that cannot be judged keeps serving; when there is nothing to
+// finished (lkgUnjudged). When the release is what serves, unhealthy or
+// with evidence that does not verify, and another release is the LKG, the
+// unit is first switched back to it, so no release that cannot be judged
+// keeps serving; when there is nothing to
 // switch back to, the block says so. What the release owed is dropped with
 // the step: it is not published and its pull request is left open and
 // unmerged for the Owner. A switch that does not take leaves the issue
@@ -206,10 +207,10 @@ func (p *Pipeline) blockVerified(ctx context.Context, h *holding, unit string, d
 	release := h.record.ReleaseDigest
 	out := Outcome{Release: release, State: h.record.State, Observed: d.observed, Reason: d.reason}
 	r := &rollout{h: h, unit: unit, rev: deploy.Revision{Unit: unit, Digest: release}, observed: d.observed}
-	mayServe := d.observed.Digest == release
+	serves := d.observed.Digest == release
 	reason := d.reason
 	switch {
-	case mayServe && d.found && d.lkg.Digest != release:
+	case serves && d.found && d.lkg.Digest != release:
 		r.lkg, r.lkgRev = d.lkg, deploy.Revision{Unit: unit, Digest: d.lkg.Digest}
 		observed, result, err := p.switchBack(ctx, r)
 		if err != nil {
@@ -221,7 +222,7 @@ func (p *Pipeline) blockVerified(ctx context.Context, h *holding, unit string, d
 		}
 		out.Observed, out.RestoredTo = observed, observed.Digest
 		reason += "; the last known good release was restored"
-	case mayServe:
+	case serves:
 		reason += "; there is no other release to restore it to, so nothing was restored"
 	default:
 		reason += "; nothing was switched back"
