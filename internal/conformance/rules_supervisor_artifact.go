@@ -118,9 +118,9 @@ func (c *checker) spelled(file string) string {
 
 // namesExecutable reports whether a command names one of the executables.
 // Its first word is what runs, so it names an executable of the same name
-// from any directory. A wrapper such as an init process or an interpreter
-// runs the file it is given in a later word, or after "=" in one such as
-// --exec=FILE, so a later word names an executable when it is the bare
+// from any directory. A wrapper such as an init process, an interpreter or
+// a shell runs the file it is given in a later word (see namedFiles), so a
+// later word names an executable when it is the bare
 // name, found through the search path, or the path the executable is
 // started from, written any way that cleans to it or under a directory the
 // manifest does not name (/opt/factory/bin/x is bin/x of a factory rooted
@@ -133,15 +133,7 @@ func (c *checker) namesExecutable(command, executables []string) bool {
 		paths = append(paths, c.spelled(path.Clean(file)))
 	}
 	for i, word := range command {
-		candidates := []string{word}
-		if _, value, assigned := strings.Cut(word, "="); assigned {
-			candidates = append(candidates, value)
-		}
-		for _, candidate := range candidates {
-			file, local := localFile(candidate)
-			if !local {
-				continue
-			}
+		for _, file := range namedFiles(word) {
 			if i == 0 {
 				if slices.Contains(names, c.spelled(executableName(file))) {
 					return true
@@ -183,7 +175,8 @@ func samePlace(a, b string) bool {
 // registry alias, or, where executables identify artifacts, when it starts
 // an executable of the supervisor's name from any directory or names the
 // supervisor's executable in a later argument (see namesExecutable). A unit
-// that starts through a shell hides what it runs and is refused for that.
+// that starts through a shell hides what it runs and is refused for that by
+// checkLaunchers.
 // In Standalone mode the supervisor must also start the binary it pins,
 // from a directory no unit mounts.
 func (c *checker) checkSupervisorArtifact(sup manifest.Supervisor) {
@@ -243,10 +236,6 @@ func (c *checker) checkSupervisorArtifactShared(sup manifest.Supervisor, executa
 				"unit %q runs image %q, which is the supervisor's repository %q whatever its tag, digest or registry alias, so a candidate built there is built where the supervisor is", name, unit.Image, imageRepository(sup.Image))
 		case !c.comparedByExecutable(unit):
 			// Its image, already compared, is what identifies this unit.
-		case throughLauncher(unit.Command):
-			c.add(RuleSupervisorSharesArtifact, at+".command",
-				"start the unit's own binary as the first word of its command, without a shell or launcher in front of it",
-				"unit %q starts through a shell or launcher, so what it runs is named in an argument this check cannot read and cannot be shown to differ from the supervisor's executable", name)
 		case c.namesExecutable(unit.Command, executables):
 			c.add(RuleSupervisorSharesArtifact, at+".command", fix,
 				"unit %q names the executable the supervisor starts in its command, so whatever program comes first can run the supervisor's executable, and replacing that unit replaces the supervisor", name)

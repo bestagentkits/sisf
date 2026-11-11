@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"unicode"
 
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
@@ -20,10 +21,10 @@ type startedFile struct {
 
 // startedFiles lists what a unit runs in Standalone mode: the first word of
 // its command, which is what the runtime executes whatever its name, the
-// binary it names as its image, and every later word of the command, and
-// the value after "=" in one, because an interpreter, a loader or a wrapper
-// runs the file it is given. A URL names no file of the machine and is left
-// out; a file URL names the file after its scheme.
+// binary it names as its image, and every file a later word of the command
+// names (see namedFiles), because an interpreter, a loader or a wrapper runs
+// the file it is given. A URL names no file of the machine and is left out;
+// a file URL names the file after its scheme.
 func startedFiles(name manifest.UnitName, unit manifest.Unit) []startedFile {
 	at := "units." + string(name)
 	var files []startedFile
@@ -38,13 +39,29 @@ func startedFiles(name manifest.UnitName, unit manifest.Unit) []startedFile {
 			continue
 		}
 		place := fmt.Sprintf("%s.command[%d]", at, i)
-		candidates := []string{word}
-		if _, value, assigned := strings.Cut(word, "="); assigned {
+		for _, file := range namedFiles(word) {
+			files = append(files, startedFile{at: place, file: file, argument: true})
+		}
+	}
+	return files
+}
+
+// namedFiles lists the files of the machine one word of a command may name:
+// each part of it between spaces and shell punctuation, as in the script a
+// shell is given with -c, and the value after "=" in each part, as in
+// --exec=FILE.
+func namedFiles(word string) []string {
+	var files []string
+	for _, part := range strings.FieldsFunc(word, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(";&|()<>`'\"", r)
+	}) {
+		candidates := []string{part}
+		if _, value, assigned := strings.Cut(part, "="); assigned {
 			candidates = append(candidates, value)
 		}
 		for _, candidate := range candidates {
 			if file, local := localFile(candidate); local {
-				files = append(files, startedFile{at: place, file: file, argument: true})
+				files = append(files, file)
 			}
 		}
 	}

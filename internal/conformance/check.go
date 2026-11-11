@@ -71,6 +71,7 @@ func checkWith(m *manifest.Manifest, backends []kit.Declaration) Report {
 	c.checkIdentity()
 	c.checkZones()
 	c.checkUnits()
+	c.checkLaunchers()
 	c.checkNetworks()
 	c.checkSupervisor()
 	c.checkIsolation()
@@ -103,10 +104,12 @@ func checkWith(m *manifest.Manifest, backends []kit.Declaration) Report {
 	return report
 }
 
-// hasSupervisorFinding reports whether any supervisor-boundary rule failed.
+// hasSupervisorFinding reports whether any supervisor-boundary rule failed,
+// or a unit runs something unknown, which cannot be shown to differ from the
+// supervisor's artifact.
 func hasSupervisorFinding(findings []Finding) bool {
 	for _, finding := range findings {
-		if strings.HasPrefix(string(finding.Rule), "supervisor.") {
+		if strings.HasPrefix(string(finding.Rule), "supervisor.") || finding.Rule == RuleUnitThroughLauncher {
 			return true
 		}
 	}

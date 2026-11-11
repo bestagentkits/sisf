@@ -17,6 +17,9 @@ const (
 	RuleUnitLifecycle Rule = "unit.lifecycle_mismatch"
 	// RuleUnitNotPinned: a unit that runs an artifact does not pin its digest.
 	RuleUnitNotPinned Rule = "unit.digest_not_pinned"
+	// RuleUnitThroughLauncher: a unit identified by what it starts starts
+	// through a shell or another launcher, which hides what runs.
+	RuleUnitThroughLauncher Rule = "unit.command_through_launcher"
 	// RuleNetworkMissing: one of the four network segments is not declared.
 	RuleNetworkMissing Rule = "network.missing"
 
@@ -173,7 +176,7 @@ const (
 // Rules returns every rule the checker can report.
 func Rules() []Rule {
 	return []Rule{
-		RuleSchema, RuleZoneMissing, RuleUnitMissing, RuleUnitLifecycle, RuleUnitNotPinned, RuleNetworkMissing,
+		RuleSchema, RuleZoneMissing, RuleUnitMissing, RuleUnitLifecycle, RuleUnitNotPinned, RuleUnitThroughLauncher, RuleNetworkMissing,
 		RuleIdentityInvalid, RuleIdentityNotDistinct,
 		RuleSupervisorUndeclared, RuleSupervisorNotPinned, RuleSupervisorSharesArtifact,
 		RuleTrustVolumeUndeclared, RuleTrustVolumeExposed, RuleTrustVolumeUnmounted,

@@ -33,14 +33,6 @@ func TestInStandaloneModeTheSupervisorBinaryIsNoOtherUnitsExecutable(t *testing.
 			func(m *manifest.Manifest) {
 				editUnit(m, manifest.UnitEdge, func(u *manifest.Unit) { u.Image = "/opt/sisf/bin/sisf-supervisor" })
 			}, "units.edge.image"},
-		{"another unit starts through a shell, which hides what it runs",
-			func(m *manifest.Manifest) {
-				editUnit(m, manifest.UnitApp, func(u *manifest.Unit) { u.Command = []string{"/bin/sh", "-c", "bin/sisf-supervisor serve"} })
-			}, "units.app.command"},
-		{"another unit starts through env, which hides what it runs",
-			func(m *manifest.Manifest) {
-				editUnit(m, manifest.UnitDispatcher, func(u *manifest.Unit) { u.Command = []string{"/usr/bin/env", "bin/sisf-supervisor"} })
-			}, "units.dispatcher.command"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -53,6 +45,22 @@ func TestInStandaloneModeTheSupervisorBinaryIsNoOtherUnitsExecutable(t *testing.
 				t.Error("a supervisor that shares its executable disables self-update")
 			}
 		})
+	}
+
+	// A unit that hands the supervisor's binary to a shell or to env names
+	// it, and also hides what runs.
+	wrapped := map[manifest.UnitName][]string{
+		manifest.UnitApp:        {"/bin/sh", "-c", "bin/sisf-supervisor serve"},
+		manifest.UnitDispatcher: {"/usr/bin/env", "bin/sisf-supervisor"},
+	}
+	for name, command := range wrapped {
+		m := standalone(t)
+		editUnit(m, name, func(u *manifest.Unit) { u.Command = command })
+		report := Check(m)
+		at := "units." + string(name) + ".command"
+		if !report.reportedAt(RuleSupervisorSharesArtifact, at) || !report.reportedAt(RuleUnitThroughLauncher, at) || report.SelfUpdate {
+			t.Errorf("%q names the supervisor's binary through a launcher, got %+v", command, report.Findings)
+		}
 	}
 }
 
