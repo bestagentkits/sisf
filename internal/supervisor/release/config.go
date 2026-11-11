@@ -97,7 +97,12 @@ type Config struct {
 	// judged with it as of its Verified step; without it, as of now.
 	VerifierAt func(at time.Time) (core.Verifier, error)
 	LKG        *LKGBook
-	Freeze     FreezeCheck
+	// Commits compares commits of the factory's repository, as GitHub's
+	// comparison does. A candidate is released only when the base its QA
+	// receipt names contains the commit of its unit's LKG release; without
+	// Commits that cannot be shown, and such a candidate is refused.
+	Commits CommitComparer
+	Freeze  FreezeCheck
 	// Publisher writes the changelog and the catalog before an issue closes.
 	Publisher Publisher
 	// Blocks keeps the record of why the pipeline blocked an issue, which

@@ -50,6 +50,10 @@ type LKG struct {
 	// IssueID and RunID name the release that was promoted.
 	IssueID core.IssueRef `json:"issue_id,omitzero"`
 	RunID   core.RunID    `json:"run_id,omitempty"`
+	// Commit is the commit the release was built from, as its verified QA
+	// receipt names it; a candidate whose base does not contain it is
+	// refused (checkBaseHasLKG). The release the install pins has none.
+	Commit core.CommitSHA `json:"commit,omitempty"`
 	// ArtifactKeyID is the key whose signature was verified at promotion.
 	ArtifactKeyID string    `json:"artifact_key_id,omitempty"`
 	VerifiedAt    time.Time `json:"verified_at,omitzero"`
@@ -167,7 +171,7 @@ func (b *LKGBook) record(v verifiedRelease) error {
 	}
 	entry := LKG{
 		Unit: v.artifact.Unit, Digest: v.artifact.Digest, Image: v.artifact.Image, Source: SourcePromoted,
-		IssueID: v.issue, RunID: v.run, ArtifactKeyID: v.artifact.Signature.KeyID,
+		IssueID: v.issue, RunID: v.run, Commit: v.receipt.CandidateSHA, ArtifactKeyID: v.artifact.Signature.KeyID,
 		VerifiedAt: v.verifiedAt, VerifiedSequence: v.sequence, RecordedAt: b.clock.Now().UTC(),
 	}
 	data, err := json.MarshalIndent(entry, "", "  ")

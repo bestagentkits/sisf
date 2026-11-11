@@ -14,8 +14,9 @@ const dashboardBody = "The status page should say when it was checked.\n\n### De
 
 // The factory improves a page of its own control unit that the Owner
 // declared an input of control: the supervisor builds and releases a new
-// control unit, and when a later build of it breaks, rolls it back to the
-// last known good one and reports why on the issue. The application keeps
+// control unit, and when a later build of it, made once the Owner put the
+// merged release in force, breaks, rolls it back to the last known good one
+// and reports why on the issue. The application keeps
 // serving throughout and the supervisor is never replaced.
 func TestTheFactoryUpdatesItsDashboardAndRollsABrokenBuildBack(t *testing.T) {
 	t.Parallel()
@@ -31,6 +32,15 @@ func TestTheFactoryUpdatesItsDashboardAndRollsABrokenBuildBack(t *testing.T) {
 	if err != nil || !found || good.Digest == installed || core.Digest(good.Digest) != f.Record(first).CandidateDigest {
 		t.Fatalf("the new control unit is not the last known good: %+v, %v", good, err)
 	}
+
+	// The factory merged the first release; the Owner moves the trust
+	// baseline to the default branch that now holds it, as a candidate of
+	// the control unit built on a base without it is refused.
+	head, _, ok := f.GitData.Branch(f.Repo, "main")
+	if !ok {
+		t.Fatal("the default branch is not known")
+	}
+	approveRevision(t, f, core.CommitSHA(head))
 
 	second := f.OpenIssue("maintainer", "MEMBER", "Reword the status page", dashboardBody, github.LabelReady, github.LabelKindBug)
 	f.ScriptPatch(second, 0, sitePageRewordDiff)

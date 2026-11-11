@@ -174,12 +174,17 @@ func (g *GitData) updateRef(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, jRef{Ref: "refs/heads/" + branch, Object: jObject{SHA: in.SHA, Type: "commit"}})
 }
 
-// compare answers GET /compare/{base}...{head} with the paths that differ.
-// Like GitHub, base and head are each a commit or a branch name.
+// compare answers GET /compare/{base}...{head} with the paths head
+// changed since it parted from base. Like GitHub, base and head are each a
+// commit or a branch name, and the paths are those that differ between
+// head and the merge base of the two: none when base contains head. For
+// commits whose history this fake does not know, made with Server.Commit,
+// base itself stands for the merge base.
 func (g *GitData) compare(w http.ResponseWriter, r *http.Request) {
 	base, head, ok := strings.Cut(r.PathValue("basehead"), "...")
-	baseFiles, okBase := g.files(repoName(r), g.revision(repoName(r), base))
-	headFiles, okHead := g.files(repoName(r), g.revision(repoName(r), head))
+	baseSHA, headSHA := g.revision(repoName(r), base), g.revision(repoName(r), head)
+	headFiles, okHead := g.files(repoName(r), headSHA)
+	baseFiles, okBase := g.files(repoName(r), g.mergeBase(repoName(r), baseSHA, headSHA))
 	if !ok || !okBase || !okHead {
 		writeError(w, http.StatusNotFound, "Not Found")
 		return
@@ -234,4 +239,40 @@ func (g *GitData) revision(repoName, rev string) string {
 		return sha
 	}
 	return rev
+}
+
+// mergeBase is the nearest commit head descends from that base descends
+// from too, each counted as descending from itself; base when the history
+// this fake knows has none.
+func (g *GitData) mergeBase(repoName, base, head string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	key := strings.ToLower(repoName) + "@"
+	walk := func(from string, visit func(string) bool) {
+		queue, seen := []string{from}, map[string]bool{from: true}
+		for len(queue) > 0 {
+			c := queue[0]
+			queue = queue[1:]
+			if !visit(c) {
+				return
+			}
+			for _, p := range g.parents[key+c] {
+				if !seen[p] {
+					seen[p] = true
+					queue = append(queue, p)
+				}
+			}
+		}
+	}
+	ofBase := map[string]bool{}
+	walk(base, func(c string) bool { ofBase[c] = true; return true })
+	found := base
+	walk(head, func(c string) bool {
+		if ofBase[c] {
+			found = c
+			return false
+		}
+		return true
+	})
+	return found
 }

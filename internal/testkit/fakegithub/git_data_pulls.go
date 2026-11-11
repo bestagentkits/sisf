@@ -151,6 +151,7 @@ func (g *GitData) mergePull(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	g.trees[tree] = files
 	g.commitTree[strings.ToLower(name)+"@"+sha] = tree
+	g.parents[strings.ToLower(name)+"@"+sha] = []string{base, head}
 	g.merges++
 	g.mu.Unlock()
 	if err := g.SetBranch(name, baseRef, sha); err != nil {

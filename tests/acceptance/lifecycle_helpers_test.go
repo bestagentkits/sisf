@@ -41,12 +41,13 @@ const sitePageDiff = `--- a/site/status.html
 +<p>All systems nominal. Last checked by the factory.</p>
 `
 
-// sitePageRewordDiff words that page differently.
+// sitePageRewordDiff words that page differently once sitePageDiff was
+// merged.
 const sitePageRewordDiff = `--- a/site/status.html
 +++ b/site/status.html
 @@ -1,2 +1,2 @@
  <h1>Factory status</h1>
--<p>All systems nominal.</p>
+-<p>All systems nominal. Last checked by the factory.</p>
 +<p>Every system is working.</p>
 `
 
