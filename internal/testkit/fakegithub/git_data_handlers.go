@@ -174,10 +174,11 @@ func (g *GitData) updateRef(w http.ResponseWriter, r *http.Request) {
 }
 
 // compare answers GET /compare/{base}...{head} with the paths that differ.
+// Like GitHub, base and head are each a commit or a branch name.
 func (g *GitData) compare(w http.ResponseWriter, r *http.Request) {
 	base, head, ok := strings.Cut(r.PathValue("basehead"), "...")
-	baseFiles, okBase := g.files(repoName(r), base)
-	headFiles, okHead := g.files(repoName(r), head)
+	baseFiles, okBase := g.files(repoName(r), g.revision(repoName(r), base))
+	headFiles, okHead := g.files(repoName(r), g.revision(repoName(r), head))
 	if !ok || !okBase || !okHead {
 		writeError(w, http.StatusNotFound, "Not Found")
 		return
@@ -202,4 +203,15 @@ func (g *GitData) compare(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+}
+
+// revision is the commit a branch name points at, or rev itself when no
+// branch has that name.
+func (g *GitData) revision(repoName, rev string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if sha, ok := g.refs[strings.ToLower(repoName)][rev]; ok {
+		return sha
+	}
+	return rev
 }
