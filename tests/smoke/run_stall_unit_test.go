@@ -85,3 +85,44 @@ func TestTheRunStopsWaitingWhenTheJournalStalls(t *testing.T) {
 		t.Errorf("coding past every attempt's run_timeout reads %q", why)
 	}
 }
+
+// A held or refused release is final until the Owner acts: the wait ends
+// at once with the supervisor's reason. A closed release, or none yet, is
+// not a reason to stop.
+func TestTheRunStopsWaitingWhenTheReleaseIsHeld(t *testing.T) {
+	t.Parallel()
+	held := `{"result":"held","state":"ReleaseCandidate","release":"sha256:aa","code":"RELEASE_HOLD","reason":"RELEASE_HOLD: real traffic is too low"}`
+	why := heldRelease(map[string][]byte{"release/run-1/1": []byte(held)})
+	for _, want := range []string{"release/run-1/1", "result held", "real traffic is too low"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("the held release reads %q, want %q in it", why, want)
+		}
+	}
+	refused := `{"result":"refused","state":"ReleaseCandidate","release":"sha256:aa","reason":"GOVERNANCE_REQUIRED: a governance change"}`
+	if why := heldRelease(map[string][]byte{"release/run-1/1": []byte(refused)}); !strings.Contains(why, "result refused") {
+		t.Errorf("a refused release reads %q", why)
+	}
+	for name, records := range map[string]map[string][]byte{
+		"none":   nil,
+		"closed": {"release/run-1/1": []byte(`{"result":"closed","state":"Closed","release":"sha256:aa"}`)},
+	} {
+		if why := heldRelease(records); why != "" {
+			t.Errorf("%s stopped the wait: %s", name, why)
+		}
+	}
+}
+
+// A release candidate is released in the round QA passed it; one that sits
+// in ReleaseCandidate past the slack of a few rounds was not released.
+func TestTheRunStopsWaitingWhenTheCandidateIsNotReleased(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 11, 11, 17, 47, 7, 0, time.UTC)
+	journal := []stateVisit{{State: "QAEvaluation", At: start.Add(-36 * time.Second)}, {State: "ReleaseCandidate", At: start}}
+	bounds := stallBounds(3, 30*time.Minute)
+	if why := stalled(journal, start.Add(5*time.Minute), bounds); why != "" {
+		t.Errorf("a candidate five minutes into its release counted as stalled: %s", why)
+	}
+	if why := stalled(journal, start.Add(96*time.Minute), bounds); !strings.Contains(why, "in ReleaseCandidate") {
+		t.Errorf("a candidate never released reads %q", why)
+	}
+}

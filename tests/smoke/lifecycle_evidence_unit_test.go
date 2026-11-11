@@ -76,3 +76,16 @@ func TestTheMergedDiffMustAddTheRequestedRoute(t *testing.T) {
 		t.Error("a removed route or a longer path was taken for the requested route")
 	}
 }
+
+// The release evidence carries the supervisor's reason, so a held release
+// reads without the install.
+func TestTheReleaseEvidenceNamesTheReason(t *testing.T) {
+	t.Parallel()
+	_, evidence := completedRelease(map[string][]byte{"release/run-1/1": []byte(
+		`{"result":"held","state":"ReleaseCandidate","release":"sha256:aa","code":"RELEASE_HOLD","reason":"RELEASE_HOLD: real traffic is too low"}`)})
+	for _, want := range []string{"result held", "code RELEASE_HOLD", `reason "RELEASE_HOLD: real traffic is too low"`} {
+		if !strings.Contains(evidence, want) {
+			t.Errorf("the release evidence reads %q, want %q in it", evidence, want)
+		}
+	}
+}

@@ -11,16 +11,20 @@ import (
 	"github.com/bestagentkits/sisf/internal/qa/agentjudge"
 )
 
-// Two more ways the run learns early that waiting longer only burns the
+// More ways the run learns early that waiting longer only burns the
 // deadline and the spend:
 //   - QA held a candidate: a held verdict is final for the run, the issue
 //     waits in QAEvaluation for a person and the lifecycle has no step out;
+//   - the supervisor held or refused the release: the issue waits in
+//     ReleaseCandidate until the Owner acts, and nothing is tried again;
 //   - the journal has not moved for longer than the state can take: the
 //     coding attempts of one Developing visit by the manifest's
 //     run_timeout each (an attempt that fails before QA starts the next in
 //     place, with no journal row), an evaluation by one candidate build and
-//     the judgment. The release states wait out observation windows and
-//     holds by design and are bounded by the run's deadline only.
+//     the judgment, and a release candidate by a few rounds, since the
+//     supervisor starts its release in the round QA passed it. Canary and
+//     Monitoring wait out observation windows and holds by design and are
+//     bounded by the run's deadline only.
 
 const (
 	// candidateBuildTimeout is the supervisor's default limit of one
@@ -36,6 +40,9 @@ func stallBounds(maxAttempts int, runTimeout time.Duration) map[string]time.Dura
 	return map[string]time.Duration{
 		"Developing":   time.Duration(max(maxAttempts, 1))*runTimeout + stallSlack,
 		"QAEvaluation": candidateBuildTimeout + agentjudge.DefaultTimeout + stallSlack,
+		// The release starts in the round QA passed the candidate; opening
+		// its pull request on GitHub comes first.
+		"ReleaseCandidate": stallSlack,
 	}
 }
 
@@ -69,12 +76,29 @@ func heldQAVerdict(records map[string][]byte) string {
 	return ""
 }
 
-// qaStopped reads the run's QA records and journal and says why the run
-// cannot move on, or "".
+// heldRelease says which release of the run the supervisor held or
+// refused and why, or "" when none was.
+func heldRelease(records map[string][]byte) string {
+	for _, key := range sortedKeys(records) {
+		var r releaseRecord
+		if json.Unmarshal(records[key], &r) == nil && (r.Result == "held" || r.Result == "refused") {
+			return "the supervisor did not release the candidate, and the issue waits in " + r.State + " for the Owner (" + describeReleaseRecord(key, r) + ")"
+		}
+	}
+	return ""
+}
+
+// qaStopped reads the run's QA and release records and its journal and
+// says why the run cannot move on, or "".
 func qaStopped(ctx context.Context, o *factoryObserver, issue, runID string, now time.Time) string {
 	if runID != "" {
 		if records, err := o.supervisorRecords(ctx, qaKeyPrefix+runID+"/"); err == nil {
 			if why := heldQAVerdict(records); why != "" {
+				return why
+			}
+		}
+		if records, err := o.supervisorRecords(ctx, releaseKeyPrefix+runID+"/"); err == nil {
+			if why := heldRelease(records); why != "" {
 				return why
 			}
 		}

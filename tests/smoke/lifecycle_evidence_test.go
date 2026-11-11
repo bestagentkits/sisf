@@ -53,6 +53,22 @@ type releaseRecord struct {
 	Result  string `json:"result"`
 	State   string `json:"state"`
 	Release string `json:"release"`
+	Code    string `json:"code"`
+	Reason  string `json:"reason"`
+}
+
+// describeReleaseRecord says how one release ended and why: its result,
+// the state it left the issue in, the release, and the supervisor's code
+// and reason, so a release that did not close reads without the install.
+func describeReleaseRecord(key string, r releaseRecord) string {
+	out := fmt.Sprintf("%s: result %s, state %s, release %s", key, r.Result, r.State, r.Release)
+	if r.Code != "" {
+		out += ", code " + r.Code
+	}
+	if r.Reason != "" {
+		out += fmt.Sprintf(", reason %q", truncate(r.Reason, 300))
+	}
+	return out
 }
 
 // supervisorRecords returns the supervisor's records whose keys start with
@@ -145,7 +161,7 @@ func completedRelease(records map[string][]byte) (bool, string) {
 			seen = append(seen, key+": unreadable")
 			continue
 		}
-		seen = append(seen, fmt.Sprintf("%s: result %s, state %s, release %s", key, r.Result, r.State, r.Release))
+		seen = append(seen, describeReleaseRecord(key, r))
 		if r.Result == "closed" && r.State == "Closed" && r.Release != "" {
 			return true, strings.Join(seen, "; ")
 		}
