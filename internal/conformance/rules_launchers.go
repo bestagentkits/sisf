@@ -13,10 +13,25 @@ import (
 // argument, often inside a script this check cannot read, so what the unit
 // runs can be shown neither to differ from the supervisor's executable nor
 // to lie outside the directories other units write.
+//
+// A unit compared by what it starts, the supervisor included, is refused
+// too when the first word of its command names a file with whitespace
+// around it: a file system may drop that whitespace and so run another
+// program than the one every rule compares, such as a launcher that is not
+// recognized by its padded name.
 func (c *checker) checkLaunchers() {
 	for _, name := range manifest.UnitNames() {
 		unit, ok := c.m.Units[name]
-		if !ok || name == manifest.UnitSupervisor || !c.comparedByExecutable(unit) || !throughLauncher(unit.Command) {
+		if !ok || len(unit.Command) == 0 || !c.comparedByExecutable(unit) {
+			continue
+		}
+		if paddedFileName(unit.Command[0]) {
+			c.add(RuleUnitThroughLauncher, "units."+string(name)+".command",
+				"name the program the unit starts without whitespace around its file name",
+				"unit %q starts %q, whose file name has whitespace around it; a file system may drop it and run another program than the one the rules compare", name, unit.Command[0])
+			continue
+		}
+		if name == manifest.UnitSupervisor || !throughLauncher(unit.Command) {
 			continue
 		}
 		c.add(RuleUnitThroughLauncher, "units."+string(name)+".command",
@@ -82,7 +97,8 @@ const appLauncherBinary = "sisf-app-launcher"
 // given, and the application's binary is not the factory. A factory unit
 // starts its own binary. The application unit starts the application's
 // program, any binary of bin/ the factory does not own, or the application
-// launcher without arguments.
+// launcher without arguments. Any other unit, such as state or artifacts,
+// has no binary in bin/ and may start none of them.
 func (c *checker) checkOwnBinary(name manifest.UnitName, command []string) {
 	at := "units." + string(name) + ".command"
 	file := path.Base(command[0])
@@ -99,7 +115,10 @@ func (c *checker) checkOwnBinary(name manifest.UnitName, command []string) {
 		return
 	}
 	if name != manifest.UnitApp {
-		return // a unit no rule knows the binary of is judged by the others
+		c.add(RuleUnitThroughLauncher, at,
+			"remove the command; `sisf up` starts no program of the install's bin/ directory as unit "+string(name),
+			"unit %q starts %q, a program of the install's bin/ directory, though it has no binary of its own there; the application launcher would run what its arguments name, and any other program there is another unit's", name, command[0])
+		return
 	}
 	switch {
 	case launcher && len(command) > 1:
@@ -113,9 +132,16 @@ func (c *checker) checkOwnBinary(name manifest.UnitName, command []string) {
 	}
 }
 
+// supervisorBinary is the name `sisf up` gives the supervisor's binary.
+const supervisorBinary = "sisf-supervisor"
+
 // factoryOwned reports whether file is the binary of a factory unit: of
-// the supervisor, as the manifest pins it, or of another factory unit.
+// the supervisor, by the name `sisf up` gives it whatever the manifest
+// pins and as the manifest pins it, or of another factory unit.
 func (c *checker) factoryOwned(file string) bool {
+	if foldCase(file) == foldCase(supervisorBinary) {
+		return true
+	}
 	if c.m.Supervisor != nil && c.m.Supervisor.Image != "" && foldCase(file) == foldCase(path.Base(c.m.Supervisor.Image)) {
 		return true
 	}
@@ -125,6 +151,13 @@ func (c *checker) factoryOwned(file string) bool {
 		}
 	}
 	return false
+}
+
+// paddedFileName reports whether the file named by word, the last element
+// of its path, differs from itself with surrounding whitespace trimmed.
+func paddedFileName(word string) bool {
+	file := path.Base(word)
+	return strings.TrimSpace(file) != file
 }
 
 // reportedAtUnit reports whether any rule already failed at path or at a
