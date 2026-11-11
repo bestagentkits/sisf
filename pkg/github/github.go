@@ -185,6 +185,10 @@ type ListIssuesOptions struct {
 	Since  time.Time
 	Labels []string
 	State  IssueState
+	// MaxPages bounds the pages of 100 issues one listing follows; zero
+	// or more than the client's own bound means the client's bound. A
+	// listing with more pages fails with LIMIT_EXCEEDED.
+	MaxPages int
 }
 
 // NewIssue is the content of an issue to create.

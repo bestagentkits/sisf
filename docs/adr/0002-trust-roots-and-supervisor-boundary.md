@@ -23,4 +23,6 @@ A factory that improves its own code can weaken the machinery that judges that c
 
 ## Acceptance test
 
-Planned: conformance tests for each of the four conditions, SISF-10 (the supervisor is not replaced by the candidate) and the key-revocation tests in [threat model](../threat-model.md) scenarios TM-02 and TM-05.
+- The four conditions: `internal/conformance/supervisor_boundary_test.go` (a breach of any condition is rejected and self-update stays off), with `internal/conformance/supervisor_artifact_test.go` and `internal/conformance/supervisor_executable_test.go` for condition 1 and `internal/supervisor/digest_self_check_test.go` for condition 4.
+- SISF-10 (the supervisor is not replaced by the candidate): `tests/acceptance/factory_self_update_zone3_test.go`.
+- Key revocation for [threat model](../threat-model.md) scenarios TM-02 and TM-05: `internal/signing/delegation/delegated_key_revocation_test.go`.

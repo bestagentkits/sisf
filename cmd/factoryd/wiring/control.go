@@ -34,6 +34,8 @@ type GitHub interface {
 	intake.IssueReader
 	intake.IssueWriter
 	FileReader
+	// Reconciliation lists the issues that changed since its last poll.
+	github.IssueSource
 	// The actions of the surfaces open the sample issue and the catalog's
 	// pull requests.
 	CreateIssue(ctx context.Context, repo github.RepoRef, n github.NewIssue) (github.Issue, error)
@@ -74,6 +76,9 @@ type ControlConfig struct {
 	Surfaces *SurfaceConfig
 	// Decision runs the decision layer on the edge's counters; nil runs none.
 	Decision *DecisionConfig
+	// Reconcile configures the polls that recover issue changes whose
+	// webhooks were lost.
+	Reconcile ReconcileConfig
 }
 
 // Control is the control zone of one factory: the HTTP server, intake, the
@@ -104,6 +109,8 @@ type Control struct {
 	projected map[core.IssueRef]int64
 	// decisions runs the decision layer; nil when it is not configured.
 	decisions *decisionRunner
+	// reconcile polls GitHub for the changes no webhook delivered.
+	reconcile *reconciler
 }
 
 // retryAt is when a failed delivery is tried again, and how often it failed.
@@ -139,6 +146,14 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 	repo := github.RepoRef{Owner: m.Repository.Owner, Name: m.Repository.Repo}
 	c := &Control{cfg: cfg, log: cfg.Logger, backoff: map[string]retryAt{}, projected: map[core.IssueRef]int64{}}
 	c.Audit = audit.New(cfg.Store, cfg.Clock)
+	reconcile, err := cfg.Reconcile.withDefaults()
+	if err != nil {
+		return nil, err
+	}
+	if reconcile.Source == nil {
+		reconcile.Source = cfg.GitHub
+	}
+	c.reconcile = &reconciler{cfg: reconcile, repo: repo, installation: settings.InstallationID, store: cfg.Store, clock: cfg.Clock}
 
 	signer, err := signing.NewSigner(cfg.ApprovalKey)
 	if err != nil {
@@ -225,7 +240,8 @@ func (c *Control) Run(ctx context.Context, ln net.Listener, interval time.Durati
 // the references of a newly approved policy, hands the stored webhook
 // deliveries and the decided approvals to intake, performs the effects intake queued on GitHub and
 // parks the issues whose wait for an answer is over; when it is configured,
-// the decision layer reads the edge's counters. Each part runs even
+// the decision layer reads the edge's counters. Once per reconciliation
+// interval it asks GitHub for the issue changes no webhook delivered. Each part runs even
 // when another failed; the error joins their failures.
 func (c *Control) Pass(ctx context.Context) error {
 	return errors.Join(
@@ -236,6 +252,9 @@ func (c *Control) Pass(ctx context.Context) error {
 		c.expireClarifications(ctx),
 		c.projectLifecycle(ctx),
 		c.runDecisions(ctx),
+		// Last, so a slow or failing GitHub delays nothing above; what it
+		// finds is drained by the next pass.
+		c.reconcileDue(ctx),
 	)
 }
 

@@ -21,9 +21,10 @@ var _ IssueSource = (*RESTClient)(nil)
 // returns what changed, and the caller feeds it through the same inbox as a
 // webhook, which deduplicates.
 type Poller struct {
-	src    IssueSource
-	repo   RepoRef
-	labels []string
+	src      IssueSource
+	repo     RepoRef
+	labels   []string
+	maxPages int
 
 	mu       sync.Mutex
 	since    time.Time
@@ -37,6 +38,16 @@ type Poller struct {
 // listing to issues carrying all of them.
 func NewPoller(src IssueSource, repo RepoRef, since time.Time, labels ...string) *Poller {
 	return &Poller{src: src, repo: repo, since: since, labels: labels, lastSeen: map[int]time.Time{}}
+}
+
+// LimitPages bounds the pages one Poll follows; a poll that would need
+// more fails with LIMIT_EXCEEDED and leaves the position where it was.
+// Zero keeps the source's own bound. Call it before the first Poll.
+func (p *Poller) LimitPages(n int) *Poller {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.maxPages = n
+	return p
 }
 
 // Since is the position to persist, so a restart resumes without a gap.
@@ -57,7 +68,7 @@ func (p *Poller) Poll(ctx context.Context) ([]Issue, error) {
 	if p.etagFor.Equal(p.since) {
 		etag = p.etag
 	}
-	page, err := p.src.PollIssues(ctx, p.repo, ListIssuesOptions{Since: p.since, Labels: p.labels}, etag)
+	page, err := p.src.PollIssues(ctx, p.repo, ListIssuesOptions{Since: p.since, Labels: p.labels, MaxPages: p.maxPages}, etag)
 	if err != nil {
 		return nil, err
 	}

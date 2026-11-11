@@ -27,6 +27,15 @@ func nextLink(h http.Header) string {
 // The next-page link comes from the response, so it is data: it is followed
 // only on the API host, and only up to MaxPages.
 func (c *RESTClient) getPages(ctx context.Context, path string, query url.Values, header http.Header, each func(apiResponse) error) (apiResponse, error) {
+	return c.getPagesUpTo(ctx, c.cfg.MaxPages, path, query, header, each)
+}
+
+// getPagesUpTo is getPages that follows at most limit pages, never more
+// than MaxPages.
+func (c *RESTClient) getPagesUpTo(ctx context.Context, limit int, path string, query url.Values, header http.Header, each func(apiResponse) error) (apiResponse, error) {
+	if limit <= 0 || limit > c.cfg.MaxPages {
+		limit = c.cfg.MaxPages
+	}
 	first, err := c.call(ctx, http.MethodGet, path, query, nil, header)
 	if err != nil || first.status == http.StatusNotModified {
 		return first, err
@@ -40,7 +49,7 @@ func (c *RESTClient) getPages(ctx context.Context, path string, query url.Values
 		if next == "" {
 			return first, nil
 		}
-		if page >= c.cfg.MaxPages {
+		if page >= limit {
 			return first, core.NewError(core.CodeLimitExceeded, "the listing has more pages than this client follows")
 		}
 		if resp, err = c.callURL(ctx, http.MethodGet, next, nil, nil); err != nil {

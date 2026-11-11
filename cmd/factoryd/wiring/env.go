@@ -45,6 +45,12 @@ const (
 	EnvSupervisorAdminAddr = "SISF_SUPERVISOR_ADMIN_ADDR"
 	// EnvDocsDir is the docs directory docs.list lists; unset lists none.
 	EnvDocsDir = "SISF_DOCS_DIR"
+	// EnvReconcileInterval is how often the control zone polls GitHub for
+	// issue changes whose webhooks were lost, as a Go duration between 10s
+	// and 1h (default 1m). EnvReconcileMaxPages bounds one poll to that many
+	// pages of 100 issues, 1 to 50 (default 10).
+	EnvReconcileInterval = "SISF_GITHUB_RECONCILE_INTERVAL"
+	EnvReconcileMaxPages = "SISF_GITHUB_RECONCILE_MAX_PAGES"
 )
 
 // Default addresses of a Standalone install; every port is on loopback.
@@ -70,6 +76,9 @@ type Env struct {
 	AppHealthURL        string
 	DispatcherHealthURL string
 	TrustedProxies      []netip.Prefix
+	// Reconcile holds the reconciliation settings given; zero values take
+	// the defaults.
+	Reconcile ReconcileConfig
 }
 
 // ReadEnv reads the contract from getenv. It checks only the shape of what
@@ -103,6 +112,23 @@ func ReadEnv(getenv func(string) string) (Env, error) {
 			return e, core.NewError(core.CodeInvalidArgument, EnvTrustedProxies+" must list networks such as 172.18.0.0/16")
 		}
 		e.TrustedProxies = append(e.TrustedProxies, prefix.Masked())
+	}
+	if raw := strings.TrimSpace(getenv(EnvReconcileInterval)); raw != "" {
+		interval, err := time.ParseDuration(raw)
+		if err != nil || interval <= 0 {
+			return e, core.NewError(core.CodeInvalidArgument, EnvReconcileInterval+" must be a duration such as 1m")
+		}
+		e.Reconcile.Interval = interval
+	}
+	if raw := strings.TrimSpace(getenv(EnvReconcileMaxPages)); raw != "" {
+		pages, err := strconv.Atoi(raw)
+		if err != nil || pages <= 0 {
+			return e, core.NewError(core.CodeInvalidArgument, EnvReconcileMaxPages+" must be a positive number")
+		}
+		e.Reconcile.MaxPages = pages
+	}
+	if _, err := e.Reconcile.withDefaults(); err != nil {
+		return e, err
 	}
 	if e.Config == "" {
 		return e, missing(EnvConfig)

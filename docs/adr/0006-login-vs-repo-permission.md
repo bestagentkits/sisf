@@ -23,4 +23,5 @@ Signing in with GitHub proves who a person is. A GitHub App installation grants 
 
 ## Acceptance test
 
-Planned: SISF-12 (issuer, subject, audience, session, scopes, install mapping, step-up, revoke and CSRF negative tests) and SISF-13 (equivalent authorization on every surface).
+- SISF-12 (issuer, subject, audience, session, scopes, install mapping, step-up, revoke and CSRF negative tests): `internal/auth/sso_oauth_negative_test.go`, against a fake identity provider.
+- SISF-13 (equivalent authorization on every surface): `tests/acceptance/five_surface_parity_test.go`, with `tests/acceptance/cross_surface_approval_test.go` and `tests/acceptance/step_up_and_write_limits_test.go`.

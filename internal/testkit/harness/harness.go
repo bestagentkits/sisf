@@ -79,6 +79,9 @@ type Options struct {
 	Upstream *Upstream
 	// Decision runs the decision layer on every control pass that is due.
 	Decision *wiring.DecisionConfig
+	// Reconcile configures the control zone's polls of GitHub; zero values
+	// take the defaults, polling the fake GitHub every DefaultReconcileInterval.
+	Reconcile wiring.ReconcileConfig
 	// Coder, when set, is the coding agent the dispatcher runs in place of
 	// the scripted one, and CoderArtifacts where the agent zone's exporter
 	// reads its patches.
@@ -219,7 +222,7 @@ func New(t testing.TB, opts Options) *Factory {
 			core.ZoneApplication: control.HealthProbeFunc(func(context.Context) error { return nil }),
 			core.ZoneAgent:       control.HealthProbeFunc(f.dispatcherAlive),
 		},
-		Surfaces: f.surfaceConfig(base), Decision: opts.Decision,
+		Surfaces: f.surfaceConfig(base), Decision: opts.Decision, Reconcile: opts.Reconcile,
 	})
 	if err != nil {
 		t.Fatalf("harness: build the control zone: %v", err)

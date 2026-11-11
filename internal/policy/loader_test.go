@@ -106,8 +106,10 @@ func TestAnIncompleteOrContradictoryPolicySetIsAHold(t *testing.T) {
 		},
 		"the catalogue has no table": func(f map[string]string) { f[policy.PathFeatures] = "# FEATURES.md\n\nEverything is allowed.\n" },
 		"the catalogue lists a feature twice": func(f map[string]string) {
-			const row = "| Decision Layer | Brief §4.2 | designed, not yet built |\n"
-			f[policy.PathFeatures] = strings.Replace(f[policy.PathFeatures], row, row+"| decision layer | Brief §4.2 | built |\n", 1)
+			// The catalogue already lists the Decision Layer; a second row
+			// under the table's header names it again in other case.
+			const separator = "|---|---|---|\n"
+			f[policy.PathFeatures] = strings.Replace(f[policy.PathFeatures], separator, separator+"| decision layer | Brief §4.2 | built |\n", 1)
 		},
 		"the two catalogues disagree": func(f map[string]string) {
 			f[policy.PathFeaturesYAML] = "features:\n  - name: Marketplace\n    scope: everything\n    status: built\n"

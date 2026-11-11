@@ -1,10 +1,12 @@
 package github_test
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 )
 
@@ -97,5 +99,27 @@ func TestPollerResumesFromAPersistedPositionAndHonoursLabels(t *testing.T) {
 		if !is.HasLabel(github.LabelReady) {
 			t.Fatalf("issue %d does not carry the label the poller filters on", is.Ref.Number)
 		}
+	}
+}
+
+// A poller bounded to fewer pages than the client refuses a listing that
+// needs more, and keeps its position so nothing is skipped.
+func TestABoundedPollerRefusesALongerListingAndKeepsItsPosition(t *testing.T) {
+	t.Parallel()
+	f := newFactory(t)
+	alice := f.person("alice")
+	for i := range 150 {
+		mustOpen(t, f, alice, fmt.Sprintf("issue %d", i))
+	}
+	p := github.NewPoller(f.client, repoRef, time.Time{}).LimitPages(1)
+	if _, err := p.Poll(bg); !core.HasCode(err, core.CodeLimitExceeded) {
+		t.Fatalf("err = %v, want LIMIT_EXCEEDED for a listing of two pages", err)
+	}
+	if !p.Since().IsZero() {
+		t.Fatalf("a refused poll moved the position to %s", p.Since())
+	}
+	all, err := github.NewPoller(f.client, repoRef, time.Time{}).LimitPages(2).Poll(bg)
+	if err != nil || len(all) != 150 {
+		t.Fatalf("a poller allowed two pages read %d issues: %v", len(all), err)
 	}
 }

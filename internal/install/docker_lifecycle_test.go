@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/bestagentkits/sisf/internal/conformance"
+	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
@@ -62,14 +63,46 @@ func TestFreshDockerInstallIsOneComposeProjectOfOneFactory(t *testing.T) {
 	if f.Name != proj {
 		t.Errorf("Compose project = %q, want %q", f.Name, proj)
 	}
+	// One factory_id on the manifest, the signed release manifest and every
+	// service of the project, by environment or by flag.
 	ids := map[string]bool{string(m.FactoryID): true}
-	for _, s := range f.Services {
+	signed, err := signing.ReadSignedManifest(in.Layout.ReleaseManifest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids[string(signed.Manifest.FactoryID)] = true
+	for name, s := range f.Services {
 		if id := s.Environment["SISF_FACTORY_ID"]; id != "" {
 			ids[id] = true
+		}
+		var command []string
+		if err := s.Command.Decode(&command); err != nil && !s.Command.IsZero() {
+			t.Fatalf("the command of service %s cannot be read: %v", name, err)
+		}
+		for _, a := range command {
+			if v, ok := strings.CutPrefix(a, "--factory-id="); ok {
+				ids[v] = true
+			}
 		}
 	}
 	if len(ids) != 1 {
 		t.Errorf("the project names %d factory ids: %v", len(ids), ids)
+	}
+	// All three zones are declared in the one manifest and each runs as a
+	// service of this one project, so one up, stop and down moves them all.
+	for _, z := range core.Zones() {
+		if m.Components.Zone(z) == nil {
+			t.Errorf("Zone %s is not declared in the one manifest", z)
+		}
+		var services []manifest.UnitName
+		for name := range m.Units {
+			if _, ok := f.Services[string(name)]; ok && name.Zone() == z {
+				services = append(services, name)
+			}
+		}
+		if len(services) == 0 {
+			t.Errorf("Zone %s has no service in the project %s", z, proj)
+		}
 	}
 	if vs, err := CheckCompose(in.Layout, rendered); err != nil || len(vs) != 0 {
 		t.Errorf("rendered project breaks isolation rules: %v %v", vs, err)

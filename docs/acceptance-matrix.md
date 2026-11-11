@@ -1,6 +1,6 @@
 # Acceptance matrix
 
-Maps each acceptance test of brief §14 (SISF-01 to SISF-20) and each additional security requirement of brief §7 to the test file that proves it. The brief is the contract; this page only routes to the proof. Run a row's package with `go test ./<dir>/...`; the whole matrix is covered by `go test ./... -race`.
+Maps each acceptance test of brief §13 (SISF-01 to SISF-20) and each additional security requirement of brief §7 to the test file that proves it. The brief is the contract; this page only routes to the proof. Run a row's package with `go test ./<dir>/...`; the whole matrix is covered by `go test ./... -race`.
 
 Status meanings: **present** means the file exists in this branch and its package passes `go test`.
 
@@ -8,10 +8,10 @@ Status meanings: **present** means the file exists in this branch and its packag
 
 | ID | Test file | Status |
 |---|---|---|
-| SISF-01 | `internal/install/fresh_install_single_factory_test.go` | present |
+| SISF-01 | `internal/install/fresh_install_single_factory_test.go` (Standalone) and `internal/install/docker_lifecycle_test.go` (`TestFreshDockerInstallIsOneComposeProjectOfOneFactory`, Compose) | present (both modes against fakes of `go` and `docker`) |
 | SISF-02 | `tests/acceptance/issue_full_lifecycle_test.go` | present |
 | SISF-03 | `internal/intake/unauthorized_and_new_feature_test.go` | present |
-| SISF-04 | `tests/acceptance/duplicate_reordered_webhooks_test.go` | present |
+| SISF-04 | `tests/acceptance/duplicate_reordered_webhooks_test.go` (with `cmd/factoryd/wiring/control_reconcile_test.go` for reconciliation) | present |
 | SISF-05 | `internal/dispatcher/worker_crash_fencing_test.go` | present |
 | SISF-06 | `internal/qa/self_scoring_rejected_test.go` | present |
 | SISF-07 | `internal/qa/hard_gate_overrides_score_test.go` | present |
@@ -21,7 +21,7 @@ Status meanings: **present** means the file exists in this branch and its packag
 | SISF-11 | `internal/policy/unapproved_policy_change_ignored_test.go` | present |
 | SISF-12 | `internal/auth/sso_oauth_negative_test.go` | present (against fakes, not real Google SSO) |
 | SISF-13 | `tests/acceptance/five_surface_parity_test.go` (with `cross_surface_approval_test.go` and `step_up_and_write_limits_test.go`) | present (CLI, REST, MCP, WebMCP tool path and dashboard forms against the wired control server and fake identity provider) |
-| SISF-14 | `internal/budget/budget_modes_test.go` | present |
+| SISF-14 | `internal/budget/budget_modes_test.go` (with `internal/budget/budget_status_test.go` `TestUnverifiedUsageAndAMissingHardCapAreShown` for a provider without a hard cap) | present |
 | SISF-15 | `tests/acceptance/two_factories_same_upstream_test.go` | present |
 | SISF-16 | `internal/conformance/backend_capability_matrix_test.go` | present |
 | SISF-17 | `internal/decision/no_benefit_signal_ignored_test.go` | present |

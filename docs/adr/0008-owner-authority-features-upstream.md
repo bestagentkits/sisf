@@ -22,4 +22,5 @@ SISF is open source and may serve many deployments, each with an Owner. Agents c
 
 ## Acceptance test
 
-Planned: SISF-03 (an unapproved feature enters the inbox and expands no permission) and SISF-15 (a local improvement in one deployment changes neither another deployment nor upstream).
+- SISF-03 (an unapproved feature enters the inbox and expands no permission): `internal/intake/unauthorized_and_new_feature_test.go`.
+- SISF-15 (a local improvement in one deployment changes neither another deployment nor upstream): `tests/acceptance/two_factories_same_upstream_test.go`.

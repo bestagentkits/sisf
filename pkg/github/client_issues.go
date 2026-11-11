@@ -76,7 +76,7 @@ func (c *RESTClient) PollIssues(ctx context.Context, repo RepoRef, opts ListIssu
 		header = http.Header{"If-None-Match": {etag}}
 	}
 	var out IssuePage
-	first, err := c.getPages(ctx, repoPath(repo, "issues"), q, header, func(resp apiResponse) error {
+	first, err := c.getPagesUpTo(ctx, opts.MaxPages, repoPath(repo, "issues"), q, header, func(resp apiResponse) error {
 		var wire []wireIssue
 		if err := decode(resp, &wire); err != nil {
 			return err

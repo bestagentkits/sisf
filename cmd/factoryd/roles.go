@@ -78,7 +78,7 @@ func newControl(s zoneSetup, log *slog.Logger, surfaces *wiring.SurfaceConfig, d
 		WebhookSecret: s.env.WebhookSecret, ApprovalKey: key, Surfaces: surfaces, Decision: decisions,
 		ListenAddr: listenOr(s.env.Listen, wiring.DefaultControlListen), AllowNonLoopback: s.env.AllowNonLoopback,
 		Probes: wiring.ZoneProbes(s.env.AppHealthURL, s.env.DispatcherHealthURL), Clock: s.clock, Logger: log,
-		TrustedProxies: s.env.TrustedProxies,
+		TrustedProxies: s.env.TrustedProxies, Reconcile: s.env.Reconcile,
 	})
 }
 

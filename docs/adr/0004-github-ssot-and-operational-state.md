@@ -24,4 +24,5 @@ Rejected: GitHub labels as distributed locks; GitHub as the job queue.
 
 ## Acceptance test
 
-Planned: SISF-04 (duplicate and reordered webhooks create exactly one run) and SISF-05 (a worker crash is recovered from state and lease, with fencing).
+- SISF-04 (duplicate and reordered webhooks create exactly one run, and reconciliation recovers a lost delivery): `tests/acceptance/duplicate_reordered_webhooks_test.go`, with `cmd/factoryd/wiring/control_reconcile_test.go`.
+- SISF-05 (a worker crash is recovered from state and lease, with fencing): `internal/dispatcher/worker_crash_fencing_test.go`.

@@ -23,4 +23,4 @@ The Owner asked for `unlimited` as the default budget. That must not be read as 
 
 ## Acceptance test
 
-Planned: SISF-14 (unlimited is explicit and confirmed at install, alerts fire, capped reserves and stops, unsupported hard caps are flagged).
+- SISF-14 (unlimited is explicit and confirmed at install, alerts fire, capped reserves and stops): `internal/budget/budget_modes_test.go`; unsupported hard caps are flagged: `internal/budget/budget_status_test.go` (`TestUnverifiedUsageAndAMissingHardCapAreShown`).

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
@@ -110,6 +111,47 @@ func TestAZoneIsHealthyOnlyWhenItAnswers200(t *testing.T) {
 		status.Store(int32(s))
 		if err := probe.Probe(context.Background()); !core.HasCode(err, core.CodeUnavailable) {
 			t.Errorf("status %d counted as healthy: %v", s, err)
+		}
+	}
+}
+
+func TestReconciliationSettingsDefaultAndRefuseValuesOutOfBounds(t *testing.T) {
+	t.Parallel()
+	base := map[string]string{EnvConfig: "f", EnvStateDSN: "d"}
+	env, err := ReadEnv(envOf(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc, err := env.Reconcile.withDefaults(); err != nil || rc.Interval != DefaultReconcileInterval ||
+		rc.MaxPages != DefaultReconcileMaxPages || rc.Timeout != DefaultReconcileTimeout {
+		t.Fatalf("unset reconciliation settings = %+v, %v; want the defaults", rc, err)
+	}
+	with := func(k, v string) map[string]string {
+		vars := map[string]string{k: v}
+		for name, value := range base {
+			vars[name] = value
+		}
+		return vars
+	}
+	env, err = ReadEnv(envOf(with(EnvReconcileInterval, "5m")))
+	if err != nil || env.Reconcile.Interval != 5*time.Minute {
+		t.Fatalf("interval = %s, %v", env.Reconcile.Interval, err)
+	}
+	env, err = ReadEnv(envOf(with(EnvReconcileMaxPages, "3")))
+	if err != nil || env.Reconcile.MaxPages != 3 {
+		t.Fatalf("max pages = %d, %v", env.Reconcile.MaxPages, err)
+	}
+	for name, vars := range map[string]map[string]string{
+		"not a duration":   with(EnvReconcileInterval, "often"),
+		"zero interval":    with(EnvReconcileInterval, "0s"),
+		"too often":        with(EnvReconcileInterval, "1s"),
+		"too rare":         with(EnvReconcileInterval, "2h"),
+		"not a number":     with(EnvReconcileMaxPages, "many"),
+		"no pages":         with(EnvReconcileMaxPages, "0"),
+		"more than client": with(EnvReconcileMaxPages, "51"),
+	} {
+		if _, err := ReadEnv(envOf(vars)); !core.HasCode(err, core.CodeInvalidArgument) {
+			t.Errorf("%s: err = %v, want INVALID_ARGUMENT", name, err)
 		}
 	}
 }
