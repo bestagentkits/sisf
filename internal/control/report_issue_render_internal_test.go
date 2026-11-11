@@ -2,6 +2,7 @@ package control
 
 import (
 	"html"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -86,3 +87,40 @@ func TestATitleSplitByCharacterReferencesIsRedacted(t *testing.T) {
 		t.Errorf("a referenced @ formed a mention: %q", title)
 	}
 }
+
+// A control character between the parts of a character reference, itself
+// written as a reference or encoded twice, is dropped while references are
+// decoded, not only afterwards, so the reference it hid is decoded too: the
+// title holds no reference GitHub would show as a character, and the
+// redactor sees the text as GitHub shows it.
+func TestATitleReferenceAssembledAroundAControlCharacterIsDecoded(t *testing.T) {
+	t.Parallel()
+	redactor := redact.New(redact.Config{})
+	for _, tc := range []struct{ title, want string }{
+		{"a&amp;#&amp;#1;x6B;b", "akb"},
+		{"a&#&#1;x6B;b", "akb"},
+		{"a&amp;amp;#&amp;amp;#1;x6B;b", "akb"},
+		{"a&#&#x7f;&#&#1;x31;07;b", "akb"},
+		{"a&#\x01x6B;b", "akb"},
+	} {
+		title := reportIssueTitle(report.Report{Title: tc.title}, redactor.Redact)
+		if want := reportIssueTitlePrefix + tc.want; title != want {
+			t.Errorf("%q: title %q, want %q", tc.title, title, want)
+		}
+		if html.UnescapeString(title) != title {
+			t.Errorf("%q: the title %q still holds a character reference", tc.title, title)
+		}
+	}
+	secret := renderToken()
+	for _, hide := range []string{"&amp;#&amp;#1;x%x;", "&#&#1;x%x;", "&#&#x1f;%d;", "&amp;#&amp;#127;%d;"} {
+		ref := strings.Replace(hide, "%x", strconvHex(secret[10]), 1)
+		ref = strings.Replace(ref, "%d", strconvDec(secret[10]), 1)
+		title := reportIssueTitle(report.Report{Title: "Login " + secret[:10] + ref + secret[11:]}, redactor.Redact)
+		if shown := joined(html.UnescapeString(title)); strings.Contains(shown, secret[:12]) {
+			t.Errorf("%s: the title shows the secret: %q", ref, title)
+		}
+	}
+}
+
+func strconvHex(b byte) string { return strconv.FormatInt(int64(b), 16) }
+func strconvDec(b byte) string { return strconv.Itoa(int(b)) }

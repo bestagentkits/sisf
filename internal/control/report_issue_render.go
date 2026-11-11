@@ -61,15 +61,22 @@ func defuse(text string, keepLines bool) string {
 }
 
 // decodeReferences decodes the HTML character references in text and
-// drops the characters that show nothing (report.Invisible), again and
-// again until neither changes it: a reference encoded twice, &amp;#8203;,
-// is decoded too, and so is one assembled only once an invisible character
-// between its parts is dropped, &#&shy;x200b;. Each pass that changes the
-// text shortens it, so the loop ends.
+// drops the characters that show nothing (report.Invisible) and the
+// control characters, a newline, tab or carriage return becoming a space
+// as defuse makes it in a title, again and again until none of that
+// changes it: a reference encoded twice, &amp;#8203;, is decoded too, and
+// so is one assembled only once a character between its parts is dropped,
+// &#&shy;x200b; or &#&#1;x6B;, so defuse, which drops the same characters,
+// cannot assemble one afterwards. Each pass that changes the text shortens
+// it or puts a space for a newline, tab or carriage return, which it then
+// holds fewer of, so the loop ends.
 func decodeReferences(text string) string {
 	for {
 		decoded := strings.Map(func(r rune) rune {
-			if report.Invisible(r) {
+			switch {
+			case r == '\n' || r == '\t' || r == '\r':
+				return ' '
+			case unicode.IsControl(r) || report.Invisible(r):
 				return -1
 			}
 			return r
