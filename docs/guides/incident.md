@@ -4,22 +4,66 @@ For when the factory misbehaves and automatic rollback has not, or cannot, fix i
 
 ## 1. Stop the damage
 
-Emergency stop needs neither the control plane nor the dispatcher:
+An emergency stop freezes publishing, holds every issue so nothing is claimed, cancels the runs in flight and revokes their secrets. It has two routes (`internal/supervisor/killswitch`):
+
+- the **store**: the stop is recorded straight in the state store, which alone freezes publishing and holds every issue. Only this route can lift a stop.
+- the **supervisor**: its admin socket records the same stop and also cancels runs and revokes their secrets.
+
+`sisf emergency-stop` uses every route it is given and needs neither the control plane nor the dispatcher. It prints what each route did as JSON and exits 1 when a route it was given failed, so a partial stop never looks complete. Running it twice is safe: the second run reports the stop already in force.
+
+### Standalone
+
+Prerequisites: a shell on the factory's host as the user who owns the install directory. The factory id is the `factory_id:` line of `<dir>/factory.yaml`; the state store is the SQLite file `<dir>/data/state/factory.db`; the supervisor listens on `127.0.0.1:7464`, the command's default.
 
 ```sh
-sisf emergency-stop --factory-id <id> --reason "<why>"
+D=$HOME/.sisf/factory                                   # your install directory
+ID=$(sed -n 's/^factory_id: //p' "$D/factory.yaml")
+SISF_STATE_DSN="$D/data/state/factory.db" \
+  sisf emergency-stop --factory-id "$ID" --reason "<why>" --actor "<your name>"
 ```
 
-It records the stop in the state store (this alone freezes publishing and holds every issue so nothing is claimed), then asks the supervisor to cancel runs in flight and revoke their secrets. The state connection comes from `$SISF_STATE_DSN` unless `--state-dsn-env` names another variable. Running it twice is safe. It exits 1 when a route could not be used (for example the supervisor did not answer) and prints what was done as JSON either way.
+Expected output, when both routes answered: a JSON object with a `store` and a `supervisor` part, each holding `stop_id`, `stopped_at` and `"publishing_frozen": true`, the supervisor's part also `claims_held`, `runs_cancelled` and `secrets_revoked`. When the supervisor does not answer, the store part is still printed, followed by (observed):
 
-- Check whether a stop is in force: `sisf emergency-stop --factory-id <id> --reason "<why>" --status`.
-- Lift it, after the cause is fixed: `--lift`. Only the store route can lift a stop; the supervisor socket cannot.
+```text
+  "failures": [
+    "supervisor: UNAVAILABLE: no supervisor answers on 127.0.0.1:7464"
+  ]
+sisf: UNAVAILABLE: the emergency stop could not use every route it was given
+```
 
-The code is in `internal/supervisor/killswitch`; the dashboard overview offers the same stop as the `factory.emergency_stop` action (`internal/control/web`). The dashboard needs a signed-in Owner (there is no Owner token); `sisf emergency-stop` on the host needs neither.
+The publishing freeze and the claim hold are in force then, but only the supervisor route cancels runs in flight: run the same command again once the supervisor answers.
+
+Verify: `sisf emergency-stop --status` asks the supervisor and prints `"frozen": true` with the stop's id, actor and reason.
+
+Undo, once the cause is fixed: lift it through the store. Cancelled runs stay cancelled and revoked secrets stay revoked; the held issues are let go and can be claimed again.
+
+```sh
+SISF_STATE_DSN="$D/data/state/factory.db" \
+  sisf emergency-stop --factory-id "$ID" --reason "<what was fixed>" --actor "<your name>" --lift
+```
+
+Expected: `emergency stop lifted`. Lifting when no stop is in force answers `NOT_FOUND: no emergency stop is in force`; lifting without `SISF_STATE_DSN` answers `INVALID_ARGUMENT: no state store connection was given; set SISF_STATE_DSN` (observed).
+
+`--actor` is optional when `$USER` is set (it then defaults to `user:$USER`); in cron, a container or a service without `$USER` the command refuses with `--factory-id, --reason and an actor (--actor or $USER) are required`.
+
+### Docker Compose
+
+In Docker mode the host has no route to either one by default: the state store is on the project's internal `factory` network, and the supervisor's admin socket is a Unix socket on the `<project>-supervisor-admin` volume (`templates/compose/compose.yaml`). Use the supervisor route through the control plane instead. It is the `factory.emergency_stop` action: Owner only, no approval and no step-up (`internal/actions/operationsactions`), served by every surface:
+
+```sh
+sisf login                                  # once, as the Owner
+sisf call factory.emergency_stop --input '{"reason":"<why>"}'
+```
+
+or the Emergency stop form on the dashboard overview (`/`), where the approval id field may be left empty. The answer is the supervisor's report (`stop_id`, `publishing_frozen`, `claims_held`, `runs_cancelled`, `secrets_revoked`). This route needs control and the supervisor running.
+
+If control does not answer, stop the whole project: `sisf stop --dir <dir>` (`docker compose stop`). That halts every unit, including Zone 1, and records no stop: the next `sisf up` or `sisf restart` resumes work as before.
+
+This release has no tested host route in Docker mode to check whether a stop is in force or to lift one. The store route would need the database published: `sisf up --debug` publishes it on 127.0.0.1:7469, but that `up` also rebuilds and restarts the factory, and lifting that way has not been exercised. Treat a stop in Docker mode as lasting until this gap is closed, and plan the recovery with the Owner.
 
 ## 2. Assess
 
-- `sisf status`, `sisf runs explain <issue|run-id>` and `sisf doctor` show what is held, blocked or unhealthy.
+- `sisf status`, `sisf runs explain <issue|run-id>` and `sisf doctor` show what is held, blocked or unhealthy; how to read them is in [Why is my issue stuck?](stuck-issues.md).
 - A release with no observable metrics is held, not published; a hold is not a failure of the factory.
 
 ## 3. Roll back
