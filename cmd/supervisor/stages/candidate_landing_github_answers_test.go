@@ -3,6 +3,7 @@ package stages
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -92,6 +93,22 @@ func TestALandingIsDecidedByWhatGitHubDidNotByItsAnswer(t *testing.T) {
 			landing, err := w.prs.Land(ctx, w.req)
 			if err != nil || landing.Merged || !strings.Contains(landing.Summary, "status 403") || w.data.Merges() != 0 {
 				t.Fatalf("Land = %+v, %v", landing, err)
+			}
+		})
+		t.Run("GitHub refuses to show the opened pull request", func(t *testing.T) {
+			w := landingFactory(t, db, "show refused")
+			opened, err := w.prs.ensure(ctx, w.req.IssueID, w.req.RunID, 1)
+			if err != nil || opened.Number == 0 {
+				t.Fatalf("ensure = %+v, %v", opened, err)
+			}
+			w.data.FailOn(http.MethodGet, "/pulls", http.StatusForbidden, "Resource not accessible by integration")
+			landing, err := w.prs.Land(ctx, w.req)
+			if err != nil || landing.Merged || w.data.Merges() != 0 {
+				t.Fatalf("Land = %+v, %v after %d merges", landing, err, w.data.Merges())
+			}
+			if !strings.Contains(landing.Summary, "GitHub refused to show the pull request (status 403") ||
+				!strings.Contains(landing.Summary, fmt.Sprintf("#%d", opened.Number)) {
+				t.Fatalf("the reason does not say GitHub refused to show the factory's pull request: %s", landing.Summary)
 			}
 		})
 		t.Run("GitHub refuses to open the pull request", func(t *testing.T) {
