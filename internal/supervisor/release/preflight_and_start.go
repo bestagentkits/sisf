@@ -37,12 +37,16 @@ type rollout struct {
 //
 //   - the backend cannot say what it can do, or cannot switch with a way
 //     back, observe a revision and measure it (a broken adapter);
-//   - the unit has no LKG, or the LKG is the release itself;
+//   - the unit has no LKG;
 //   - the LKG is not observed running and healthy as itself, so the way back
 //     cannot be verified;
 //   - the LKG cannot be measured (no metrics);
 //   - real traffic is too low to judge and there is no synthetic suite, or
 //     the suite says it cannot be run.
+//
+// A release whose program is the LKG's itself, byte for byte, is refused
+// with ALREADY_EXISTS instead: it has nothing to deploy, and waiting would
+// not change that.
 func (p *Pipeline) preflight(ctx context.Context, h *holding, v verifiedRelease) (*rollout, error) {
 	unit := v.artifact.Unit
 	caps, err := p.cfg.Backend.Capabilities(ctx)
@@ -59,7 +63,8 @@ func (p *Pipeline) preflight(ctx context.Context, h *holding, v verifiedRelease)
 	case !found:
 		return nil, holdf("unit %s has no last known good release to roll back to", unit)
 	case lkg.Digest == v.artifact.Digest:
-		return nil, holdf("the release is already the last known good release; rolling back to it is no way back")
+		return nil, core.NewError(core.CodeAlreadyExists,
+			"the candidate builds the same program as the last known good release, so there is nothing to deploy")
 	}
 	r := &rollout{
 		h: h, v: v, unit: unit, lkg: lkg, monitor: NewMonitor(p.cfg.Monitor),

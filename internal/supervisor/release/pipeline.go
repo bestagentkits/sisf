@@ -147,6 +147,13 @@ func (p *Pipeline) Release(ctx context.Context, req Request) (Outcome, error) {
 		return out, fmt.Errorf("the release could not be judged yet, so it is tried again: %w", err)
 	}
 	r, err := p.preflight(ctx, h, v)
+	if core.HasCode(err, core.CodeAlreadyExists) {
+		// The candidate builds the program that serves: nothing can be
+		// deployed or judged, and the lifecycle has no way from here to
+		// Verified that does not claim a rollout. The issue is blocked and
+		// its pull request left for the Owner to merge by hand.
+		return p.refuse(ctx, h, out, err)
+	}
 	if err != nil {
 		_ = p.audit(ctx, h, "release.preflight", core.OutcomeDenied, map[string]string{"code": string(core.CodeOf(err))})
 		return stop(ResultHeld, err)

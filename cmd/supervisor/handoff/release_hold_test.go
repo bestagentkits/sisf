@@ -8,6 +8,7 @@ import (
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 )
 
 // The public summary of a held release is chosen by its result and code
@@ -71,5 +72,18 @@ func TestOnlyAHeldReleaseIsResumed(t *testing.T) {
 	}
 	if err := handoff.ResumeHeldRelease(ctx, kv, "run-1", 1, "owner", now.Add(2*time.Minute)); !core.HasCode(err, core.CodeConflict) {
 		t.Fatalf("a release already resumed was resumed again: %v", err)
+	}
+}
+
+// The block of a candidate that builds the program already serving says
+// so, and that its pull request is merged by hand.
+func TestTheBlockOfACandidateThatBuildsTheServingProgramSaysToMergeItByHand(t *testing.T) {
+	t.Parallel()
+	stop := handoff.RunStop{IssueID: core.IssueRef{Owner: "a", Repo: "b", Number: 1}, RunID: "run-1", Cause: statemachine.BlockReleaseRefused, ReleaseCode: core.CodeAlreadyExists}
+	if s := stop.Summary(); !strings.Contains(s, "same program") {
+		t.Errorf("summary %q does not say the candidate builds the program already serving", s)
+	}
+	if w := stop.WayOut(); !strings.Contains(w, "merge its pull request by hand") {
+		t.Errorf("way out %q does not say to merge the pull request by hand", w)
 	}
 }
