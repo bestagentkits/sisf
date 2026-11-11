@@ -41,8 +41,9 @@ type Installer struct {
 	// Signal sends a signal to a process, or to a process group for a
 	// negative pid; nil means syscall.Kill.
 	Signal func(pid int, sig syscall.Signal) error
-	// ProcessStart says when a process started, as ps prints it in the C
-	// locale, or "" when no such process lives; nil means ps. It tells a
+	// ProcessStart says when a process started, or "" when no such process
+	// lives; nil reads it from /proc on Linux and from ps elsewhere. It
+	// tells a
 	// recorded process from another that was later given its pid.
 	ProcessStart func(pid int) (string, error)
 	// SupervisorStatus asks the supervisor on a loopback address for its
