@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/install"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -267,27 +268,44 @@ func TestStoredLoginFileIsOwnerOnlyAndReplacedWhole(t *testing.T) {
 
 // The default control URL is a fixed loopback port that another factory on
 // the same host may hold: with an install in the SISF home, a token or a
-// login request goes only to a server that names this install's factory.
+// login request goes only to a server that names this install's factory and
+// this install's root key. A second install of the same repository shares
+// the factory id, and only the key tells them apart; a server that names no
+// key proves nothing.
 func TestATokenIsNeverSentToAnotherFactory(t *testing.T) {
 	isolate(t)
 	home := initSim(t, "standalone")
 	t.Setenv(homeEnv, home)
 	t.Setenv(tokenEnv, "token-of-this-install")
-	for factory, want := range map[string]int{"sisf-other": exitFailure, "": exitFailure, "sisf-hello-app": exitOK} {
-		f := newFakeFactory(t, http.StatusOK, `{"factory_id":"`+factory+`","output":{}}`)
+	ownKey, err := install.Layout{Dir: home}.RootKeyID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherKey := "ed25519:" + strings.Repeat("ab", 32)
+	type answer struct{ factory, key string }
+	ours := answer{"sisf-hello-app", ownKey}
+	for _, a := range []answer{{"sisf-other", ownKey}, {"", ownKey}, {"sisf-hello-app", otherKey}, {"sisf-hello-app", ""}, ours} {
+		f := newFakeFactory(t, http.StatusOK, `{"factory_id":"`+a.factory+`","root_key_id":"`+a.key+`","output":{}}`)
 		status, _, stderr := runCLI(t, "", "status", "--url", f.srv.URL)
-		if status != want {
-			t.Errorf("factory %q: status %d, want %d (%s)", factory, status, want, stderr)
+		if want := map[bool]int{true: exitOK, false: exitFailure}[a == ours]; status != want {
+			t.Errorf("%+v: status %d, want %d (%s)", a, status, want, stderr)
 		}
 		for _, s := range f.seen() {
-			if s.auth != "" && factory != "sisf-hello-app" {
-				t.Errorf("factory %q received the token at %s", factory, s.path)
+			if s.auth != "" && a != ours {
+				t.Errorf("%+v received the token at %s", a, s.path)
 			}
 		}
-		if factory == "sisf-other" && !strings.Contains(stderr, "is factory sisf-other, not sisf-hello-app") {
+		if a.factory == "sisf-other" && !strings.Contains(stderr, "is factory sisf-other, not sisf-hello-app") {
 			t.Errorf("the refusal does not name both factories: %s", stderr)
 		}
-		if factory == "sisf-hello-app" {
+		if a.key == otherKey && !strings.Contains(stderr, "another install of factory sisf-hello-app") {
+			t.Errorf("the refusal does not say it is another install: %s", stderr)
+		}
+		if a.factory != "" && a.key == "" && !strings.Contains(stderr, "does not name the root key") {
+			t.Errorf("the refusal does not say the key is missing: %s", stderr)
+		}
+		factory := a.factory + " " + a.key
+		if a == ours {
 			continue
 		}
 		status, _, _ = runCLI(t, "", "login", "--url", f.srv.URL)
@@ -297,6 +315,37 @@ func TestATokenIsNeverSentToAnotherFactory(t *testing.T) {
 		for _, s := range f.seen() {
 			if s.path == deviceStartPath {
 				t.Errorf("a login request was sent to factory %q", factory)
+			}
+		}
+	}
+}
+
+// Only an install that is genuinely absent skips the check: a manifest or a
+// root key that cannot be read sends nothing.
+func TestATokenIsNotSentWhenTheInstallCannotBeRead(t *testing.T) {
+	isolate(t)
+	for name, damage := range map[string]func(home string) error{
+		"manifest": func(home string) error {
+			return os.WriteFile(filepath.Join(home, "factory.yaml"), []byte("api_version: [\n"), 0o600)
+		},
+		"root key": func(home string) error {
+			return os.Remove(filepath.Join(home, "secrets", "control", "root-public-key"))
+		},
+	} {
+		home := initSim(t, "standalone")
+		if err := damage(home); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(homeEnv, home)
+		t.Setenv(tokenEnv, "token-of-this-install")
+		key, _ := install.Layout{Dir: home}.RootKeyID()
+		f := newFakeFactory(t, http.StatusOK, `{"factory_id":"sisf-hello-app","root_key_id":"`+key+`","output":{}}`)
+		if status, _, stderr := runCLI(t, "", "status", "--url", f.srv.URL); status == exitOK {
+			t.Errorf("%s unreadable: status succeeded (%s)", name, stderr)
+		}
+		for _, s := range f.seen() {
+			if s.auth != "" {
+				t.Errorf("%s unreadable: the token was sent to %s", name, s.path)
 			}
 		}
 	}

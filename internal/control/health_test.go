@@ -16,6 +16,7 @@ import (
 
 type healthBody struct {
 	FactoryID core.FactoryID                     `json:"factory_id"`
+	RootKeyID string                             `json:"root_key_id"`
 	Status    string                             `json:"status"`
 	Zones     map[core.Zone]control.HealthStatus `json:"zones"`
 }
@@ -49,6 +50,35 @@ func TestHealthzNamesTheFactoryThatAnswers(t *testing.T) {
 			t.Fatalf("healthz factory_id = %q, want %q", body.FactoryID, sqlstoretest.Factory)
 		}
 	})
+}
+
+// TestHealthzNamesTheRootKeyOfItsInstall lets the CLI tell two installs of
+// one factory id apart: the root key's id is public, and only a well-formed
+// id is repeated. Not parallel: it sets the process environment.
+func TestHealthzNamesTheRootKeyOfItsInstall(t *testing.T) {
+	keyID := "ed25519:" + strings.Repeat("ab", 32)
+	for value, want := range map[string]string{
+		keyID:                     keyID,
+		"":                        "",
+		"ed25519:short":           "",
+		"secret-material-123":     "",
+		keyID + "\nX-Injected: 1": "",
+	} {
+		t.Run(want+"/"+value, func(t *testing.T) {
+			t.Setenv(control.EnvRootKeyID, value)
+			withServer(t, func(t *testing.T, e *env) {
+				rec := e.do(httptest.NewRequest(http.MethodGet, "/healthz", nil))
+				var body healthBody
+				getJSON(t, rec, &body)
+				if body.RootKeyID != want {
+					t.Fatalf("healthz root_key_id = %q for %q, want %q", body.RootKeyID, value, want)
+				}
+				if want == "" && strings.Contains(rec.Body.String(), "root_key_id") {
+					t.Fatalf("healthz names a root key it does not have: %s", rec.Body.String())
+				}
+			})
+		})
+	}
 }
 
 func TestHealthzReportsADownZoneWithoutItsReason(t *testing.T) {

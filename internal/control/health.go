@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"regexp"
 	"sync"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
 )
@@ -131,11 +134,35 @@ func describeProbeError(err error) string {
 // Health reports the three zones, in zone order.
 func (s *Server) Health(ctx context.Context) []ZoneHealth { return s.health.check(ctx) }
 
+// EnvRootKeyID names the id of the install's root public key, the value
+// signing.KeyID gives ("ed25519:" and 64 hex digits). The installer sets it
+// in the control process's environment; /healthz repeats it.
+//
+// It is read from the environment here, not from Config, so that installs
+// can name their key without a change to how the server is configured; a
+// value that is not a well-formed key id is not repeated, so a mistake in
+// the environment cannot publish anything else.
+const EnvRootKeyID = "SISF_ROOT_FINGERPRINT"
+
+// rootKeyIDForm is the form of a root key id.
+var rootKeyIDForm = regexp.MustCompile("^" + regexp.QuoteMeta(signing.Algorithm) + ":[0-9a-f]{64}$")
+
+// rootKeyID is the install's root key id from the environment, or "".
+func rootKeyID() string {
+	if id := os.Getenv(EnvRootKeyID); rootKeyIDForm.MatchString(id) {
+		return id
+	}
+	return ""
+}
+
 // handleHealthz answers the unauthenticated liveness check. It reports each
-// zone's verdict and the factory it belongs to, and nothing else; the
-// reasons are for the Owner's log. The factory id is not secret: it lets a
-// client on the same host tell this factory from another one answering on
-// the same fixed port, before it sends a token or trusts a verdict.
+// zone's verdict, the factory it belongs to and the id of its install's
+// root public key, and nothing else; the reasons are for the Owner's log.
+// Neither id is secret: they let a client on the same host tell this
+// factory from another one answering on the same fixed port, and one
+// install of a factory id from another install of the same id, before it
+// sends a token or trusts a verdict. They identify an honest factory; they
+// prove nothing, since any process that learns them can repeat them.
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	zones := map[core.Zone]HealthStatus{}
 	status, code := "ok", http.StatusOK
@@ -146,5 +173,9 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 			s.log.Warn("a zone is not healthy", "zone", string(z.Zone), "status", string(z.Status), "detail", z.Detail)
 		}
 	}
-	writeJSON(w, code, map[string]any{"factory_id": s.cfg.FactoryID, "status": status, "zones": zones})
+	body := map[string]any{"factory_id": s.cfg.FactoryID, "status": status, "zones": zones}
+	if id := rootKeyID(); id != "" {
+		body["root_key_id"] = id
+	}
+	writeJSON(w, code, body)
 }

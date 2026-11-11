@@ -5,9 +5,11 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -149,5 +151,46 @@ func TestTheReportIsWrappedAndCarriesNoErrorCodes(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "NOT_FOUND") || !strings.Contains(out.String(), "sisf init") {
 		t.Errorf("report of a directory without an install:\n%s", out.String())
+	}
+}
+
+// Control names its install's root key on /healthz too, so another install
+// of the same factory id is told apart there even when the supervisor does
+// not answer.
+func TestControlOfAnotherInstallOfTheSameFactoryIDIsToldApartByItsRootKey(t *testing.T) {
+	t.Parallel()
+	net := healthyNet().with("127.0.0.1:7463/healthz", reply{code: 200,
+		body: `{"factory_id":"sisf-hello-app","root_key_id":"ed25519:` + strings.Repeat("ab", 32) + `","status":"ok","zones":{"application":"ok","agent":"ok","control":"ok"}}`})
+	in := builtStandalone(t, net, nil)
+	markStopped(in)
+	r := runDoctor(t, in)
+	noLiveCheckPasses(t, r)
+	if d := detailOf(r, runningCheck); !strings.Contains(d, "port 7463 is answered by another install of factory sisf-hello-app") {
+		t.Errorf("running = %q, want control named as another install", d)
+	}
+}
+
+// The control process of a Standalone install names the install's root key
+// id, the value its /healthz repeats, and never the key itself.
+func TestStandaloneControlIsGivenTheRootKeyIDOfItsInstall(t *testing.T) {
+	t.Parallel()
+	r := startStandalone(t, nil)
+	defer r.stop(t)
+	want, err := r.in.Layout.RootKeyID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := r.factoryd(t, "control").cmd.Env
+	if !slices.Contains(env, control.EnvRootKeyID+"="+want) {
+		t.Fatalf("control env lacks %s=%s: %v", control.EnvRootKeyID, want, env)
+	}
+	pub, err := os.ReadFile(r.in.Layout.Secret(areaControl, "root-public-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range env {
+		if strings.Contains(e, strings.TrimSpace(string(pub))) {
+			t.Fatalf("control env holds the root public key itself: %s", e)
+		}
 	}
 }

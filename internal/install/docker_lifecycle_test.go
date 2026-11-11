@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/bestagentkits/sisf/internal/conformance"
+	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -428,5 +429,26 @@ func TestEveryComposeVolumeNamesTheInstallThatMadeIt(t *testing.T) {
 	}
 	if vs, err := CheckCompose(in.Layout, rendered); err != nil || len(vs) > 0 {
 		t.Fatalf("the labelled project does not pass the isolation rules: %v %v", vs, err)
+	}
+}
+
+// Control in Docker mode names the install's root key id on /healthz.
+func TestDockerControlIsGivenTheRootKeyIDOfItsInstall(t *testing.T) {
+	t.Parallel()
+	in, rendered := renderCompose(t, nil)
+	want, err := in.Layout.RootKeyID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(rendered, &file); err != nil {
+		t.Fatal(err)
+	}
+	if got := file.Services["control"].Environment[control.EnvRootKeyID]; got != want {
+		t.Fatalf("control %s = %q, want %q", control.EnvRootKeyID, got, want)
 	}
 }

@@ -36,6 +36,10 @@ type ComposeData struct {
 	// labels every volume of the project with the install that made it
 	// (see checkProjectOwner).
 	InstallDir string
+	// RootKeyID is the id of the install's root public key, which control
+	// names on /healthz so the CLI can tell this install from another one
+	// of the same factory id.
+	RootKeyID string
 
 	// SecretsDir, ConfigFile, ReleaseFile and SimAgentDir are absolute host
 	// paths.
@@ -88,9 +92,13 @@ func newComposeData(l Layout, o Options, images Images, bootstrap []string, host
 		return ComposeData{}, invalidf("Docker mode needs a factory id that starts with sisf- and has no dot, not %q", o.FactoryID)
 	}
 	app := digestOf(images.App)
+	keyID, err := l.RootKeyID()
+	if err != nil {
+		return ComposeData{}, err
+	}
 	return ComposeData{
 		Project: proj, FactoryID: o.FactoryID, Repository: o.Repo.Owner + "/" + o.Repo.Repo,
-		InstallDir: l.Dir, SecretsDir: l.Dir + "/secrets", ConfigFile: l.Config(), ReleaseFile: l.ReleaseManifest(), SimAgentDir: l.SimAgentDir(),
+		InstallDir: l.Dir, RootKeyID: keyID, SecretsDir: l.Dir + "/secrets", ConfigFile: l.Config(), ReleaseFile: l.ReleaseManifest(), SimAgentDir: l.SimAgentDir(),
 		GitHubAPIURL: o.GitHubAPIURL, Images: images, Sim: o.Sim, Debug: o.Debug,
 		BootstrapCommand: string(cmd), PostgresImage: PostgresImage,
 		AppDigest: string(app), AppContainer: deployedContainer(o.FactoryID, "app", app),

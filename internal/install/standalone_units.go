@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
+	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
@@ -135,7 +136,8 @@ func (in *Installer) standaloneControlEnv(o Options) []string {
 	env := append(o.Identity.controlEnv(),
 		wiring.EnvSupervisorAdminAddr+"="+addr(PortSupervisor),
 		wiring.EnvEdgeCountersURL+"=http://"+addr(PortEdgeAdmin),
-		wiring.EnvLocalStoreDir+"="+in.Layout.Data("control", "secrets"))
+		wiring.EnvLocalStoreDir+"="+in.Layout.Data("control", "secrets"),
+		control.EnvRootKeyID+"="+in.rootKeyID())
 	env = append(env, o.reconcileEnv()...)
 	docs := filepath.Join(in.SourceDir, "docs")
 	if info, err := os.Stat(docs); err == nil && info.IsDir() && quotedPathPattern.MatchString(docs) {

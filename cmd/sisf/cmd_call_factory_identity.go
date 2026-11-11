@@ -10,39 +10,68 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// verifyFactory proves, before a token or a login request is sent, that the
-// control server at the URL is the factory of the install in the SISF home.
-// The default URL is a fixed loopback port, and a second factory on the same
-// host may answer there; it must never receive this install's token. With no
-// install in the SISF home, such as on a laptop that talks to a remote
-// factory, there is nothing to compare with and nothing is checked.
+// verifyFactory checks, before a token or a login request is sent, that the
+// control server at the URL is the factory of the install in the SISF home:
+// it must name this install's factory id and the id of this install's root
+// public key on its open health route. The default URL is a fixed loopback
+// port, and a second factory on the same host may answer there; two installs
+// of one repository share the factory id, and only the root key tells them
+// apart. Neither must receive this install's token or answer its login.
+//
+// What this does not do: both ids are public, and the health route only
+// repeats them. The check tells installs apart and stops an honest wrong
+// factory; a hostile local process that binds the port while the factory is
+// down, and has learnt the key id, for example by asking the health route
+// while the factory ran, can repeat it. Only a challenge the factory signs
+// would rule that out.
+//
+// With no install in the SISF home, such as on a laptop that talks to a
+// remote factory, there is nothing to compare with and nothing is checked.
+// An install that is there but cannot be read is not the same as none: the
+// check then fails and nothing is sent.
 func (c *connFlags) verifyFactory(ctx context.Context, client *apiClient) error {
 	home, err := resolveDir(c.dir)
 	if err != nil {
 		return err
 	}
-	m, err := (install.Layout{Dir: home}).LoadManifest()
-	if err != nil {
+	layout := install.Layout{Dir: home}
+	m, err := layout.LoadManifest()
+	if core.HasCode(err, core.CodeNotFound) {
 		return nil // no install here: a remote factory, named by its URL
 	}
+	if err != nil {
+		return core.NewError(core.CodeUnavailable, "the install in "+home+" cannot be read, so the server at "+client.base+" cannot be checked; nothing was sent to it",
+			core.NextAction{Action: "sisf doctor --dir " + home, Description: "see what is wrong with the install"}).WithCause(err)
+	}
+	ownKey, err := layout.RootKeyID()
+	if err != nil {
+		return core.NewError(core.CodeUnavailable, "the root public key of the install in "+home+" cannot be read, so the server at "+client.base+" cannot be checked; nothing was sent to it",
+			core.NextAction{Action: "sisf doctor --dir " + home, Description: "see what is wrong with the install"}).WithCause(err)
+	}
 	anonymous := *client
-	anonymous.token = "" // the health route is open; the token waits for the proof
+	anonymous.token = "" // the health route is open; the token waits for the check
 	status, raw, _, err := anonymous.do(ctx, http.MethodGet, "/healthz", nil)
 	if err != nil {
 		return notRunning(client.base, home, err)
 	}
 	var health struct {
 		FactoryID core.FactoryID `json:"factory_id"`
+		RootKeyID string         `json:"root_key_id"`
 	}
 	_ = json.Unmarshal(raw, &health) // an unreadable answer names no factory
+	doctor := core.NextAction{Action: "sisf doctor --dir " + home, Description: "see what answers on this install's ports"}
 	switch {
 	case health.FactoryID == "":
-		return core.NewError(core.CodeConflict, "the server at "+client.base+" does not say which factory it is (HTTP "+strconv.Itoa(status)+"), so nothing was sent to it",
-			core.NextAction{Action: "sisf doctor --dir " + home, Description: "see what answers on this install's ports"})
+		return core.NewError(core.CodeConflict, "the server at "+client.base+" does not say which factory it is (HTTP "+strconv.Itoa(status)+"), so nothing was sent to it", doctor)
 	case health.FactoryID != m.FactoryID:
 		return core.NewError(core.CodeConflict, "the server at "+client.base+" is factory "+string(health.FactoryID)+", not "+string(m.FactoryID)+" of the install in "+home+"; nothing was sent to it",
-			core.NextAction{Action: "--url", Description: "name this factory's control URL, or stop the other factory that holds its port"},
-			core.NextAction{Action: "sisf doctor --dir " + home, Description: "see what answers on this install's ports"})
+			core.NextAction{Action: "--url", Description: "name this factory's control URL, or stop the other factory that holds its port"}, doctor)
+	case health.RootKeyID == "":
+		return core.NewError(core.CodeConflict, "the server at "+client.base+" says it is factory "+string(m.FactoryID)+" but does not name the root key of its install, so it cannot be told from another install of that factory; nothing was sent to it",
+			core.NextAction{Action: "sisf stop --dir " + home + " && sisf up --dir " + home, Description: "if it is this install, started by an older sisf, start it again so it names its key"}, doctor)
+	case health.RootKeyID != ownKey:
+		return core.NewError(core.CodeConflict, "the server at "+client.base+" is another install of factory "+string(m.FactoryID)+" (root key "+health.RootKeyID+", not the key of the install in "+home+"); nothing was sent to it",
+			core.NextAction{Action: "--url", Description: "name this factory's control URL, or stop the other install that holds its port"}, doctor)
 	}
 	return nil
 }

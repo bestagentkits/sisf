@@ -53,7 +53,7 @@ func (in *Installer) checkAnswering(ctx context.Context, c *collector, m *manife
 		case a.factoryID != string(m.FactoryID):
 			return a.port + " is answered by factory " + a.factoryID + ", not this install's " + string(m.FactoryID)
 		case a.keyID != "" && ownKey != "" && a.keyID != ownKey:
-			return a.port + " is answered by another install of factory " + a.factoryID + ": its release is signed by root key " + a.keyID + ", not this install's"
+			return a.port + " is answered by another install of factory " + a.factoryID + ": it names root key " + a.keyID + ", not this install's"
 		}
 		return ""
 	}
@@ -115,7 +115,8 @@ func (in *Installer) instanceRunning(ctx context.Context, m *manifest.Manifest) 
 	return true, "Compose project " + project(m.FactoryID)
 }
 
-// controlIdentity asks control's open health route which factory it is.
+// controlIdentity asks control's open health route which factory it is and
+// which install's root key it names.
 func (in *Installer) controlIdentity(ctx context.Context) answeredBy {
 	a := answeredBy{port: "port " + sprintf("%d", PortControl)}
 	_, body, err := in.httpGet(ctx, hostURL(PortControl, "/healthz"), nil)
@@ -125,9 +126,10 @@ func (in *Installer) controlIdentity(ctx context.Context) answeredBy {
 	a.reached = true
 	var health struct {
 		FactoryID string `json:"factory_id"`
+		RootKeyID string `json:"root_key_id"`
 	}
 	if json.Unmarshal(body, &health) == nil {
-		a.factoryID = health.FactoryID
+		a.factoryID, a.keyID = health.FactoryID, health.RootKeyID
 	}
 	return a
 }
@@ -150,15 +152,24 @@ func (in *Installer) supervisorIdentity(ctx context.Context, m *manifest.Manifes
 // rootKeyID is the key id of this install's root public key, or empty when
 // it cannot be read; the manifest check reports that separately.
 func (in *Installer) rootKeyID() string {
-	raw, err := os.ReadFile(in.Layout.Secret(areaControl, "root-public-key"))
+	id, _ := in.Layout.RootKeyID() // reported by the manifest check
+	return id
+}
+
+// RootKeyID is the key id of the install's root public key (signing.KeyID):
+// the identifier the doctor, the emergency stop and the CLI compare with
+// what a running factory names. It is public, never key material.
+func (l Layout) RootKeyID() (string, error) {
+	path := l.Secret(areaControl, "root-public-key")
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return "", unavailablef(err, "cannot read the root public key %s", path)
 	}
 	pub, err := signing.ParsePublicKey(strings.TrimSpace(string(raw)))
 	if err != nil {
-		return ""
+		return "", invalidf("%s does not hold a root public key", path)
 	}
-	return signing.KeyID(pub)
+	return signing.KeyID(pub), nil
 }
 
 // isMissingProgram reports whether err says a program is not installed.

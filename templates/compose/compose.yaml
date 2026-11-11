@@ -214,6 +214,8 @@ services:
       SISF_CONFIG: /etc/sisf/factory.yaml
       SISF_LISTEN: "0.0.0.0:{{ .PortControl }}"
       SISF_LISTEN_ALLOW_NON_LOOPBACK: "true"
+      # The id of the install's root public key, named on /healthz.
+      SISF_ROOT_FINGERPRINT: "{{ .RootKeyID }}"
       SISF_GITHUB_API_URL: "{{ .GitHubAPIURL }}"
 {{- if .ReconcileInterval }}
       SISF_GITHUB_RECONCILE_INTERVAL: "{{ .ReconcileInterval }}"
