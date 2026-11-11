@@ -232,8 +232,11 @@ func pullNumbered(prs []github.PullRequest, number int) (github.PullRequest, boo
 }
 
 // transient reports whether GitHub could not answer, as opposed to
-// refusing. A refused token counts as not answering: an installation
-// token is renewed, and an expired one must not decide a landing.
+// refusing. A refused token (401) counts as not answering, so a token that
+// is revoked or expired never decides a landing: the client holds the
+// token it was started with and does not renew it, so such an issue stays
+// in Verified, its landing due, until the operator replaces the token and
+// restarts the supervisor.
 func transient(err error) bool {
 	return core.HasCode(err, core.CodeUnavailable) || core.HasCode(err, core.CodeRateLimited) ||
 		core.HasCode(err, core.CodeTimeout) || core.HasCode(err, core.CodeInternal) || core.HasCode(err, core.CodeUnauthenticated)
