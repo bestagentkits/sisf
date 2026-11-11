@@ -72,6 +72,15 @@ func TestATitleSplitByCharacterReferencesIsRedacted(t *testing.T) {
 			t.Errorf("%s: the title shows the split secret: %q", ref, title)
 		}
 	}
+	// A reference assembled only once an invisible character between its
+	// parts is dropped is decoded too: the secret is split once, so the
+	// title is not cut before it.
+	for _, ref := range []string{"&#&shy;x200b;", "&s&#8203;hy;", "&#&#8203;x200b;"} {
+		title := reportIssueTitle(report.Report{Title: "Login " + secret[:10] + ref + secret[10:]}, redactor.Redact)
+		if shown := joined(html.UnescapeString(title)); strings.Contains(shown, secret[:12]) {
+			t.Errorf("%s: the title shows the split secret: %q", ref, title)
+		}
+	}
 	// A reference that names a mention is defused like the mention itself.
 	if title := reportIssueTitle(report.Report{Title: "ping &#64;octocat"}, redactor.Redact); strings.Contains(title, "@octocat") {
 		t.Errorf("a referenced @ formed a mention: %q", title)

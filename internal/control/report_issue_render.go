@@ -60,12 +60,20 @@ func defuse(text string, keepLines bool) string {
 	return shortReferenceForm.ReplaceAllString(text, "$1"+zeroWidthSpace+"$2")
 }
 
-// decodeReferences decodes the HTML character references in text until
-// none is left, so a reference encoded twice, &amp;#8203;, is decoded too.
-// Each pass that changes the text shortens it, so the loop ends.
+// decodeReferences decodes the HTML character references in text and
+// drops the characters that show nothing (report.Invisible), again and
+// again until neither changes it: a reference encoded twice, &amp;#8203;,
+// is decoded too, and so is one assembled only once an invisible character
+// between its parts is dropped, &#&shy;x200b;. Each pass that changes the
+// text shortens it, so the loop ends.
 func decodeReferences(text string) string {
 	for {
-		decoded := html.UnescapeString(text)
+		decoded := strings.Map(func(r rune) rune {
+			if report.Invisible(r) {
+				return -1
+			}
+			return r
+		}, html.UnescapeString(text))
 		if decoded == text {
 			return text
 		}
