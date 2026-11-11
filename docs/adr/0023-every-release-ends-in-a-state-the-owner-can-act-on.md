@@ -2,7 +2,7 @@
 
 ## Status
 
-Status: proposed. The Owner chose this direction on 2026-11-11: a refused release leaves ReleaseCandidate, and an interrupted release is rolled back. This ADR records the decision for review before it is accepted.
+Status: proposed. The Owner chose this direction after the trust review of the release lifecycle: a refused release leaves ReleaseCandidate, and an interrupted release is rolled back. This ADR records the decision for review before it is accepted.
 
 ## Context
 
@@ -16,7 +16,7 @@ A trust review of the release lifecycle found releases that stopped in a state n
 
 ## Decision
 
-- **A refused release blocks its issue.** A new lifecycle edge, ReleaseCandidate → Blocked on event `release_refused`, is unguarded like the other edges into Blocked (`pkg/core/statemachine/table.go`). The issue is blocked with cause `release_refused`, and the stop record keeps the refusal's code (`cmd/supervisor/handoff/run_stop.go`). The issue's summary names the code's meaning. `EXPIRED` says the receipt or the signing key expired. `APPROVAL_REQUIRED` says the change touches the trusted surface or a unit outside `release.units`. A verification failure says the candidate did not verify. The candidate's pull request is noted as refused, never as rolled back.
+- **A refused release blocks its issue.** A new lifecycle edge, ReleaseCandidate → Blocked on event `release_refused`, is unguarded like the other edges into Blocked (`pkg/core/statemachine/table.go`). The issue is blocked with cause `release_refused`, and the stop record keeps the refusal's code (`cmd/supervisor/handoff/run_stop.go`). The issue's summary names the code's meaning. `EXPIRED` says the receipt or the signing key expired. `APPROVAL_REQUIRED` says the change touches the trusted surface or a unit outside `release.units`. A verification failure says the candidate did not verify. The candidate's pull request is noted as refused, never as rolled back. Only a refusal that judged the candidate or the request blocks the issue: the codes `APPROVAL_REQUIRED`, `EXPIRED`, `SIGNATURE_INVALID`, `TAMPERED`, `GUARD_FAILED`, `INVALID_ARGUMENT`, `PERMISSION_DENIED`, `NOT_FOUND` and `REPLAYED`. A check that failed for any other reason, or whose context ended, judged nothing; the release does not begin and is tried again on the next pass.
 - **The supervisor is the control zone.** The task asked for the edge to be the supervisor zone's alone. The store has three zones (application, agent, control), and the supervisor writes as the control zone, so the edge is admitted to the control zone only. It is listed in `controlEvents` (`pkg/state/sqlstore/zone_ownership.go`) and in the PostgreSQL record trigger and row policies generated from those rules. Like every step from Claimed through Monitoring, the step needs the issue lease and the run the record names. The agent zone's role cannot take it, and the application zone writes no step.
 - **Migration 10** (`0010_release_refusal_and_lease_steps`, backward compatible) installs the new step on PostgreSQL and a trigger on `leases`, `sisf_lease_step` (`pkg/state/sqlstore/lease_step_trigger.go`). The trigger holds every change of a lease to one of the writes the lease API makes:
   - insert at token 1;
@@ -85,3 +85,5 @@ A trust review of the release lifecycle found releases that stopped in a state n
   - `TestAHeldReleaseResumedAfterItsReceiptExpiredBlocksItsIssue`;
   - `TestTheRetryOfAReleaseWhoseHoldCannotBeReadSaysSo`.
 - `tests/acceptance/exhausted_run_blocked_test.go`: `TestTheRetryOfALaterRollbackIsJudgedByItsOwnRecord`.
+- `tests/acceptance/release_recovery_after_restart_test.go`: `TestAReleaseLeftInCanaryByAStoppedSupervisorIsRestoredAndBlocked`, through the supervisor's own pass.
+- `internal/supervisor/release/unverified_candidate_refused_test.go`: `TestAReleaseWhoseChecksWereCutShortIsTriedAgainNotRefused` and `TestOnlyAJudgedRefusalBlocksTheIssue`.
