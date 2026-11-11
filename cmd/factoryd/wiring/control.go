@@ -311,12 +311,14 @@ func (c *Control) Run(ctx context.Context, ln net.Listener, interval time.Durati
 // an answer. The error joins their failures.
 //
 // On an install acting with the operator's token, a pass whose check of
-// the token finds its write access revoked does none of this and returns
-// PERMISSION_DENIED.
+// the token finds its write access revoked does none of this but the
+// prune of lapsed reports, and returns PERMISSION_DENIED.
 func (c *Control) Pass(ctx context.Context) error {
+	// The prune reads nothing on GitHub, so it runs whatever the token's access.
+	pruned := c.pruneReports(ctx)
 	if c.access != nil {
 		if err := c.access.check(ctx); err != nil {
-			return err
+			return errors.Join(err, pruned)
 		}
 	}
 	published := c.publishPolicy(ctx)
@@ -340,7 +342,7 @@ func (c *Control) Pass(ctx context.Context) error {
 		c.projectProgress(ctx),
 		c.projectLifecycle(ctx),
 		c.runDecisions(ctx),
-		c.pruneReports(ctx),
+		pruned,
 		// Last, so a slow or failing GitHub delays nothing above; what it
 		// finds is drained by the next pass.
 		c.reconcileDue(ctx),
