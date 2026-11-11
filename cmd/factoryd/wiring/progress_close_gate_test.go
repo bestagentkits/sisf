@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
+	"github.com/bestagentkits/sisf/pkg/state"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
 
@@ -127,7 +129,7 @@ func closeGateControl(t *testing.T) (*Control, *commentGitHub, *sqlstoretest.Clo
 // A GitHub outage as the run ends never costs the issue its last progress
 // line: however long GitHub answers 5xx, rate limits or not at all, the
 // issue is not closed, and once GitHub answers again the comment shows the
-// end first and the issue closes after it.
+// end, the merge included, and the issue closes after it.
 func TestAnOutageAtTheRunsEndDelaysTheCloseUntilTheEndIsShown(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -142,6 +144,11 @@ func TestAnOutageAtTheRunsEndDelaysTheCloseUntilTheEndIsShown(t *testing.T) {
 		core.NewError(core.CodeRateLimited, "GitHub rate limit"),
 		core.NewError(core.CodeUnavailable, "connection refused"),
 		core.NewError(core.CodeTimeout, "deadline exceeded"),
+	}
+	merged := handoff.CandidatePR{IssueID: issue, RunID: r.RunID, Attempt: 1, Branch: "sisf/f1/run-1-1", Base: "main", Number: 9,
+		Commit: "1111111111111111111111111111111111111111", State: handoff.LandingMerged}
+	if err := c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error { return handoff.PutCandidatePR(ctx, tx, merged) }); err != nil {
+		t.Fatal(err)
 	}
 	r.State, r.Version = core.StateClosed, 2
 	for i := range 3 * maxProgressFailures {
@@ -161,6 +168,9 @@ func TestAnOutageAtTheRunsEndDelaysTheCloseUntilTheEndIsShown(t *testing.T) {
 	closed, _, events := gh.state()
 	if want := []string{"comment Verified", "comment Closed", "close"}; !closed || strings.Join(events, ",") != strings.Join(want, ",") {
 		t.Fatalf("GitHub saw %v, want %v", events, want)
+	}
+	if comments, _ := gh.ListComments(ctx, issue, time.Time{}); len(comments) != 1 || !strings.Contains(comments[0].Body, "**Merged** #9 into `main`") {
+		t.Fatalf("the last progress does not say the change is merged: %+v", comments)
 	}
 }
 
