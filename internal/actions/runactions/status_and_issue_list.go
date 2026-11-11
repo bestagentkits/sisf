@@ -64,9 +64,11 @@ type GitHubSync struct {
 	ParkingDeferredSince  time.Time `json:"parking_deferred_since,omitzero"`
 	ParkingDeferredReason string    `json:"parking_deferred_reason,omitempty"`
 	// ReportsWaiting counts the bug reports from the public report route
-	// not yet published as GitHub issues for triage; ReportPublishError
-	// says why the last publication failed, "" when it did not.
+	// not yet published as GitHub issues for triage, ReportsFailed those
+	// given up after GitHub refused them; ReportPublishError says why the
+	// last publication failed, "" when it did not.
 	ReportsWaiting     int    `json:"reports_waiting"`
+	ReportsFailed      int    `json:"reports_failed"`
 	ReportPublishError string `json:"report_publish_error,omitempty"`
 }
 

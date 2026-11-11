@@ -170,8 +170,10 @@ func (p ReportPublisher) noteError(ctx context.Context, failure error) error {
 // ReportPublication is how the publication of stored reports stands, as
 // the factory's status shows it.
 type ReportPublication struct {
-	// Waiting counts the stored reports not published yet.
+	// Waiting counts the stored reports not published yet, Failed those
+	// given up after GitHub refused them, which will never be published.
 	Waiting int
+	Failed  int
 	// LastError is why the last publication failed; "" when it did not.
 	LastError string
 }
@@ -186,6 +188,11 @@ func ReadReportPublication(ctx context.Context, store state.Store) (ReportPublic
 			return err
 		}
 		out.Waiting = len(waiting)
+		failed, err := tx.ListKV(ctx, ReportsNamespace, reportFailedPrefix, 0)
+		if err != nil {
+			return err
+		}
+		out.Failed = len(failed)
 		entry, err := tx.GetKV(ctx, ReportsNamespace, reportPublishErrorKey)
 		switch {
 		case err == nil:

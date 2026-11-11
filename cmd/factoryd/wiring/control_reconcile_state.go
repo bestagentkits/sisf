@@ -181,7 +181,7 @@ func (c *Control) GitHubSync(ctx context.Context) (runactions.GitHubSync, error)
 		if err != nil {
 			return out, err
 		}
-		out.ReportsWaiting, out.ReportPublishError = published.Waiting, published.LastError
+		out.ReportsWaiting, out.ReportsFailed, out.ReportPublishError = published.Waiting, published.Failed, published.LastError
 	}
 	return out, nil
 }

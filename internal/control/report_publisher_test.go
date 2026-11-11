@@ -292,6 +292,9 @@ func TestAReportGitHubRefusesIsGivenUpAfterAFewTries(t *testing.T) {
 		if countKeys(t, e, "r/") != 0 || countKeys(t, e, "f/") != 1 {
 			t.Fatalf("a report refused three times: %d waiting, %d given up", countKeys(t, e, "r/"), countKeys(t, e, "f/"))
 		}
+		if st, err := control.ReadReportPublication(context.Background(), e.store); err != nil || st.Waiting != 0 || st.Failed != 1 {
+			t.Fatalf("the status of a report given up: %+v, %v", st, err)
+		}
 		creates := gh.creates
 		publish(t, p)
 		if gh.creates != creates {
