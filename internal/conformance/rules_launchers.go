@@ -40,17 +40,91 @@ func (c *checker) checkStandaloneBinaries() {
 	}
 	for _, name := range manifest.UnitNames() {
 		unit, ok := c.m.Units[name]
-		if !ok || name == manifest.UnitSupervisor || len(unit.Command) == 0 || factoryBinary(unit.Command[0]) {
+		if !ok || name == manifest.UnitSupervisor || len(unit.Command) == 0 {
 			continue
 		}
 		at := "units." + string(name)
 		if c.reportedAtUnit(at+".command") || c.reportedAtUnit(at+".image") {
 			continue
 		}
-		c.add(RuleUnitThroughLauncher, at+".command",
-			"start a factory binary from the install's bin/ directory, such as bin/factoryd, as the first word of the command",
-			"unit %q starts %q, which is not a factory binary in the install's bin/ directory; a program from elsewhere, such as an interpreter, can run anything its arguments name, including the supervisor's executable", name, unit.Command[0])
+		if !factoryBinary(unit.Command[0]) {
+			c.add(RuleUnitThroughLauncher, at+".command",
+				"start a factory binary from the install's bin/ directory, such as bin/factoryd, as the first word of the command",
+				"unit %q starts %q, which is not a factory binary in the install's bin/ directory; a program from elsewhere, such as an interpreter, can run anything its arguments name, including the supervisor's executable", name, unit.Command[0])
+			continue
+		}
+		c.checkOwnBinary(name, unit.Command)
 	}
+}
+
+// unitBinaries is the binary in the install's bin/ directory that each unit
+// of a Standalone install starts, as `sisf up` builds and defines them. The
+// supervisor's binary has a rule of its own, which pins it; the application
+// has none here, since it is the operator's program (see checkOwnBinary).
+var unitBinaries = map[manifest.UnitName]string{
+	manifest.UnitControl:    "factoryd",
+	manifest.UnitDispatcher: "factoryd",
+	manifest.UnitEdge:       "sisf-edge",
+	manifest.UnitRunner:     "sisf-runner",
+	manifest.UnitQARunner:   "sisf-qa-runner",
+}
+
+// appLauncherBinary is the launcher `sisf up` writes to bin/ for the
+// supervisor's local deployments. It runs the program its second argument
+// names, so it is a launcher like a shell: only the application unit may
+// start it, and only without arguments, since the supervisor alone names
+// that program, when it deploys a release.
+const appLauncherBinary = "sisf-app-launcher"
+
+// checkOwnBinary refuses a unit that starts a binary of bin/ other than its
+// own. Every binary there is one `sisf up` builds or writes, but they are
+// not interchangeable: the application launcher runs any program it is
+// given, and the application's binary is not the factory. A factory unit
+// starts its own binary. The application unit starts the application's
+// program, any binary of bin/ the factory does not own, or the application
+// launcher without arguments.
+func (c *checker) checkOwnBinary(name manifest.UnitName, command []string) {
+	at := "units." + string(name) + ".command"
+	file := path.Base(command[0])
+	// A file system that ignores case runs bin/SISF-APP-LAUNCHER for
+	// bin/sisf-app-launcher, so the application's names are folded; a
+	// factory unit must name its binary exactly.
+	launcher := foldCase(file) == foldCase(appLauncherBinary)
+	if own, ok := unitBinaries[name]; ok {
+		if file != own {
+			c.add(RuleUnitThroughLauncher, at,
+				"start the unit's own binary, bin/"+own+", as the first word of the command",
+				"unit %q starts %q, not its own binary bin/%s; another binary of the install, such as the application launcher, runs what its arguments name, or is another unit's program", name, command[0], own)
+		}
+		return
+	}
+	if name != manifest.UnitApp {
+		return // a unit no rule knows the binary of is judged by the others
+	}
+	switch {
+	case launcher && len(command) > 1:
+		c.add(RuleUnitThroughLauncher, at,
+			"start bin/"+appLauncherBinary+" without arguments; the supervisor gives it the program of a release when it deploys one",
+			"unit %q passes arguments to the application launcher, which runs the program its second argument names; the manifest may not name that program", name)
+	case !launcher && c.factoryOwned(file):
+		c.add(RuleUnitThroughLauncher, at,
+			"start the application's own program from bin/, or bin/"+appLauncherBinary+" without arguments",
+			"unit %q starts %q, a binary of the factory, not the application's program", name, command[0])
+	}
+}
+
+// factoryOwned reports whether file is the binary of a factory unit: of
+// the supervisor, as the manifest pins it, or of another factory unit.
+func (c *checker) factoryOwned(file string) bool {
+	if c.m.Supervisor != nil && c.m.Supervisor.Image != "" && foldCase(file) == foldCase(path.Base(c.m.Supervisor.Image)) {
+		return true
+	}
+	for _, own := range unitBinaries {
+		if foldCase(own) == foldCase(file) {
+			return true
+		}
+	}
+	return false
 }
 
 // reportedAtUnit reports whether any rule already failed at path or at a

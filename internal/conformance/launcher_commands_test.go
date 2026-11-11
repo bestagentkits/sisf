@@ -121,3 +121,53 @@ func TestAStandaloneUnitStartsOnlyAFactoryBinaryFromTheInstallsBinDirectory(t *t
 		t.Fatalf("a Docker unit is identified by its image, got %+v", report.Findings)
 	}
 }
+
+// Every binary of a Standalone install's bin/ is one `sisf up` builds or
+// writes, but each unit may start only its own: the application launcher
+// runs the program its arguments name, and the application is not the
+// factory. The application unit starts its own program, which the operator
+// names, or the launcher without arguments, which the supervisor gives the
+// program of a release when it deploys one.
+func TestAStandaloneUnitStartsOnlyItsOwnBinaryFromTheInstallsBinDirectory(t *testing.T) {
+	t.Parallel()
+	refused := []struct {
+		unit    manifest.UnitName
+		command []string
+	}{
+		{manifest.UnitControl, []string{"bin/sisf-app-launcher", "x", "/tmp/evil"}},
+		{manifest.UnitDispatcher, []string{"bin/sisf-app-launcher", "x", "/bin/sh"}},
+		{manifest.UnitControl, []string{"bin/hello-app"}},
+		{manifest.UnitDispatcher, []string{"bin/sisf-edge"}},
+		{manifest.UnitEdge, []string{"bin/factoryd", "control"}},
+		{manifest.UnitRunner, []string{"bin/sisf-app-launcher"}},
+		{manifest.UnitQARunner, []string{"bin/sisf-runner"}},
+		{manifest.UnitApp, []string{"bin/sisf-app-launcher", "x", "/tmp/evil"}},
+		{manifest.UnitApp, []string{"bin/SISF-App-Launcher", "x", "/bin/sh"}},
+		{manifest.UnitApp, []string{"bin/factoryd", "control"}},
+		{manifest.UnitApp, []string{"bin/Sisf-Edge"}},
+	}
+	for _, tc := range refused {
+		m := standalone(t)
+		editUnit(m, tc.unit, func(u *manifest.Unit) { u.Command = tc.command })
+		report := Check(m)
+		if report.Conformant() || !report.reportedAt(RuleUnitThroughLauncher, "units."+string(tc.unit)+".command") {
+			t.Errorf("%s starting %q: want %s, got %+v", tc.unit, tc.command, RuleUnitThroughLauncher, report.Findings)
+		}
+	}
+
+	allowed := []struct {
+		unit    manifest.UnitName
+		command []string
+	}{
+		{manifest.UnitApp, []string{"bin/sisf-app-launcher"}},
+		{manifest.UnitApp, []string{"bin/my-shop", "--quiet"}},
+		{manifest.UnitControl, []string{"bin/factoryd", "control", "--listen=127.0.0.1:7463"}},
+	}
+	for _, tc := range allowed {
+		m := standalone(t)
+		editUnit(m, tc.unit, func(u *manifest.Unit) { u.Command = tc.command })
+		if report := Check(m); !report.Conformant() || !report.SelfUpdate {
+			t.Errorf("%s starting %q must be allowed with self-update, got %+v", tc.unit, tc.command, report.Findings)
+		}
+	}
+}
