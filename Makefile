@@ -1,4 +1,4 @@
-.PHONY: help build test lint vet fmt fmt-check generate vet-tags check e2e smoke up down
+.PHONY: help build install test lint vet fmt fmt-check generate vet-tags check e2e smoke up down
 
 # A bare `make` builds, as it always has; `make help` lists every target.
 .DEFAULT_GOAL := build
@@ -10,6 +10,16 @@ help: ## List every target with one line each
 
 build: ## Build every package without CGO, as CI does
 	CGO_ENABLED=0 go build ./...
+
+# The build `sisf version` names: the nearest tag or the commit, the full
+# commit and the time of the build.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null)
+COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
+BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+VERSION_LDFLAGS = -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildDate=$(BUILD_DATE)
+
+install: ## Install sisf into $(go env GOPATH)/bin, stamped with its version
+	go install -ldflags "$(VERSION_LDFLAGS)" ./cmd/sisf
 
 test: ## Run every untagged test with the race detector (needs CGO and a C compiler)
 	CGO_ENABLED=1 go test ./... -race
