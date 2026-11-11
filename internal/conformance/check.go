@@ -43,13 +43,22 @@ type checker struct {
 	risks []Risk
 }
 
-// add records a finding. The message is formatted with args.
+// add records a finding. The message is formatted with args. A value that
+// has the shape of a secret is withheld from the message, the place and the
+// fix, whichever field it was pasted into.
 func (c *checker) add(rule Rule, path, fix, message string, args ...any) {
-	c.findings = append(c.findings, Finding{Rule: rule, Path: path, Message: fmt.Sprintf(message, args...), Fix: fix})
+	shown := make([]any, len(args))
+	for i, arg := range args {
+		shown[i] = withheldArg(arg)
+	}
+	c.findings = append(c.findings, Finding{
+		Rule: rule, Path: withheldText(path), Message: withheldText(fmt.Sprintf(message, shown...)), Fix: withheldText(fix),
+	})
 }
 
 // reported reports whether rule already failed at path.
 func (c *checker) reported(rule Rule, path string) bool {
+	path = withheldText(path)
 	return slices.ContainsFunc(c.findings, func(f Finding) bool { return f.Rule == rule && f.Path == path })
 }
 
@@ -94,9 +103,9 @@ func checkWith(m *manifest.Manifest, backends []kit.Declaration) Report {
 		reported[finding.Path] = true
 	}
 	for _, violation := range manifest.Validate(m) {
-		if !reported[violation.Path] {
+		if !reported[withheldText(violation.Path)] {
 			report.Findings = append(report.Findings, Finding{
-				Rule: RuleSchema, Path: violation.Path, Message: violation.Message,
+				Rule: RuleSchema, Path: withheldText(violation.Path), Message: withheldText(violation.Message),
 				Fix: "make the value match schemas/factory.schema.json",
 			})
 		}

@@ -53,6 +53,11 @@ func (c *checker) checkInlineSecrets(path string, value any, above setting) {
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
+			if shape := secretShape(key); shape != "" {
+				c.add(RuleSecretInline, path+"."+key, "remove the key; keep the secret with a secret provider and put "+manifest.SecretRefForm+" in a value",
+					"a key below %s holds %s; a secret is never written in the manifest, as a key or as a value (the key is not shown)", path, shape)
+				continue
+			}
 			c.checkInlineSecrets(path+"."+key, v[key], setting{
 				secret:      above.secret || namesSecret(key),
 				environment: above.environment || namesEnvironment(key),

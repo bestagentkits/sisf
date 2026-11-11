@@ -19,6 +19,9 @@ var (
 	urlWithPassword = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s/?#@:]*:[^\s/?#@]+@`)
 	// urlAnywhere finds the URLs in a text.
 	urlAnywhere = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+`)
+	// queryParam finds the parameters of a query string, with or without
+	// the URL around it, as in /hook?token=VALUE.
+	queryParam = regexp.MustCompile(`[?&]([A-Za-z0-9_.-]+)=([^&#\s"'<>]+)`)
 	// authorizationHeader is an HTTP header that carries a credential.
 	authorizationHeader = regexp.MustCompile(`(?i)\b(proxy-)?authorization\s*:\s*\S`)
 	// schemeCredential is a credential written with its HTTP scheme, as in
@@ -74,9 +77,10 @@ func carriesSchemeCredential(text string) bool {
 }
 
 // urlCarriesToken reports whether a URL in the text carries a credential in
-// its user part or its query. A user part that is a plain account name, as
-// in ssh://git@host, carries none; one in the form of a provider's token
-// does. A query parameter carries one when its name says so.
+// its user part, or a query string, with or without its URL, carries one. A
+// user part that is a plain account name, as in ssh://git@host, carries
+// none; one in the form of a provider's token does. A query parameter
+// carries one when its name says so.
 func urlCarriesToken(text string) bool {
 	for _, raw := range urlAnywhere.FindAllString(text, -1) {
 		parsed, err := url.Parse(raw)
@@ -86,15 +90,14 @@ func urlCarriesToken(text string) bool {
 		if parsed.User != nil && providerToken.MatchString(parsed.User.Username()) {
 			return true
 		}
-		for name, values := range parsed.Query() {
-			if !queryNamesSecret(name) {
-				continue
-			}
-			for _, value := range values {
-				if value != "" && !manifest.IsSecretRef(value) {
-					return true
-				}
-			}
+	}
+	for _, match := range queryParam.FindAllStringSubmatch(text, -1) {
+		name, value := match[1], match[2]
+		if unescaped, err := url.QueryUnescape(value); err == nil {
+			value = unescaped
+		}
+		if queryNamesSecret(name) && !manifest.IsSecretRef(value) {
+			return true
 		}
 	}
 	return false
