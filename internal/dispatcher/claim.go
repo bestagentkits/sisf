@@ -96,14 +96,14 @@ func (d *Dispatcher) claimOne(ctx context.Context, ready core.StateRecord, brief
 		}
 		reservation, err := d.cfg.Budget.Reserve(ctx, tx, core.ReservationRequest{
 			FactoryID: stored.FactoryID, IssueID: stored.IssueID, RunID: runID,
-			Estimate: d.cfg.Estimate, IdempotencyKey: "claim/" + string(runID),
+			Estimate: d.cfg.Estimate, IdempotencyKey: ClaimIdempotencyKey(runID),
 		})
 		if err != nil {
 			return err
 		}
 		step := core.Transition{
 			IssueID: stored.IssueID, From: core.StateReady, To: core.StateClaimed, Event: core.EventClaimed,
-			ExpectedVersion: stored.Version, IdempotencyKey: "claim/" + string(runID),
+			ExpectedVersion: stored.Version, IdempotencyKey: ClaimIdempotencyKey(runID),
 			LeaseOwner: lease.Owner, FencingToken: lease.Token, RunID: runID, Attempt: 1,
 			ActorID: d.cfg.Owner, Reason: "claimed by the active dispatcher",
 		}
@@ -157,4 +157,10 @@ func countWorking(ctx context.Context, tx state.Tx) (int, error) {
 		}
 	}
 	return working, nil
+}
+
+// ClaimIdempotencyKey is the idempotency key of the reservation the claim
+// of run makes, so the reservation can be found again from the run alone.
+func ClaimIdempotencyKey(run core.RunID) string {
+	return "claim/" + string(run)
 }

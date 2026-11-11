@@ -149,6 +149,13 @@ func (g *Gate) fits(ctx context.Context, ledger core.BudgetLedger, s Settings, e
 	return nil
 }
 
+// RunReservationID is the ID of the reservation the dispatcher's claim of
+// run made. A caller closing a run's reservation derives it here instead
+// of trusting a record that names one: the record may be the agent zone's.
+func RunReservationID(run core.RunID) string {
+	return reservationID(dispatcher.ClaimIdempotencyKey(run))
+}
+
 // reservationID derives the reservation of an idempotency key, so a retried
 // claim finds the reservation it made before.
 func reservationID(idempotencyKey string) string {

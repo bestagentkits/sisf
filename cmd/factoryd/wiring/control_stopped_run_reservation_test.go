@@ -92,19 +92,24 @@ func TestBlockingAStoppedRunClosesItsReservation(t *testing.T) {
 	}
 }
 
-// A run record naming the reservation of another run cannot close it:
-// the close checks the reservation is the run's own and refuses, and the
-// other run's reservation stays held.
+// A run record naming the reservation of another run cannot close it, nor
+// keep the run's own reservation held: the block closes the reservation
+// derived from the run's ID, whatever the record names, and the other
+// run's reservation stays held.
 func TestARunRecordCannotCloseAnotherRunsReservation(t *testing.T) {
 	t.Parallel()
 	f := harness.New(t, harness.Options{})
 	_, victim := codedRun(t, f, "Greet the world")
 	number, run := codedRun(t, f, "Say goodbye")
+	own := run.ReservationID
 	run.Status, run.ReservationID = dispatcher.RunExhausted, victim.ReservationID
 	forgeRun(t, f, run)
 	_ = f.Control.Pass(context.Background())
 	if r := reservationOf(t, f, victim.ReservationID); r.Status != core.ReservationHeld {
 		t.Fatalf("a record naming another run's reservation closed it: %s", r.Status)
+	}
+	if r := reservationOf(t, f, own); r.Status == core.ReservationHeld || r.Status == core.ReservationSuspended {
+		t.Fatalf("a record naming another run's reservation left the run's own %s", r.Status)
 	}
 	if got := f.Record(number).State; got != core.StateBlocked {
 		t.Fatalf("the issue of a run marked exhausted is %s, want Blocked", got)

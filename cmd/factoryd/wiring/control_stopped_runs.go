@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
+	"github.com/bestagentkits/sisf/internal/budget"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
@@ -197,18 +198,31 @@ func runRecordOf(ctx context.Context, tx state.Tx, record core.StateRecord) (*di
 }
 
 // closeStoppedReservation closes the reservation of a run whose issue is
-// being blocked. A reservation that is not the run's own, or that does not
-// exist, is left as it is and returned as refused, so the block still
-// goes on; any other failure fails the block, which the next pass retries.
+// being blocked. The reservation is the one the run's claim made, derived
+// from the run's ID: the record may be the agent zone's, so the one it
+// names is not trusted. A record naming another one is returned as
+// refused, and so is a missing reservation the record claims; the block
+// still goes on. Any other failure fails the block, which the next pass
+// retries.
 func (c *Control) closeStoppedReservation(ctx context.Context, tx state.Tx, run *dispatcher.RunRecord) (refused error, err error) {
-	if run == nil || run.ReservationID == "" {
+	if run == nil {
 		return nil, nil
 	}
-	err = dispatcher.CloseReservationOfRun(ctx, c.budget, tx, run.RunID, run.ReservationID, run.Spend)
-	if core.HasCode(err, core.CodeTampered) || core.HasCode(err, core.CodeNotFound) {
+	own := budget.RunReservationID(run.RunID)
+	if run.ReservationID != "" && run.ReservationID != own {
+		refused = core.NewError(core.CodeTampered, "the record of run "+string(run.RunID)+" names reservation "+run.ReservationID+", not its own "+own)
+	}
+	err = dispatcher.CloseReservationOfRun(ctx, c.budget, tx, run.RunID, own, run.Spend)
+	switch {
+	case core.HasCode(err, core.CodeNotFound):
+		if refused == nil && run.ReservationID != "" {
+			refused = err
+		}
+		return refused, nil
+	case core.HasCode(err, core.CodeTampered):
 		return err, nil
 	}
-	return nil, err
+	return refused, err
 }
 
 // endHeldBuild removes the hold of the build of record's attempt, and its
