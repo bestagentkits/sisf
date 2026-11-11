@@ -22,8 +22,9 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build ./...
-      # The e2e and smoke suites only run with Docker or paid services, so CI
-      # compiles and vets them to keep them from rotting between runs.
+      # The smoke suite runs only with paid services, so CI compiles and
+      # vets it to keep it from rotting between runs. The e2e job runs the
+      # e2e suite.
       - run: go vet -tags e2e ./tests/e2e/...
       - run: go vet -tags smoke ./tests/smoke/...
 
@@ -40,6 +41,50 @@ jobs:
       - run: go test ./... -race
         env:
           CGO_ENABLED: "1"
+
+  # The state store, the audit log and the install bootstrap run against
+  # SQLite everywhere else; here they run against a real PostgreSQL, so a
+  # migration or a store policy that only PostgreSQL refuses is caught.
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres@sha256:23e88eb049fd5d54894d70100df61d38a49ed97909263f79d4ff4c30a5d5fca2 # 16-alpine
+        env:
+          POSTGRES_PASSWORD: test-only # a placeholder for a server that lives for this job
+          POSTGRES_DB: sisf
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./pkg/state/... ./internal/audit/... ./internal/install/... -count=1 -p 1
+        env:
+          SISF_TEST_PG_DSN: postgres://postgres:test-only@127.0.0.1:5432/sisf?sslmode=disable
+
+  # The whole lifecycle against a simulated GitHub and scripted agents: once
+  # in Standalone, once against a Docker factory `sisf up` builds. It needs
+  # no secret and spends nothing.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: make e2e
 
   lint:
     runs-on: ubuntu-latest
