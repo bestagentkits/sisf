@@ -21,6 +21,11 @@ func (r refusingIssues) CreateIssue(context.Context, github.RepoRef, github.NewI
 	return github.Issue{}, nil
 }
 
+func (r refusingIssues) AddLabels(context.Context, core.IssueRef, ...string) error {
+	r.t.Fatal("a report issue was labelled on an install that names the factory's account by ID only")
+	return nil
+}
+
 func (r refusingIssues) PollIssues(context.Context, github.RepoRef, github.ListIssuesOptions, string) (github.IssuePage, error) {
 	r.t.Fatal("report issues were listed on an install that names the factory's account by ID only")
 	return github.IssuePage{}, nil

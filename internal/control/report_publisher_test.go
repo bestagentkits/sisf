@@ -34,8 +34,29 @@ type reportGitHub struct {
 	fail    []error
 	lose    bool
 	// unlabelled drops the labels, as GitHub does for a token that may
-	// open issues but not label them.
-	unlabelled bool
+	// open issues but not label them; labelRefused refuses to add a label
+	// afterwards, as GitHub does for such a token.
+	unlabelled   bool
+	labelRefused bool
+	labelAdds    int
+}
+
+func (g *reportGitHub) AddLabels(_ context.Context, ref core.IssueRef, names ...string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.labelAdds++
+	if g.labelRefused {
+		return rejected(http.StatusForbidden)
+	}
+	for i := range g.issues {
+		if g.issues[i].Ref == ref {
+			for _, name := range names {
+				g.issues[i].Labels = append(g.issues[i].Labels, github.Label{Name: name})
+			}
+			return nil
+		}
+	}
+	return core.NewError(core.CodeNotFound, "no such issue")
 }
 
 func (g *reportGitHub) CreateIssue(_ context.Context, repo github.RepoRef, n github.NewIssue) (github.Issue, error) {
@@ -397,9 +418,73 @@ func TestAnIssueShownWithoutTheLabelIsCounted(t *testing.T) {
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		e, gh, p := reportEnv(t, db)
 		sendReportText(t, e, "Unlabelled", "Body.", 1)
-		gh.unlabelled = true
+		gh.unlabelled, gh.labelRefused = true, true
 		if res := publish(t, p); res.Published != 1 || res.Unlabelled != 1 {
 			t.Fatalf("publish: %+v", res)
+		}
+	})
+}
+
+// An issue opened without the label is given it afterwards when the token
+// may label issues; when it may not, the factory's status says the token
+// lacks the permission, and keeps saying so until a report issue is
+// labelled again.
+func TestAnIssueOpenedWithoutTheLabelIsLabelledOrTheMissingPermissionShown(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e, gh, p := reportEnv(t, db)
+		sendReportText(t, e, "Unlabelled first", "Body.", 1)
+		gh.unlabelled = true
+		if res := publish(t, p); res.Published != 1 || res.Unlabelled != 0 || !report.HasIssueLabel(gh.created()[0]) {
+			t.Fatalf("publish with a token that may label afterwards: %+v, issue %+v", res, gh.created()[0])
+		}
+		gh.labelRefused = true
+		sendReportText(t, e, "Unlabelled second", "Body.", 2)
+		if res := publish(t, p); res.Published != 1 || res.Unlabelled != 1 {
+			t.Fatalf("publish with a token that may not label: %+v", res)
+		}
+		status := func() control.ReportPublication {
+			st, err := control.ReadReportPublication(context.Background(), e.store, db.Clock.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			return st
+		}
+		if st := status(); !strings.Contains(st.LastError, string(core.CodePermissionDenied)) || !strings.Contains(st.LastError, report.IssueLabel) {
+			t.Fatalf("the status does not say the token may not label report issues: %+v", st)
+		}
+		publish(t, p)
+		if st := status(); !strings.Contains(st.LastError, report.IssueLabel) {
+			t.Fatalf("a pass with nothing to publish cleared the missing permission: %+v", st)
+		}
+		gh.unlabelled, gh.labelRefused = false, false
+		sendReportText(t, e, "Labelled again", "Body.", 3)
+		publish(t, p)
+		if st := status(); st.LastError != "" {
+			t.Fatalf("the status after a labelled issue: %+v, want no error", st)
+		}
+	})
+}
+
+// With a token that may open issues but not label them, an issue opened
+// before a crash carries no label, yet it is found by the marker its
+// body opens with among the issues the factory's account wrote, and not
+// opened again.
+func TestAnUnlabelledIssueOpenedBeforeACrashIsNotOpenedAgain(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e, gh, p := reportEnv(t, db)
+		sendReportText(t, e, "Login loops", "It keeps asking.", 1)
+		gh.unlabelled, gh.labelRefused, gh.lose = true, true, true
+		if _, err := p.Publish(context.Background()); err == nil {
+			t.Fatal("a lost answer reported no error")
+		}
+		gh.lose = false
+		if res := publish(t, p); res.Published != 1 {
+			t.Fatalf("publish after the lost answer: %+v", res)
+		}
+		if gh.creates != 1 {
+			t.Fatalf("an unlabelled issue opened before the crash was opened again: %d creates", gh.creates)
 		}
 	})
 }

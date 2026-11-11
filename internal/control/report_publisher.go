@@ -36,10 +36,12 @@ const (
 var reportIDForm = regexp.MustCompile(`^report-[0-9a-f]{16}$`)
 
 // ReportIssues is what publishing reports does on GitHub: open an issue,
-// and list the report issues changed since a time, to find one an attempt
-// whose answer was lost may have opened. github.RESTClient is one.
+// label one GitHub opened without its label, and list the issues changed
+// since a time, to find one an attempt whose answer was lost may have
+// opened. github.RESTClient is one.
 type ReportIssues interface {
 	CreateIssue(ctx context.Context, repo github.RepoRef, n github.NewIssue) (github.Issue, error)
+	AddLabels(ctx context.Context, ref core.IssueRef, names ...string) error
 	PollIssues(ctx context.Context, repo github.RepoRef, opts github.ListIssuesOptions, etag string) (github.IssuePage, error)
 }
 
@@ -65,26 +67,31 @@ type ReportPublisher struct {
 // ReportPublishResult is what one Publish did.
 type ReportPublishResult struct {
 	// Published counts the reports now shown as issues, Rejected those
-	// whose issue GitHub refused this time, and Unlabelled the issues opened
-	// that GitHub shows without report.IssueLabel, as it does for a token
-	// that may open issues but not label them.
+	// whose issue GitHub refused this time, and Unlabelled the issues
+	// GitHub shows without report.IssueLabel even after the publisher tried
+	// to add it, as for a token that may open issues but not label them.
 	Published  int
 	Rejected   int
 	Unlabelled int
 	// PausedUntil is when publishing goes on, set once the daily budget of
 	// report issues is spent; zero while it is not.
 	PausedUntil time.Time
+	// labelFailure is why the label of the last unlabelled issue could not
+	// be added.
+	labelFailure error
 }
 
 // Publish publishes the reports waiting in the order they were received,
 // at most Batch of them and no more than the daily budget has left
 // (ReportDailyPublishBudget); with the budget spent it opens nothing and
 // says until when publishing pauses, keeping every report. A report whose
-// last attempt got no answer is first looked for among the
-// report issues the factory opened since, so an issue opened just before a
-// crash is recorded instead of opened again; when GitHub lists more than a
-// page of report issues changed since, one such report may be published
-// twice. GitHub refusing the issue of a report, a client error that is not
+// last attempt got no answer is first looked for among the issues the
+// factory's account opened since, by the marker its body opens with and
+// with or without the label, so an issue opened just before a crash is
+// recorded instead of opened again; when GitHub lists more than a page of
+// issues changed since, one such report may be published twice. An issue
+// GitHub shows without the label is given it; when that fails, the
+// factory's status says the token may not label issues. GitHub refusing the issue of a report, a client error that is not
 // about the token, the repository or the rate limit, is counted against
 // that report and the next one is tried; after maxReportRejections it is
 // kept apart and not tried again. Any other failure, an outage or a refused
@@ -119,7 +126,11 @@ func (p ReportPublisher) Publish(ctx context.Context) (ReportPublishResult, erro
 		return result, err
 	}
 	err = p.publishBatch(ctx, waiting, &result)
-	if noted := p.noteError(ctx, err); err == nil {
+	failure := err
+	if failure == nil && result.Unlabelled > 0 {
+		failure = missingLabelPermission(result.labelFailure)
+	}
+	if noted := p.noteError(ctx, failure, result.Published > result.Unlabelled); err == nil {
 		err = noted
 	}
 	if err == nil && result.Published > 0 {
@@ -136,7 +147,7 @@ func (p ReportPublisher) Publish(ctx context.Context) (ReportPublishResult, erro
 // stops at the first failure that is not about one report.
 func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEntry, result *ReportPublishResult) error {
 	for _, entry := range waiting {
-		published, labelled, refused, err := p.publishOne(ctx, entry)
+		published, labelFailure, refused, err := p.publishOne(ctx, entry)
 		switch {
 		case refused != nil:
 			result.Rejected++
@@ -150,12 +161,28 @@ func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEnt
 			return err
 		case published:
 			result.Published++
-			if !labelled {
+			if labelFailure != nil {
 				result.Unlabelled++
+				result.labelFailure = labelFailure
 			}
 		}
 	}
 	return nil
+}
+
+// missingLabelPermissionMessage opens what the status says while report
+// issues are opened without their label.
+const missingLabelPermissionMessage = "report issues are opened without the label " + report.IssueLabel +
+	" and it could not be added: the factory's GitHub token may open issues but not label them; give it permission to label issues"
+
+// missingLabelPermission is the failure noted while report issues are
+// opened without their label, why adding it failed included.
+func missingLabelPermission(cause error) error {
+	err := core.NewError(core.CodePermissionDenied, missingLabelPermissionMessage)
+	if cause != nil {
+		err = err.WithCause(cause)
+	}
+	return err
 }
 
 // reportPublishErrorKey holds why the last publication failed, for the
@@ -163,8 +190,10 @@ func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEnt
 const reportPublishErrorKey = "publish-error"
 
 // noteError records why publishing failed, or that it no longer does,
-// writing only when that changed.
-func (p ReportPublisher) noteError(ctx context.Context, failure error) error {
+// writing only when that changed. A missing permission to label report
+// issues is cleared only by a report issue that carries its label
+// (labelled), not by a call that published nothing.
+func (p ReportPublisher) noteError(ctx context.Context, failure error, labelled bool) error {
 	return p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		entry, err := tx.GetKV(ctx, ReportsNamespace, reportPublishErrorKey)
 		switch {
@@ -175,6 +204,8 @@ func (p ReportPublisher) noteError(ctx context.Context, failure error) error {
 			entry = state.KVEntry{Namespace: ReportsNamespace, Key: reportPublishErrorKey}
 		case err != nil:
 			return err
+		case failure == nil && !labelled && strings.Contains(string(entry.Value), missingLabelPermissionMessage):
+			return nil
 		case failure == nil:
 			return tx.DeleteKV(ctx, ReportsNamespace, entry.Key, entry.Version)
 		}
@@ -189,21 +220,23 @@ func (p ReportPublisher) noteError(ctx context.Context, failure error) error {
 }
 
 // publishOne publishes the report stored at entry and reports whether it
-// is now shown as an issue, and whether that issue carries the label.
-// GitHub's refusal of the report's issue is returned as refused, apart
-// from the failures that hold for every report.
-func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (published, labelled bool, refused, err error) {
+// is now shown as an issue, and, when that issue does not carry the label
+// and it could not be added, why (labelFailure). GitHub's refusal of the
+// report's issue is returned as refused, apart from the failures that hold
+// for every report.
+func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (published bool, labelFailure, refused, err error) {
 	var stored storedReport
 	if err := json.Unmarshal(entry.Value, &stored); err != nil || !reportIDForm.MatchString(stored.ID) || stored.Fingerprint == "" {
-		return false, false, nil, p.reject(ctx, entry.Key, core.CodeTampered)
+		return false, nil, nil, p.reject(ctx, entry.Key, core.CodeTampered)
 	}
 	if !stored.Publish.AttemptedAt.IsZero() {
 		issue, found, err := p.findIssue(ctx, stored)
 		if err != nil {
-			return false, false, nil, err
+			return false, nil, nil, err
 		}
 		if found {
-			return true, report.HasIssueLabel(issue), nil, p.markPublished(ctx, entry.Key, stored, issue.Ref.Number)
+			labelFailure, err := p.recordIssue(ctx, entry.Key, stored, issue)
+			return true, labelFailure, nil, err
 		}
 	}
 	attempt := stored
@@ -211,7 +244,7 @@ func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (p
 	if err := p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		return putStored(ctx, tx, entry.Key, entry.Version, attempt)
 	}); err != nil {
-		return false, false, nil, err
+		return false, nil, nil, err
 	}
 	// The text is made visible and redacted again, as the route does, in
 	// case it was stored by an older route, and redacted once more after
@@ -223,27 +256,51 @@ func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (p
 		Title: reportIssueTitle(shown, p.Redactor.Redact), Body: reportIssueBody(shown, p.Redactor.Redact), Labels: []string{report.IssueLabel}})
 	switch {
 	case refusesReport(err):
-		return false, false, err, nil
+		return false, nil, err, nil
 	case err != nil:
-		return false, false, nil, err
+		return false, nil, nil, err
 	}
-	return true, report.HasIssueLabel(issue), nil, p.markPublished(ctx, entry.Key, stored, issue.Ref.Number)
+	labelFailure, err = p.recordIssue(ctx, entry.Key, stored, issue)
+	return true, labelFailure, nil, err
+}
+
+// recordIssue records the report stored at key as shown by issue and then,
+// when GitHub shows the issue without report.IssueLabel, adds it, returning
+// why when that failed. The issue is recorded first, so a failure to label
+// it never opens it again.
+func (p ReportPublisher) recordIssue(ctx context.Context, key string, stored storedReport, issue github.Issue) (labelFailure, err error) {
+	if err := p.markPublished(ctx, key, stored, issue.Ref.Number); err != nil {
+		return nil, err
+	}
+	if report.HasIssueLabel(issue) {
+		return nil, nil
+	}
+	if err := p.Issues.AddLabels(ctx, issue.Ref, report.IssueLabel); err != nil {
+		return err, nil
+	}
+	return nil, nil
 }
 
 // findIssue looks for the issue an unanswered attempt to publish r may have
-// opened: a report issue the factory's account wrote whose body opens with
-// r's marker. Only the publisher writes that first line, so a report's
-// text, which may name any ID, cannot pass for it.
+// opened: an issue the factory's account wrote whose body opens with r's
+// marker. Only the publisher writes that first line, so a report's text,
+// which may name any ID, cannot pass for it. The report issues changed
+// since the attempt are looked at first; a token that may open issues but
+// not label them opens them without the label, so then every issue
+// changed since is. Each listing reads one page of 100 issues: when more
+// changed since the attempt, the issue may be missed and opened again.
 func (p ReportPublisher) findIssue(ctx context.Context, r storedReport) (github.Issue, bool, error) {
-	page, err := p.Issues.PollIssues(ctx, p.Repo, github.ListIssuesOptions{
-		Labels: []string{report.IssueLabel}, Since: r.Publish.AttemptedAt.Add(-reportLookupSlack), MaxPages: 1}, "")
-	if err != nil {
-		return github.Issue{}, false, err
-	}
+	since := r.Publish.AttemptedAt.Add(-reportLookupSlack)
 	marker := report.IssueMarker(r.ID) + "\n"
-	for _, issue := range page.Issues {
-		if p.Self.Wrote(issue.Author) && strings.HasPrefix(issue.Body, marker) {
-			return issue, true, nil
+	for _, labels := range [][]string{{report.IssueLabel}, nil} {
+		page, err := p.Issues.PollIssues(ctx, p.Repo, github.ListIssuesOptions{Labels: labels, Since: since, MaxPages: 1}, "")
+		if err != nil {
+			return github.Issue{}, false, err
+		}
+		for _, issue := range page.Issues {
+			if p.Self.Wrote(issue.Author) && strings.HasPrefix(issue.Body, marker) {
+				return issue, true, nil
+			}
 		}
 	}
 	return github.Issue{}, false, nil
