@@ -5,9 +5,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,32 +25,45 @@ const (
 // mergeNames are the names of pkg/github that make or describe a merge.
 var mergeNames = map[string]bool{"NewMerger": true, "Merger": true, "MergeRequest": true, "Merged": true}
 
-// listedPackage is what `go list` says of one package.
+// listedPackage is what `go list` says of one package. IgnoredGoFiles are
+// its files left out by build constraints on this platform: they are
+// checked too, as another platform or tag would compile them.
 type listedPackage struct {
-	ImportPath string
-	Dir        string
-	GoFiles    []string
+	ImportPath     string
+	Dir            string
+	GoFiles        []string
+	IgnoredGoFiles []string
 }
 
+// platforms are the systems whose build graphs are checked: a package
+// imported only on one of them is in that one's graph.
+var platforms = []string{"linux", "darwin", "windows"}
+
 // buildGraph lists every package of this module compiled into the binary
-// of cmd, from the build graph rather than from file names.
+// of cmd on any of platforms, from the build graph rather than from file
+// names.
 func buildGraph(t *testing.T, cmd string) []listedPackage {
 	t.Helper()
-	list := exec.Command("go", "list", "-deps", "-json=ImportPath,Dir,GoFiles", "./cmd/"+cmd)
-	list.Dir = filepath.Join("..", "..")
-	out, err := list.Output()
-	if err != nil {
-		t.Fatalf("go list -deps ./cmd/%s: %v", cmd, err)
-	}
+	seen := map[string]bool{}
 	var pkgs []listedPackage
-	dec := json.NewDecoder(strings.NewReader(string(out)))
-	for dec.More() {
-		var p listedPackage
-		if err := dec.Decode(&p); err != nil {
-			t.Fatal(err)
+	for _, goos := range platforms {
+		list := exec.Command("go", "list", "-deps", "-json=ImportPath,Dir,GoFiles,IgnoredGoFiles", "./cmd/"+cmd)
+		list.Dir = filepath.Join("..", "..")
+		list.Env = append(os.Environ(), "GOOS="+goos, "CGO_ENABLED=0")
+		out, err := list.Output()
+		if err != nil {
+			t.Fatalf("GOOS=%s go list -deps ./cmd/%s: %v", goos, cmd, err)
 		}
-		if strings.HasPrefix(p.ImportPath, modulePath+"/") && p.ImportPath != githubPkg {
-			pkgs = append(pkgs, p)
+		dec := json.NewDecoder(strings.NewReader(string(out)))
+		for dec.More() {
+			var p listedPackage
+			if err := dec.Decode(&p); err != nil {
+				t.Fatal(err)
+			}
+			if strings.HasPrefix(p.ImportPath, modulePath+"/") && p.ImportPath != githubPkg && !seen[p.ImportPath] {
+				seen[p.ImportPath] = true
+				pkgs = append(pkgs, p)
+			}
 		}
 	}
 	return pkgs
@@ -61,7 +76,7 @@ func mergeUses(t *testing.T, p listedPackage) []string {
 	t.Helper()
 	var uses []string
 	fset := token.NewFileSet()
-	for _, name := range p.GoFiles {
+	for _, name := range slices.Concat(p.GoFiles, p.IgnoredGoFiles) {
 		file, err := parser.ParseFile(fset, filepath.Join(p.Dir, name), nil, parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatal(err)
@@ -123,4 +138,82 @@ func TestOnlyTheSupervisorHasAWayToMerge(t *testing.T) {
 	if !found {
 		t.Fatal("no package of the supervisor's binary names the merger: the check would find nothing anywhere")
 	}
+}
+
+// mergeSegments are the path segments of GitHub's API that merge: a pull
+// request's merge and a branch merge.
+var mergeSegments = map[string]bool{"merge": true, "merges": true}
+
+// Inside pkg/github itself, only the Merger's own methods name an API path
+// that merges, and nothing but NewMerger builds a Merger. Any other way
+// to merge, an exported wrapper of the REST client say, would hand the
+// capability to every zone holding a client.
+func TestOnlyTheMergerInsidePkgGithubReachesAMerge(t *testing.T) {
+	t.Parallel()
+	list := exec.Command("go", "list", "-json=ImportPath,Dir,GoFiles,IgnoredGoFiles", ".")
+	out, err := list.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p listedPackage
+	if err := json.Unmarshal(out, &p); err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	merges := 0
+	for _, name := range slices.Concat(p.GoFiles, p.IgnoredGoFiles) {
+		file, err := parser.ParseFile(fset, filepath.Join(p.Dir, name), nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			fn, _ := decl.(*ast.FuncDecl)
+			inMerger := fn != nil && fn.Recv != nil && receiverType(fn.Recv) == "Merger"
+			builds := fn != nil && fn.Recv == nil && fn.Name.Name == "NewMerger"
+			ast.Inspect(decl, func(n ast.Node) bool {
+				switch n := n.(type) {
+				case *ast.BasicLit:
+					if n.Kind != token.STRING {
+						return true
+					}
+					value, _ := strconv.Unquote(n.Value)
+					for segment := range strings.SplitSeq(value, "/") {
+						if mergeSegments[segment] {
+							if !inMerger {
+								t.Errorf("%s: the API path %q is named outside the Merger", fset.Position(n.Pos()), value)
+							}
+							merges++
+						}
+					}
+				case *ast.CompositeLit:
+					if id, ok := n.Type.(*ast.Ident); ok && id.Name == "Merger" && !builds {
+						t.Errorf("%s: a Merger is built outside NewMerger", fset.Position(n.Pos()))
+					}
+				case *ast.CallExpr:
+					if id, ok := n.Fun.(*ast.Ident); ok && id.Name == "NewMerger" {
+						t.Errorf("%s: pkg/github itself calls NewMerger", fset.Position(n.Pos()))
+					}
+				}
+				return true
+			})
+		}
+	}
+	if merges == 0 {
+		t.Fatal("the Merger names no API path that merges: the check would find nothing anywhere")
+	}
+}
+
+// receiverType is the type name of a method's receiver, without a pointer.
+func receiverType(recv *ast.FieldList) string {
+	if len(recv.List) == 0 {
+		return ""
+	}
+	typ := recv.List[0].Type
+	if star, ok := typ.(*ast.StarExpr); ok {
+		typ = star.X
+	}
+	if id, ok := typ.(*ast.Ident); ok {
+		return id.Name
+	}
+	return ""
 }
