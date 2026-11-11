@@ -64,15 +64,18 @@ func logPass(log *slog.Logger, res stages.PassResult) {
 
 // releaseMessages say what each release result means for the issue.
 var releaseMessages = map[release.Result]string{
-	release.ResultHeld:          "release held: the issue waits in ReleaseCandidate for the Owner",
-	release.ResultRefused:       "release refused: the refusal is final for this candidate and it is not tried again; the issue waits in ReleaseCandidate until the Owner changes the policy in a governed update or closes the issue",
-	release.ResultBlocked:       "release rolled back: the issue is blocked",
-	release.ResultRestoreFailed: "release could not be undone: the last known good release is not observed running again, and a person must act",
+	release.ResultHeld:          "release held before anything was deployed: the issue waits in ReleaseCandidate for the Owner's retry",
+	release.ResultRefused:       "release refused before anything was deployed: the issue is blocked and the Owner's retry returns it to Ready for a new run",
+	release.ResultBlocked:       "release undone: the last known good release serves again and the issue is blocked until the Owner's retry returns it to Ready",
+	release.ResultInterrupted:   "release stopped after its rollout started: the issue is left where the state says, and the supervisor's recovery restores the last known good release and blocks it",
+	release.ResultRestoreFailed: "release could not be undone: the last known good release is not observed running again; the supervisor tries again on every pass, and a person must look",
 }
 
 // logRelease logs one release that ended. A release that did not go ahead
 // is logged once, when it ends: a held one is not tried again until the
-// Owner's retry starts it over, and a refused one never.
+// Owner's retry starts it over, and a refused one blocks its issue. A
+// refusal whose block could not be written yet is logged on every pass
+// until it is.
 func logRelease(log *slog.Logger, issue core.IssueRef, out release.Outcome) {
 	if out.Result == release.ResultClosed {
 		log.Info("release closed: the verified release serves the application", "issue", issue.String(), "release", string(out.Release))
@@ -86,8 +89,11 @@ func logRelease(log *slog.Logger, issue core.IssueRef, out release.Outcome) {
 	if c, _, found := strings.Cut(out.Reason, ": "); found && core.ErrorCode(c).Valid() {
 		code = c
 	}
-	log.Warn(msg, "issue", issue.String(), "result", string(out.Result), "state", string(out.State), "code", code,
-		"reason", out.Reason, "release", string(out.Release))
+	if out.Result == release.ResultRefused && out.State == core.StateReleaseCandidate {
+		msg = "release refused before anything was deployed, and the issue could not be blocked yet: the next pass tries again"
+	}
+	log.Warn(msg, "issue", issue.String(), "result", string(out.Result), "state", string(out.State), "cause", string(out.Cause),
+		"code", code, "reason", out.Reason, "release", string(out.Release))
 }
 
 // startLifecycle builds the stages when the flags ask for them, adds the
@@ -106,6 +112,14 @@ func (l *lifecycleFlags) startLifecycle(ctx context.Context, d lifecycleDeps, op
 	return func(ctx context.Context) {
 		if l.adopter != nil && !l.adopter.until(ctx, l, d.clock, d.log) {
 			return
+		}
+		// A release a supervisor that stopped left in Canary or Monitoring
+		// is undone before anything else runs: the last known good release,
+		// which adoption put back under the local backend, is restored
+		// through the backend and the issue blocked.
+		recovered := st.Release.Recover(ctx)
+		if ctx.Err() == nil {
+			logPass(d.log, stages.PassResult{Release: recovered})
 		}
 		runStages(ctx, st, l, d.clock, d.log)
 	}, nil

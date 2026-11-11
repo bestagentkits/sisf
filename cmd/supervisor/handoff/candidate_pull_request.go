@@ -30,11 +30,15 @@ const (
 	// LandingRolledBack: the release was rolled back; the pull request is
 	// never merged by the factory.
 	LandingRolledBack LandingState = "rolled_back"
+	// LandingRefused: the release was refused before anything was
+	// deployed; the pull request is never merged by the factory and stays
+	// open for the Owner.
+	LandingRefused LandingState = "refused"
 )
 
 // Final reports whether nothing more happens to the pull request by itself.
 func (s LandingState) Final() bool {
-	return s == LandingMerged || s == LandingLeftOpen || s == LandingRolledBack
+	return s == LandingMerged || s == LandingLeftOpen || s == LandingRolledBack || s == LandingRefused
 }
 
 // CandidatePR is the supervisor's record of the pull request of a run's

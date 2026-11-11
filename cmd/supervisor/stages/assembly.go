@@ -125,6 +125,7 @@ func New(cfg Config) (*Stages, error) {
 	}
 	rc := cfg.Release
 	rc.FactoryID, rc.State, rc.Verifier, rc.Publisher, rc.Clock = cfg.FactoryID, cfg.State, cfg.Verifier, publisher, cfg.Clock
+	rc.Blocks = releaseBlocks{}
 	if prs != nil {
 		rc.Lander = prs
 	}

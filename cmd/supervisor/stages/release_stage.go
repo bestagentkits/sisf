@@ -2,6 +2,7 @@ package stages
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
@@ -12,14 +13,18 @@ import (
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
-// Releaser runs a candidate through the release pipeline.
+// Releaser runs a candidate through the release pipeline, and undoes a
+// release left with nothing watching it.
 type Releaser interface {
 	Release(ctx context.Context, req release.Request) (release.Outcome, error)
+	Recover(ctx context.Context, issue core.IssueRef, unit string) (release.Outcome, error)
 }
 
 // ReleaseStage hands every release candidate, with its signed receipt and
 // its signed artifact, to the release pipeline once. The pipeline decides
-// everything after: it holds, refuses, rolls back or closes.
+// everything after: it holds, refuses, rolls back or closes. It also has
+// the pipeline undo every release whose rollout started and that nothing
+// watches any more (Recover).
 type ReleaseStage struct {
 	FactoryID core.FactoryID
 	State     state.Store
@@ -35,11 +40,12 @@ type ReleasePassResult struct {
 	Errors   []error
 }
 
-// Pass releases the candidates waiting in ReleaseCandidate that have no
-// release yet, or whose held release the Owner resumed, then finishes the
-// verified ones whose landing is pending.
+// Pass first undoes the releases left unwatched (Recover), then releases
+// the candidates waiting in ReleaseCandidate that have no release yet, or
+// whose held release the Owner resumed, then finishes the verified ones
+// whose landing is pending.
 func (s *ReleaseStage) Pass(ctx context.Context) ReleasePassResult {
-	res := ReleasePassResult{Outcomes: map[core.IssueRef]release.Outcome{}}
+	res := s.Recover(ctx)
 	type job struct {
 		record core.StateRecord
 		qa     QAResult
@@ -74,7 +80,8 @@ func (s *ReleaseStage) Pass(ctx context.Context) ReleasePassResult {
 		return nil
 	})
 	if err != nil {
-		return ReleasePassResult{Errors: []error{err}}
+		res.Errors = append(res.Errors, err)
+		return res
 	}
 	for _, j := range jobs {
 		out, err := s.release(ctx, j.record, j.qa, j.doc, j.build)
@@ -89,7 +96,8 @@ func (s *ReleaseStage) Pass(ctx context.Context) ReleasePassResult {
 }
 
 // releaseDue reports whether the candidate of r is to be released: it has
-// no release yet, or the Owner resumed its held release.
+// no release yet, the Owner resumed its held release, or an earlier release
+// recorded a refusal without blocking the issue, which is judged again.
 func releaseDue(ctx context.Context, tx state.Tx, r core.StateRecord) (bool, error) {
 	_, err := ReadRelease(ctx, tx, r.RunID, r.Attempt)
 	switch {
@@ -109,10 +117,12 @@ func releaseDue(ctx context.Context, tx state.Tx, r core.StateRecord) (bool, err
 }
 
 // release signs the build as a deploy artifact and runs the pipeline. The
-// outcome is recorded whatever it is, so a held or refused release is not
-// retried by itself: a held or refused one is also recorded as the
-// release's hold, which the Owner sees, and only the Owner's retry lets a
-// held one start over.
+// outcome is recorded, so a held release is not retried by itself: it is
+// also recorded as the release's hold, which the Owner sees, and only the
+// Owner's retry lets it start over. A hold is written only for a release
+// that left its issue in ReleaseCandidate with nothing deployed; a refusal
+// whose block could not be written is recorded nowhere, so the next pass
+// judges it again.
 func (s *ReleaseStage) release(ctx context.Context, record core.StateRecord, r QAResult, doc handoff.CandidateDoc, build handoff.BuildRecord) (release.Outcome, error) {
 	artifact, err := supplychain.SignArtifact(ctx, s.ArtifactSigner, deploy.Artifact{
 		FactoryID: s.FactoryID, Unit: build.Unit, Digest: core.ReleaseDigest(build.Digest), Image: build.Image,
@@ -125,18 +135,24 @@ func (s *ReleaseStage) release(ctx context.Context, record core.StateRecord, r Q
 		IssueID: record.IssueID, RunID: record.RunID, Candidate: r.Candidate, Receipt: r.Receipt,
 		Artifact: artifact, Feature: doc.Feature, Summary: doc.Summary,
 	})
-	if out.Result == "" {
+	if out.Result == "" || (out.Result == release.ResultRefused && out.State == core.StateReleaseCandidate) {
 		return out, relErr
 	}
+	return out, errors.Join(relErr, s.recordOutcome(ctx, record, out, relErr))
+}
+
+// recordOutcome keeps how a release of record's candidate ended and, for a
+// held one, its hold; any other ending drops the hold.
+func (s *ReleaseStage) recordOutcome(ctx context.Context, record core.StateRecord, out release.Outcome, relErr error) error {
 	rec := ReleaseRecord{Result: string(out.Result), State: out.State, Release: out.Release, Reason: out.Reason, At: s.Clock.Now().UTC()}
 	if relErr != nil {
 		rec.Code = string(core.CodeOf(relErr))
 	}
-	err = s.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+	return s.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		if err := put(ctx, tx, ReleaseKey(record.RunID, record.Attempt), rec); err != nil {
 			return err
 		}
-		if out.Result != release.ResultHeld && out.Result != release.ResultRefused {
+		if out.Result != release.ResultHeld || out.State != core.StateReleaseCandidate {
 			return handoff.DropReleaseHold(ctx, tx, record.RunID, record.Attempt)
 		}
 		return handoff.PutReleaseHold(ctx, tx, handoff.ReleaseHold{
@@ -144,8 +160,70 @@ func (s *ReleaseStage) release(ctx context.Context, record core.StateRecord, r Q
 			Code: core.CodeOf(relErr), Reason: out.Reason, Release: out.Release, HeldAt: rec.At,
 		})
 	})
-	if err != nil {
-		return out, err
+}
+
+// Recover has the pipeline undo every release whose rollout started and
+// that nothing of this supervisor watches: one a supervisor that stopped
+// left in Canary or Monitoring, and one whose restore could not block its
+// issue. The LKG of the release's unit is restored and the issue blocked.
+// It runs when the supervisor starts and at the start of every pass; a
+// release the pipeline drives is left alone, and an issue whose lease
+// another holder has is left for a later pass.
+func (s *ReleaseStage) Recover(ctx context.Context) ReleasePassResult {
+	res := ReleasePassResult{Outcomes: map[core.IssueRef]release.Outcome{}}
+	type job struct {
+		record core.StateRecord
+		unit   string
 	}
-	return out, relErr
+	var jobs []job
+	err := s.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		records, err := tx.ListRecords(ctx, state.RecordFilter{States: release.RecoverableStates()})
+		if err != nil {
+			return err
+		}
+		for _, r := range records {
+			unit, err := releasedUnit(ctx, tx, r)
+			if err != nil {
+				res.Errors = append(res.Errors, fmt.Errorf("%s: the unit of its release in %s: %w", r.IssueID, r.State, err))
+				continue
+			}
+			jobs = append(jobs, job{record: r, unit: unit})
+		}
+		return nil
+	})
+	if err != nil {
+		res.Errors = append(res.Errors, err)
+		return res
+	}
+	for _, j := range jobs {
+		out, err := s.Pipeline.Recover(ctx, j.record.IssueID, j.unit)
+		switch {
+		case core.HasCode(err, core.CodeLeaseHeld):
+			continue
+		case out.Result == "":
+			if err != nil {
+				res.Errors = append(res.Errors, fmt.Errorf("%s: recover its release: %w", j.record.IssueID, err))
+			}
+			continue
+		}
+		if recErr := s.recordOutcome(ctx, j.record, out, err); recErr != nil {
+			res.Errors = append(res.Errors, fmt.Errorf("%s: record its recovered release: %w", j.record.IssueID, recErr))
+		}
+		res.Outcomes[j.record.IssueID] = out
+	}
+	return res
+}
+
+// releasedUnit is the unit the release of r's candidate was built as, read
+// from the supervisor's own records of the candidate's evaluation and build.
+func releasedUnit(ctx context.Context, tx state.Tx, r core.StateRecord) (string, error) {
+	qa, err := ReadQAResult(ctx, tx, r.RunID, r.Attempt)
+	if err != nil {
+		return "", err
+	}
+	build, err := handoff.ReadBuild(ctx, tx, qa.Candidate.CommitSHA)
+	if err != nil {
+		return "", err
+	}
+	return build.Unit, nil
 }

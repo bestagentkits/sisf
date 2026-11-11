@@ -25,8 +25,8 @@ const (
 	// passed, and the issue waits in ReleaseCandidate for the Owner's retry.
 	CauseReleaseHeld Cause = "release_held"
 	// CauseReleaseRefused: the supervisor refused the release of a
-	// candidate QA passed. The refusal is final for that candidate; the
-	// issue waits in ReleaseCandidate.
+	// candidate QA passed before anything was deployed and blocked the
+	// issue; the Owner's retry returns it to Ready for a new run.
 	CauseReleaseRefused Cause = "release_refused"
 	CauseInProgress     Cause = "in_progress"
 )
@@ -120,6 +120,9 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 		out.Reason = "The issue is blocked; it moves on only through a safe, authorized retry."
 		out.NextActions = []core.NextAction{{Action: "approvals.list", Description: "see the approvals of this issue", Params: about}, inspect}
 		if stopped != nil {
+			if stopped.Cause == releaseRefused {
+				out.Cause = CauseReleaseRefused
+			}
 			out.Reason = stopped.Summary + " The issue is blocked. " + stopped.WayOut
 			out.Evidence = append(out.Evidence, Evidence{Kind: "run_stop", Ref: stopped.Ref, At: stopped.At,
 				Summary: "blocked with cause " + stopped.Cause})
@@ -147,10 +150,7 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 		out.NextActions = []core.NextAction{inspect}
 	case released != nil && !released.Resumed:
 		out.Stopped, out.Cause = true, CauseReleaseHeld
-		if released.Result == releaseRefused {
-			out.Cause = CauseReleaseRefused
-		}
-		out.Reason = released.Summary + releaseWayOut(*released, issue)
+		out.Reason = released.Summary + releaseWayOut(issue)
 		summary := fmt.Sprintf("release %s with %s", released.Result, released.Code)
 		if released.Reason != "" {
 			summary += ": " + released.Reason
@@ -237,20 +237,16 @@ func (h handlers) releaseHold(ctx context.Context, r core.StateRecord, owner boo
 	return &hold, nil
 }
 
-// releaseRefused is the result of a release the supervisor refused, as the
-// release pipeline names it.
-const releaseRefused = "refused"
+// releaseRefused is the cause of a block over a release the supervisor
+// refused, as the lifecycle names it.
+const releaseRefused = "release_refused"
 
 // releaseWayOut says how the Owner gets the issue out of ReleaseCandidate,
-// as a sentence that follows the summary. A held release starts over on
-// the Owner's retry, on the factory's host, once its cause is removed; no
-// surface action retries an issue yet. A refused release is final for its
-// candidate: its summary already says what is left to the Owner, and no
-// retry is offered.
-func releaseWayOut(hold ReleaseHold, issue string) string {
-	if hold.Result == releaseRefused {
-		return ""
-	}
+// as a sentence that follows the summary of a held release: it starts over
+// on the Owner's retry, on the factory's host, once its cause is removed;
+// no surface action retries an issue yet. A refused release blocks its
+// issue and is explained by the record of the block.
+func releaseWayOut(issue string) string {
 	return " Remove the cause in the evidence, then, as the Owner on the factory's host, run `factoryd issue retry --issue " + issue + "` to start the release over."
 }
 

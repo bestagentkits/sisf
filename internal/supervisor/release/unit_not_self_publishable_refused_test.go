@@ -11,7 +11,7 @@ import (
 // by the pipeline: the release is refused before anything is staged.
 func TestAReleaseOfAUnitTheFactoryMayNotPublishIsRefused(t *testing.T) {
 	t.Parallel()
-	for name, units := range map[string][]string{
+	for _, units := range map[string][]string{
 		"release.units lists other units": {"control", "dispatcher"},
 		"release.units is empty":          {},
 	} {
@@ -21,13 +21,7 @@ func TestAReleaseOfAUnitTheFactoryMayNotPublishIsRefused(t *testing.T) {
 		w.seedReleaseCandidate(issue, run, firstBuild)
 
 		out, err := w.pipeline().Release(context.Background(), w.request(issue, run, firstBuild))
-		if !core.HasCode(err, core.CodeApprovalRequired) || out.Result != ResultRefused {
-			t.Fatalf("%s: Release = %s, %v; want refused for want of a person", name, out.Result, err)
-		}
-		w.requireState(issue, core.StateReleaseCandidate)
-		if _, _, staged, _ := w.backend.snapshot(); len(staged) != 0 {
-			t.Fatalf("%s: a unit the factory may not publish was staged: %v", name, staged)
-		}
+		requireRefusedUntouched(t, w, issue, out, err, core.CodeApprovalRequired)
 	}
 }
 

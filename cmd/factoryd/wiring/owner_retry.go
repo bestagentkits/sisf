@@ -2,11 +2,13 @@ package wiring
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/intake"
+	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 	"github.com/bestagentkits/sisf/pkg/github"
@@ -28,15 +30,18 @@ import (
 // repeated outages is not Blocked: its patch is good and only waits for
 // the outage to end. The Owner's retry of such an issue resumes the build
 // instead, and the supervisor tries it again at once. Likewise an
-// issue in ReleaseCandidate whose release the supervisor held: the retry
-// lets the release start over, and the supervisor releases the candidate
-// again in its next round. A refused release is never started over.
+// issue in ReleaseCandidate whose release the supervisor held before
+// anything was deployed: the retry lets the release start over, and the
+// supervisor releases the candidate again in its next round.
 //
 // An issue the control zone blocked because its run stopped without a
-// candidate (handoff.RunStop) returns to Ready on the Owner's retry, where
-// a new run claims it. After a run that used its attempts the scope was
-// approved and still is, so the retry needs no further proof than that the
-// Owner asked. After a run whose policy was superseded the scope is judged
+// candidate, or because the supervisor refused, rolled back or could not
+// finish the run's release (handoff.RunStop), returns to Ready on the
+// Owner's retry, where a new run claims it and codes, judges and releases
+// it afresh. After a run that used its attempts, and after any release,
+// the scope was approved and still is, so the retry needs no further proof
+// than that the Owner asked. A rollback recorded before its cause was kept
+// is read from its recovery report. After a run whose policy was superseded the scope is judged
 // under the policy in force first, by intake: it is pinned to that policy
 // when it lies inside the delegation or the Owner approved it under that
 // policy since, and otherwise the Owner is asked, as for a scope that was
@@ -44,8 +49,7 @@ import (
 // so the retry need not wait for the next pass.
 //
 // Any other block is judged by the lifecycle's retry guard, with intake's
-// rule in front of it; a block whose cause has no retry rule, such as a
-// release that was rolled back, is refused.
+// rule in front of it; a block whose cause has no retry rule is refused.
 func (c *Control) Retry(ctx context.Context, issue core.IssueRef, actor core.Actor) (intake.Result, error) {
 	if _, err := c.blockStoppedRun(ctx, issue); err != nil && !core.HasCode(err, core.CodeLeaseHeld) && !core.HasCode(err, core.CodeNotFound) {
 		return intake.Result{Issue: issue}, err
@@ -161,16 +165,20 @@ func (c *Control) supersededAt(ctx context.Context, issue core.IssueRef) (bool, 
 }
 
 // stoppedRunRetry is the retry guard of an issue the control zone blocked
-// because its run stopped. Why and when it was blocked are read from the
-// record written with the block, for the run the step names; an issue
-// blocked for any other reason has no such record of its current run, and
-// the guard then proves nothing. Only the Owner is allowed.
+// for its run: the run stopped, or its release was refused or undone. Why
+// and when it was blocked are read from the record written with the block,
+// for the run the step names; an issue blocked for any other reason has no
+// such record of its current run, and the guard then proves nothing. Only
+// the Owner is allowed.
 func (c *Control) stoppedRunRetry(actor core.Actor) statemachine.RetryGuard {
 	return statemachine.RetryGuardFunc(func(ctx context.Context, t core.Transition) (statemachine.RetryProof, error) {
 		var stop handoff.RunStop
 		err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
 			var err error
 			stop, err = handoff.ReadRunStop(ctx, tx, t.RunID)
+			if core.HasCode(err, core.CodeNotFound) {
+				stop, err = rolledBackBefore(ctx, tx, t)
+			}
 			return err
 		})
 		switch {
@@ -187,14 +195,40 @@ func (c *Control) stoppedRunRetry(actor core.Actor) statemachine.RetryGuard {
 	})
 }
 
+// rolledBackBefore is the record of a block an earlier release wrote when
+// it rolled the run of t back without keeping the cause: its recovery
+// report, kept in the transaction that blocked the issue. NOT_FOUND when
+// the run has none.
+func rolledBackBefore(ctx context.Context, tx state.Tx, t core.Transition) (handoff.RunStop, error) {
+	entry, err := tx.GetKV(ctx, release.RecoveryNamespace, release.RecoveryKey(t.RunID))
+	if err != nil {
+		return handoff.RunStop{}, err
+	}
+	var report release.RecoveryReport
+	if json.Unmarshal(entry.Value, &report) != nil || report.RunID != t.RunID || report.At.IsZero() {
+		return handoff.RunStop{}, core.NewError(core.CodeTampered, "the stored recovery report of run "+string(t.RunID)+" cannot be read")
+	}
+	cause := report.Cause
+	if cause == "" {
+		cause = statemachine.BlockRolledBack
+	}
+	return handoff.RunStop{IssueID: report.IssueID, RunID: report.RunID, Cause: cause, Release: report.Release,
+		RestoredTo: report.RestoredTo, BlockedAt: report.At}, nil
+}
+
 // resumeHeldRelease lets the held release of issue's current attempt start
 // over on the Owner's retry. held is false when the issue does not wait in
-// ReleaseCandidate on a held or refused release.
+// ReleaseCandidate on a held release. A record that cannot be read is an
+// error, never a reason to go on as if nothing were held.
 func (c *Control) resumeHeldRelease(ctx context.Context, issue core.IssueRef, actor core.Actor) (result intake.Result, held bool, err error) {
 	err = c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		record, err := tx.GetRecord(ctx, issue)
-		if err != nil || record.State != core.StateReleaseCandidate {
+		if core.HasCode(err, core.CodeNotFound) || (err == nil && record.State != core.StateReleaseCandidate) {
 			return nil
+		}
+		if err != nil {
+			held = true
+			return err
 		}
 		if _, err := handoff.ReadReleaseHold(ctx, tx, record.RunID, record.Attempt); core.HasCode(err, core.CodeNotFound) {
 			return nil
@@ -214,15 +248,27 @@ func (c *Control) resumeHeldRelease(ctx context.Context, issue core.IssueRef, ac
 
 // resumeHeldBuild resumes the held build of issue's current attempt on the
 // Owner's retry. held is false when the issue has no held build, and the
-// retry then goes on as a retry of a block.
+// retry then goes on as a retry of a block. A record that cannot be read is
+// an error, never a reason to go on as if nothing were held.
 func (c *Control) resumeHeldBuild(ctx context.Context, issue core.IssueRef, actor core.Actor) (result intake.Result, held bool, err error) {
 	err = c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		record, err := tx.GetRecord(ctx, issue)
-		if err != nil || record.State != core.StateDeveloping {
+		if core.HasCode(err, core.CodeNotFound) || (err == nil && record.State != core.StateDeveloping) {
 			return nil
 		}
+		if err != nil {
+			held = true
+			return err
+		}
 		outage, _, err := handoff.ReadBuildOutage(ctx, tx, record.RunID, record.Attempt)
-		if err != nil || !outage.Held || outage.Reason == handoff.HeldPolicySuperseded {
+		if core.HasCode(err, core.CodeNotFound) {
+			return nil
+		}
+		if err != nil {
+			held = true
+			return err
+		}
+		if !outage.Held || outage.Reason == handoff.HeldPolicySuperseded {
 			// A build held over a superseded policy is never resumed: its
 			// issue is blocked instead.
 			return nil

@@ -24,7 +24,7 @@ func TestAReleaseHoldIsSummarisedWithoutItsReason(t *testing.T) {
 		{"held", core.CodeFrozen, "emergency stop"},
 		{"held", core.CodeReleaseHold, "judged and rolled back"},
 		{"held", core.CodeConflict, "could not start"},
-		{"refused", core.CodeApprovalRequired, "only a person may publish"},
+		{"refused", core.CodeApprovalRequired, "the issue is blocked"},
 		{"refused", core.CodeTampered, "refused before anything was deployed"},
 	} {
 		h := handoff.ReleaseHold{RunID: "run-1", Attempt: 1, Result: tc.result, Code: tc.code, Reason: secretish}
@@ -38,8 +38,9 @@ func TestAReleaseHoldIsSummarisedWithoutItsReason(t *testing.T) {
 	}
 }
 
-// Only a held release, not yet resumed, is resumed by the Owner's retry; a
-// refused one is final, and a resume is recorded once.
+// A held release, not yet resumed, is resumed by the Owner's retry once. A
+// refused hold an earlier release recorded waits for nobody: the
+// supervisor judges it again, and a retry resumes it like a held one.
 func TestOnlyAHeldReleaseIsResumed(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -51,8 +52,12 @@ func TestOnlyAHeldReleaseIsResumed(t *testing.T) {
 	if err := handoff.PutReleaseHold(ctx, kv, handoff.ReleaseHold{RunID: "run-1", Attempt: 1, Result: "refused", Code: core.CodeApprovalRequired, HeldAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := handoff.ResumeHeldRelease(ctx, kv, "run-1", 1, "owner", now); !core.HasCode(err, core.CodeConflict) {
-		t.Fatalf("a refused release was resumed: %v", err)
+	refused, err := handoff.ReadReleaseHold(ctx, kv, "run-1", 1)
+	if err != nil || refused.Waiting() || !refused.Resumed() {
+		t.Fatalf("a refused hold of an earlier release: %+v, %v; want it judged again, waiting for nobody", refused, err)
+	}
+	if err := handoff.ResumeHeldRelease(ctx, kv, "run-1", 1, "owner", now); err != nil {
+		t.Fatalf("a refused hold of an earlier release was not resumed: %v", err)
 	}
 	if err := handoff.PutReleaseHold(ctx, kv, handoff.ReleaseHold{RunID: "run-1", Attempt: 1, Result: "held", Code: core.CodeFrozen, HeldAt: now}); err != nil {
 		t.Fatal(err)

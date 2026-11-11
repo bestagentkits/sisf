@@ -5,9 +5,14 @@
 //	-> promote, record the LKG, publish and close, or restore the LKG
 //
 // A release is judged only by what is observed running and measured. A
-// release that cannot be observed or undone holds; missing metrics are never
-// read as success. A candidate that touches the trusted control surface is a
-// governance change and is never released by this pipeline.
+// release that cannot be observed or undone holds before anything is
+// deployed; missing metrics are never read as success. A candidate that
+// touches the trusted control surface is a governance change and is never
+// released by this pipeline: like any candidate the pipeline refuses, its
+// issue is blocked. Once a rollout started, the release either closes or is
+// undone: the LKG is restored and the issue blocked, and a release left
+// with nothing watching it, because the supervisor stopped, is undone by
+// Recover.
 //
 // Every lifecycle step is written to the operational store by the control
 // zone, under the issue lease the pipeline holds, after the lifecycle
@@ -90,6 +95,9 @@ type Config struct {
 	Freeze   FreezeCheck
 	// Publisher writes the changelog and the catalog before an issue closes.
 	Publisher Publisher
+	// Blocks keeps the record of why the pipeline blocked an issue, which
+	// the Owner's retry is judged by.
+	Blocks BlockRecorder
 	// Lander is optional; with it a verified release's change is landed on
 	// the default branch before the issue closes.
 	Lander Lander
@@ -140,8 +148,8 @@ func (c Config) withDefaults() (Config, error) {
 	switch {
 	case c.State == nil || c.Backend == nil || c.Verifier == nil || c.LKG == nil:
 		return c, invalid("a release pipeline needs a state store, a deployment backend, a verifier and an LKG book")
-	case c.Freeze == nil || c.Publisher == nil:
-		return c, invalid("a release pipeline needs the emergency stop and a publisher")
+	case c.Freeze == nil || c.Publisher == nil || c.Blocks == nil:
+		return c, invalid("a release pipeline needs the emergency stop, a publisher and a record of its blocks")
 	}
 	if c.Clock == nil {
 		c.Clock = core.SystemClock{}

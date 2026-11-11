@@ -11,52 +11,65 @@ import (
 
 // roll moves traffic to the release step by step, watching each partial
 // step, then observes the release taking all traffic and watches it through
-// the observation window. It returns a reason when the release must be
-// restored to the LKG, and an error when it can neither go on nor be judged.
-func (p *Pipeline) roll(ctx context.Context, r *rollout) (string, error) {
+// the observation window. It returns why the release must be restored to
+// the LKG, if it must, and an error when it can neither go on nor be
+// judged.
+func (p *Pipeline) roll(ctx context.Context, r *rollout) (*undo, error) {
 	steps := []int{100}
 	if r.canary {
 		steps = p.cfg.CanarySteps
 	}
 	for _, percent := range steps {
 		if p.frozen(ctx) {
-			return "an emergency stop froze publishing during the rollout", nil
+			return stoppedByEmergency(), nil
 		}
 		if err := p.cfg.Backend.Promote(ctx, r.rev, percent); err != nil {
-			return "traffic could not be moved to the release: " + err.Error(), nil
+			return &undo{cause: statemachine.BlockReleaseInterrupted, reason: "traffic could not be moved to the release: " + err.Error()}, nil
 		}
 		if percent < 100 {
-			if reason, err := p.watch(ctx, r, percent, p.cfg.StepWindows, false); reason != "" || err != nil {
-				return reason, err
+			if why, err := p.watch(ctx, r, percent, p.cfg.StepWindows, false); why != nil || err != nil {
+				return why, err
 			}
 		}
 	}
-	if reason, err := p.takeAllTraffic(ctx, r); reason != "" || err != nil {
-		return reason, err
+	if why, err := p.takeAllTraffic(ctx, r); why != nil || err != nil {
+		return why, err
 	}
 	return p.watch(ctx, r, 100, p.cfg.ObservationWindows, true)
+}
+
+// stoppedByEmergency is the undo of a release an emergency stop froze
+// during its rollout.
+func stoppedByEmergency() *undo {
+	return &undo{cause: statemachine.BlockReleaseInterrupted, reason: "an emergency stop froze publishing during the rollout"}
+}
+
+// unjudged is the undo of a release that could not be judged while it
+// served traffic.
+func unjudged(reason string) *undo {
+	return &undo{cause: statemachine.BlockReleaseUnjudged, reason: reason}
 }
 
 // takeAllTraffic proves the release serves all traffic: the revision read
 // from the running system, in an observation made since the rollout
 // started, is the release, healthy, and its metrics can be read. Only then
 // is the rollout written as healthy.
-func (p *Pipeline) takeAllTraffic(ctx context.Context, r *rollout) (string, error) {
+func (p *Pipeline) takeAllTraffic(ctx context.Context, r *rollout) (*undo, error) {
 	observed, err := p.cfg.Backend.ObservedRevision(ctx, r.unit)
 	if err != nil {
-		return "the release cannot be observed once it took all traffic", nil
+		return unjudged("the release cannot be observed once it took all traffic"), nil
 	}
 	r.observed = observed
 	if !observed.Matches(r.rev) {
-		return "the revision observed running is not the release, or it is not healthy", nil
+		return judgedUnhealthy("the revision observed running is not the release, or it is not healthy"), nil
 	}
 	started := rolloutStartedAt(r.h.record)
 	if observed.ObservedAt.Before(started) {
-		return "the running system answered with an observation made before the rollout, so the release cannot be observed", nil
+		return unjudged("the running system answered with an observation made before the rollout, so the release cannot be observed"), nil
 	}
 	metrics, err := p.cfg.Backend.Measure(ctx, r.rev, p.cfg.Monitor.Window)
 	if err != nil {
-		return "the release cannot be measured once it took all traffic", nil
+		return unjudged("the release cannot be measured once it took all traffic"), nil
 	}
 	proof := statemachine.CanaryProof{
 		IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Released: r.rev.Digest, Observed: observed.Digest,
@@ -64,9 +77,9 @@ func (p *Pipeline) takeAllTraffic(ctx context.Context, r *rollout) (string, erro
 		RolloutStartedAt: started,
 	}
 	if !proof.Healthy {
-		return "critical health: the release failed its health check once it took all traffic", nil
+		return judgedUnhealthy("critical health: the release failed its health check once it took all traffic"), nil
 	}
-	return "", p.step(ctx, r.h, stepSpec{
+	return nil, p.step(ctx, r.h, stepSpec{
 		event: core.EventRolloutHealthy, reason: "the release is observed serving all traffic", release: r.rev.Digest,
 		evidence: []string{"observed:" + string(observed.Digest)},
 		guards: statemachine.Guards{Canary: statemachine.CanaryGuardFunc(func(context.Context, core.Transition) (statemachine.CanaryProof, error) {
@@ -90,45 +103,45 @@ func rolloutStartedAt(record core.StateRecord) time.Time {
 // watches windows windows; in the observation phase a release judged under
 // low traffic is held until the synthetic hold has lasted MinHold, plus one
 // window for each failed real request.
-func (p *Pipeline) watch(ctx context.Context, r *rollout, percent, windows int, observing bool) (string, error) {
+func (p *Pipeline) watch(ctx context.Context, r *rollout, percent, windows int, observing bool) (*undo, error) {
 	started := p.cfg.Clock.Now()
 	for i := 0; ; i++ {
 		if i >= windows {
 			need := p.cfg.LowTraffic.MinHold + time.Duration(r.extensions)*p.cfg.Monitor.Window
 			if !observing || !r.lowTraffic || p.cfg.Clock.Now().Sub(started) >= need {
-				return "", nil
+				return nil, nil
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return nil, ctx.Err()
 		case <-p.cfg.Clock.After(p.cfg.Monitor.Window):
 		}
 		if p.frozen(ctx) {
-			return "an emergency stop froze publishing during the rollout", nil
+			return stoppedByEmergency(), nil
 		}
 		if err := p.renew(ctx, r.h); err != nil {
-			return "", err
+			return nil, err
 		}
 		metrics, err := p.cfg.Backend.Measure(ctx, r.rev, p.cfg.Monitor.Window)
 		if err != nil {
-			return "the release cannot be measured any more, so it cannot be judged", nil
+			return unjudged("the release cannot be measured any more, so it cannot be judged"), nil
 		}
 		if percent < 100 {
 			p.refreshBaseline(ctx, r)
 		}
 		report, decision := r.monitor.Judge(metrics, r.baseline)
 		report.Percent = percent
-		reason := ""
+		var why *undo
 		switch decision {
 		case DecisionRollback:
-			reason = report.Note
+			why = judgedUnhealthy(report.Note)
 		case DecisionLowTraffic:
-			reason = p.judgeLowTraffic(ctx, r, &report, metrics)
+			why, err = p.judgeLowTraffic(ctx, r, &report, metrics)
 		}
 		r.windows = append(r.windows, report)
-		if reason != "" {
-			return reason, nil
+		if why != nil || err != nil {
+			return why, err
 		}
 	}
 }
@@ -146,27 +159,36 @@ func (p *Pipeline) refreshBaseline(ctx context.Context, r *rollout) {
 }
 
 // judgeLowTraffic judges a window with too few real requests by the
-// synthetic suite. A failed synthetic run restores the LKG; a failed real
-// request does not, but extends the hold and is kept as evidence.
-func (p *Pipeline) judgeLowTraffic(ctx context.Context, r *rollout, report *WindowReport, metrics deploy.Metrics) string {
+// synthetic suite. A failed synthetic run restores the LKG as a release
+// judged unhealthy; a suite that could not be run judged nothing, so the
+// LKG is restored as for a release that could not be judged, and a
+// supervisor that is stopping leaves it to the recovery. A failed real
+// request does not restore the LKG, but extends the hold and is kept as
+// evidence.
+func (p *Pipeline) judgeLowTraffic(ctx context.Context, r *rollout, report *WindowReport, metrics deploy.Metrics) (*undo, error) {
 	r.lowTraffic = true
 	if p.cfg.Synthetic == nil {
-		return "real traffic is too low to judge the release and the application has no synthetic suite"
+		return unjudged("real traffic is too low to judge the release and the application has no synthetic suite"), nil
 	}
 	result, err := p.cfg.Synthetic.Run(ctx, r.rev)
 	if err != nil {
-		result = SyntheticResult{Detail: "the synthetic suite could not be run"}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		report.Synthetic = &SyntheticResult{Detail: "the synthetic suite could not be run"}
+		return unjudged("the synthetic suite could not be run during the low-traffic hold, so the release could not be judged: " +
+			string(core.CodeOf(err))), nil
 	}
 	report.Synthetic = &result
 	if !result.Passed {
-		return "a synthetic check failed during the low-traffic hold"
+		return judgedUnhealthy("a synthetic check failed during the low-traffic hold"), nil
 	}
 	if metrics.ServerErrors > 0 {
 		r.extensions++
 		report.Note += "; a real request failed, which extends the hold by one window"
 		if r.extensions > p.cfg.LowTraffic.MaxExtensions {
-			return "real requests kept failing through the low-traffic hold"
+			return judgedUnhealthy("real requests kept failing through the low-traffic hold"), nil
 		}
 	}
-	return ""
+	return nil, nil
 }

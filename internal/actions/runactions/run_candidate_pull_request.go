@@ -54,6 +54,8 @@ func (pr CandidatePR) summary() string {
 		return fmt.Sprintf("%s is not merged and left for the Owner: %s", pr.name(), pr.Reason)
 	case "rolled_back":
 		return fmt.Sprintf("pull request #%d is not merged: its release was rolled back", pr.Number)
+	case "refused":
+		return fmt.Sprintf("pull request #%d is not merged: its release was refused before anything was deployed", pr.Number)
 	case "pending":
 		return fmt.Sprintf("pull request #%d is being merged after its release was verified", pr.Number)
 	}

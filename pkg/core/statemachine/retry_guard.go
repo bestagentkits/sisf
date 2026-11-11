@@ -34,9 +34,11 @@ const (
 	// not go on with it, so the last known good release was restored.
 	BlockReleaseInterrupted BlockCause = "release_interrupted"
 	// BlockReleaseUnjudged means a release of the issue could not be judged
-	// while it served traffic, because the synthetic suite that judges a
-	// release under low traffic could not be run, so the last known good
-	// release was restored.
+	// while it served traffic, because it could not be observed or measured
+	// or the synthetic suite that judges a release under low traffic could
+	// not be run, so the last known good release was restored. Unlike
+	// BlockRolledBack it says nothing about whether the release was
+	// healthy.
 	BlockReleaseUnjudged BlockCause = "release_unjudged"
 	// BlockRunExhausted means the run of the issue used every coding
 	// attempt it was allowed without producing a candidate.

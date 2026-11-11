@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 	"github.com/bestagentkits/sisf/pkg/deploy"
 	"github.com/bestagentkits/sisf/pkg/state"
 )
@@ -25,6 +26,9 @@ type RecoveryReport struct {
 	Release    core.ReleaseDigest `json:"release"`
 	RestoredTo core.ReleaseDigest `json:"restored_to"`
 	Reason     string             `json:"reason"`
+	// Cause is why the issue is blocked: the release was judged unhealthy,
+	// could not be judged, or was interrupted.
+	Cause statemachine.BlockCause `json:"cause,omitempty"`
 	// Observed is what runs after the restore, read from the running system.
 	Observed deploy.Observed `json:"observed"`
 	Windows  []WindowReport  `json:"windows,omitempty"`
@@ -39,16 +43,26 @@ func RecoveryKey(run core.RunID) string { return "recovery/" + string(run) }
 
 // restore switches the unit back to the LKG, proves from the running system
 // that the LKG serves again, then writes RolledBack and, with the recovery
-// report, Blocked. Only code and configuration are switched: the backend's
-// Rollback never touches data volumes, and nothing here restores data.
-func (p *Pipeline) restore(ctx context.Context, r *rollout, reason string) (Outcome, error) {
+// report and the cause of the block, Blocked. Only code and configuration
+// are switched: the backend's Rollback never touches data volumes, and
+// nothing here restores data.
+//
+// The record may already be in RolledBack, when an earlier restore of the
+// release switched back but could not block the issue; the restore then
+// switches back again, which the LKG already serving makes harmless, and
+// writes the block. Before switching it makes sure it still holds the
+// issue lease, so it never undoes a release another holder now drives.
+func (p *Pipeline) restore(ctx context.Context, r *rollout, why undo) (Outcome, error) {
 	out := Outcome{
-		Release: r.rev.Digest, Windows: r.windows, Reason: reason, State: r.h.record.State, Observed: r.observed,
+		Release: r.rev.Digest, Windows: r.windows, Reason: why.reason, State: r.h.record.State, Observed: r.observed,
 	}
 	failed := func(result Result, err error) (Outcome, error) {
-		out.Result = result
-		_ = p.audit(ctx, r.h, "release.restore", core.OutcomeFailed, map[string]string{"reason": reason})
+		out.Result, out.State = result, r.h.record.State
+		_ = p.audit(ctx, r.h, "release.restore", core.OutcomeFailed, map[string]string{"reason": why.reason})
 		return out, err
+	}
+	if err := p.keepLease(ctx, r.h); err != nil {
+		return failed(ResultInterrupted, err)
 	}
 	charge := p.runRollbackCharge(r)
 	spend := p.reserveRollback(ctx, charge)
@@ -62,32 +76,41 @@ func (p *Pipeline) restore(ctx context.Context, r *rollout, reason string) (Outc
 		return failed(ResultRestoreFailed, holdf("the last known good release is not observed running and healthy after the restore"))
 	}
 	out.Observed, out.RestoredTo = observed, r.lkgRev.Digest
-	event := core.EventRegressionDetected
-	if r.h.record.State == core.StateCanary {
-		event = core.EventErrorThresholdExceeded
-	}
 	ref := "kv:" + RecoveryNamespace + "/" + RecoveryKey(r.h.record.RunID)
 	evidence := []string{"observed:" + string(observed.Digest), ref}
-	if err := p.step(ctx, r.h, stepSpec{event: event, reason: reason, evidence: evidence}); err != nil {
-		return failed(ResultHeld, err)
+	if r.h.record.State != core.StateRolledBack {
+		event := core.EventRegressionDetected
+		if r.h.record.State == core.StateCanary {
+			event = core.EventErrorThresholdExceeded
+		}
+		if err := p.step(ctx, r.h, stepSpec{event: event, reason: why.reason, evidence: evidence}); err != nil {
+			return failed(ResultInterrupted, err)
+		}
 	}
+	now := p.cfg.Clock.Now().UTC()
 	report := RecoveryReport{
 		IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Release: r.rev.Digest, RestoredTo: r.lkgRev.Digest,
-		Reason: reason, Observed: observed, Windows: r.windows, DataUntouched: true, At: p.cfg.Clock.Now().UTC(),
+		Reason: why.reason, Cause: why.cause, Observed: observed, Windows: r.windows, DataUntouched: true, At: now,
+	}
+	block := Block{
+		IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Attempt: r.h.record.Attempt, Cause: why.cause,
+		Release: r.rev.Digest, RestoredTo: r.lkgRev.Digest, BlockedAt: now,
 	}
 	err = p.step(ctx, r.h, stepSpec{
 		event: core.EventRecoveryReported, reason: "the LKG serves again; the recovery report is recorded", evidence: evidence,
 		also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error {
-			return writeRecoveryReport(ctx, tx, report)
+			if err := writeRecoveryReport(ctx, tx, report); err != nil {
+				return err
+			}
+			return p.cfg.Blocks.RecordBlock(ctx, tx, block)
 		},
 	})
-	out.State = r.h.record.State
 	if err != nil {
-		return failed(ResultHeld, err)
+		return failed(ResultInterrupted, err)
 	}
-	out.Result = ResultBlocked
+	out.Result, out.State, out.Cause = ResultBlocked, r.h.record.State, why.cause
 	if err := p.audit(ctx, r.h, "release.rollback", core.OutcomeExecuted, map[string]string{
-		"release": string(r.rev.Digest), "restored_to": string(r.lkgRev.Digest), "reason": reason,
+		"release": string(r.rev.Digest), "restored_to": string(r.lkgRev.Digest), "reason": why.reason, "cause": string(why.cause),
 	}); err != nil {
 		return out, err
 	}

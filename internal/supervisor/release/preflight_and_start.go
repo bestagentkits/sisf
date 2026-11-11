@@ -41,7 +41,8 @@ type rollout struct {
 //   - the LKG is not observed running and healthy as itself, so the way back
 //     cannot be verified;
 //   - the LKG cannot be measured (no metrics);
-//   - real traffic is too low to judge and there is no synthetic suite.
+//   - real traffic is too low to judge and there is no synthetic suite, or
+//     the suite says it cannot be run.
 func (p *Pipeline) preflight(ctx context.Context, h *holding, v verifiedRelease) (*rollout, error) {
 	unit := v.artifact.Unit
 	caps, err := p.cfg.Backend.Capabilities(ctx)
@@ -85,6 +86,11 @@ func (p *Pipeline) preflight(ctx context.Context, h *holding, v verifiedRelease)
 	}
 	if r.lowTraffic && p.cfg.Synthetic == nil {
 		return nil, holdf("real traffic is too low to judge the release and the application has no synthetic suite")
+	}
+	if ready, ok := p.cfg.Synthetic.(SyntheticReadiness); r.lowTraffic && ok {
+		if err := ready.Ready(ctx); err != nil {
+			return nil, holdf("real traffic is too low to judge the release and the synthetic suite cannot be run").WithCause(err)
+		}
 	}
 	return r, nil
 }

@@ -7,11 +7,9 @@ import (
 	"testing"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
-	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
-	"github.com/bestagentkits/sisf/pkg/state"
 )
 
 // storeRulesDiff adds the agent zone's own QA pass to the steps it may
@@ -87,7 +85,8 @@ func TestAPatchOfTheStoreRulesOrMigrationsIsNeitherStagedNorMerged(t *testing.T)
 
 // A candidate that changes the store contract is built and evaluated like
 // any other, and then refused by the release supervisor as a governance
-// change: nothing is deployed and nothing reaches main.
+// change: the issue is blocked for it, nothing is deployed and nothing
+// reaches main.
 func TestACandidateThatChangesTheStoreContractIsRefusedAsAGovernanceChange(t *testing.T) {
 	t.Parallel()
 	f := harness.New(t, harness.Options{})
@@ -95,19 +94,8 @@ func TestACandidateThatChangesTheStoreContractIsRefusedAsAGovernanceChange(t *te
 	f.ScriptPatch(number, 0, storeContractDiff)
 	f.Cycle(6)
 
-	record := f.Record(number)
-	if record.State != core.StateReleaseCandidate {
-		t.Fatalf("the governance change went on to %s", record.State)
-	}
-	var rec stages.ReleaseRecord
-	err := f.ControlStore.View(context.Background(), func(ctx context.Context, tx state.Tx) error {
-		var err error
-		rec, err = stages.ReadRelease(ctx, tx, record.RunID, record.Attempt)
-		return err
-	})
-	if err != nil || rec.Result != string(release.ResultRefused) || !containsCode(rec.Reason, core.CodeApprovalRequired) ||
-		!strings.Contains(rec.Reason, "pkg/state/zone_steps.go") {
-		t.Fatalf("the release was not refused as a governance change: %+v, %v", rec, err)
+	if rec := wantRefusedAndBlocked(t, f, number, core.CodeApprovalRequired); !strings.Contains(rec.Reason, "pkg/state/zone_steps.go") {
+		t.Fatalf("the release was not refused for the store contract: %+v", rec)
 	}
 	wantNothingReleased(t, f, "pkg/state/zone_steps.go")
 }

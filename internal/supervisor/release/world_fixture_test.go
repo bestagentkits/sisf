@@ -52,6 +52,44 @@ func (s *fakeSynthetic) Run(context.Context, deploy.Revision) (SyntheticResult, 
 	return SyntheticResult{Passed: s.pass, EvidenceRef: "synthetic:run"}, nil
 }
 
+// storeBlocks keeps the record of each block as a document of its own
+// namespace, in the transaction that blocks the issue, as the supervisor's
+// recorder does.
+type storeBlocks struct{}
+
+const blocksNamespace = "release-blocks"
+
+func (storeBlocks) RecordBlock(ctx context.Context, kv state.KV, b Block) error {
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return err
+	}
+	_, err = kv.PutKV(ctx, state.KVEntry{Namespace: blocksNamespace, Key: string(b.RunID), Value: raw})
+	return err
+}
+
+// block reads the record of why the pipeline blocked the issue of run.
+func (w *world) block(run core.RunID) (Block, bool) {
+	w.t.Helper()
+	var b Block
+	found := false
+	err := w.store.View(context.Background(), func(ctx context.Context, tx state.Tx) error {
+		entry, err := tx.GetKV(ctx, blocksNamespace, string(run))
+		if core.HasCode(err, core.CodeNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		found = true
+		return json.Unmarshal(entry.Value, &b)
+	})
+	if err != nil {
+		w.t.Fatalf("read the block of %s: %v", run, err)
+	}
+	return b, found
+}
+
 // world is one factory as the release pipeline sees it: a real operational
 // store, a trust volume whose LKG is the root-signed release manifest, a
 // deployment backend serving the LKG, and the supervisor's keys.
@@ -81,7 +119,7 @@ func newWorld(t *testing.T) *world {
 	w.book = w.recordInstallLKG(lkgDigest)
 	w.cfg = Config{
 		FactoryID: testFactory, State: w.store, Backend: w.backend, Verifier: w.keys.verifier, LKG: w.book,
-		Freeze: w.freeze, Publisher: w.publisher, Clock: clock,
+		Freeze: w.freeze, Publisher: w.publisher, Blocks: storeBlocks{}, Clock: clock,
 	}
 	return w
 }

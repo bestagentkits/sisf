@@ -18,12 +18,17 @@ const (
 )
 
 // ReleaseHold is the supervisor's record of a release of a candidate that
-// was held or refused, kept in the build namespace beside the candidate's
-// other records. A held or refused release is not tried again by itself:
-// the issue waits in ReleaseCandidate. Only the Owner's retry of the issue
-// lets a held release start over (ResumeHeldRelease); a refused one is
-// final for its candidate, and what is left to the Owner is to change the
-// policy in a governed update or to close the issue.
+// was held, kept in the build namespace beside the candidate's other
+// records. It is written only while nothing is deployed and the issue
+// waits in ReleaseCandidate. A held release is not tried again by itself:
+// only the Owner's retry of the issue lets it start over
+// (ResumeHeldRelease).
+//
+// A release the supervisor refuses blocks its issue instead (RunStop
+// records why), so a refused hold is only ever one an earlier release
+// recorded. The supervisor judges such a release again, and the Owner's
+// retry may resume it like a held one; either way it ends released or
+// blocked, never waiting for good.
 //
 // Reason is the pipeline's own sentence, for the Owner's authenticated
 // surfaces and the supervisor's log. It can name units, backends and what
@@ -82,30 +87,30 @@ func DropReleaseHold(ctx context.Context, kv state.KV, run core.RunID, attempt i
 	return kv.DeleteKV(ctx, BuildNamespace, entry.Key, entry.Version)
 }
 
-// Waiting reports whether the release waits for a person: it was refused,
-// or it was held and the Owner has not resumed it yet.
+// Waiting reports whether the release waits for the Owner: it was held and
+// the Owner has not resumed it yet. A refused hold an earlier release
+// recorded waits for nobody: the supervisor judges it again.
 func (h ReleaseHold) Waiting() bool {
-	return h.Result == ReleaseResultRefused || h.ResumedAt.IsZero()
+	return h.Result == ReleaseResultHeld && h.ResumedAt.IsZero()
 }
 
-// Resumed reports whether the Owner resumed the held release, so the
-// supervisor releases the candidate again.
+// Resumed reports whether the supervisor is to release the candidate
+// again: the Owner resumed the held release, or an earlier release
+// recorded it as refused, which is now judged again and blocks the issue
+// if it is still refused.
 func (h ReleaseHold) Resumed() bool {
-	return h.Result == ReleaseResultHeld && !h.ResumedAt.IsZero()
+	return h.Result == ReleaseResultRefused || !h.ResumedAt.IsZero()
 }
 
 // ResumeHeldRelease lets a held release start over on the Owner's retry.
-// A release with no hold is NOT_FOUND; a refused one, or one already
-// resumed, is CONFLICT.
+// A release with no hold is NOT_FOUND; one already resumed is CONFLICT. A
+// refused hold an earlier release recorded is resumed like a held one.
 func ResumeHeldRelease(ctx context.Context, kv state.KV, run core.RunID, attempt int, owner string, now time.Time) error {
 	h, err := ReadReleaseHold(ctx, kv, run, attempt)
 	if err != nil {
 		return err
 	}
-	switch {
-	case h.Result != ReleaseResultHeld:
-		return core.NewError(core.CodeConflict, "the release was refused, not held; a refused release is never tried again")
-	case h.Resumed():
+	if !h.ResumedAt.IsZero() {
 		return core.NewError(core.CodeConflict, "the held release was already resumed and is being released again")
 	}
 	h.ResumedBy, h.ResumedAt = owner, now
@@ -116,12 +121,8 @@ func ResumeHeldRelease(ctx context.Context, kv state.KV, run core.RunID, attempt
 // and where the issue waits. It is chosen by the result and the code only.
 func (h ReleaseHold) Summary() string {
 	if h.Result == ReleaseResultRefused {
-		why := "the release was refused before anything was deployed"
-		if h.Code == core.CodeApprovalRequired {
-			why = "the change touches the factory's trusted control surface, or a unit the policy does not let the factory publish by itself, which only a person may publish"
-		}
-		return fmt.Sprintf("The release of run %s was refused: %s. The refusal is final for this candidate and it is never tried again; "+
-			"the issue waits in ReleaseCandidate until the Owner changes the policy in a governed update or closes the issue.", h.RunID, why)
+		return fmt.Sprintf("The release of run %s was refused before anything was deployed. The supervisor judges it again: "+
+			"if it is still refused the issue is blocked, and the Owner's retry then returns it to Ready for a new run.", h.RunID)
 	}
 	var why string
 	switch h.Code {

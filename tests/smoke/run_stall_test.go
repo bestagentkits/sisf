@@ -15,8 +15,9 @@ import (
 // deadline and the spend:
 //   - QA held a candidate: a held verdict is final for the run, the issue
 //     waits in QAEvaluation for a person and the lifecycle has no step out;
-//   - the supervisor held or refused the release: the issue waits in
-//     ReleaseCandidate until the Owner acts, and nothing is tried again;
+//   - the supervisor held the release, and the issue waits in
+//     ReleaseCandidate until the Owner acts, or refused it, and the issue
+//     is blocked until the Owner retries it; nothing is tried again;
 //   - the journal has not moved for longer than the state can take: the
 //     coding attempts of one Developing visit by the manifest's
 //     run_timeout each (an attempt that fails before QA starts the next in

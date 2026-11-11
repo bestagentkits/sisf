@@ -3,9 +3,12 @@ package release
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/core/statemachine"
+	"github.com/bestagentkits/sisf/pkg/deploy"
 )
 
 // lowTrafficWorld is a world whose application serves far fewer requests
@@ -76,4 +79,70 @@ func TestAFailedRealRequestExtendsTheHoldInsteadOfRollingBack(t *testing.T) {
 	if extended != DefaultMaxHoldExtensions+1 || !strings.Contains(out.Reason, "kept failing") {
 		t.Fatalf("%d extensions, reason %q; want the hold extended %d times before the restore", extended, out.Reason, DefaultMaxHoldExtensions)
 	}
+}
+
+// brokenSynthetic is a synthetic suite that judges nothing: it cannot be
+// run, and says so before a release when asked.
+type brokenSynthetic struct {
+	notReady error
+	runs     atomic.Int32
+}
+
+func (s *brokenSynthetic) Run(context.Context, deploy.Revision) (SyntheticResult, error) {
+	s.runs.Add(1)
+	return SyntheticResult{}, core.NewError(core.CodeUnavailable, "the synthetic suite could not be started")
+}
+
+func (s *brokenSynthetic) Ready(context.Context) error { return s.notReady }
+
+// A synthetic suite that cannot be run before the rollout starts holds the
+// release: nothing is deployed and the issue waits in ReleaseCandidate.
+func TestALowTrafficReleaseHoldsWhenItsSyntheticSuiteCannotBeRun(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.backend.totalPerWindow = 20
+	w.cfg.Synthetic = &brokenSynthetic{notReady: core.NewError(core.CodeNotFound, "the synthetic program is gone")}
+	issue, run := issueRef(62), core.RunID("run-62")
+	w.seedReleaseCandidate(issue, run, firstBuild)
+
+	out, err := w.pipeline().Release(context.Background(), w.request(issue, run, firstBuild))
+	if !core.HasCode(err, core.CodeReleaseHold) || out.Result != ResultHeld || out.State != core.StateReleaseCandidate {
+		t.Fatalf("Release = %+v, %v; want held in ReleaseCandidate", out, err)
+	}
+	if promotions, rollbacks, staged, _ := w.backend.snapshot(); len(promotions)+len(rollbacks)+len(staged) != 0 {
+		t.Fatalf("a release that could not be judged still acted: staged %v promoted %v rolled back %v", staged, promotions, rollbacks)
+	}
+}
+
+// A synthetic suite that cannot be run once the rollout started judged
+// nothing: the LKG is restored and the issue blocked as a release that
+// could not be judged, not as one a synthetic check failed.
+func TestASyntheticSuiteThatCannotRunDuringTheRolloutRestoresTheLKGAsUnjudged(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.backend.totalPerWindow = 20
+	suite := &brokenSynthetic{}
+	w.cfg.Synthetic = suite
+	issue, run := issueRef(63), core.RunID("run-63")
+	w.seedReleaseCandidate(issue, run, firstBuild)
+
+	out, err := w.pipeline().Release(context.Background(), w.request(issue, run, firstBuild))
+	requireRestored(t, w, issue, run, out, err)
+	if out.Cause != statemachine.BlockReleaseUnjudged || strings.Contains(out.Reason, "a synthetic check failed") || suite.runs.Load() != 1 {
+		t.Fatalf("outcome cause %s reason %q after %d runs, want a release that could not be judged", out.Cause, out.Reason, suite.runs.Load())
+	}
+	requireBlockedWith(t, w, issue, run, statemachine.BlockReleaseUnjudged)
+}
+
+// A failed synthetic check is a judgment: the release is rolled back as
+// unhealthy.
+func TestAFailedSyntheticCheckBlocksTheIssueAsRolledBack(t *testing.T) {
+	t.Parallel()
+	w, _ := lowTrafficWorld(t, false)
+	issue, run := issueRef(64), core.RunID("run-64")
+	w.seedReleaseCandidate(issue, run, firstBuild)
+
+	out, err := w.pipeline().Release(context.Background(), w.request(issue, run, firstBuild))
+	requireRestored(t, w, issue, run, out, err)
+	requireBlockedWith(t, w, issue, run, statemachine.BlockRolledBack)
 }

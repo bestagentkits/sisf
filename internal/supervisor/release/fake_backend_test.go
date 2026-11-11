@@ -63,6 +63,10 @@ type fakeBackend struct {
 	capsErr, observeErr, stageErr, rollbackErr error
 	measureErr                                 map[core.ReleaseDigest]error
 
+	// onMeasure, when set, is called, without the lock, before each
+	// measurement, so a test can act in the middle of a rollout.
+	onMeasure func(rev core.ReleaseDigest)
+
 	// dataVolume stands for the application's stored data; no call changes it.
 	dataVolume string
 	promotions []int
@@ -120,6 +124,12 @@ func (b *fakeBackend) share(rev core.ReleaseDigest) int64 {
 }
 
 func (b *fakeBackend) Measure(_ context.Context, rev deploy.Revision, window time.Duration) (deploy.Metrics, error) {
+	b.mu.Lock()
+	hook := b.onMeasure
+	b.mu.Unlock()
+	if hook != nil {
+		hook(rev.Digest)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if err := b.measureErr[rev.Digest]; err != nil {

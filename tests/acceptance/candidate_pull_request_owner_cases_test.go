@@ -3,18 +3,14 @@
 package acceptance
 
 import (
-	"context"
 	"strings"
 	"testing"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
-	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
-	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/manifest"
-	"github.com/bestagentkits/sisf/pkg/state"
 )
 
 // adrDiff adds an architecture decision record: a foundation file.
@@ -26,7 +22,8 @@ const adrDiff = `--- /dev/null
 
 // A candidate that changes a foundation file is never merged by the
 // factory: release governance refuses to release it, so it never reaches
-// Verified, and its pull request stays open for the Owner.
+// Verified: the issue is blocked for the refusal, and its pull request
+// stays open for the Owner.
 func TestACandidateThatChangesAFoundationFileIsLeftForTheOwner(t *testing.T) {
 	t.Parallel()
 	f := harness.New(t, harness.Options{})
@@ -34,20 +31,9 @@ func TestACandidateThatChangesAFoundationFileIsLeftForTheOwner(t *testing.T) {
 	f.ScriptPatch(number, 0, adrDiff)
 	f.Cycle(4)
 
-	record := f.Record(number)
-	if record.State != core.StateReleaseCandidate {
-		t.Fatalf("the foundation change went on to %s", record.State)
-	}
-	var rec stages.ReleaseRecord
-	if err := f.ControlStore.View(context.Background(), func(ctx context.Context, tx state.Tx) error {
-		var err error
-		rec, err = stages.ReadRelease(ctx, tx, record.RunID, record.Attempt)
-		return err
-	}); err != nil || rec.Result != string(release.ResultRefused) || !containsCode(rec.Reason, core.CodeApprovalRequired) {
-		t.Fatalf("the release was not refused as a governance change: %+v, %v", rec, err)
-	}
+	wantRefusedAndBlocked(t, f, number, core.CodeApprovalRequired)
 	pr := candidatePR(t, f, number)
-	if pr.State.Final() || f.GitData.Merges() != 0 {
+	if pr.State != handoff.LandingRefused || f.GitData.Merges() != 0 {
 		t.Fatalf("the foundation change's pull request: %+v after %d merges", pr, f.GitData.Merges())
 	}
 	if _, files, _ := f.GitData.Branch(f.Repo, "main"); files["docs/adr/0099-greeting.md"] != "" {

@@ -7,24 +7,44 @@ import (
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
 // leaveRolledBack notes on the pull request of a run whose release was
-// rolled back that the factory will not merge it, then records that.
+// rolled back, or refused before anything was deployed, that the factory
+// will not merge it, then records that. The run's stop record says which:
+// a refused release was never deployed, so it is not called rolled back.
 func (c *CandidatePRs) leaveRolledBack(ctx context.Context, run core.RunID) error {
 	var pr handoff.CandidatePR
+	refused := false
 	if err := c.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
 		var err error
-		pr, err = handoff.ReadCandidatePR(ctx, tx, run)
-		return err
+		if pr, err = handoff.ReadCandidatePR(ctx, tx, run); err != nil {
+			return err
+		}
+		stop, err := handoff.ReadRunStop(ctx, tx, run)
+		switch {
+		case core.HasCode(err, core.CodeNotFound):
+			return nil
+		case err != nil:
+			return err
+		}
+		refused = stop.Cause == statemachine.BlockReleaseRefused
+		return nil
 	}); err != nil {
 		return err
 	}
-	if err := c.note(ctx, pr, "The release built from this pull request was rolled back. The factory will not merge it; it stays open for the Owner."); err != nil {
+	text, landing, reason := "The release built from this pull request was rolled back. The factory will not merge it; it stays open for the Owner.",
+		handoff.LandingRolledBack, "the release was rolled back"
+	if refused {
+		text, landing, reason = "The release built from this pull request was refused before anything was deployed. "+
+			"The factory will not merge it; it stays open for the Owner.", handoff.LandingRefused, "the release was refused"
+	}
+	if err := c.note(ctx, pr, text); err != nil {
 		return err
 	}
-	pr.State, pr.Reason, pr.DecidedAt = handoff.LandingRolledBack, "the release was rolled back", c.Clock.Now().UTC()
+	pr.State, pr.Reason, pr.DecidedAt = landing, reason, c.Clock.Now().UTC()
 	return c.State.Update(ctx, func(ctx context.Context, tx state.Tx) error { return handoff.PutCandidatePR(ctx, tx, pr) })
 }
 

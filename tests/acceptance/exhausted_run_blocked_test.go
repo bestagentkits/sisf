@@ -160,10 +160,11 @@ func TestARunExhaustedBeforeItsAgentStartsBlocksTheClaimedIssue(t *testing.T) {
 	}
 }
 
-// The Owner's retry lifts the block of the run that stopped and no other:
-// after the retried issue's next run is released and rolled back, the
-// record of the earlier, exhausted run does not lift that block.
-func TestTheRecordOfAStoppedRunDoesNotLiftTheBlockOfALaterRollback(t *testing.T) {
+// The Owner's retry is judged by the record of the run whose block it
+// lifts: after the retried issue's next run is released and rolled back,
+// the rollback's own record lets the Owner retry it, and the progress of
+// the rolled back run does not cite the earlier, exhausted run.
+func TestTheRetryOfALaterRollbackIsJudgedByItsOwnRecord(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := harness.New(t, harness.Options{})
@@ -181,16 +182,23 @@ func TestTheRecordOfAStoppedRunDoesNotLiftTheBlockOfALaterRollback(t *testing.T)
 	if rolledBack.State != core.StateBlocked || rolledBack.RunID == exhausted.RunID || commentContaining(t, f, number, "Release rolled back") == "" {
 		t.Fatalf("the second run was not rolled back and blocked: %+v", rolledBack)
 	}
-	if runStopOf(t, f, exhausted.RunID).IssueID != f.Issue(number) {
-		t.Fatal("the record of the exhausted run is gone, the premise of this test")
+	if stop := runStopOf(t, f, rolledBack.RunID); stop.Cause != statemachine.BlockRolledBack || stop.RestoredTo == "" {
+		t.Fatalf("the record of the rolled back run: %+v", stop)
 	}
-	if _, err := f.Control.Retry(ctx, f.Issue(number), ownerActor(f)); !core.HasCode(err, core.CodeGuardFailed) {
-		t.Fatalf("the block of a rolled back release was lifted: %v", err)
+	if c := commentContaining(t, f, number, "<!-- sisf:progress "); strings.Contains(c, "coding attempts it was allowed") {
+		t.Errorf("the progress of the rolled back run cites the earlier run's stop:\n%s", c)
+	}
+	maintainer := core.Actor{ID: "user:maintainer", Kind: core.ActorHuman, Roles: []core.Role{core.RoleMaintainer}, Surface: core.SurfaceCLI}
+	if _, err := f.Control.Retry(ctx, f.Issue(number), maintainer); !core.HasCode(err, core.CodeGuardFailed) {
+		t.Fatalf("a maintainer retried the rolled back release: %v", err)
 	}
 	if got := f.Record(number); got.State != core.StateBlocked || got.Version != rolledBack.Version {
 		t.Fatalf("the refused retry moved the issue: %+v", got)
 	}
-	if c := commentContaining(t, f, number, "<!-- sisf:progress "); strings.Contains(c, "coding attempts it was allowed") {
-		t.Errorf("the progress of the rolled back run cites the earlier run's stop:\n%s", c)
+	if _, err := f.Control.Retry(ctx, f.Issue(number), ownerActor(f)); err != nil {
+		t.Fatalf("the Owner's retry of the rolled back release: %v", err)
+	}
+	if got := f.Record(number).State; got != core.StateReady {
+		t.Fatalf("the retried issue is %s, want Ready", got)
 	}
 }

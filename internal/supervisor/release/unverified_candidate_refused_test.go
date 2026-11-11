@@ -6,16 +6,22 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 )
 
 // requireRefusedUntouched fails the test unless the release was refused with
-// code, nothing was deployed and the LKG did not move.
+// code, the issue was blocked with the refusal recorded as its cause,
+// nothing was deployed and the LKG did not move.
 func requireRefusedUntouched(t *testing.T, w *world, issue core.IssueRef, out Outcome, err error, code core.ErrorCode) {
 	t.Helper()
-	if !core.HasCode(err, code) || out.Result != ResultRefused {
-		t.Fatalf("Release = %s, %v; want refused with %s", out.Result, err, code)
+	if !core.HasCode(err, code) || out.Result != ResultRefused || out.State != core.StateBlocked {
+		t.Fatalf("Release = %s in %s, %v; want refused with %s and blocked", out.Result, out.State, err, code)
 	}
-	w.requireState(issue, core.StateReleaseCandidate)
+	w.requireState(issue, core.StateBlocked)
+	record := w.record(issue)
+	if b, found := w.block(record.RunID); !found || b.Cause != statemachine.BlockReleaseRefused || b.Code != code || b.IssueID != issue {
+		t.Fatalf("the block of the refused release is %+v (found %v), want cause %s with code %s", b, found, statemachine.BlockReleaseRefused, code)
+	}
 	promotions, rollbacks, staged, _ := w.backend.snapshot()
 	if len(promotions)+len(rollbacks)+len(staged) != 0 {
 		t.Fatalf("a refused release still acted: staged %v promoted %v rolled back %v", staged, promotions, rollbacks)

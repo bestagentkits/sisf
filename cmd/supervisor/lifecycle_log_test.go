@@ -35,8 +35,9 @@ func TestTheSupervisorLogsEveryQAVerdictWithItsReason(t *testing.T) {
 }
 
 // Every release the stages ran is logged once, when it ends: a closed one
-// as information, and one that was held, refused, rolled back or could not
-// be restored as a warning with its result, code and reason. A held
+// as information, and one that was held, refused, undone, interrupted or
+// could not be restored as a warning with its result, the state it left
+// the issue in, the cause of a block, its code and its reason. A held
 // release is not tried again by itself, so it is logged once, and again
 // only when the Owner's retry starts it over.
 func TestTheSupervisorLogsEveryReleaseWithItsResultCodeAndReason(t *testing.T) {
@@ -47,13 +48,19 @@ func TestTheSupervisorLogsEveryReleaseWithItsResultCodeAndReason(t *testing.T) {
 		issue(1): {Result: release.ResultClosed, State: core.StateClosed, Release: "sha256:aa"},
 		issue(2): {Result: release.ResultHeld, State: core.StateReleaseCandidate, Release: "sha256:bb",
 			Reason: "RELEASE_HOLD: real traffic is too low to judge the release and the application has no synthetic suite"},
-		issue(3): {Result: release.ResultBlocked, State: core.StateBlocked, Release: "sha256:cc", Reason: "critical health"},
+		issue(3): {Result: release.ResultBlocked, State: core.StateBlocked, Release: "sha256:cc", Reason: "critical health", Cause: "rolled_back"},
+		issue(4): {Result: release.ResultRefused, State: core.StateBlocked, Release: "sha256:dd", Reason: "EXPIRED: the receipt expired"},
+		issue(5): {Result: release.ResultRefused, State: core.StateReleaseCandidate, Release: "sha256:ee", Reason: "EXPIRED: the receipt expired"},
+		issue(6): {Result: release.ResultInterrupted, State: core.StateCanary, Release: "sha256:ff", Reason: "context canceled"},
 	}}})
 	log := out.String()
 	for _, want := range []string{
 		`level=INFO msg="release closed: the verified release serves the application" issue=a/b#1 release=sha256:aa`,
-		`level=WARN msg="release held: the issue waits in ReleaseCandidate for the Owner" issue=a/b#2 result=held state=ReleaseCandidate code=RELEASE_HOLD reason="RELEASE_HOLD: real traffic is too low`,
-		`level=WARN msg="release rolled back: the issue is blocked" issue=a/b#3 result=blocked`,
+		`level=WARN msg="release held before anything was deployed: the issue waits in ReleaseCandidate for the Owner's retry" issue=a/b#2 result=held state=ReleaseCandidate cause="" code=RELEASE_HOLD reason="RELEASE_HOLD: real traffic is too low`,
+		`level=WARN msg="release undone: the last known good release serves again and the issue is blocked until the Owner's retry returns it to Ready" issue=a/b#3 result=blocked state=Blocked cause=rolled_back`,
+		`level=WARN msg="release refused before anything was deployed: the issue is blocked and the Owner's retry returns it to Ready for a new run" issue=a/b#4 result=refused state=Blocked cause="" code=EXPIRED`,
+		`level=WARN msg="release refused before anything was deployed, and the issue could not be blocked yet: the next pass tries again" issue=a/b#5 result=refused state=ReleaseCandidate`,
+		`level=WARN msg="release stopped after its rollout started: the issue is left where the state says, and the supervisor's recovery restores the last known good release and blocks it" issue=a/b#6 result=interrupted state=Canary`,
 	} {
 		if !strings.Contains(log, want) {
 			t.Errorf("the log lacks %s:\n%s", want, log)

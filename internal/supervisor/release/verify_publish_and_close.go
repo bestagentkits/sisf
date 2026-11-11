@@ -25,11 +25,11 @@ func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
 	windowEnd := p.cfg.Clock.Now()
 	observed, err := p.cfg.Backend.ObservedRevision(ctx, r.unit)
 	if err != nil {
-		return p.restore(ctx, r, "the release cannot be observed after its observation window")
+		return p.restore(ctx, r, *unjudged("the release cannot be observed after its observation window"))
 	}
 	r.observed, out.Observed = observed, observed
 	if !observed.Matches(r.rev) {
-		return p.restore(ctx, r, "regression: the revision observed after the window is not the healthy release")
+		return p.restore(ctx, r, *judgedUnhealthy("regression: the revision observed after the window is not the healthy release"))
 	}
 	dod := []statemachine.DoDResult{
 		{Item: "the release is observed running and healthy", Met: true, EvidenceRef: "observed:" + string(observed.Digest)},
@@ -50,7 +50,10 @@ func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
 		})},
 	})
 	if err != nil {
-		return held(err)
+		// The release served through its window but its verification could
+		// not be recorded, so it cannot be left in Monitoring unwatched.
+		return p.restore(ctx, r, undo{cause: statemachine.BlockReleaseInterrupted,
+			reason: "the verified release could not be recorded, so it could not be kept: " + err.Error()})
 	}
 	if err := p.cfg.LKG.record(r.v); err != nil {
 		return held(err)
