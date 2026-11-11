@@ -142,6 +142,9 @@ func TestRealLifecycleSmoke(t *testing.T) {
 		r.fatalf("sisf init: %v", err)
 	}
 	r.logf("sisf init:\n%s", out)
+	if err := declareSandboxInputs(home); err != nil {
+		r.fatalf("declare the sandbox application's inputs: %v", err)
+	}
 	factoryID := installedFactoryID(r, home)
 	sb.startFilter(ctx, r, bins.sisf, factoryID, filepath.Join(root, "docker-filter.log"))
 	head, err := defaultBranchRevision(ctx, r)
