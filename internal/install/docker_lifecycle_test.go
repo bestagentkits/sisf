@@ -2,6 +2,7 @@ package install
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -34,7 +35,8 @@ func TestFreshDockerInstallIsOneComposeProjectOfOneFactory(t *testing.T) {
 	lines := exec.lines()
 	var composeCalls []string
 	for _, l := range lines {
-		if strings.HasPrefix(l, "docker compose") {
+		// Listing the projects only reads, to see who owns the name.
+		if strings.HasPrefix(l, "docker compose") && !strings.HasPrefix(l, "docker compose ls ") {
 			composeCalls = append(composeCalls, l)
 			if !strings.Contains(l, "-p "+proj+" ") {
 				t.Errorf("a compose call is not about the one project %s: %s", proj, l)
@@ -174,7 +176,7 @@ func TestUpStartsNothingWhenAnIsolationCheckFails(t *testing.T) {
 		t.Fatalf("Up = %v, want POLICY_HOLD", err)
 	}
 	for _, l := range exec.lines() {
-		if strings.HasPrefix(l, "docker compose") {
+		if strings.HasPrefix(l, "docker compose") && !strings.HasPrefix(l, "docker compose ls ") {
 			t.Fatalf("a compose command ran though the checks failed: %s", l)
 		}
 	}
@@ -272,5 +274,62 @@ func TestTheSupervisorIsMeasuredInAContainerWithNothingMountedAndNoNetwork(t *te
 		if strings.Contains(measure, banned) {
 			t.Errorf("the measuring run has %q: %s", banned, measure)
 		}
+	}
+}
+
+// Two installs of same-named repositories share a factory id, and so the
+// Compose project name: one never starts, stops or deletes the other's.
+func TestADockerInstallNeverActsOnAnotherInstallsComposeProject(t *testing.T) {
+	t.Parallel()
+	in, exec, _ := newTestInstaller(t)
+	exec.answer = buildAnswers
+	mustInit(t, in, manifest.ModeDocker)
+	if err := os.WriteFile(in.Layout.Compose(), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other := `[{"Name":"sisf-hello-app","Status":"running(6)","ConfigFiles":"/elsewhere/factory/compose.yaml"}]`
+	exec.answer = func(c Cmd) ([]byte, error) {
+		if strings.Join(c.Args[:2], " ") == "compose ls" {
+			return []byte(other), nil
+		}
+		return buildAnswers(c)
+	}
+	for name, run := range map[string]func() error{
+		"up":      func() error { return in.Up(t.Context(), UpOptions{Init: initOptions(in, manifest.ModeDocker)}) },
+		"stop":    func() error { return in.Stop(t.Context()) },
+		"down -v": func() error { return in.Down(t.Context(), true) },
+	} {
+		if err := run(); !core.HasCode(err, core.CodeConflict) || !strings.Contains(err.Error(), "/elsewhere/factory/compose.yaml") {
+			t.Errorf("%s = %v, want CONFLICT naming the other install", name, err)
+		}
+	}
+	for _, l := range exec.lines() {
+		if strings.Contains(l, " down") || strings.Contains(l, " stop") || strings.Contains(l, " up -d") {
+			t.Fatalf("a command acted on the other install's project: %s", l)
+		}
+	}
+	// Its own project is recognised through a symbolic link to its
+	// directory, and a project whose name only starts with this one's is
+	// another project, not a conflict.
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(in.Layout.Dir, link); err != nil {
+		t.Fatal(err)
+	}
+	own := `[{"Name":"sisf-hello-app","ConfigFiles":"` + filepath.Join(link, "compose.yaml") + `"},` +
+		`{"Name":"sisf-hello-app-2","ConfigFiles":"/elsewhere/compose.yaml"}]`
+	exec.answer = func(c Cmd) ([]byte, error) {
+		if strings.Join(c.Args[:2], " ") == "compose ls" {
+			return []byte(own), nil
+		}
+		return buildAnswers(c)
+	}
+	if err := in.Stop(t.Context()); err != nil {
+		t.Errorf("stop of its own project reached through a link = %v", err)
+	}
+	// A Docker install that was never started stops and goes down cleanly.
+	fresh, _, _ := newTestInstaller(t)
+	mustInit(t, fresh, manifest.ModeDocker)
+	if err := fresh.Down(t.Context(), true); err != nil {
+		t.Errorf("down -v of a Docker install never started = %v", err)
 	}
 }

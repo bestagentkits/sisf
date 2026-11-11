@@ -51,6 +51,9 @@ func (in *Installer) bootstrapCommand(m *manifest.Manifest) ([]string, error) {
 // service. The project is checked before anything runs, so the file that
 // runs is the file that passed the isolation rules.
 func (in *Installer) upDocker(ctx context.Context, m *manifest.Manifest) error {
+	if err := in.checkProjectOwner(ctx, m); err != nil {
+		return err
+	}
 	b, err := in.release(ctx, m)
 	if err != nil {
 		return err
@@ -137,6 +140,16 @@ func (in *Installer) writeCompose(o Options, images Images, bootstrap []string, 
 // dockerStop runs a Compose subcommand that keeps the project ("stop",
 // "restart").
 func (in *Installer) dockerStop(ctx context.Context, m *manifest.Manifest, verb string) error {
+	if !in.composeRendered() {
+		if verb == "restart" {
+			return core.NewError(core.CodeNotFound, "the factory in "+in.Layout.Dir+" was never started",
+				core.NextAction{Action: "sisf up --dir " + in.Layout.Dir, Description: "start it"})
+		}
+		return nil // never started, so already stopped
+	}
+	if err := in.checkProjectOwner(ctx, m); err != nil {
+		return err
+	}
 	if err := in.compose(ctx, m, verb); err != nil {
 		return unavailablef(err, "docker compose %s failed", verb)
 	}
@@ -147,6 +160,12 @@ func (in *Installer) dockerStop(ctx context.Context, m *manifest.Manifest, verb 
 // removeData its volumes. Only this project is named, and every resource in
 // it carries the project's prefix.
 func (in *Installer) dockerDown(ctx context.Context, m *manifest.Manifest, removeData bool) error {
+	if !in.composeRendered() {
+		return nil // never started: no container, network or volume exists
+	}
+	if err := in.checkProjectOwner(ctx, m); err != nil {
+		return err
+	}
 	args := []string{"down", "--remove-orphans"}
 	if removeData {
 		args = append(args, "--volumes")
