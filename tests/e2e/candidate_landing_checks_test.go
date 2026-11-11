@@ -19,8 +19,8 @@ func (s simGitHub) mergedCandidates(t *testing.T, number int) map[int]string {
 		Body   string
 		// MergedAt tells a merged one: GitHub's list has no merged field.
 		MergedAt *string `json:"merged_at"`
-		Head   struct{ Ref, SHA string }
-		Base   struct{ Ref string }
+		Head     struct{ Ref, SHA string }
+		Base     struct{ Ref string }
 	}
 	out := s.must(t, http.StatusOK, "GET", "/repos/"+s.repo+"/pulls?state=all&per_page=100", "", nil)
 	if err := json.Unmarshal(out, &pulls); err != nil {
