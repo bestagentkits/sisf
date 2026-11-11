@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -77,6 +78,9 @@ type Config struct {
 	// control.ClientAddress builds one that names an IPv6 client by its /64.
 	// Nil means the remote IP address.
 	ClientKey func(*http.Request) string
+	// registrationLimits replaces the start limits of registrations, for a
+	// test of the table behind them; nil means report.NewStartLimiter.
+	registrationLimits *report.Limiter
 	// SigningKey signs access tokens; nil generates one, so a restart voids
 	// every token, which is the safe failure.
 	SigningKey *ecdsa.PrivateKey
@@ -98,10 +102,13 @@ type Server struct {
 	clientSeq uint64
 	// pick chooses which of n registered clients to drop when every source
 	// holds one; nil means randomIndex.
-	pick    func(n int) (int, error)
-	pending map[string]*pendingConsent // by digest of the consent ID
-	codes   map[string]*codeGrant      // by digest of the code
-	revoked map[string]time.Time       // token ID -> its expiry
+	pick func(n int) (int, error)
+	// registrations limits how often clients are registered; made on first
+	// use (admitRegistration).
+	registrations *report.Limiter
+	pending       map[string]*pendingConsent // by digest of the consent ID
+	codes         map[string]*codeGrant      // by digest of the code
+	revoked       map[string]time.Time       // token ID -> its expiry
 }
 
 // New validates cfg and returns a server.

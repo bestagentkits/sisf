@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"slices"
 	"time"
+
+	"github.com/bestagentkits/sisf/internal/intake/report"
 )
 
 // Registration is open to anyone, so the dynamically registered clients
@@ -55,9 +57,32 @@ func (s *Server) clientKey(r *http.Request) string {
 	return host
 }
 
+// admitRegistration takes a registration from source off the start
+// limits (report.NewStartLimiter): StartsPerSource a minute from one
+// source and, from all together, the rate at which a flood rotating
+// through new sources drops a person's client consented to within a
+// minute with probability at most 15%, for a table of MaxClients. It
+// reports whether the registration may go on and, if not, how long until
+// it may be tried again.
+func (s *Server) admitRegistration(source string) (bool, time.Duration) {
+	s.mu.Lock()
+	switch {
+	case s.registrations != nil:
+	case s.cfg.registrationLimits != nil:
+		s.registrations = s.cfg.registrationLimits
+	default:
+		s.registrations = report.NewStartLimiter(s.cfg.MaxClients)
+	}
+	limits := s.registrations
+	s.mu.Unlock()
+	return limits.Take(source, s.cfg.Clock.Now())
+}
+
 // addDynamicClient stores c, registered from source, and reports whether
 // it found room. It first drops expired clients and then, while MaxClients
-// are registered:
+// are registered, counting the newcomer's source as if its new client were
+// registered already, so a source that holds an unused client loses its
+// own oldest before any other source's is touched:
 //
 //   - when some source holds more than one unused client, the oldest unused
 //     client of the source holding the most: a flood from another address,
@@ -79,7 +104,7 @@ func (s *Server) addDynamicClient(c Client, source string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	inFlight := s.clientsInFlightLocked(now)
-	unusedBySource := map[string]int{}
+	unusedBySource := map[string]int{source: 1}
 	for id, u := range s.dynamic {
 		switch {
 		case u.expired(now) && !inFlight[id]:
@@ -98,10 +123,9 @@ func (s *Server) addDynamicClient(c Client, source string) bool {
 			s.dropOldestClientLocked(unusedBySource, func(id string, u *clientUse) bool {
 				return u.unused() && !inFlight[id] && unusedBySource[u.source] == busiest
 			})
-		case busiest == 1:
-			if !s.dropRandomClientLocked(unusedBySource, func(id string, u *clientUse) bool { return u.unused() && !inFlight[id] }) {
-				return false
-			}
+		case busiest == 1 && s.dropRandomClientLocked(unusedBySource, func(id string, u *clientUse) bool { return u.unused() && !inFlight[id] }):
+			// Only the newcomer's own source may be counted at one with no
+			// unused client registered; then a consented one goes.
 		default:
 			if !s.dropRandomClientLocked(unusedBySource, func(id string, _ *clientUse) bool { return !inFlight[id] }) {
 				return false

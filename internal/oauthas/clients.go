@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/bestagentkits/sisf/internal/intake/report"
 )
 
 // Client is a public OAuth client. No client has a secret: PKCE binds each
@@ -92,6 +94,11 @@ type registration struct {
 // nothing beyond what any public client gets: a code still needs a signed-in
 // person's consent and the PKCE verifier.
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if ok, wait := s.admitRegistration(s.clientKey(r)); !ok {
+		w.Header().Set("Retry-After", report.RetryAfter(wait))
+		writeOAuthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "too many clients are being registered; try again shortly")
+		return
+	}
 	var in registration
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(&in); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "the body must be a JSON client registration")

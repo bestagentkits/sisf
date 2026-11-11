@@ -17,11 +17,13 @@ import (
 const sourceHeader = "X-Test-Source"
 
 // registrationLimits keys clients on sourceHeader and holds at most max
-// registered clients.
+// registered clients. The tests here are about that table, behind the
+// start limits, so the limits are lifted (oauthas.LiftStartLimits).
 func registrationLimits(maxClients int) func(*oauthas.Config) {
 	return func(cfg *oauthas.Config) {
 		cfg.MaxClients = maxClients
 		cfg.ClientKey = func(r *http.Request) string { return r.Header.Get(sourceHeader) }
+		oauthas.LiftStartLimits(cfg)
 	}
 }
 
