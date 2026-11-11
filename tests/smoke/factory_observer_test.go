@@ -31,9 +31,13 @@ type factoryObserver struct {
 	env       []string // sisf environment with SISF_HOME and SISF_URL
 	stateDB   string
 	factoryID string
+	// maxAttempts is the manifest's limit of coding attempts per run.
+	maxAttempts int
 	// signIn signs the operator in through the browser; keepSignedIn calls
 	// it again before the stored login lapses.
 	signIn func(context.Context)
+	// renewForced makes the next call sign in again whatever the login.
+	renewForced bool
 }
 
 // inspectView is the part of runs.inspect the run reads.
@@ -146,7 +150,7 @@ func newFactoryObserver(r *commandRunner, sisf, home string) (*factoryObserver, 
 		return nil, fmt.Errorf("the install's factory.yaml cannot be read: %w", err)
 	}
 	o := &factoryObserver{
-		r: r, sisf: sisf, home: home, stateDB: l.StateDB(), factoryID: string(m.FactoryID),
+		r: r, sisf: sisf, home: home, stateDB: l.StateDB(), factoryID: string(m.FactoryID), maxAttempts: m.Limits.MaxAttempts,
 		env: sisfEnv("SISF_HOME="+home, "SISF_URL="+loopbackURL(install.PortControl, "")),
 	}
 	o.signIn = func(ctx context.Context) { signInOperator(ctx, r, sisf, home, o.env) }

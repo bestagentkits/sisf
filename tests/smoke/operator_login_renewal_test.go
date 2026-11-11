@@ -46,8 +46,36 @@ func (o *factoryObserver) keepSignedIn(ctx context.Context) {
 	if o.signIn == nil {
 		return
 	}
-	if l, err := readStoredLogin(o.home); err == nil && time.Until(l.ExpiresAt) > loginRenewMargin {
+	forced := o.renewForced
+	o.renewForced = false
+	if l, err := readStoredLogin(o.home); !forced && err == nil && time.Until(l.ExpiresAt) > loginRenewMargin {
 		return
 	}
 	o.signIn(ctx)
+}
+
+// forceRenewal makes the next call sign the operator in again even though
+// the stored login is still good, so the renewal path is exercised once.
+func (o *factoryObserver) forceRenewal() { o.renewForced = true }
+
+// checkForcedRenewal renews the operator's login once against the live
+// control plane, as the paid run does when the hour-long login runs out,
+// and proves the renewed login answers. A broken renewal ends the run that
+// spends nothing instead of a paid one.
+func checkForcedRenewal(ctx context.Context, r *commandRunner, obs *factoryObserver) {
+	r.t.Helper()
+	before, err := readStoredLogin(obs.home)
+	if err != nil {
+		r.fatalf("the CLI's stored login cannot be read: %v", err)
+	}
+	obs.forceRenewal()
+	b, err := obs.budget(ctx)
+	if err != nil {
+		r.fatalf("budget.get with the renewed login: %v", err)
+	}
+	after, err := readStoredLogin(obs.home)
+	if err != nil || after.Token == before.Token || !after.ExpiresAt.After(time.Now().Add(loginRenewMargin)) {
+		r.fatalf("the forced renewal stored no new login (error %v)", err)
+	}
+	r.report.check("login renewal", statusPass, "a forced renewal stored a new login and budget.get answered with it: "+b.summary())
 }

@@ -75,6 +75,9 @@ func TestRealLifecycleSmoke(t *testing.T) {
 		r.fatalf("%v", err)
 	}
 	facts := preflight(ctx, r)
+	if !upOnly {
+		requireIdleSandbox(ctx, r)
+	}
 	choices := choicesFrom(os.Getenv, filepath.Join(root, "sandbox"))
 	requireOutsideHome(r, home, choices.operatorHome)
 	bins := buildBinaries(ctx, r, filepath.Join(root, "bin"))
@@ -184,6 +187,7 @@ func upOnlySignIn(ctx context.Context, r *commandRunner, sisf, home string) {
 		r.fatalf("budget.get as the signed-in operator: %v", err)
 	}
 	r.report.check("operator signed in", statusPass, "budget.get answered: "+b.summary())
+	checkForcedRenewal(ctx, r, obs)
 }
 
 // approvePolicy puts the sandbox's current head in force as the policy,
