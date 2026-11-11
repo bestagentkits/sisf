@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/actions/runactions"
+	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/state"
@@ -158,8 +159,9 @@ func (r *reconciler) key() string { return "github/" + r.repo.Owner + "/" + r.re
 
 // GitHubSync reports how the factory keeps up with GitHub, for its status:
 // the stored state of reconciliation and, on an install acting with the
-// operator's token, that token's access. It reads the store, so it shows
-// what the running control zone last stored.
+// operator's token, that token's access, and how the publication of bug
+// reports stands. It reads the store, so it shows what the running control
+// zone last stored.
 func (c *Control) GitHubSync(ctx context.Context) (runactions.GitHubSync, error) {
 	var out runactions.GitHubSync
 	if c.reconcile != nil {
@@ -173,6 +175,13 @@ func (c *Control) GitHubSync(ctx context.Context) (runactions.GitHubSync, error)
 	}
 	if c.access != nil {
 		c.access.status(&out)
+	}
+	if c.reports != nil {
+		published, err := control.ReadReportPublication(ctx, c.cfg.Store)
+		if err != nil {
+			return out, err
+		}
+		out.ReportsWaiting, out.ReportPublishError = published.Waiting, published.LastError
 	}
 	return out, nil
 }

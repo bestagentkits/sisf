@@ -40,7 +40,9 @@ func Specs() []core.ActionSpec {
 "retrying":{"type":"array","items":{"type":"object","properties":{"issue":{"type":"integer"},"updated_at":{"type":"string","format":"date-time"},"attempts":{"type":"integer"},"reason":{"type":"string"}}}},
 "skipped":{"type":"array","description":"Issue changes given up after repeated failures.","items":{"type":"object","properties":{"issue":{"type":"integer"},"updated_at":{"type":"string","format":"date-time"},"attempts":{"type":"integer"},"reason":{"type":"string"}}}},
 "token_access":{"type":"string","enum":["confirmed","revoked"]},"token_access_detail":{"type":"string"},
-"token_checked_at":{"type":"string","format":"date-time"},"parking_deferred_since":{"type":"string","format":"date-time"},"parking_deferred_reason":{"type":"string"}}}}}`)},
+"token_checked_at":{"type":"string","format":"date-time"},"parking_deferred_since":{"type":"string","format":"date-time"},"parking_deferred_reason":{"type":"string"},
+"reports_waiting":{"type":"integer","description":"Bug reports from the public report route not yet published as GitHub issues for triage."},
+"report_publish_error":{"type":"string","description":"Why the last publication of bug reports failed."}}}}}`)},
 		{Name: ActionIssuesList, Summary: "List tracked issues with their lifecycle record, most recently changed first.",
 			Sensitivity: core.SensitivityRead, Scopes: []string{"issues:read"}, Roles: readers,
 			Input: actions.Schema(`{"type":"object","additionalProperties":false,"properties":{

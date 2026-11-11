@@ -22,14 +22,19 @@ const DefaultMaxStoredReports = 1000
 
 // Keys of the reports namespace. A report lives under the UTC day it was
 // first received, so the oldest sort first and lapsed ones are pruned from
-// the front; an index by fingerprint finds it again for a duplicate, and one
-// counter holds how many are stored, so the capacity check reads one
-// document.
+// the front: under r/ while it waits to be published as a GitHub issue,
+// under f/ once GitHub refused it for good, and, once published, only as a
+// small record under p/ that answers a duplicate. An index by fingerprint
+// finds any of them again for a duplicate, and one counter holds how many
+// reports are stored under r/ and f/, so the capacity check reads one
+// document; a published report no longer counts.
 const (
-	reportDayLayout   = "20060102"
-	reportPrefix      = "r/"
-	reportIndexPrefix = "fp/"
-	reportCountKey    = "count"
+	reportDayLayout     = "20060102"
+	reportPrefix        = "r/"
+	reportFailedPrefix  = "f/"
+	reportPublishPrefix = "p/"
+	reportIndexPrefix   = "fp/"
+	reportCountKey      = "count"
 	// reportPruneBatch bounds how many lapsed reports one save, or one
 	// round of the periodic prune, removes, and so how many documents it
 	// reads to find them.
@@ -43,6 +48,41 @@ const (
 	reportSaveAttempts = 3
 )
 
+// storedReport is a report as the namespace keeps it under r/ or f/: the
+// report and how its publication went so far.
+type storedReport struct {
+	report.Report
+	Publish reportPublishState `json:"publish,omitzero"`
+}
+
+// reportPublishState is how the publication of a stored report went so far.
+type reportPublishState struct {
+	// AttemptedAt is when an issue was last asked for and no answer that
+	// says whether GitHub created it was recorded; zero otherwise.
+	AttemptedAt time.Time `json:"attempted_at,omitzero"`
+	// Rejections counts the times GitHub refused the issue as invalid.
+	Rejections int `json:"rejections,omitempty"`
+	// FailedCode is the code GitHub's last refusal carried, set once the
+	// report was given up and moved under f/.
+	FailedCode core.ErrorCode `json:"failed_code,omitempty"`
+}
+
+// publishedReport is what is kept of a report once it was published: what
+// answers a duplicate, without its text.
+type publishedReport struct {
+	ID          string    `json:"id"`
+	Fingerprint string    `json:"fingerprint"`
+	Issue       int       `json:"issue"`
+	ReceivedAt  time.Time `json:"received_at"`
+	LastSeenAt  time.Time `json:"last_seen_at"`
+	Count       int       `json:"count"`
+}
+
+// reportKey is the key of a report first received at under prefix.
+func reportKey(prefix string, at time.Time, fingerprint string) string {
+	return prefix + at.UTC().Format(reportDayLayout) + "/" + fingerprint
+}
+
 // storedReports is a report.Store over the control zone's operational
 // store. It is bounded by capacity and by retention, counted from when a
 // report was first received.
@@ -55,10 +95,11 @@ type storedReports struct {
 var _ report.Store = storedReports{}
 
 // Save implements report.Store. It first removes lapsed reports; then a
-// duplicate is counted against the stored report, and a new one is stored.
-// When the store is full, a report of the oldest day stored makes room for
-// it: reports are kept by the UTC day they arrived, so which of that day's
-// goes is not ordered further. The report route's per-client and overall
+// duplicate is counted against the stored report, published or not, and a
+// new one is stored to be published. When the store is full, a report GitHub
+// refused for good makes room for it, or else a report of the oldest day
+// still waiting to be published: reports are kept by the UTC day they
+// arrived, so which of that day's goes is not ordered further. The report route's per-client and overall
 // rate limits bound how fast reports can push others out. Only a store
 // whose count says full while it lists no report refuses a new one, with
 // LIMIT_EXCEEDED.
@@ -99,8 +140,8 @@ func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report
 				return s.putCountIf(ctx, tx, count, pruned)
 			}
 			r.Count, r.LastSeenAt = 1, r.ReceivedAt
-			key := reportPrefix + r.ReceivedAt.UTC().Format(reportDayLayout) + "/" + r.Fingerprint
-			if err := putReport(ctx, tx, key, 0, r); err != nil {
+			key := reportKey(reportPrefix, r.ReceivedAt, r.Fingerprint)
+			if err := putStored(ctx, tx, key, 0, storedReport{Report: r}); err != nil {
 				return err
 			}
 			index := state.KVEntry{Namespace: ReportsNamespace, Key: reportIndexPrefix + r.Fingerprint, Value: []byte(key)}
@@ -124,18 +165,25 @@ func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report
 	return stored, created, nil
 }
 
-// dropOldest removes one report of the oldest day stored to make room and
-// reports whether it found one.
+// dropOldest removes, to make room, a report GitHub refused for good or
+// else one of the oldest day still waiting to be published, and reports
+// whether it found one. A published report is not counted and never goes.
 func (s storedReports) dropOldest(ctx context.Context, tx state.Tx, count *reportCount) (bool, error) {
-	entries, err := tx.ListKV(ctx, ReportsNamespace, reportPrefix, 1)
-	if err != nil || len(entries) == 0 {
-		return false, err
+	for _, prefix := range []string{reportFailedPrefix, reportPrefix} {
+		entries, err := tx.ListKV(ctx, ReportsNamespace, prefix, 1)
+		if err != nil {
+			return false, err
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		if err := dropReport(ctx, tx, entries[0]); err != nil {
+			return false, err
+		}
+		count.n = max(count.n-1, 0)
+		return true, nil
 	}
-	if err := dropReport(ctx, tx, entries[0]); err != nil {
-		return false, err
-	}
-	count.n = max(count.n-1, 0)
-	return true, nil
+	return false, nil
 }
 
 // putCountIf stores count when changed says it changed.
@@ -146,7 +194,8 @@ func (s storedReports) putCountIf(ctx context.Context, tx state.Tx, count report
 	return putCount(ctx, tx, count)
 }
 
-// dropReport removes the stored report e and its fingerprint index.
+// dropReport removes the stored entry e and its fingerprint index, when
+// the index still names e.
 func dropReport(ctx context.Context, tx state.Tx, e state.KVEntry) error {
 	if err := tx.DeleteKV(ctx, ReportsNamespace, e.Key, e.Version); err != nil {
 		return err
@@ -154,16 +203,17 @@ func dropReport(ctx context.Context, tx state.Tx, e state.KVEntry) error {
 	fingerprint := e.Key[strings.LastIndex(e.Key, "/")+1:]
 	index, err := tx.GetKV(ctx, ReportsNamespace, reportIndexPrefix+fingerprint)
 	switch {
-	case err == nil:
+	case err == nil && string(index.Value) == e.Key:
 		return tx.DeleteKV(ctx, ReportsNamespace, index.Key, index.Version)
-	case core.HasCode(err, core.CodeNotFound):
+	case err == nil || core.HasCode(err, core.CodeNotFound):
 		return nil
 	}
 	return err
 }
 
 // countDuplicate counts r against the stored report with its fingerprint,
-// when there is one.
+// when there is one, keeping how its publication went; a published one is
+// counted in what is kept of it.
 func (s storedReports) countDuplicate(ctx context.Context, tx state.Tx, r report.Report) (report.Report, bool, error) {
 	index, err := tx.GetKV(ctx, ReportsNamespace, reportIndexPrefix+r.Fingerprint)
 	if core.HasCode(err, core.CodeNotFound) {
@@ -176,37 +226,57 @@ func (s storedReports) countDuplicate(ctx context.Context, tx state.Tx, r report
 	if err != nil {
 		return report.Report{}, false, err
 	}
-	var stored report.Report
+	if strings.HasPrefix(entry.Key, reportPublishPrefix) {
+		var kept publishedReport
+		if err := json.Unmarshal(entry.Value, &kept); err != nil {
+			return report.Report{}, false, core.NewError(core.CodeTampered, "a published report's record cannot be read").WithCause(err)
+		}
+		kept.Count++
+		kept.LastSeenAt = r.ReceivedAt
+		if err := putJSON(ctx, tx, entry.Key, entry.Version, kept); err != nil {
+			return report.Report{}, false, err
+		}
+		return report.Report{ID: kept.ID, Fingerprint: kept.Fingerprint, ReceivedAt: kept.ReceivedAt,
+			LastSeenAt: kept.LastSeenAt, Count: kept.Count}, true, nil
+	}
+	var stored storedReport
 	if err := json.Unmarshal(entry.Value, &stored); err != nil {
 		return report.Report{}, false, core.NewError(core.CodeTampered, "a stored report cannot be read").WithCause(err)
 	}
 	stored.Count++
 	stored.LastSeenAt = r.ReceivedAt
-	return stored, true, putReport(ctx, tx, entry.Key, entry.Version, stored)
+	return stored.Report, true, putStored(ctx, tx, entry.Key, entry.Version, stored)
 }
 
 // pruneLapsed removes reports first received on a day before the retention
-// began, the oldest first and at most reportPruneBatch of them. It returns
-// the count of those left and whether it removed any.
+// began, the oldest first and at most reportPruneBatch of each kind: those
+// waiting to be published, those GitHub refused and what is kept of
+// published ones. It returns the count of stored reports left and whether
+// it removed any.
 func (s storedReports) pruneLapsed(ctx context.Context, tx state.Tx, now time.Time) (reportCount, bool, error) {
 	count, err := readCount(ctx, tx)
 	if err != nil {
 		return count, false, err
 	}
-	oldest := reportPrefix + now.Add(-s.retention).UTC().Format(reportDayLayout) + "/"
-	entries, err := tx.ListKV(ctx, ReportsNamespace, reportPrefix, reportPruneBatch)
-	if err != nil {
-		return count, false, err
-	}
+	day := now.Add(-s.retention).UTC().Format(reportDayLayout) + "/"
 	pruned := false
-	for _, e := range entries {
-		if e.Key >= oldest {
-			break
-		}
-		if err := dropReport(ctx, tx, e); err != nil {
+	for _, prefix := range []string{reportPrefix, reportFailedPrefix, reportPublishPrefix} {
+		entries, err := tx.ListKV(ctx, ReportsNamespace, prefix, reportPruneBatch)
+		if err != nil {
 			return count, pruned, err
 		}
-		count.n, pruned = max(count.n-1, 0), true
+		for _, e := range entries {
+			if e.Key >= prefix+day {
+				break
+			}
+			if err := dropReport(ctx, tx, e); err != nil {
+				return count, pruned, err
+			}
+			if prefix != reportPublishPrefix {
+				count.n = max(count.n-1, 0)
+			}
+			pruned = true
+		}
 	}
 	return count, pruned, nil
 }
@@ -260,8 +330,14 @@ func putCount(ctx context.Context, tx state.Tx, c reportCount) error {
 	return err
 }
 
-func putReport(ctx context.Context, tx state.Tx, key string, version int64, r report.Report) error {
-	raw, err := json.Marshal(r)
+// putStored writes a report waiting to be published, or refused, at key.
+func putStored(ctx context.Context, tx state.Tx, key string, version int64, r storedReport) error {
+	return putJSON(ctx, tx, key, version, r)
+}
+
+// putJSON writes v at key of the reports namespace.
+func putJSON(ctx context.Context, tx state.Tx, key string, version int64, v any) error {
+	raw, err := json.Marshal(v)
 	if err != nil {
 		return core.NewError(core.CodeInternal, "a report cannot be encoded").WithCause(err)
 	}

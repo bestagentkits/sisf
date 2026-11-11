@@ -835,6 +835,12 @@ paths:
                           position:
                             format: date-time
                             type: string
+                          report_publish_error:
+                            description: Why the last publication of bug reports failed.
+                            type: string
+                          reports_waiting:
+                            description: Bug reports from the public report route not yet published as GitHub issues for triage.
+                            type: integer
                           retrying:
                             items:
                               properties:

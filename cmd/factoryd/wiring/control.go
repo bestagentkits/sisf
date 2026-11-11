@@ -124,6 +124,11 @@ type Control struct {
 	// access watches the operator token's write access on an install that
 	// acts with it; nil on one with a GitHub App installation.
 	access *operatorAccess
+	// reports publishes the stored bug reports as GitHub issues; nil when
+	// the zone was built without its surfaces, and so without the report
+	// route. reportsOff is set once a pass said why it publishes none.
+	reports    *control.ReportPublisher
+	reportsOff bool
 	// budget closes the reservation of a run whose issue the control zone
 	// blocks because the run stopped.
 	budget *budget.Gate
@@ -252,6 +257,8 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 	}); err != nil {
 		return nil, err
 	}
+	c.reports = &control.ReportPublisher{Store: cfg.Store, Issues: cfg.GitHub, Repo: repo, Self: settings.Self,
+		Redactor: redact.New(redact.Config{}), Clock: cfg.Clock}
 	return c, nil
 }
 
@@ -303,8 +310,9 @@ func (c *Control) Run(ctx context.Context, ln net.Listener, interval time.Durati
 // parks the issues whose wait for an answer is over, polling GitHub first
 // when an answer may not be known yet, and blocks the issues whose run
 // stopped without a candidate; when it is configured,
-// the decision layer reads the edge's counters, and the stored bug reports
-// past their retention are pruned, a bounded number per pass. Once per reconciliation
+// the decision layer reads the edge's counters; the stored bug reports
+// past their retention are pruned, and a small batch of those waiting is
+// published as GitHub issues for a person to triage. Once per reconciliation
 // interval it asks GitHub for the issue changes no webhook delivered. Each part runs even
 // when another failed, except the parking: a pass whose drain of the inbox
 // failed or held a delivery back parks nothing, since the delivery may be
@@ -343,6 +351,8 @@ func (c *Control) Pass(ctx context.Context) error {
 		c.projectLifecycle(ctx),
 		c.runDecisions(ctx),
 		pruned,
+		// Late, so publishing reports delays none of the factory's own work.
+		c.publishReports(ctx),
 		// Last, so a slow or failing GitHub delays nothing above; what it
 		// finds is drained by the next pass.
 		c.reconcileDue(ctx),

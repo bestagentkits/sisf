@@ -63,6 +63,11 @@ type GitHubSync struct {
 	// waits. Zero and "" when no parking waits.
 	ParkingDeferredSince  time.Time `json:"parking_deferred_since,omitzero"`
 	ParkingDeferredReason string    `json:"parking_deferred_reason,omitempty"`
+	// ReportsWaiting counts the bug reports from the public report route
+	// not yet published as GitHub issues for triage; ReportPublishError
+	// says why the last publication failed, "" when it did not.
+	ReportsWaiting     int    `json:"reports_waiting"`
+	ReportPublishError string `json:"report_publish_error,omitempty"`
 }
 
 // SyncIssue is one issue change reconciliation could not store.
