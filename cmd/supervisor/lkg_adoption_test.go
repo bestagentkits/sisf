@@ -130,46 +130,6 @@ func TestTheSupervisorStartsTheInstalledLastKnownGoodRelease(t *testing.T) {
 	}
 }
 
-// staleBackend is an adoption backend that also stops what an earlier
-// supervisor left running, and records in which order it was asked to.
-type staleBackend struct {
-	adoptionBackend
-	calls    []string
-	staleErr error
-}
-
-func (b *staleBackend) StopStale(context.Context) error {
-	b.calls = append(b.calls, "stop-stale")
-	return b.staleErr
-}
-
-func (b *staleBackend) Stage(ctx context.Context, a deploy.Artifact) (deploy.Revision, error) {
-	b.calls = append(b.calls, "stage")
-	return b.adoptionBackend.Stage(ctx, a)
-}
-
-// Before it starts the LKG the supervisor stops the application process an
-// earlier supervisor started, which still holds a slot's port; when that
-// process cannot be stopped nothing is started over it.
-func TestAdoptionStopsTheProcessAnEarlierSupervisorLeftBeforeStartingTheLKG(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	digest := core.Digest("sha256:" + strings.Repeat("d", 64))
-	book, signer := installedBook(t, digest)
-	backend := &staleBackend{staleErr: core.NewError(core.CodeUnavailable, "process 4242 did not leave after it was killed")}
-	a := &lkgAdopter{factory: testFactory, backend: backend, lkg: book, signer: signer, image: "local/" + string(testFactory) + "/app"}
-	if err := a.adopt(ctx); !core.HasCode(err, core.CodeUnavailable) || len(backend.staged) != 0 {
-		t.Fatalf("the LKG was started over a process that could not be stopped: %v, %d stages", err, len(backend.staged))
-	}
-	backend.staleErr, backend.calls = nil, nil
-	if err := a.adopt(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(backend.calls, ",") != "stop-stale,stage" {
-		t.Fatalf("the adoption asked for %v", backend.calls)
-	}
-}
-
 // Only the trusted simulation judges on a short window or a low sample
 // floor, and a simulated unit image must be pinned.
 func TestReleaseTuningIsShorterOnlyInTheSimulation(t *testing.T) {

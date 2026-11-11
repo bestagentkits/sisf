@@ -30,16 +30,11 @@ type lkgAdopter struct {
 	image string
 }
 
-// staleStopper is a backend that can stop the application processes an
-// earlier supervisor started and lost track of when it stopped.
-type staleStopper interface {
-	StopStale(ctx context.Context) error
-}
-
 // adopt stages the LKG and sends it all traffic, unless it is already
-// observed serving the unit. A process an earlier supervisor started, which
-// still holds a slot's port, is stopped first; only a process the backend
-// recorded and still finds to be the same one is signalled.
+// observed serving the unit. The local backend finds again, when it is
+// built, the processes an earlier supervisor started and recorded, so a
+// release that still serves is observed as such, and one that holds the
+// port of the slot staged over is stopped first.
 func (a *lkgAdopter) adopt(ctx context.Context) error {
 	lkg, found, err := a.lkg.Get(ctx, adoptedUnit)
 	if err != nil {
@@ -51,11 +46,6 @@ func (a *lkgAdopter) adopt(ctx context.Context) error {
 	rev := deploy.Revision{Unit: adoptedUnit, Digest: lkg.Digest}
 	if observed, err := a.backend.ObservedRevision(ctx, adoptedUnit); err == nil && observed.Matches(rev) {
 		return nil
-	}
-	if stale, ok := a.backend.(staleStopper); ok {
-		if err := stale.StopStale(ctx); err != nil {
-			return err
-		}
 	}
 	image := lkg.Image
 	if image == "" {

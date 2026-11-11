@@ -17,8 +17,9 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// staleStopGrace is how long a stale process gets to leave after SIGTERM
-// before it is killed, and stalePoll how often its exit is looked for.
+// staleStopGrace is how long a recorded process gets to leave after
+// SIGTERM before it is killed, and stalePoll how often its exit is looked
+// for.
 const (
 	staleStopGrace = 5 * time.Second
 	stalePoll      = 100 * time.Millisecond
@@ -125,31 +126,31 @@ func (b *Backend) forgetSlot(s *slot) {
 	}
 }
 
-// StopStale stops the processes an earlier backend recorded in the state
-// directory and this one does not run: those a supervisor started before
-// it stopped, which still hold the slots' ports. A recorded process is
-// signalled only while its pid still names the process recorded, one that
-// started at the recorded time; otherwise its pid belongs to something
-// else now and the record is dropped without a signal. A
-// process is asked to leave with SIGTERM and killed when it has not after
-// a grace period. Without a state directory there is nothing to stop.
-func (b *Backend) StopStale(ctx context.Context) error {
+// reattach rebuilds the slots from the records an earlier backend kept in
+// the state directory: a recorded process that still runs as the one
+// recorded, one that started at the recorded time, is the slot's process
+// again, as the release the record names. A supervisor that stopped and
+// started again thus observes, measures, rolls back to and stops what it
+// started before, rather than taking the release that serves for gone. The
+// slot keeps the port the configuration gives it. A record whose process is
+// gone, or whose pid now names another process, is dropped without a
+// signal. A process found again is stopped, like any other, when its slot
+// is staged over or rolled back from.
+func (b *Backend) reattach(ctx context.Context) error {
 	if b.cfg.StateDir == "" {
 		return nil
 	}
-	b.ops.Lock()
-	defer b.ops.Unlock()
 	var failed []error
 	for _, s := range b.slot {
-		if err := b.stopStaleSlot(ctx, s); err != nil {
+		if err := b.reattachSlot(ctx, s); err != nil {
 			failed = append(failed, fmt.Errorf("slot %s: %w", s.name, err))
 		}
 	}
 	return errors.Join(failed...)
 }
 
-// stopStaleSlot stops the recorded process of one slot, if it is stale.
-func (b *Backend) stopStaleSlot(ctx context.Context, s *slot) error {
+// reattachSlot rebuilds one slot from its record, if it has one.
+func (b *Backend) reattachSlot(ctx context.Context, s *slot) error {
 	path := b.slotFile(s)
 	raw, err := os.ReadFile(path)
 	switch {
@@ -159,30 +160,45 @@ func (b *Backend) stopStaleSlot(ctx context.Context, s *slot) error {
 		return err
 	}
 	var rec slotRecord
-	if json.Unmarshal(raw, &rec) != nil || rec.PID <= 1 || rec.Slot != s.name || rec.Start == "" {
+	if json.Unmarshal(raw, &rec) != nil || rec.PID <= 1 || rec.Slot != s.name || rec.Start == "" ||
+		!unitPattern.MatchString(rec.Unit) || rec.Digest.Validate() != nil {
 		b.cfg.Logger.Warn("a slot record that does not hold together is dropped without a signal", "slot", s.name)
 		return os.Remove(path)
-	}
-	b.mu.Lock()
-	ours := s.proc != nil
-	if identified, ok := s.proc.(identifiedProcess); ok && identified.PID() != rec.PID {
-		ours = false
-	}
-	b.mu.Unlock()
-	if ours {
-		return nil
 	}
 	if !sameProcess(ctx, rec) {
 		b.cfg.Logger.Info("a recorded process is gone; its record is dropped", "slot", s.name, "pid", rec.PID)
 		return os.Remove(path)
 	}
-	b.cfg.Logger.Warn("stopping a process an earlier supervisor started", "slot", s.name, "pid", rec.PID, "release", string(rec.Digest),
-		"command", rec.Command)
-	if err := stopRecorded(ctx, rec, b.cfg.Clock); err != nil {
-		return err
-	}
-	return os.Remove(path)
+	b.cfg.Logger.Info("found again a process an earlier supervisor started", "slot", s.name, "pid", rec.PID,
+		"release", string(rec.Digest), "command", rec.Command)
+	s.digest, s.proc = rec.Digest, &recordedProcess{rec: rec, clock: b.cfg.Clock}
+	return nil
 }
+
+// recordedProcess is a process an earlier backend started and recorded,
+// found again after a restart. Its pid is trusted only while it names the
+// process recorded: it is alive only then, and each signal that stops it is
+// sent only after that is shown again. Its standard error was read by the
+// backend that started it, so its critical lines are no longer counted.
+type recordedProcess struct {
+	rec   slotRecord
+	clock core.Clock
+}
+
+func (p *recordedProcess) PID() int { return p.rec.PID }
+
+func (p *recordedProcess) Alive() bool { return sameProcess(context.Background(), p.rec) }
+
+// Stop ends the recorded process, if its pid still names it.
+func (p *recordedProcess) Stop(ctx context.Context) error {
+	if !sameProcess(ctx, p.rec) {
+		return nil
+	}
+	return stopRecorded(ctx, p.rec, p.clock)
+}
+
+// CriticalSince is zero: the lines the process writes are not read.
+func (p *recordedProcess) CriticalSince(time.Time) int64 { return 0 }
 
 // sameProcess reports whether rec's pid still names the process recorded:
 // a live process that started at the recorded time. A process that has
@@ -195,7 +211,8 @@ func sameProcess(ctx context.Context, rec slotRecord) bool {
 
 // stopRecorded sends SIGTERM to the recorded process, waits for it to
 // leave, and kills it after the grace period. Each signal is sent only
-// after the pid is shown to name the recorded process still.
+// after the pid is shown to name the recorded process still: the caller
+// shows it for the first.
 func stopRecorded(ctx context.Context, rec slotRecord, clock core.Clock) error {
 	proc, err := os.FindProcess(rec.PID)
 	if err != nil {

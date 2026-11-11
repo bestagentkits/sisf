@@ -35,7 +35,7 @@ func (l *lifecycleFlags) edgeAdmin(lookupEnv func(string) (string, bool)) (*edge
 
 // localSlotsRecord names, in the trust volume, the directory where the
 // local deploy backend records the process of each slot, so a restarted
-// supervisor stops the application processes it started before.
+// supervisor finds again the application processes it started before.
 const localSlotsRecord = "local-slots"
 
 // deployBackend builds the configured deploy backend over the edge.

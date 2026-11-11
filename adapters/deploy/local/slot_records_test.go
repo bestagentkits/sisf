@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/adapters/deploy/local"
+	"github.com/bestagentkits/sisf/pkg/deploy"
 )
 
 // sleeper is a real operating-system process the test owns: it stands for
@@ -112,16 +113,15 @@ func stagedWithRecord(t *testing.T, app *sleeper) (*world, string) {
 }
 
 // restarted is a new backend over the same state directory, as after a
-// restart of the supervisor: it runs nothing of its own.
-func restarted(t *testing.T, dir string) *local.Backend {
+// restart of the supervisor: it has started nothing itself.
+func restarted(t *testing.T, dir string) *world {
 	t.Helper()
-	w := newWorld(t, worldOptions{cfg: func(c *local.Config) { c.StateDir = dir }})
-	return w.backend
+	return newWorld(t, worldOptions{cfg: func(c *local.Config) { c.StateDir = dir }})
 }
 
 // A backend with a state directory records the process of each slot it
-// starts, forgets it once the process is stopped, and never takes its own
-// running processes for stale ones.
+// starts and forgets it once the process is stopped; a backend built over
+// the records finds the running processes again without signalling them.
 func TestTheProcessOfASlotIsRecordedWhileItRuns(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -138,11 +138,9 @@ func TestTheProcessOfASlotIsRecordedWhileItRuns(t *testing.T) {
 			t.Fatalf("slot %s is not recorded: %+v", slot, rec)
 		}
 	}
-	if err := w.backend.StopStale(ctx); err != nil {
-		t.Fatalf("a backend stopped its own processes as stale: %v", err)
-	}
+	restarted(t, dir)
 	if app.gone(100 * time.Millisecond) {
-		t.Fatal("a backend signalled a process it runs itself")
+		t.Fatal("a backend built over the records signalled a process it found again")
 	}
 	// The rollback stops the staged revision on green.
 	if err := w.backend.Rollback(ctx, stable); err != nil {
@@ -157,25 +155,30 @@ func TestTheProcessOfASlotIsRecordedWhileItRuns(t *testing.T) {
 }
 
 // After a restart, the process an earlier backend started and recorded is
-// stopped before anything is staged, and its record is dropped.
-func TestARestartedBackendStopsTheProcessAnEarlierOneLeftRunning(t *testing.T) {
+// the process of its slot again: it is not signalled when the backend is
+// built, and it is stopped, its record replaced, when the slot is staged
+// over, so it never holds the port of what is staged.
+func TestARestartedBackendStopsTheProcessAnEarlierOneLeftWhenItStagesOverIt(t *testing.T) {
 	t.Parallel()
 	app := startSleeper(t)
 	_, dir := stagedWithRecord(t, app)
-	if err := restarted(t, dir).StopStale(context.Background()); err != nil {
-		t.Fatalf("StopStale: %v", err)
+	w := restarted(t, dir)
+	if app.gone(100 * time.Millisecond) {
+		t.Fatal("the process found again was signalled before its slot was used")
 	}
+	w.stage(digestB)
 	if !app.gone(10 * time.Second) {
-		t.Fatal("the stale process still runs")
+		t.Fatal("the process an earlier backend left still runs on the slot staged over")
 	}
-	if _, ok := readSlotRecord(t, filepath.Join(dir, "blue.json")); ok {
+	if rec, ok := readSlotRecord(t, filepath.Join(dir, "blue.json")); ok && rec.PID == app.cmd.Process.Pid {
 		t.Fatal("the record of the stopped process is still there")
 	}
 }
 
 // A recorded pid that no longer names the recorded process, here because
 // the process that has it started at another time, is never signalled:
-// the record is dropped and the process runs on.
+// the record is dropped when the backend is built, the process runs on
+// while the slot is staged over, and the slot is not taken as running.
 func TestARecordWhosePidNamesAnotherProcessIsDroppedWithoutASignal(t *testing.T) {
 	t.Parallel()
 	app := startSleeper(t)
@@ -196,14 +199,16 @@ func TestARecordWhosePidNamesAnotherProcessIsDroppedWithoutASignal(t *testing.T)
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := restarted(t, dir).StopStale(context.Background()); err != nil {
-		t.Fatalf("StopStale: %v", err)
-	}
-	if app.gone(200 * time.Millisecond) {
-		t.Fatal("a process the record does not name was signalled")
-	}
+	w := restarted(t, dir)
 	if _, ok := readSlotRecord(t, path); ok {
 		t.Fatal("the record of a process that is gone is still there")
+	}
+	if obs, err := w.backend.Measure(context.Background(), deploy.Revision{Unit: "app", Digest: digestA}, time.Minute); err == nil && obs.Healthy {
+		t.Fatal("a slot whose record names another process is taken as running")
+	}
+	w.stage(digestB)
+	if app.gone(200 * time.Millisecond) {
+		t.Fatal("a process the record does not name was signalled")
 	}
 }
 
@@ -253,8 +258,9 @@ func alive(pid int) bool {
 }
 
 // A process the ExecStarter started through a launcher that execs the
-// release's program is still found and stopped by a restarted backend:
-// the exec changes the command line, not the identity recorded.
+// release's program is still found by a restarted backend, and stopped
+// when its slot is staged over: the exec changes the command line, not the
+// identity recorded.
 func TestARestartedBackendStopsAProcessItsLauncherExecedInto(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "slots")
@@ -280,9 +286,7 @@ func TestARestartedBackendStopsAProcessItsLauncherExecedInto(t *testing.T) {
 	})
 	// Let the launcher become the program before the restart.
 	time.Sleep(200 * time.Millisecond)
-	if err := restarted(t, dir).StopStale(context.Background()); err != nil {
-		t.Fatalf("StopStale: %v", err)
-	}
+	restarted(t, dir).stage(digestB)
 	deadline := time.Now().Add(10 * time.Second)
 	for alive(rec.PID) {
 		if time.Now().After(deadline) {

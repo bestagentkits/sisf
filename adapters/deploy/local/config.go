@@ -74,8 +74,8 @@ type Config struct {
 	Logger *slog.Logger
 	// StateDir is a directory only the owner of the backend writes, where
 	// it records the process of each slot so that a later backend, after a
-	// restart, can stop what an earlier one left running (StopStale). Empty
-	// keeps nothing on disk.
+	// restart, finds again what an earlier one left running. Empty keeps
+	// nothing on disk.
 	StateDir string
 }
 
