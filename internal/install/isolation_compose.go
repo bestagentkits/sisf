@@ -2,7 +2,9 @@ package install
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"slices"
 	"sort"
@@ -30,6 +32,9 @@ func (v Violation) String() string {
 // same checks run in the tests, before `sisf up` starts anything, and in the
 // doctor, so the file that runs is the file that was checked.
 func CheckCompose(l Layout, data []byte) ([]Violation, error) {
+	if err := plainYAML(data); err != nil {
+		return nil, err
+	}
 	var file composeFile
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	// Strictly: a key the deployment does not write, which could widen a
@@ -51,6 +56,46 @@ func CheckCompose(l Layout, data []byte) ([]Violation, error) {
 	c.sandbox()
 	c.stateReach()
 	return c.out, nil
+}
+
+// standardTags are the YAML tags Compose reads as the checker does: the
+// kinds of value of the core schema and the merge key the template's
+// hardening block is merged with.
+var standardTags = []string{"!!str", "!!int", "!!float", "!!bool", "!!null", "!!timestamp", "!!map", "!!seq", "!!merge"}
+
+// plainYAML refuses a file that Compose would read otherwise than the
+// checker: one with more than one document, which Compose merges over the
+// first while the decoder reads the first alone, and one with a tag outside
+// the core schema, such as !reset or !override, which Compose obeys by
+// dropping or replacing the tagged value while the decoder ignores it.
+func plainYAML(data []byte) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var document yaml.Node
+	if err := dec.Decode(&document); err != nil {
+		return invalidf("the Compose file is not one YAML document: %v", err)
+	}
+	var another yaml.Node
+	if err := dec.Decode(&another); !errors.Is(err, io.EOF) {
+		return invalidf("the Compose file holds more than one YAML document; Compose merges every document, so only a file of one is checked")
+	}
+	return standardTagsOnly(&document)
+}
+
+// standardTagsOnly walks a node tree and refuses the first tag outside
+// standardTags. An alias is checked where its anchor stands.
+func standardTagsOnly(node *yaml.Node) error {
+	if node.Kind == yaml.AliasNode {
+		return nil
+	}
+	if node.Kind != yaml.DocumentNode && !slices.Contains(standardTags, node.ShortTag()) {
+		return invalidf("line %d carries the YAML tag %q; Compose acts on tags such as !reset and !override that the checker cannot follow, so only the core schema's tags are allowed", node.Line, node.Tag)
+	}
+	for _, child := range node.Content {
+		if err := standardTagsOnly(child); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type composeChecker struct {
