@@ -345,3 +345,27 @@ func TestAScopeTheOwnerRefusedIsNotRetriedOnADelegationUnderTheSamePolicy(t *tes
 	wantCode(t, err, core.CodeGuardFailed, "a retry of the refused scope on a delegation")
 	f.wantStillBlocked("a refused scope retried on a delegation", queued)
 }
+
+func TestAScopeTheOwnerRefusedIsRetriedOnADelegationUnderALaterPolicy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFactory(t)
+	f.open(outsider, completeBody, github.LabelReady, github.LabelKindBug)
+	f.reconcile()
+	f.decide(f.waiting(), approvals.DecisionReject)
+	f.reconcile()
+	f.wantState(core.StateBlocked)
+	f.clock.Advance(time.Hour)
+
+	// The author is given write access and the policy is revised, so the
+	// scope the Owner refused now lies within a delegation the Owner did not
+	// rule on.
+	f.github.edit(issueRef, func(issue *github.Issue) { issue.AuthorAssociation = github.AssociationMember })
+	f.policy.set(func(s *policy.Snapshot) { s.Revision = newerPolicy }, nil)
+	result, err := f.service.Retry(ctx, f.retryBy(f.owner()))
+	if err != nil {
+		t.Fatalf("the retry of a refused scope delegated under a later policy was refused: %v", err)
+	}
+	wantEvents(t, result, core.EventRetryAuthorized)
+	f.wantState(core.StateReady)
+}
