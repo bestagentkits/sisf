@@ -34,7 +34,7 @@ func (f *agentFlags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.sandbox.Endpoint, "exec-docker-endpoint", "", "Standalone --exec docker: http URL, on loopback, of the runner Docker request filter (sisf docker-filter --role runner)")
 	fs.StringVar(&f.sandbox.Network, "exec-docker-network", "", "Standalone --exec docker: the internal sandbox network candidate builds run on")
 	fs.StringVar(&f.sandbox.EgressProxy, "egress-proxy", "", "Standalone --exec docker: http URL of the egress proxy on the sandbox network, its only way out")
-	fs.StringVar(&f.sandbox.RunnerImage, "runner-image", "", "Standalone --exec docker: image candidate builds run in, name@sha256:... (pinned by its registry digest), which the filter allows")
+	fs.StringVar(&f.sandbox.RunnerImage, "runner-image", "", "Standalone --exec docker: image candidate builds run in, pinned as name@sha256:<digest> or by its full local image ID sha256:<64 hex>, which the filter allows")
 }
 
 // apply sets the agent options, checking the choices only the command line

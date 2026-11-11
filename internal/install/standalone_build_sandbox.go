@@ -48,9 +48,11 @@ var (
 	dockerNetworkPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 	// egressProxyPattern is what the docker execution backend accepts.
 	egressProxyPattern = regexp.MustCompile(`^http://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$`)
-	// runnerImagePattern is what the docker backend runs: a reference
-	// pinned by digest (adapters/exec/docker/sandbox.go).
-	runnerImagePattern = regexp.MustCompile(`^[a-z0-9]+(?:[._/:-][a-z0-9]+)*@sha256:[a-f0-9]{64}$`)
+	// runnerImagePattern is what the docker backend runs
+	// (adapters/exec/docker/sandbox.go): a reference pinned by its registry
+	// digest, name@sha256:<digest>, or the full ID of an image built on this
+	// host, sha256:<64 hex>. A tag and a short ID are refused.
+	runnerImagePattern = regexp.MustCompile(`^(?:[a-z0-9]+(?:[._/:-][a-z0-9]+)*@)?sha256:[a-f0-9]{64}$`)
 )
 
 // check validates the sandbox on its own: every part given and well formed.
@@ -73,7 +75,7 @@ func (b BuildSandbox) check() error {
 		return invalidf("--egress-proxy must be a plain http URL of a host on the sandbox network")
 	}
 	if !runnerImagePattern.MatchString(b.RunnerImage) {
-		return invalidf("--runner-image must be an image reference pinned by digest, name@sha256:...; a local image ID is not one the docker backend runs")
+		return invalidf("--runner-image must pin the image by content: name@sha256:<digest> or a full local image ID, sha256:<64 hex>; a tag or a short ID is refused")
 	}
 	return nil
 }

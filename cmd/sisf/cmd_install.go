@@ -77,7 +77,7 @@ the install a Docker build sandbox the operator runs: --exec docker
 --exec-docker-endpoint http://127.0.0.1:PORT (the runner filter, sisf
 docker-filter --role runner) --exec-docker-network NET (internal)
 --egress-proxy http://HOST:PORT (on NET) --runner-image NAME@sha256:DIGEST
---build-command CMD, and --qa-agent-binary LAUNCHER, an absolute launcher
+or sha256:IMAGE-ID --build-command CMD, and --qa-agent-binary LAUNCHER, an absolute launcher
 that runs the QA agent in a sandbox (--qa-home is then refused).`,
 		Flags: func(fs *flag.FlagSet) { bindInstallFlags(fs, &installFlags{}) },
 		Run:   runInit,

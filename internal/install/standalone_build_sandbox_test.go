@@ -90,8 +90,11 @@ func TestInitRefusesAnIncompleteOrMisplacedBuildSandbox(t *testing.T) {
 		"a proxy with a path":     func(o *Options) { o.BuildSandbox.EgressProxy = "http://egress:3128/x" },
 		"a proxy with a user":     func(o *Options) { o.BuildSandbox.EgressProxy = "http://u:p@egress:3128" },
 		"an image with a space":   func(o *Options) { o.BuildSandbox.RunnerImage = "runner latest" },
-		"a local image ID":        func(o *Options) { o.BuildSandbox.RunnerImage = "sha256:" + strings.Repeat("ab", 32) },
 		"an image by tag":         func(o *Options) { o.BuildSandbox.RunnerImage = "sisf-runner:latest" },
+		"a short image ID":        func(o *Options) { o.BuildSandbox.RunnerImage = "sha256:" + strings.Repeat("ab", 6) },
+		"a short digest":          func(o *Options) { o.BuildSandbox.RunnerImage = "runner@sha256:" + strings.Repeat("a", 63) },
+		"an uppercase digest":     func(o *Options) { o.BuildSandbox.RunnerImage = "runner@sha256:" + strings.Repeat("AB", 32) },
+		"a bare image ID":         func(o *Options) { o.BuildSandbox.RunnerImage = strings.Repeat("ab", 32) },
 		"Docker mode":             func(o *Options) { o.Mode = manifest.ModeDocker; o.Agents = AgentOptions{} },
 		"the simulation": func(o *Options) {
 			o.Sim, o.Identity, o.Agents = true, Identity{}, AgentOptions{}
@@ -105,6 +108,21 @@ func TestInitRefusesAnIncompleteOrMisplacedBuildSandbox(t *testing.T) {
 	// A manifest edited by hand is checked again when the units start.
 	if err := (LifecycleChoice{BuildSandbox: BuildSandbox{Endpoint: "http://127.0.0.1:1"}}).check(); err == nil {
 		t.Error("an incomplete sandbox in the manifest was accepted")
+	}
+}
+
+// The runner image may be pinned the two ways the docker backend runs: by a
+// registry digest, or by the full ID of an image built on this host, which
+// has no registry digest.
+func TestInitAcceptsTheRunnerImagePinsTheDockerBackendRuns(t *testing.T) {
+	t.Parallel()
+	for _, image := range []string{
+		"127.0.0.1:17481/sisf-runner@sha256:" + strings.Repeat("ab", 32),
+		"sha256:" + strings.Repeat("ab", 32),
+	} {
+		if err := initErr(t, manifest.ModeStandalone, func(o *Options) { sandboxed(t, o); o.BuildSandbox.RunnerImage = image }); err != nil {
+			t.Errorf("--runner-image %s: Init = %v", image, err)
+		}
 	}
 }
 
