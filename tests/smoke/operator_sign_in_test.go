@@ -5,11 +5,8 @@ package smoke
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"io"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -59,11 +56,11 @@ func signInOperator(ctx context.Context, r *commandRunner, sisf, home string, en
 	if err := cmd.Wait(); err != nil || !approved {
 		r.fatalf("sisf login was not approved: %v", err)
 	}
-	token, err := storedToken(home)
+	login, err := readStoredLogin(home)
 	if err != nil {
 		r.fatalf("the CLI's stored login cannot be read: %v", err)
 	}
-	r.scrub.addSecret(token)
+	r.scrub.addSecret(login.Token)
 }
 
 // approveDeviceLogin signs the Owner in at the fake identity provider of
@@ -85,22 +82,4 @@ func streamLines(rd io.Reader, fn func(string)) {
 			fn(line)
 		}
 	}
-}
-
-// storedToken reads the token `sisf login` stored under home.
-func storedToken(home string) (string, error) {
-	raw, err := os.ReadFile(filepath.Join(home, "credentials.json"))
-	if err != nil {
-		return "", err
-	}
-	var c struct {
-		Token string `json:"token"`
-	}
-	if err := json.Unmarshal(raw, &c); err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(c.Token) == "" {
-		return "", os.ErrNotExist
-	}
-	return c.Token, nil
 }

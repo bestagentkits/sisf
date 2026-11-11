@@ -139,7 +139,7 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	if err != nil {
 		r.fatalf("%v", err)
 	}
-	signInOperator(ctx, r, bins.sisf, home, obs.env)
+	obs.signIn(ctx)
 	rep.phase("install, up, doctor and policy", started)
 
 	stage, started = "run", time.Now()
@@ -174,7 +174,7 @@ func upOnlySignIn(ctx context.Context, r *commandRunner, sisf, home string) {
 	if err != nil {
 		r.fatalf("%v", err)
 	}
-	signInOperator(ctx, r, sisf, home, obs.env)
+	obs.signIn(ctx)
 	b, err := obs.budget(ctx)
 	if err != nil {
 		r.fatalf("budget.get as the signed-in operator: %v", err)

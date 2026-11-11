@@ -27,9 +27,13 @@ import (
 type factoryObserver struct {
 	r         *commandRunner
 	sisf      string
+	home      string   // the install, where `sisf login` stores the login
 	env       []string // sisf environment with SISF_HOME and SISF_URL
 	stateDB   string
 	factoryID string
+	// signIn signs the operator in through the browser; keepSignedIn calls
+	// it again before the stored login lapses.
+	signIn func(context.Context)
 }
 
 // inspectView is the part of runs.inspect the run reads.
@@ -81,6 +85,7 @@ func (o *factoryObserver) call(ctx context.Context, action string, input any, ou
 	if err != nil {
 		return err
 	}
+	o.keepSignedIn(ctx)
 	stdout, err := o.r.run(ctx, time.Minute, o.env, o.sisf, "call", action, "--input", string(raw))
 	if err != nil {
 		return err
@@ -103,6 +108,7 @@ func (o *factoryObserver) budget(ctx context.Context) (budgetView, error) {
 
 // approvals lists the approval requests, for the operator to decide.
 func (o *factoryObserver) approvals(ctx context.Context) (string, error) {
+	o.keepSignedIn(ctx)
 	return o.r.run(ctx, time.Minute, o.env, o.sisf, "call", "approvals.list", "--input", `{}`)
 }
 
@@ -139,8 +145,10 @@ func newFactoryObserver(r *commandRunner, sisf, home string) (*factoryObserver, 
 	if err != nil {
 		return nil, fmt.Errorf("the install's factory.yaml cannot be read: %w", err)
 	}
-	return &factoryObserver{
-		r: r, sisf: sisf, stateDB: l.StateDB(), factoryID: string(m.FactoryID),
+	o := &factoryObserver{
+		r: r, sisf: sisf, home: home, stateDB: l.StateDB(), factoryID: string(m.FactoryID),
 		env: sisfEnv("SISF_HOME="+home, "SISF_URL="+loopbackURL(install.PortControl, "")),
-	}, nil
+	}
+	o.signIn = func(ctx context.Context) { signInOperator(ctx, r, sisf, home, o.env) }
+	return o, nil
 }
