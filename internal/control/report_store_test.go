@@ -59,9 +59,10 @@ func TestReportsAreKeptInTheControlStoreAcrossARestart(t *testing.T) {
 	})
 }
 
-// The stored reports are bounded: a full store makes room for a new report
-// by removing one of the oldest day's, still counts a duplicate, and a
-// report past its retention is removed, which makes room again.
+// The stored reports are bounded. A report accepted and still waiting to
+// be published is never pushed out: a full store refuses a new report with
+// 503 and a Retry-After, still counts a duplicate, and makes room again
+// once a report past its retention is removed.
 func TestStoredReportsAreBoundedAndExpireAfterTheirRetention(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
@@ -76,37 +77,35 @@ func TestStoredReportsAreBoundedAndExpireAfterTheirRetention(t *testing.T) {
 				t.Fatalf("report %d: %d", n, code)
 			}
 		}
-		if code, state := postReport(t, e, "One too many", 10); code != http.StatusAccepted || state != "accepted" {
-			t.Fatalf("a report past the capacity: %d %s, want it stored in place of an older one", code, state)
+		rec := postReportRecorded(t, e, "One too many", 10)
+		if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+			t.Fatalf("a report past the capacity: %d, Retry-After %q, want it refused with a Retry-After", rec.Code, rec.Header().Get("Retry-After"))
 		}
-		if code, state := postReport(t, e, "One too many", 11); code != http.StatusOK || state != "duplicate" {
-			t.Fatalf("a duplicate in a full store: %d %s", code, state)
+		for n := range capacity {
+			if code, state := postReport(t, e, fmt.Sprintf("Old report %d", n), 20+n); code != http.StatusOK || state != "duplicate" {
+				t.Fatalf("waiting report %d in a full store: %d %s, want it kept and counted as a duplicate", n, code, state)
+			}
 		}
 		if n := storedReportCount(t, e); n != capacity {
 			t.Fatalf("%d reports are stored, want the capacity of %d", n, capacity)
 		}
 
-		// A day later, new reports push out the previous day's first.
-		db.Clock.Advance(24 * time.Hour)
-		for n := range capacity {
-			if code, _ := postReport(t, e, fmt.Sprintf("Next day %d", n), 20+n); code != http.StatusAccepted {
-				t.Fatalf("next day's report %d in a full store: %d, want it stored", n, code)
-			}
-		}
-		for n := range capacity {
-			if code, state := postReport(t, e, fmt.Sprintf("Next day %d", n), 30+n); code != http.StatusOK || state != "duplicate" {
-				t.Fatalf("next day's report %d again: %d %s, want it kept over the previous day's", n, code, state)
-			}
-		}
-		if code, state := postReport(t, e, "One too many", 40); code != http.StatusAccepted || state != "accepted" {
-			t.Fatalf("a report of the previous day sent again: %d %s, want it removed to make room and stored afresh", code, state)
-		}
-
 		db.Clock.Advance(retention + 24*time.Hour)
-		if code, state := postReport(t, e, "Next day 1", 50); code != http.StatusAccepted || state != "accepted" {
+		if code, state := postReport(t, e, "Old report 1", 30); code != http.StatusAccepted || state != "accepted" {
 			t.Fatalf("a report whose stored copy lapsed: %d %s, want it stored afresh", code, state)
 		}
 	})
+}
+
+// postReportRecorded posts the report titled title from its own client
+// address and returns the whole answer.
+func postReportRecorded(t *testing.T, e *env, title string, client int) *httptest.ResponseRecorder {
+	t.Helper()
+	body := fmt.Sprintf(`{"title":%q,"body":"The page fails."}`, title)
+	req := httptest.NewRequest(http.MethodPost, report.Path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = fmt.Sprintf("198.51.100.%d:4000", client%250+1)
+	return e.do(req)
 }
 
 // Lapsed reports are removed by the control zone's periodic pass too, so

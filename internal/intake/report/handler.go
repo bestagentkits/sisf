@@ -38,6 +38,9 @@ const (
 	DefaultMaxClients     = 10000
 	// MaxTitleRunes bounds the title of a report.
 	MaxTitleRunes = 200
+	// fullStoreRetry is the Retry-After of a report refused because the
+	// store is full: stored reports leave it as they are published.
+	fullStoreRetry = 5 * time.Minute
 )
 
 // Config configures the handler.
@@ -122,6 +125,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.cfg.Logger.Error("report could not be stored", "code", string(core.CodeOf(err)))
+		if core.HasCode(err, core.CodeLimitExceeded) {
+			// The store is full until reports are published or lapse.
+			w.Header().Set("Retry-After", retryAfter(fullStoreRetry))
+		}
 		reply(w, http.StatusServiceUnavailable, "error", "the report could not be stored; try again later")
 		return
 	}

@@ -96,13 +96,11 @@ var _ report.Store = storedReports{}
 
 // Save implements report.Store. It first removes lapsed reports; then a
 // duplicate is counted against the stored report, published or not, and a
-// new one is stored to be published. When the store is full, a report GitHub
-// refused for good makes room for it, or else a report of the oldest day
-// still waiting to be published: reports are kept by the UTC day they
-// arrived, so which of that day's goes is not ordered further. The report route's per-client and overall
-// rate limits bound how fast reports can push others out. Only a store
-// whose count says full while it lists no report refuses a new one, with
-// LIMIT_EXCEEDED.
+// new one is stored to be published. When the store is full, the oldest
+// report GitHub refused for good makes room for it; a report accepted and
+// still waiting to be published is never removed, so with none refused the
+// new report is refused with LIMIT_EXCEEDED until reports are published or
+// lapse.
 func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report, bool, error) {
 	if r.Fingerprint == "" || strings.ContainsAny(r.Fingerprint, "/") {
 		return report.Report{}, false, core.NewError(core.CodeInvalidArgument, "a report needs a fingerprint")
@@ -165,25 +163,20 @@ func (s storedReports) Save(ctx context.Context, r report.Report) (report.Report
 	return stored, created, nil
 }
 
-// dropOldest removes, to make room, a report GitHub refused for good or
-// else one of the oldest day still waiting to be published, and reports
-// whether it found one. A published report is not counted and never goes.
+// dropOldest removes, to make room, the oldest report GitHub refused for
+// good, and reports whether it found one. A report accepted and still
+// waiting to be published is never removed to make room, and a published
+// one is not counted.
 func (s storedReports) dropOldest(ctx context.Context, tx state.Tx, count *reportCount) (bool, error) {
-	for _, prefix := range []string{reportFailedPrefix, reportPrefix} {
-		entries, err := tx.ListKV(ctx, ReportsNamespace, prefix, 1)
-		if err != nil {
-			return false, err
-		}
-		if len(entries) == 0 {
-			continue
-		}
-		if err := dropReport(ctx, tx, entries[0]); err != nil {
-			return false, err
-		}
-		count.n = max(count.n-1, 0)
-		return true, nil
+	entries, err := tx.ListKV(ctx, ReportsNamespace, reportFailedPrefix, 1)
+	if err != nil || len(entries) == 0 {
+		return false, err
 	}
-	return false, nil
+	if err := dropReport(ctx, tx, entries[0]); err != nil {
+		return false, err
+	}
+	count.n = max(count.n-1, 0)
+	return true, nil
 }
 
 // putCountIf stores count when changed says it changed.

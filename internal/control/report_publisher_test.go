@@ -417,3 +417,36 @@ func TestPublishingNeedsTheFactorysLogin(t *testing.T) {
 		}
 	})
 }
+
+// A full store makes room for a new report only by removing one GitHub
+// refused for good, the oldest first; a report waiting to be published is
+// never removed.
+func TestAFullStoreMakesRoomOnlyFromReportsGivenUp(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e := newEnv(t, db)
+		e.deps.Report = &control.ReportRoute{Redactor: redact.New(redact.Config{}), MaxStored: 2}
+		e.restart(t)
+		gh := &reportGitHub{}
+		p := control.ReportPublisher{Store: e.store, Issues: gh, Repo: github.RepoRef{Owner: "acme", Name: "app"},
+			Self: factoryAccount, Redactor: redact.New(redact.Config{}), Clock: db.Clock, Batch: 1}
+		sendReportText(t, e, "Refused", "GitHub will not take it.", 1)
+		gh.fail = []error{rejected(422), rejected(422), rejected(422)}
+		for range 3 {
+			publish(t, p)
+		}
+		sendReportText(t, e, "Waiting", "Still to publish.", 2)
+		if code, state := sendReportText(t, e, "Newcomer", "Fills the store.", 3); code != http.StatusAccepted || state != "accepted" {
+			t.Fatalf("a report in a store full with one given up: %d %s, want it stored in its place", code, state)
+		}
+		if countKeys(t, e, "f/") != 0 || countKeys(t, e, "r/") != 2 {
+			t.Fatalf("after making room: %d given up, %d waiting", countKeys(t, e, "f/"), countKeys(t, e, "r/"))
+		}
+		if code, _ := sendReportText(t, e, "One more", "No room.", 4); code != http.StatusServiceUnavailable {
+			t.Fatalf("a report in a store full of waiting ones: %d, want it refused", code)
+		}
+		if code, state := sendReportText(t, e, "Waiting", "Still to publish.", 5); code != http.StatusOK || state != "duplicate" {
+			t.Fatalf("a waiting report after the refusal: %d %s, want it kept", code, state)
+		}
+	})
+}
