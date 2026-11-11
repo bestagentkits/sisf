@@ -15,8 +15,9 @@ import (
 )
 
 type healthBody struct {
-	Status string                             `json:"status"`
-	Zones  map[core.Zone]control.HealthStatus `json:"zones"`
+	FactoryID core.FactoryID                     `json:"factory_id"`
+	Status    string                             `json:"status"`
+	Zones     map[core.Zone]control.HealthStatus `json:"zones"`
 }
 
 func TestHealthzAggregatesAllThreeZones(t *testing.T) {
@@ -32,6 +33,20 @@ func TestHealthzAggregatesAllThreeZones(t *testing.T) {
 			if status != control.HealthOK {
 				t.Errorf("zone %s = %s", zone, status)
 			}
+		}
+	})
+}
+
+// TestHealthzNamesTheFactoryThatAnswers lets a client on the same host tell
+// this factory from another one listening on the same fixed port.
+func TestHealthzNamesTheFactoryThatAnswers(t *testing.T) {
+	t.Parallel()
+	withServer(t, func(t *testing.T, e *env) {
+		rec := e.do(httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		var body healthBody
+		getJSON(t, rec, &body)
+		if body.FactoryID != sqlstoretest.Factory {
+			t.Fatalf("healthz factory_id = %q, want %q", body.FactoryID, sqlstoretest.Factory)
 		}
 	})
 }

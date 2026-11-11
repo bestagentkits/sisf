@@ -132,7 +132,10 @@ func describeProbeError(err error) string {
 func (s *Server) Health(ctx context.Context) []ZoneHealth { return s.health.check(ctx) }
 
 // handleHealthz answers the unauthenticated liveness check. It reports each
-// zone's verdict and nothing else; the reasons are for the Owner's log.
+// zone's verdict and the factory it belongs to, and nothing else; the
+// reasons are for the Owner's log. The factory id is not secret: it lets a
+// client on the same host tell this factory from another one answering on
+// the same fixed port, before it sends a token or trusts a verdict.
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	zones := map[core.Zone]HealthStatus{}
 	status, code := "ok", http.StatusOK
@@ -143,5 +146,5 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 			s.log.Warn("a zone is not healthy", "zone", string(z.Zone), "status", string(z.Status), "detail", z.Detail)
 		}
 	}
-	writeJSON(w, code, map[string]any{"status": status, "zones": zones})
+	writeJSON(w, code, map[string]any{"factory_id": s.cfg.FactoryID, "status": status, "zones": zones})
 }
