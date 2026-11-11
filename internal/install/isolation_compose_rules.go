@@ -51,6 +51,9 @@ type composeVolume struct {
 	// as a bind of a host directory (type: none, o: bind, device: <path>).
 	Driver     string               `yaml:"driver"`
 	DriverOpts map[string]yaml.Node `yaml:"driver_opts"`
+	// Labels name the install that made the volume; they change nothing
+	// about what the volume is.
+	Labels map[string]string `yaml:"labels"`
 }
 
 type composeService struct {

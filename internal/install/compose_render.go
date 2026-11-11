@@ -32,6 +32,11 @@ type ComposeData struct {
 	Project    string
 	FactoryID  core.FactoryID
 	Repository string
+	// InstallDir is the install's directory, an absolute host path. It
+	// labels every volume of the project with the install that made it
+	// (see checkProjectOwner).
+	InstallDir string
+
 	// SecretsDir, ConfigFile, ReleaseFile and SimAgentDir are absolute host
 	// paths.
 	SecretsDir, ConfigFile, ReleaseFile, SimAgentDir string
@@ -85,7 +90,7 @@ func newComposeData(l Layout, o Options, images Images, bootstrap []string, host
 	app := digestOf(images.App)
 	return ComposeData{
 		Project: proj, FactoryID: o.FactoryID, Repository: o.Repo.Owner + "/" + o.Repo.Repo,
-		SecretsDir: l.Dir + "/secrets", ConfigFile: l.Config(), ReleaseFile: l.ReleaseManifest(), SimAgentDir: l.SimAgentDir(),
+		InstallDir: l.Dir, SecretsDir: l.Dir + "/secrets", ConfigFile: l.Config(), ReleaseFile: l.ReleaseManifest(), SimAgentDir: l.SimAgentDir(),
 		GitHubAPIURL: o.GitHubAPIURL, Images: images, Sim: o.Sim, Debug: o.Debug,
 		BootstrapCommand: string(cmd), PostgresImage: PostgresImage,
 		AppDigest: string(app), AppContainer: deployedContainer(o.FactoryID, "app", app),
@@ -115,7 +120,7 @@ var quotedPathPattern = regexp.MustCompile(`^/[A-Za-z0-9_./+-]*( [A-Za-z0-9_./+-
 func (d ComposeData) check() error {
 	// The template writes these paths inside double-quoted YAML strings, so
 	// single spaces are safe; quotes, "$", "#" and the rest are not.
-	for _, p := range []string{d.SecretsDir, d.ConfigFile, d.ReleaseFile, d.SimAgentDir} {
+	for _, p := range []string{d.InstallDir, d.SecretsDir, d.ConfigFile, d.ReleaseFile, d.SimAgentDir} {
 		if !quotedPathPattern.MatchString(p) {
 			return invalidf("the install path %q has characters Compose files cannot carry; use letters, digits, single spaces and . _ + - /", p)
 		}

@@ -442,17 +442,33 @@ networks:
 volumes:
   state-data:
     name: "{{ .Project }}-state-data"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   app-data:
     name: "{{ .Project }}-app-data"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   control-data:
     name: "{{ .Project }}-control-data"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   supervisor-admin:
     name: "{{ .Project }}-supervisor-admin"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   trust:
     name: "{{ .Project }}-trust"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   workspaces:
     name: "{{ .Project }}-workspaces"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   qa-workspaces:
     name: "{{ .Project }}-qa-workspaces"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   artifacts:
     name: "{{ .Project }}-artifacts"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"

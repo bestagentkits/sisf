@@ -11,6 +11,7 @@ import (
 	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
+	"gopkg.in/yaml.v3"
 )
 
 func upDocker(t *testing.T) (*Installer, *fakeExec) {
@@ -132,8 +133,11 @@ func TestEveryDockerCommandNamesOnlyThingsOfThisInstall(t *testing.T) {
 				t.Errorf("image tag outside this install's prefix: %s", l)
 			}
 		}
+		// The one volume command is the read-only listing of this
+		// project's volumes, which checks who made them.
+		ownVolumes := strings.HasPrefix(l, "docker volume ls --filter label=com.docker.compose.project="+proj+" ")
 		for _, danger := range []string{"docker rm", "docker stop", "docker kill", "docker volume", "docker network create", "docker network rm", "docker system", "prune"} {
-			if strings.Contains(l, danger) {
+			if strings.Contains(l, danger) && !ownVolumes {
 				t.Errorf("up runs %q", l)
 			}
 		}
@@ -229,8 +233,10 @@ func TestDockerStopRestartAndDownActOnTheOneProject(t *testing.T) {
 	// Each down first lists the containers the supervisor deployed for this
 	// factory, which Compose does not know of; there are none here.
 	var extra []string
+	// Each command also first lists this project's volumes, read-only, to
+	// check that this install made them.
 	for _, l := range exec.lines()[before:] {
-		if !strings.HasPrefix(l, "docker compose") {
+		if !strings.HasPrefix(l, "docker compose") && !strings.HasPrefix(l, "docker volume ls --filter label=com.docker.compose.project=sisf-hello-app ") {
 			extra = append(extra, l)
 		}
 	}
@@ -331,5 +337,96 @@ func TestADockerInstallNeverActsOnAnotherInstallsComposeProject(t *testing.T) {
 	mustInit(t, fresh, manifest.ModeDocker)
 	if err := fresh.Down(t.Context(), true); err != nil {
 		t.Errorf("down -v of a Docker install never started = %v", err)
+	}
+}
+
+// After `sisf down` without -v a project has no container left, so Compose
+// no longer lists it, but its volumes stay. Another install of the same
+// factory id must not adopt them: each volume names the install that made
+// it, and one made by no known install is not adopted by a new install.
+func TestADockerInstallNeverAdoptsTheVolumesAnotherInstallLeftBehind(t *testing.T) {
+	t.Parallel()
+	volumes := func(in *Installer, exec *fakeExec, listed string) {
+		exec.answer = func(c Cmd) ([]byte, error) {
+			if strings.Join(c.Args[:2], " ") == "volume ls" {
+				return []byte(listed), nil
+			}
+			return buildAnswers(c)
+		}
+	}
+	acts := func(in *Installer) map[string]func() error {
+		return map[string]func() error{
+			"up":      func() error { return in.Up(t.Context(), UpOptions{Init: initOptions(in, manifest.ModeDocker)}) },
+			"stop":    func() error { return in.Stop(t.Context()) },
+			"down -v": func() error { return in.Down(t.Context(), true) },
+		}
+	}
+	noAction := func(exec *fakeExec) {
+		t.Helper()
+		for _, l := range exec.lines() {
+			if strings.Contains(l, " down") || strings.Contains(l, " stop") || strings.Contains(l, " up ") {
+				t.Fatalf("a command acted on volumes of another install: %s", l)
+			}
+		}
+	}
+
+	// Volumes another install made.
+	in, exec, _ := newTestInstaller(t)
+	mustInit(t, in, manifest.ModeDocker)
+	if err := os.WriteFile(in.Layout.Compose(), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	volumes(in, exec, "sisf-hello-app-state-data /elsewhere/my factory\nsisf-hello-app-trust /elsewhere/my factory\n")
+	for name, run := range acts(in) {
+		if err := run(); !core.HasCode(err, core.CodeConflict) || !strings.Contains(err.Error(), "/elsewhere/my factory") {
+			t.Errorf("%s = %v, want CONFLICT naming the other install", name, err)
+		}
+	}
+	noAction(exec)
+
+	// Volumes no install names, met by an install that never started its
+	// project: they are another install's, made before volumes named one.
+	fresh, freshExec, _ := newTestInstaller(t)
+	mustInit(t, fresh, manifest.ModeDocker)
+	volumes(fresh, freshExec, "sisf-hello-app-state-data \n")
+	if err := fresh.Up(t.Context(), UpOptions{Init: initOptions(fresh, manifest.ModeDocker)}); !core.HasCode(err, core.CodeConflict) {
+		t.Errorf("up of a new install next to unnamed volumes = %v, want CONFLICT", err)
+	}
+	noAction(freshExec)
+
+	// Its own volumes, named through a symbolic link to its directory, and
+	// unnamed ones of a project it rendered before volumes named the install.
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(in.Layout.Dir, link); err != nil {
+		t.Fatal(err)
+	}
+	volumes(in, exec, "sisf-hello-app-state-data "+link+"\nsisf-hello-app-trust \n")
+	if err := in.Stop(t.Context()); err != nil {
+		t.Errorf("stop with its own volumes = %v", err)
+	}
+	if err := in.Down(t.Context(), true); err != nil {
+		t.Errorf("down -v with its own volumes = %v", err)
+	}
+}
+
+// Every volume of the rendered project names the install that made it.
+func TestEveryComposeVolumeNamesTheInstallThatMadeIt(t *testing.T) {
+	t.Parallel()
+	in, rendered := renderCompose(t, nil)
+	var file struct {
+		Volumes map[string]struct {
+			Labels map[string]string `yaml:"labels"`
+		} `yaml:"volumes"`
+	}
+	if err := yaml.Unmarshal(rendered, &file); err != nil || len(file.Volumes) == 0 {
+		t.Fatalf("rendered volumes = %v %v", file.Volumes, err)
+	}
+	for name, v := range file.Volumes {
+		if v.Labels[installDirLabel] != in.Layout.Dir {
+			t.Errorf("volume %s labels = %v, want %s=%s", name, v.Labels, installDirLabel, in.Layout.Dir)
+		}
+	}
+	if vs, err := CheckCompose(in.Layout, rendered); err != nil || len(vs) > 0 {
+		t.Fatalf("the labelled project does not pass the isolation rules: %v %v", vs, err)
 	}
 }
