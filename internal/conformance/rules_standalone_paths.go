@@ -5,6 +5,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
@@ -15,7 +16,7 @@ type placedMount struct {
 	unit   manifest.UnitName
 	at     string // manifest path of the mount
 	volume string
-	dir    string // cleaned mount path
+	dir    string // mount path as onDisk compares it
 	// owner tells volumes with different owners apart: the owning zone, and
 	// for a shared volume also the unit that holds it.
 	owner string
@@ -36,7 +37,7 @@ func (c *checker) placedMounts() []placedMount {
 			}
 			placed = append(placed, placedMount{
 				unit: name, at: fmt.Sprintf("units.%s.mounts[%d]", name, i),
-				volume: mount.Volume, dir: path.Clean(mount.Path), owner: owner,
+				volume: mount.Volume, dir: onDisk(mount.Path), owner: owner,
 			})
 		}
 	}
@@ -57,8 +58,9 @@ func (c *checker) placedMounts() []placedMount {
 //     holds every directory below it, the trust volume and the other zones'
 //     data included (see refuseClimbingMount).
 //
-// Directories are compared as written, after cleaning; in Docker mode a
-// mount path is a place inside one container and says nothing of another.
+// Directories are compared after cleaning and without regard to letter
+// case (see onDisk); in Docker mode a mount path is a place inside one
+// container and says nothing of another.
 func (c *checker) checkStandalonePaths() {
 	if c.m.Mode != manifest.ModeStandalone {
 		return
@@ -117,6 +119,30 @@ func (c *checker) refuseClimbingMount(mount placedMount, trust string, placed []
 	c.addOnce(RuleVolumePathOverlap, mount.at+".path", fix,
 		"unit %q mounts volume %q at a directory that climbs out of the factory root; on one machine that directory holds every other directory of the deployment, so its owner writes the data of the other owners", mount.unit, mount.volume)
 }
+
+// foldCase returns the spelling every case variant of s shares: each letter
+// is replaced by the least of the letters it is equal to without regard to
+// case, so "data/Trust" and "DATA/trust" fold alike, as do the Kelvin sign
+// and K. A file system that ignores case, as macOS does by default, opens
+// all of them as one name.
+func foldCase(s string) string {
+	return strings.Map(func(r rune) rune {
+		least := r
+		for other := unicode.SimpleFold(r); other != r; other = unicode.SimpleFold(other) {
+			least = min(least, other)
+		}
+		return least
+	}, s)
+}
+
+// onDisk returns the form in which a Standalone path is compared with
+// another when a match refuses the manifest: cleaned, and with letter case
+// folded, because on a file system that ignores case two spellings are one
+// directory. A comparison whose match accepts a manifest, such as a store
+// placed inside the volume that holds it, compares the paths as written, so
+// that a file system that tells case apart is not taken to hold what it
+// does not.
+func onDisk(file string) string { return foldCase(path.Clean(file)) }
 
 // overlap reports whether two cleaned directories are equal or nested.
 func overlap(a, b string) bool { return within(a, b) || within(b, a) }

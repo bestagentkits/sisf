@@ -32,6 +32,7 @@ func startedFiles(name manifest.UnitName, unit manifest.Unit) []startedFile {
 // is or holds file. A mount that climbs out of the factory root is left out:
 // it is refused on its own, and every relative file would lie below it.
 func (c *checker) mountHolding(file string, keep func(placedMount) bool) (placedMount, bool) {
+	file = onDisk(file)
 	for _, mount := range c.placedMounts() {
 		if !climbs(mount.dir) && keep(mount) && within(file, mount.dir) {
 			return mount, true

@@ -103,7 +103,7 @@ func (c *checker) checkQAWorkspace() {
 			case held.Volume == other.Volume:
 				c.addOnce(RuleQASharedWorkspace, at, fix,
 					"the qa-runner mounts volume %q, which the runner mounts too (units.runner.mounts[%d]); QA judges the coding agent's work from a workspace of its own, so that the coding agent can neither alter what QA reads nor read what QA leaves", held.Volume, j)
-			case c.m.Mode == manifest.ModeStandalone && held.Path != "" && other.Path != "" && overlap(held.Path, other.Path):
+			case c.m.Mode == manifest.ModeStandalone && held.Path != "" && other.Path != "" && overlap(onDisk(held.Path), onDisk(other.Path)):
 				c.addOnce(RuleQASharedWorkspace, at, fix,
 					"the qa-runner mounts volume %q at a directory that is, holds or lies inside the runner's (units.runner.mounts[%d]); on one machine they are the same files, so the coding agent can alter what QA reads", held.Volume, j)
 			}
