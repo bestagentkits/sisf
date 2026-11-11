@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"log/slog"
+	"maps"
+	"slices"
+	"strings"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/supervisor"
+	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -26,7 +30,9 @@ func runStages(ctx context.Context, st *stages.Stages, l *lifecycleFlags, clock 
 }
 
 // logPass logs what one round of the stages did: every failure, every
-// candidate built, and every QA verdict with its reason.
+// candidate built, every QA verdict with its reason, and every release
+// that ended, with its result and, when it did not go ahead, its code and
+// reason.
 func logPass(log *slog.Logger, res stages.PassResult) {
 	for _, err := range res.Errors() {
 		log.Warn("a lifecycle stage failed", "code", string(core.CodeOf(err)), "error", err.Error())
@@ -49,6 +55,38 @@ func logPass(log *slog.Logger, res stages.PassResult) {
 	for _, issue := range res.QA.Held {
 		log.Warn("candidate held after QA: the issue waits in QAEvaluation for the Owner", "issue", issue.String(), "reason", res.QA.Reasons[issue])
 	}
+	issues := slices.SortedFunc(maps.Keys(res.Release.Outcomes), func(a, b core.IssueRef) int { return strings.Compare(a.String(), b.String()) })
+	for _, issue := range issues {
+		logRelease(log, issue, res.Release.Outcomes[issue])
+	}
+}
+
+// releaseMessages say what each release result means for the issue.
+var releaseMessages = map[release.Result]string{
+	release.ResultHeld:          "release held: the issue waits in ReleaseCandidate for the Owner",
+	release.ResultRefused:       "release refused: it is not tried again, and the issue waits in ReleaseCandidate for the Owner",
+	release.ResultBlocked:       "release rolled back: the issue is blocked",
+	release.ResultRestoreFailed: "release could not be undone: the last known good release is not observed running again, and a person must act",
+}
+
+// logRelease logs one release that ended. A release that did not go ahead
+// is logged once, when it ends; it is not tried again until the Owner's
+// retry starts it over.
+func logRelease(log *slog.Logger, issue core.IssueRef, out release.Outcome) {
+	if out.Result == release.ResultClosed {
+		log.Info("release closed: the verified release serves the application", "issue", issue.String(), "release", string(out.Release))
+		return
+	}
+	msg, ok := releaseMessages[out.Result]
+	if !ok {
+		msg = "release ended without closing the issue"
+	}
+	code := ""
+	if c, _, found := strings.Cut(out.Reason, ": "); found && core.ErrorCode(c).Valid() {
+		code = c
+	}
+	log.Warn(msg, "issue", issue.String(), "result", string(out.Result), "state", string(out.State), "code", code,
+		"reason", out.Reason, "release", string(out.Release))
 }
 
 // startLifecycle builds the stages when the flags ask for them, adds the
