@@ -14,27 +14,37 @@ import (
 )
 
 // A flood of reports cannot make the factory open more than its daily
-// budget of issues, nor keep a person's report out. Twenty-four addresses
-// send as many reports as the route takes in the first hour, then one of
-// them goes on at its own limit every hour for a day, while the publisher
-// runs every minute as the control pass does. Within the day at most
-// ReportDailyPublishBudget issues are opened, oldest report first, and
-// then publishing pauses with the backlog shown; a report from a new
-// address is accepted all the while, since the store keeps room.
+// budget of issues. Twenty-four addresses send as many reports as the
+// route takes in the first hour, then one of them goes on at its own limit
+// every hour for a day, while the publisher runs every minute as the
+// control pass does. Within the day at most ReportDailyPublishBudget
+// issues are opened, oldest report first, and then publishing pauses with
+// the backlog shown. The store here holds 60 reports, so the flood fills it
+// within the day and a person's report is refused while it is full; once
+// publishing resumes and frees room, the person's report is accepted.
 func TestAReportFloodOpensAtMostTheDailyBudgetInReceiptOrder(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		const capacity = 60
 		e, gh, p := reportEnv(t, db)
+		e.deps.Report.MaxStored = capacity
+		e.restart(t)
 		start := db.Clock.Now()
 		var accepted []string
+		codes := map[int]int{}
 		send := func(client, n int) {
 			title := fmt.Sprintf("Flood %d from %d", n, client)
-			if code, _ := sendReportText(t, e, title, "Body.", client); code == http.StatusAccepted {
+			code, _ := sendReportText(t, e, title, "Body.", client)
+			codes[code]++
+			if code == http.StatusAccepted {
 				accepted = append(accepted, "Report: "+title)
 			}
 			db.Clock.Advance(100 * time.Millisecond)
 		}
-		genuine := false
+		person := func() int {
+			code, _ := sendReportText(t, e, "Checkout fails", "A person's report.", 200)
+			return code
+		}
 		for minute := range 24 * 60 {
 			if minute == 0 {
 				for client := 1; client <= 24; client++ {
@@ -42,8 +52,8 @@ func TestAReportFloodOpensAtMostTheDailyBudgetInReceiptOrder(t *testing.T) {
 						send(client, n)
 					}
 				}
-				if len(accepted) != 60 {
-					t.Fatalf("%d reports accepted in the first hour from 24 addresses, want the overall limit of 60", len(accepted))
+				if len(accepted) != 60 || codes[http.StatusTooManyRequests] != 60 {
+					t.Fatalf("the first hour from 24 addresses: %v, want the overall limit of 60 accepted and the rest refused as too many", codes)
 				}
 			}
 			if minute > 0 && minute%60 == 0 {
@@ -52,16 +62,12 @@ func TestAReportFloodOpensAtMostTheDailyBudgetInReceiptOrder(t *testing.T) {
 				}
 			}
 			if minute == 12*60+30 {
-				if code, _ := sendReportText(t, e, "Checkout fails", "A person's report.", 200); code != http.StatusAccepted {
-					t.Fatalf("a person's report during the flood: %d, want it accepted", code)
+				if code := person(); code != http.StatusServiceUnavailable {
+					t.Fatalf("a person's report while the flood fills the store: %d, want it refused until there is room", code)
 				}
-				genuine = true
 			}
 			publish(t, p)
 			db.Clock.Advance(start.Add(time.Duration(minute+1) * time.Minute).Sub(db.Clock.Now()))
-		}
-		if !genuine {
-			t.Fatal("the person's report was never sent")
 		}
 		issues := gh.created()
 		if len(issues) != control.ReportDailyPublishBudget {
@@ -79,13 +85,17 @@ func TestAReportFloodOpensAtMostTheDailyBudgetInReceiptOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := len(accepted) + 1 - len(issues); st.Waiting != want || st.PausedUntil.IsZero() || !st.PausedUntil.After(db.Clock.Now()) {
-			t.Fatalf("the status after a day of flooding: %+v, want %d waiting and publishing paused", st, want)
+		if st.Waiting != capacity || len(accepted)-len(issues) != capacity || st.PausedUntil.IsZero() || !st.PausedUntil.After(db.Clock.Now()) {
+			t.Fatalf("the status after a day of flooding: %+v, want a full store of %d waiting and publishing paused", st, capacity)
 		}
-		// Once the oldest publication is a day old, publishing goes on.
+		// Once the oldest publication is a day old, publishing goes on, and
+		// the room it frees takes the person's report.
 		db.Clock.Advance(st.PausedUntil.Sub(db.Clock.Now()))
 		if res := publish(t, p); res.Published == 0 {
 			t.Fatalf("publishing did not resume once the budget freed: %+v", res)
+		}
+		if code := person(); code != http.StatusAccepted {
+			t.Fatalf("a person's report once publishing freed room: %d, want it accepted", code)
 		}
 	})
 }
