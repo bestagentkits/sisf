@@ -60,6 +60,12 @@ func TestAVerifiedReleaseThatNoLongerServesBlocksItsIssueUntilTheOwnerRetriesIt(
 	if pr := candidatePR(t, f, number); pr.State == handoff.LandingMerged || f.GitData.Merges() != 0 || mainHolds(f) {
 		t.Fatalf("the unjudged release's change was merged: %+v, %d merges", pr, f.GitData.Merges())
 	}
+	if pr := candidatePR(t, f, number); pr.State != handoff.LandingLeftOpen || !strings.Contains(pr.Reason, "no longer be judged") || pr.Waiting != "" {
+		t.Errorf("the pull request record after the block is %+v, want left for the Owner with nothing it waits on", pr)
+	}
+	if comment := commentContaining(t, f, number, "<!-- sisf:progress "); !strings.Contains(comment, "**Blocked:**") || !strings.Contains(comment, stop.Summary()) {
+		t.Errorf("the progress comment does not say the issue is blocked, in the block's words:\n%s", comment)
+	}
 
 	if _, err := f.Control.Retry(ctx, f.Issue(number), ownerActor(f)); err != nil {
 		t.Fatalf("the Owner's retry: %v", err)

@@ -54,8 +54,9 @@ type lkgDecision struct {
 // settleLKG decides, and when it may records, the LKG for the verified
 // release of record. It writes no lifecycle step, so it also runs at
 // startup before the LKG is adopted. An error decides nothing: the LKG or
-// the store could not be read, the artifact could not be verified now or the
-// LKG could not be written; the release waits and is tried again.
+// the store could not be read, the running system did not answer, the
+// artifact could not be verified now or the LKG could not be written; the
+// release waits and is tried again.
 func (p *Pipeline) settleLKG(ctx context.Context, record core.StateRecord, req Request) (lkgDecision, error) {
 	unit := req.Artifact.Unit
 	var d lkgDecision

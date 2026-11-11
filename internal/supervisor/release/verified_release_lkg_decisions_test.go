@@ -224,3 +224,34 @@ func TestTheBlockOfAnUnjudgedVerifiedReleaseIsAudited(t *testing.T) {
 		t.Fatalf("the block record is %+v (found %v), want a verified release not judged", b, found)
 	}
 }
+
+// At startup a running system that does not answer records nothing and
+// writes no step: the error is reported for the pass to log, and the
+// release is judged on a later pass.
+func TestAStartupThatCannotObserveTheRunningSystemRecordsNothing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := newWorld(t)
+	unlock := w.lockTrustVolume()
+	issue, run := issueRef(226), core.RunID("run-226")
+	w.seedReleaseCandidate(issue, run, firstBuild)
+	req := w.request(issue, run, firstBuild)
+	if out, err := w.pipeline().Release(ctx, req); err == nil || out.State != core.StateVerified {
+		t.Fatalf("Release = %+v, %v; want held in Verified on the LKG", out, err)
+	}
+	unlock()
+	w.backend.mu.Lock()
+	w.backend.observeErr = core.NewError(core.CodeUnavailable, "the edge does not answer")
+	w.backend.mu.Unlock()
+	before := w.record(issue)
+
+	if err := w.pipeline().RecordVerifiedLKG(ctx, req); !core.HasCode(err, core.CodeUnavailable) {
+		t.Fatalf("RecordVerifiedLKG while nothing answers = %v, want UNAVAILABLE", err)
+	}
+	if lkg := w.lkg(); lkg.Digest != lkgDigest {
+		t.Fatalf("the LKG is %s, want the one before the release", lkg.Digest)
+	}
+	if after := w.record(issue); after != before {
+		t.Fatalf("the record moved from %+v to %+v; startup writes no step", before, after)
+	}
+}
