@@ -3,8 +3,6 @@ package install
 import (
 	"context"
 	"os"
-	"path/filepath"
-	"strconv"
 
 	"github.com/bestagentkits/sisf/pkg/manifest"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
@@ -15,11 +13,13 @@ import (
 // command, one process for a service manager to watch, and one lifecycle for
 // the three zones.
 func (in *Installer) upStandalone(ctx context.Context, m *manifest.Manifest, reload <-chan struct{}) error {
-	if pid, err := in.runningPID(); err != nil {
+	// The run lock is held from before the build until the units stopped;
+	// a second `up` of this install fails here at once.
+	lock, err := in.acquireRunLock()
+	if err != nil {
 		return err
-	} else if pid != 0 {
-		return invalidf("this install is already running (process %d)", pid)
 	}
+	defer lock.release()
 	b, err := in.release(ctx, m)
 	if err != nil {
 		return err
@@ -55,11 +55,6 @@ func (in *Installer) upStandalone(ctx context.Context, m *manifest.Manifest, rel
 			_ = c.Close() // logs only; the units have stopped by now
 		}
 	}()
-	if err := in.writePID(); err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(in.Layout.PIDFile()) }()
-
 	g := newGroup(in.Exec, in.Clock, units, in.say)
 	if reload != nil {
 		go func() {
@@ -90,12 +85,4 @@ func (in *Installer) bootstrapState(ctx context.Context, m *manifest.Manifest) e
 		cfg.Budget = &rec
 	}
 	return Bootstrap(ctx, cfg)
-}
-
-func (in *Installer) writePID() error {
-	path := in.Layout.PIDFile()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return unavailablef(err, "cannot create the run directory")
-	}
-	return writeSecret(path, []byte(strconv.Itoa(os.Getpid())+"\n"))
 }

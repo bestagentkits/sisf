@@ -51,7 +51,7 @@ func noLiveCheckPasses(t *testing.T, r Report) {
 func TestTheDoctorNeverReportsAnotherFactorysHealthAsThisInstalls(t *testing.T) {
 	t.Parallel()
 	in := builtStandalone(t, otherFactoryNet("sisf-other"), nil)
-	in.Signal = (&fakeSignals{}).send // no `sisf up` of this install runs
+	markStopped(in) // no `sisf up` of this install runs
 	in.SupervisorStatus = supervisorOf("sisf-other", "ed25519:other")
 	r := runDoctor(t, in)
 	noLiveCheckPasses(t, r)
@@ -69,7 +69,7 @@ func TestAnotherInstallOfTheSameFactoryIDIsToldApartByItsRootKey(t *testing.T) {
 	// Two installs of acme/hello-app on one host share the factory id; the
 	// key that signed the supervisor's release tells them apart.
 	in := builtStandalone(t, healthyNet(), nil)
-	in.Signal = (&fakeSignals{}).send
+	markStopped(in)
 	in.SupervisorStatus = supervisorOf("sisf-hello-app", "ed25519:another-install")
 	r := runDoctor(t, in)
 	noLiveCheckPasses(t, r)
@@ -91,7 +91,7 @@ func TestAProgramThatDoesNotNameItsFactoryIsNotThisInstall(t *testing.T) {
 	t.Parallel()
 	net := healthyNet().with("127.0.0.1:7463/healthz", reply{code: 200, body: `{"status":"ok","zones":{"application":"ok","agent":"ok","control":"ok"}}`})
 	in := builtStandalone(t, net, nil)
-	in.Signal = (&fakeSignals{}).send
+	markStopped(in)
 	r := runDoctor(t, in)
 	noLiveCheckPasses(t, r)
 	if d := detailOf(r, runningCheck); !strings.Contains(d, "does not say which factory") {

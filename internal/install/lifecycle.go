@@ -3,8 +3,6 @@ package install
 import (
 	"context"
 	"os"
-	"strconv"
-	"strings"
 	"syscall"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -130,10 +128,18 @@ func (in *Installer) Down(ctx context.Context, removeData bool) error {
 	if err := in.stopStandalone(ctx); err != nil {
 		return err
 	}
-	if removeData {
-		if err := os.RemoveAll(in.Layout.Data()); err != nil {
-			return unavailablef(err, "cannot remove %s", in.Layout.Data())
-		}
+	if !removeData {
+		return nil
+	}
+	// The run lock is held while the data goes, so an `up` started meanwhile
+	// fails instead of running on a half-removed directory.
+	lock, err := in.lockRun()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }() // drops the lock
+	if err := os.RemoveAll(in.Layout.Data()); err != nil {
+		return unavailablef(err, "cannot remove %s", in.Layout.Data())
 	}
 	return nil
 }
@@ -167,21 +173,18 @@ func (in *Installer) signal(pid int, sig syscall.Signal) error {
 }
 
 // runningPID returns the pid of the foreground `sisf up`, or 0 when none is
-// running. A pid file left by a process that is gone is not a running one.
+// running. The run lock decides (see Layout.RunLock): a pid file whose lock
+// no process holds is stale, whatever process now has its pid, and is
+// removed rather than trusted.
 func (in *Installer) runningPID() (int, error) {
-	data, err := os.ReadFile(in.Layout.PIDFile())
-	if os.IsNotExist(err) {
-		return 0, nil
+	held, err := in.runLockHeld()
+	if err != nil || !held {
+		return 0, err
 	}
-	if err != nil {
-		return 0, unavailablef(err, "cannot read the pid file")
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 1 {
-		return 0, nil
-	}
-	if in.signal(pid, 0) != nil {
-		return 0, nil
+	pid := readPIDFile(in.Layout.PIDFile())
+	if pid == 0 {
+		// The lock is taken just before the pid is written.
+		return 0, core.NewError(core.CodeUnavailable, "a `sisf up` of this install holds its run lock but has not recorded its process yet; try again in a moment")
 	}
 	return pid, nil
 }
@@ -205,8 +208,9 @@ func (in *Installer) signalStandalone(ctx context.Context, sig syscall.Signal) e
 		return nil
 	}
 	for range stopWaitPolls {
-		if in.signal(pid, 0) != nil {
-			return nil
+		// The lock is dropped by the kernel when the process has ended.
+		if held, err := in.runLockHeld(); err != nil || !held {
+			return err
 		}
 		select {
 		case <-in.Clock.After(stopPoll):

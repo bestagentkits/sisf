@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -225,17 +226,28 @@ func TestLifecycleCommandsSayWhatTheyDid(t *testing.T) {
 	} {
 		dir := initSim(t, "standalone")
 		// A child process stands in for the foreground `sisf up`: it is
-		// alive, it is ours, and it ends on SIGTERM.
+		// alive, it is ours, it holds the run lock through the file it
+		// inherits, and it ends on SIGTERM, which drops the lock.
+		if err := os.MkdirAll(filepath.Join(dir, "run"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		lock, err := os.OpenFile(filepath.Join(dir, "run", "sisf.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			t.Fatal(err)
+		}
 		stand := exec.Command("sleep", "60")
-		if err := stand.Start(); err != nil {
+		stand.ExtraFiles = []*os.File{lock}
+		err = stand.Start()
+		_ = lock.Close() // the child alone holds the lock now
+		if err != nil {
 			t.Fatal(err)
 		}
 		exited := make(chan struct{})
 		go func() { _ = stand.Wait(); close(exited) }()
 		t.Cleanup(func() { _ = stand.Process.Kill(); <-exited })
-		if err := os.MkdirAll(filepath.Join(dir, "run"), 0o700); err != nil {
-			t.Fatal(err)
-		}
 		pid := []byte(strconv.Itoa(stand.Process.Pid) + "\n")
 		if err := os.WriteFile(filepath.Join(dir, "run", "sisf.pid"), pid, 0o600); err != nil {
 			t.Fatal(err)

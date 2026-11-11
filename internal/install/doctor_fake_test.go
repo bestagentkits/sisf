@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -123,17 +122,24 @@ func asThisInstall(in *Installer, status func(context.Context, string) (supervis
 	}
 }
 
-// markRunning writes the pid file of a foreground `sisf up` and makes every
-// pid alive, as for an install whose factory runs.
+// markRunning holds the run lock and writes the pid file of a foreground
+// `sisf up`, and makes every pid alive, as for an install whose factory runs.
 func markRunning(t *testing.T, in *Installer) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(in.Layout.PIDFile()), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(in.Layout.PIDFile(), []byte("4242\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	heldRunLocks.Store(in.Layout.Dir, holdRunLock(t, in, 4242, nil))
 	in.Signal = func(int, syscall.Signal) error { return nil }
+}
+
+// heldRunLocks are the run locks markRunning holds, by install directory.
+var heldRunLocks sync.Map
+
+// markStopped ends the `sisf up` markRunning stood in for: its run lock is
+// dropped, as the kernel drops it when the process ends, and no pid is alive.
+func markStopped(in *Installer) {
+	if lock, ok := heldRunLocks.LoadAndDelete(in.Layout.Dir); ok {
+		_ = lock.(*os.File).Close()
+	}
+	in.Signal = (&fakeSignals{}).send
 }
 
 // builtStandalone returns an installer holding a Standalone install that was

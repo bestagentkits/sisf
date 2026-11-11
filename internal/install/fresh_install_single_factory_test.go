@@ -270,12 +270,7 @@ func TestStandaloneUpRefusesASecondRunOfTheSameInstall(t *testing.T) {
 	exec.answer = buildAnswers
 	in.Signal = func(int, syscall.Signal) error { return nil } // every pid is alive
 	mustInit(t, in, manifest.ModeStandalone)
-	if err := os.MkdirAll(in.Layout.Dir+"/run", 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(in.Layout.PIDFile(), []byte("4242\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	holdRunLock(t, in, 4242, nil) // the first `up`, still building or running
 	if err := in.Up(t.Context(), UpOptions{Init: initOptions(in, manifest.ModeStandalone)}); err == nil {
 		t.Fatal("a second up ran next to a live one")
 	}
