@@ -96,6 +96,20 @@ func TestPostgresRefusesAStepThatRewritesWhatTheRecordIsAbout(t *testing.T) {
 		} {
 			refusedRow(t, agent, name, statement)
 		}
+		// A claim always starts its run at attempt 1, so on a record the
+		// store wrote the statement below is the legal start of development.
+		// On a Claimed record whose count was raised past the store, it is
+		// a reset of the count, and refused.
+		raised := claim(t, owner, readyRecord(t, owner, issue(85)), "worker-1", "run-1")
+		if _, err := db.Raw(t).ExecContext(ctx, recordUpdate(`attempt = 3`, raised.IssueID)); err != nil {
+			t.Fatalf("raise the attempt count past the store: %v", err)
+		}
+		refusedRow(t, agent, "a start of development that resets the attempt count",
+			recordUpdate(`state = 'Developing', version = version + 1, attempt = 1`, raised.IssueID))
+		if got := record(t, owner, raised.IssueID); got.State != core.StateClaimed || got.Attempt != 3 {
+			t.Fatalf("the refused reset moved the record to %+v", got)
+		}
+
 		// Starting a rollout is not the agent zone's step: its role does not
 		// see a record in ReleaseCandidate to name a release on it.
 		result, err := agent.ExecContext(ctx, recordUpdate(`state = 'Canary', version = version + 1, release_digest = '`+string(releaseDigest)+`'`, releasing.IssueID))

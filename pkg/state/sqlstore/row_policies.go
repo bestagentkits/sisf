@@ -34,8 +34,8 @@ import (
 // change; recordStepTrigger): for every session the policies hold, a record
 // moves from one state to the next only along an edge of the lifecycle, to
 // the next version, stays the record of its factory and issue, and changes
-// its run, attempt, candidate, release, lease and key only as that step
-// does in the store. With the policy of a zone on the states its steps
+// its run, attempt, candidate, release and lease only as that step does in
+// the store. With the policy of a zone on the states its steps
 // start and end in, that admits exactly the zone's own steps.
 var rowPolicyTables = []string{tableRecords, tableTransitions, tableKV, tableUsage}
 
