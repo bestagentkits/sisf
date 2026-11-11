@@ -55,8 +55,13 @@ func (b *adoptionBackend) ObservedRevision(_ context.Context, unit string) (depl
 // key signed at install, pinning app at digest.
 func installedBook(t *testing.T, digest core.Digest) (*release.LKGBook, core.Signer) {
 	t.Helper()
+	return installedBookIn(t, filepath.Join(t.TempDir(), "trust"), digest)
+}
+
+// installedBookIn is installedBook on a trust volume made at dir.
+func installedBookIn(t *testing.T, dir string, digest core.Digest) (*release.LKGBook, core.Signer) {
+	t.Helper()
 	ctx := context.Background()
-	dir := filepath.Join(t.TempDir(), "trust")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

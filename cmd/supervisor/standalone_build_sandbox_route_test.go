@@ -191,3 +191,32 @@ func TestTheSupervisorRefusesABuildSandboxOnANetworkThatIsNotInternal(t *testing
 		t.Fatalf("a container was created: %d", len(created))
 	}
 }
+
+// The image builder of a factory that keeps programs is given the store,
+// so its builds export; one that keeps none builds as before.
+func TestTheSandboxedBuilderExportsOnlyWhereProgramsAreKept(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	route := newSandboxRoute(t)
+	lf := parseRunFlags(t, route.args)
+	docker, local, err := lf.execBackends(route.manifest, core.SystemClock{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	images, err := lf.imageBuilder(ctx, route.manifest, false, nil, docker, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sandbox, ok := images.(stages.SandboxImages); !ok || sandbox.Programs != nil {
+		t.Fatalf("a factory that keeps no programs builds with %+v", images)
+	}
+	store, _ := trustStore(t)
+	lf.programs = &localPrograms{launcher: launcherPath, store: store}
+	images, err = lf.imageBuilder(ctx, route.manifest, false, nil, docker, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sandbox, ok := images.(stages.SandboxImages); !ok || sandbox.Programs != store {
+		t.Fatalf("a factory that keeps programs builds with %+v", images)
+	}
+}

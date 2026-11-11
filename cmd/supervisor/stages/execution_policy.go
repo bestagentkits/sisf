@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/intake/prgate"
+	"github.com/bestagentkits/sisf/internal/supervisor/programstore"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/execution"
 	"github.com/bestagentkits/sisf/pkg/github"
@@ -33,6 +34,9 @@ type ExecutionChoice struct {
 	// BuildArgv and BuildTimeout are the sandboxed build command.
 	BuildArgv    []string
 	BuildTimeout time.Duration
+	// Programs keeps the program each sandboxed build exports, where the
+	// deploy backend runs programs; nil otherwise.
+	Programs *programstore.Store
 	// Suite judges commits in the simulation profile; see SimulatedImages.
 	Suite func(ctx context.Context, req ImageRequest) (bool, string)
 }
@@ -60,7 +64,7 @@ func SelectImageBuilder(ctx context.Context, c ExecutionChoice) (ImageBuilder, e
 			return nil, core.NewError(core.CodeInvalidArgument,
 				"candidates are built in a sandbox, which needs a build command (--build-command) and a positive build timeout (--build-timeout)")
 		}
-		return SandboxImages{Exec: c.Docker, Specs: c.Specs, Argv: c.BuildArgv, Timeout: c.BuildTimeout}, nil
+		return SandboxImages{Exec: c.Docker, Specs: c.Specs, Argv: c.BuildArgv, Timeout: c.BuildTimeout, Programs: c.Programs}, nil
 	}
 	if c.Local != nil {
 		return nil, untrustedRefused(c.Local.Name())

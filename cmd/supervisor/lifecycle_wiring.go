@@ -84,6 +84,9 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
+	if err := l.openLocalPrograms(ctx, d.cfg.TrustDir, sim, book); err != nil {
+		return nil, err
+	}
 	admin, err := l.edgeAdmin(d.lookupEnv)
 	if err != nil {
 		return nil, err

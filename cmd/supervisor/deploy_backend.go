@@ -16,7 +16,7 @@ import (
 const localAddrEnv = "SISF_LISTEN"
 
 // imageRefPattern is the shape of an image reference a local program is
-// given as its only argument: no option, no shell syntax.
+// given as its first argument: no option, no shell syntax.
 var imageRefPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@+-]{0,254}$`)
 
 // edgeAdmin connects to the edge's admin route. The token is read from the
@@ -39,15 +39,12 @@ func (l *lifecycleFlags) deployBackend(factory core.FactoryID, ctl edge.Controll
 		if l.localProgram == "" || !filepath.IsAbs(l.localProgram) {
 			return nil, core.NewError(core.CodeInvalidArgument, "deploy local needs an absolute --deploy-local-program")
 		}
-		program := l.localProgram
+		programs := l.programs
+		if programs == nil {
+			programs = &localPrograms{launcher: l.localProgram}
+		}
 		starter := local.ExecStarter{
-			AddrEnv: localAddrEnv, Clock: clock,
-			Command: func(image string) (string, []string, error) {
-				if !imageRefPattern.MatchString(image) {
-					return "", nil, core.NewError(core.CodeInvalidArgument, "the release's image reference is not one a local program accepts")
-				}
-				return program, []string{image}, nil
-			},
+			AddrEnv: localAddrEnv, Clock: clock, Command: programs.command,
 			OnLog: func(line string) { log.Info("unit output", "line", line) },
 		}
 		return local.New(local.Config{Factory: factory, Starter: starter, Edge: ctl, Clock: clock, Logger: log})

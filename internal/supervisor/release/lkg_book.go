@@ -115,6 +115,17 @@ func (b *LKGBook) Get(ctx context.Context, unit string) (LKG, bool, error) {
 	return entry, true, nil
 }
 
+// Installed returns the digest the root-signed release manifest pins for
+// unit: the release the install itself built, whatever was promoted since.
+// It is false when the install recorded no release or pins no such unit.
+func (b *LKGBook) Installed(ctx context.Context, unit string) (core.ReleaseDigest, bool, error) {
+	if !unitPattern.MatchString(unit) {
+		return "", false, invalid("unit %q is not a unit name", unit)
+	}
+	lkg, found, err := b.fromManifest(ctx, unit)
+	return lkg.Digest, found, err
+}
+
 // fromManifest reads the unit's digest from the root-signed release
 // manifest record. That store verifies the root signature as it loads.
 func (b *LKGBook) fromManifest(ctx context.Context, unit string) (LKG, bool, error) {
