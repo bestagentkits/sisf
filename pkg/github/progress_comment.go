@@ -46,8 +46,8 @@ func (p *ProgressComment) Upsert(ctx context.Context, ref core.IssueRef, body st
 	if err := p.Factory.Validate(); err != nil {
 		return Comment{}, err
 	}
-	if p.Self.IsZero() || p.Issues == nil {
-		return Comment{}, core.NewError(core.CodeInvalidArgument, "a progress comment needs the factory's account and an issue client")
+	if p.Self.Login == "" || p.Issues == nil {
+		return Comment{}, core.NewError(core.CodeInvalidArgument, "a progress comment needs the factory's account by its login, and an issue client")
 	}
 	if strings.Contains(body, "<!-- sisf:progress") {
 		return Comment{}, core.NewError(core.CodeInvalidArgument, "progress text must not contain a progress marker")
@@ -71,11 +71,11 @@ func (p *ProgressComment) Upsert(ctx context.Context, ref core.IssueRef, body st
 }
 
 // find returns the oldest comment that carries the marker and was written by
-// the factory.
+// the factory, told by its login (Identity.Wrote).
 func (p *ProgressComment) find(comments []Comment) (Comment, bool) {
 	var found Comment
 	for _, c := range comments {
-		if !p.Self.Matches(c.Author) || !strings.HasPrefix(c.Body, p.Marker()) {
+		if !p.Self.Wrote(c.Author) || !strings.HasPrefix(c.Body, p.Marker()) {
 			continue
 		}
 		if found.ID == 0 || c.ID < found.ID {

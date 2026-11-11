@@ -253,7 +253,7 @@ func checkGitHubEvents(c *collector, m *manifest.Manifest) {
 	noLogin := ""
 	if s.Self.Login == "" && s.Self.ID != 0 {
 		noLogin = "; the factory's account is named by its ID alone: the login is missing from extensions.github_app_login, " +
-			"so the supervisor cannot tell its own pull request from anyone else's and merges no candidate, leaving every one for the Owner"
+			"so the factory cannot tell its own pull request or progress comment from anyone else's: it merges no candidate, leaving every one for the Owner, and writes no progress comment"
 	}
 	switch {
 	case err != nil:

@@ -130,3 +130,35 @@ func TestProgressRejectsWhatCouldBreakTheMarkerContract(t *testing.T) {
 		t.Errorf("text carrying a marker: %v", err)
 	}
 }
+
+// The factory's progress comment is told by its author's login. A person
+// whose user ID equals the ID the install names, as an App's ID may, does
+// not get their marker comment taken for the factory's: it is neither
+// edited nor in the way of the factory's own. An account named by its ID
+// alone writes no progress comment, as it could not find its own again.
+func TestTheProgressCommentIsToldByItsAuthorsLogin(t *testing.T) {
+	t.Parallel()
+	f := newFactory(t)
+	mallory := f.person("mallory")
+	n := mustOpen(t, f, mallory, "idea")
+	p := &github.ProgressComment{Issues: f.client, Self: github.Identity{ID: mallory.ID, Login: factoryLogin}, Factory: "f1"}
+	planted, err := f.fake.AddComment(testRepo, n, mallory, p.Marker()+"\nfake status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Upsert(bg, repoRef.Issue(n), "Claimed")
+	if err != nil || got.ID == planted || !got.Author.Bot {
+		t.Fatalf("Upsert = %+v, %v: the factory took a comment by someone with its configured ID", got, err)
+	}
+	comments, _ := f.fake.Comments(testRepo, n)
+	if len(comments) != 2 || comments[0].Body != p.Marker()+"\nfake status" {
+		t.Fatalf("the person's comment must be left alone: %+v", comments)
+	}
+	idOnly := &github.ProgressComment{Issues: f.client, Self: github.Identity{ID: factoryAccount}, Factory: "f2"}
+	if _, err := idOnly.Upsert(bg, repoRef.Issue(n), "Claimed"); !core.HasCode(err, core.CodeInvalidArgument) {
+		t.Fatalf("an account named by its ID alone wrote a progress comment: %v", err)
+	}
+	if countComments(t, f, n) != 2 {
+		t.Fatal("an account named by its ID alone added a comment")
+	}
+}
