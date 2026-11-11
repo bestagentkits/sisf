@@ -16,12 +16,12 @@ import (
 const (
 	testRepoName  = "acme/app"
 	testRepoToken = "ghs_test_token"
-	// editMain changes app/main.go, which the base holds.
-	editMain = "--- a/app/main.go\n+++ b/app/main.go\n@@ -1 +1 @@\n-a\n+b\n"
+	// editMain changes examples/hello-app/main.go, which the base holds.
+	editMain = "--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-a\n+b\n"
 )
 
 // realGitHub is the GitHub client against a fake that serves the git data
-// API, with a base commit holding app/main.go.
+// API, with a base commit holding examples/hello-app/main.go.
 type realGitHub struct {
 	fake   *fakegithub.Server
 	data   *fakegithub.GitData
@@ -53,7 +53,7 @@ func newRealGitHub(t *testing.T) *realGitHub {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base, err := fake.Commit(testRepoName, map[string]string{"app/main.go": "a\n", "app/lib": "x\n"})
+	base, err := fake.Commit(testRepoName, map[string]string{"examples/hello-app/main.go": "a\n", "examples/hello-app/lib": "x\n"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,13 +205,13 @@ func TestWhatThePatchsContentMakesGitHubRefuseIsThePatchsFault(t *testing.T) {
 		want       RefusalReason
 	}{
 		"a base file over 1 MB": {fakegithub.EntryLargeFile, editMain, RefusalBaseFileTooLarge},
-		"a directory":           {fakegithub.EntryDirectory, "--- a/app/lib\n+++ b/app/lib\n@@ -1 +1 @@\n-x\n+y\n", RefusalNotARegularFile},
-		"a submodule":           {fakegithub.EntrySubmodule, "--- a/app/lib\n+++ b/app/lib\n@@ -1 +1 @@\n-x\n+y\n", RefusalNotARegularFile},
+		"a directory":           {fakegithub.EntryDirectory, "--- a/examples/hello-app/lib\n+++ b/examples/hello-app/lib\n@@ -1 +1 @@\n-x\n+y\n", RefusalNotARegularFile},
+		"a submodule":           {fakegithub.EntrySubmodule, "--- a/examples/hello-app/lib\n+++ b/examples/hello-app/lib\n@@ -1 +1 @@\n-x\n+y\n", RefusalNotARegularFile},
 	} {
 		g := newRealGitHub(t)
-		path := "app/main.go"
+		path := "examples/hello-app/main.go"
 		if c.kind != fakegithub.EntryLargeFile {
-			path = "app/lib"
+			path = "examples/hello-app/lib"
 		}
 		if err := g.fake.SetEntryKind(testRepoName, string(g.base), path, c.kind); err != nil {
 			t.Fatal(err)
@@ -243,7 +243,7 @@ func TestWhatThePatchsContentMakesGitHubRefuseIsThePatchsFault(t *testing.T) {
 // TestABuildCommandThatDoesNotReportAsAskedIsAnOutage).
 func TestABuildThatReportsNoImageIsThePatchsFault(t *testing.T) {
 	t.Parallel()
-	repo := &recordingRepo{files: map[string]string{"app/main.go": "a\n"}}
+	repo := &recordingRepo{files: map[string]string{"examples/hello-app/main.go": "a\n"}}
 	b := newTestBuilder(repo)
 	b.Images = noDigestImages{}
 	if _, err := b.Build(context.Background(), BuildRequest{RunID: "run-1", Attempt: 1, Base: baseSHA, Diff: editMain}); err == nil {

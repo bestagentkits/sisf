@@ -6,10 +6,12 @@
 //     pipeline refuses a candidate that changes any of them as a governance
 //     change. The list is generated into the release package (go generate
 //     ./internal/supervisor/release/).
-//   - The directories that only the control unit links and the application
-//     does not. A change to them is a build of the control unit, which is
-//     the unit that runs them. The list is generated into the stages
-//     package (go generate ./cmd/supervisor/stages/).
+//   - The directories of the packages the application links: its inputs
+//     among the Go packages of this module. A candidate the factory
+//     publishes by itself as a release of the application may change only
+//     files directly in those directories (and the application's
+//     Dockerfile). The list is generated into the release package as well
+//     (go generate ./internal/supervisor/release/).
 //
 // A test beside each generated list fails when that list is stale.
 package trustedclosure
@@ -40,31 +42,19 @@ var targets = []struct{ goos, goarch, cgo string }{
 	{"linux", "amd64", "1"}, {"linux", "arm64", "1"}, {"darwin", "amd64", "1"}, {"darwin", "arm64", "1"},
 }
 
-// ControlBinaries are the main packages of the control unit.
-var ControlBinaries = []string{"./cmd/factoryd"}
-
-// ApplicationPackages are the packages of the application the factory
-// builds; what they link is the application's, whatever else links it.
-var ApplicationPackages = []string{"./examples/hello-app/..."}
+// ApplicationBinaries are the main packages of the application the factory
+// builds and observes. Its synthetic suite and the suite's command are not
+// part of it: they judge the application and are trusted.
+var ApplicationBinaries = []string{"./examples/hello-app"}
 
 // Packages returns the import paths of this module's packages that the
 // trusted binaries link on any target, sorted and without repeats. root is
 // the module's root directory.
 func Packages(root string) ([]string, error) { return Closure(root, TrustedBinaries...) }
 
-// ControlOnlyPackages returns the import paths of this module's packages
-// that the control unit links and the application does not, on any target.
-func ControlOnlyPackages(root string) ([]string, error) {
-	control, err := Closure(root, ControlBinaries...)
-	if err != nil {
-		return nil, err
-	}
-	app, err := Closure(root, ApplicationPackages...)
-	if err != nil {
-		return nil, err
-	}
-	return slices.DeleteFunc(control, func(p string) bool { return slices.Contains(app, p) }), nil
-}
+// ApplicationPackages returns the import paths of this module's packages
+// that the application links on any target, itself included.
+func ApplicationPackages(root string) ([]string, error) { return Closure(root, ApplicationBinaries...) }
 
 // Closure returns the import paths of this module's packages that the
 // packages matched by patterns link on any target, sorted and without
@@ -123,11 +113,12 @@ var TrustedList = List{
 		"), on every platform they are built for.",
 }
 
-// ControlList is the list of the directories only the control unit links.
-var ControlList = List{
-	Var: "controlUnitPackageDirs",
-	Doc: "are the directories of the Go packages the control unit links (" + strings.Join(ControlBinaries, ", ") +
-		") and the application (" + strings.Join(ApplicationPackages, ", ") + ") does not, on every platform.",
+// AppList is the list of the directories of the packages the application
+// links.
+var AppList = List{
+	Var: "appUnitPackageDirs",
+	Doc: "are the directories of the Go packages the application (" + strings.Join(ApplicationBinaries, ", ") +
+		") links, itself included, on every platform. Each covers the files directly in it, not its subdirectories.",
 }
 
 // Render is the Go source of list, holding dirs, in package pkg, gofmt-ed.

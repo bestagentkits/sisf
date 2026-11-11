@@ -95,11 +95,11 @@ func TestABuildThatCouldNotRunIsAnOutageNotTheCandidatesFault(t *testing.T) {
 
 func TestAFailedBuildCommandNamesTheCommitItRanOn(t *testing.T) {
 	t.Parallel()
-	repo := &recordingRepo{files: map[string]string{"app/main.go": "a\n"}}
+	repo := &recordingRepo{files: map[string]string{"examples/hello-app/main.go": "a\n"}}
 	b := newTestBuilder(repo)
 	b.Images = SandboxImages{Exec: scriptedSandbox{result: execution.ExecResult{ExitCode: 1}}, Argv: []string{"build"}, Timeout: time.Minute}
 	built, err := b.Build(context.Background(), BuildRequest{RunID: "run-1", Attempt: 2, Base: baseSHA,
-		Diff: "--- a/app/main.go\n+++ b/app/main.go\n@@ -1 +1 @@\n-a\n+b\n"})
+		Diff: "--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-a\n+b\n"})
 	if r, ok := RefusalOf(err); !ok || r.Reason != RefusalBuildFailed {
 		t.Fatalf("a failing build command: %v", err)
 	}

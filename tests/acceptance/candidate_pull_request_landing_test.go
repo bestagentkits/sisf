@@ -44,7 +44,7 @@ func candidatePR(t *testing.T, f *harness.Factory, number int) handoff.Candidate
 // mainHolds reports whether the default branch carries the greeting.
 func mainHolds(f *harness.Factory) bool {
 	_, files, ok := f.GitData.Branch(f.Repo, "main")
-	return ok && files["app/main.go"] == greetedMain
+	return ok && files["examples/hello-app/main.go"] == greetedMain
 }
 
 // The candidate QA passed gets one pull request from its branch, linked to

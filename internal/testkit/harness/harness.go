@@ -263,7 +263,7 @@ func New(t testing.TB, opts Options) *Factory {
 // SeedFiles are the application and dashboard sources the fake repository
 // starts with, next to the foundation files: what a scripted patch changes.
 var SeedFiles = map[string]string{
-	"app/main.go":                "package main\n\nfunc main() { println(\"hello\") }\n",
+	"examples/hello-app/main.go": "package main\n\nfunc main() { println(\"hello\") }\n",
 	"ui/dashboard/status.html":   "<h1>Factory status</h1>\n<p>All systems nominal.</p>\n",
 	"internal/qa/thresholds.txt": "pass_score=85\n",
 }

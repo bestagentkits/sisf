@@ -20,7 +20,9 @@ import (
 //
 //   - the release is the build of the candidate commit QA judged;
 //   - the candidate changes no foundation, policy, CI, ownership or
-//     migration file (those are the Owner's to merge, see ADR 0003);
+//     migration file (those are the Owner's to merge, see ADR 0003), and
+//     every path it changes is an input of the unit it was built as and
+//     released, none of them protected (release.CheckSelfPublishedChange);
 //   - the policy in force is the one the run was pinned to;
 //   - the pull request is open, targets the default branch and its head
 //     is still exactly the candidate commit; GitHub checks the head again
@@ -230,6 +232,16 @@ func (c *CandidatePRs) mayNotMerge(ctx context.Context, req release.LandRequest,
 	}
 	if len(touched) > 0 {
 		return "it changes " + strings.Join(touched, ", ") + ", which only the Owner merges", nil
+	}
+	// The rule the release was judged by, applied again to the unit the
+	// supervisor recorded when it built the candidate: only the inputs of
+	// that unit, none of them protected.
+	if err := release.CheckSelfPublishedChange(release.DefaultProtectedPaths(), build.Unit, req.Candidate.ChangedPaths); err != nil {
+		var refused *core.Error
+		if errors.As(err, &refused) {
+			return refused.Message + ", so only the Owner merges it", nil
+		}
+		return err.Error() + ", so only the Owner merges it", nil
 	}
 	refs, err := c.Policy(ctx)
 	if err != nil {

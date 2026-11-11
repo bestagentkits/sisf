@@ -76,14 +76,19 @@ func TestOnlyAHeldReleaseIsResumed(t *testing.T) {
 }
 
 // The block of a candidate that builds the program already serving says
-// so, and that its pull request is merged by hand.
+// so, that no release observed what it changed, and that the Owner reviews
+// it before merging its pull request by hand: the change is not assumed
+// harmless.
 func TestTheBlockOfACandidateThatBuildsTheServingProgramSaysToMergeItByHand(t *testing.T) {
 	t.Parallel()
 	stop := handoff.RunStop{IssueID: core.IssueRef{Owner: "a", Repo: "b", Number: 1}, RunID: "run-1", Cause: statemachine.BlockReleaseRefused, ReleaseCode: core.CodeAlreadyExists}
 	if s := stop.Summary(); !strings.Contains(s, "same program") {
 		t.Errorf("summary %q does not say the candidate builds the program already serving", s)
 	}
-	if w := stop.WayOut(); !strings.Contains(w, "merge its pull request by hand") {
-		t.Errorf("way out %q does not say to merge the pull request by hand", w)
+	if s := stop.Summary(); !strings.Contains(s, "needs the Owner's review") || strings.Contains(s, "documentation only") {
+		t.Errorf("summary %q does not say what the candidate changed needs the Owner's review", s)
+	}
+	if w := stop.WayOut(); !strings.Contains(w, "merge it by hand only if you accept it") {
+		t.Errorf("way out %q does not leave the merge to the Owner's review", w)
 	}
 }

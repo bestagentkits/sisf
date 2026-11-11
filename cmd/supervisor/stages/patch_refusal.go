@@ -19,7 +19,8 @@ const (
 	RefusalDoesNotApply RefusalReason = "does_not_apply"
 	// RefusalProtectedPath: the patch touches a path ProtectedPath names.
 	RefusalProtectedPath RefusalReason = "protected_path"
-	// RefusalUnitSpan: the patch spans runtime units or touches no path.
+	// RefusalUnitSpan: the patch changes the inputs of two runtime units, or
+	// no path at all.
 	RefusalUnitSpan RefusalReason = "unit_span"
 	// RefusalAttemptMismatch: the patch document names another attempt
 	// than the state record of its run.

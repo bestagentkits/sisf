@@ -28,7 +28,7 @@ import (
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
-// greeted is app/main.go after the coding agent's change.
+// greeted is examples/hello-app/main.go after the coding agent's change.
 const greeted = "package main\n\nfunc main() { println(\"hello, world\") }\n"
 
 // An issue goes the whole way with real agent adapters on both sides: a
@@ -107,7 +107,7 @@ func agentFactory(t *testing.T, judgments []clitest.Script) *harness.Factory {
 	t.Helper()
 	coderBin := clitest.Install(t, "claude", clitest.Script{Steps: []clitest.Step{
 		{AwaitStdin: "*EOF*"},
-		{WriteFile: map[string]string{"app/main.go": greeted}},
+		{WriteFile: map[string]string{"examples/hello-app/main.go": greeted}},
 		{Emit: `{"type":"system","subtype":"init","model":"mid"}`},
 		{Emit: `{"type":"assistant","message":{"content":[{"type":"text","text":"Changed the greeting."}]}}`},
 		{Emit: `{"type":"result","subtype":"success","is_error":false,"result":"Changed the greeting.","total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":20}}`},
@@ -177,7 +177,7 @@ func qaRun(correctness int) []clitest.Step {
 		if category == qa.CategoryCorrectness {
 			points = correctness
 		}
-		scores[string(category)] = map[string]any{"points": points, "evidence": "app/main.go: the greeting changed"}
+		scores[string(category)] = map[string]any{"points": points, "evidence": "examples/hello-app/main.go: the greeting changed"}
 	}
 	raw, _ := json.Marshal(map[string]any{"version": 1, "scores": scores, "hard_gate_observations": []any{}, "summary": "judged"})
 	return codexStream(agentjudge.OpenMarker + "\n" + string(raw) + "\n" + agentjudge.CloseMarker)

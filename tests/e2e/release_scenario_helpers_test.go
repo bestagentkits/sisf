@@ -47,10 +47,11 @@ type releaseRecord struct {
 }
 
 // The sources the fake repository holds next to the foundation files: what
-// the scenarios' patches change. app/ is the application, ui/dashboard/ the
-// control plane's dashboard, internal/qa/ the trusted QA baseline.
+// the scenarios' patches change. examples/hello-app/ is the application,
+// ui/dashboard/ the control plane's dashboard, internal/qa/ the trusted QA
+// baseline.
 var seedFiles = map[string]string{
-	"app/main.go":                "package main\n\nfunc main() { println(\"hello\") }\n",
+	"examples/hello-app/main.go": "package main\n\nfunc main() { println(\"hello\") }\n",
 	"ui/dashboard/status.html":   "<h1>Factory status</h1>\n<p>All systems nominal.</p>\n",
 	"internal/qa/thresholds.txt": "pass_score=85\n",
 }
@@ -58,8 +59,8 @@ var seedFiles = map[string]string{
 // The patches the scripted agent leaves in the scenarios; setPatch fills
 // in their {run} marker.
 const (
-	greetingDiff = `--- a/app/main.go
-+++ b/app/main.go
+	greetingDiff = `--- a/examples/hello-app/main.go
++++ b/examples/hello-app/main.go
 @@ -1,3 +1,3 @@
  package main
 
@@ -236,7 +237,7 @@ func runFullLifecycle(t *testing.T, d releaseDeployment) {
 		t.Fatal("a rollback was reported on a release that succeeded")
 	}
 	// The supervisor merged the candidate's pull request before the close.
-	requireLanded(t, gh, number, "app/main.go")
+	requireLanded(t, gh, number, "examples/hello-app/main.go")
 	if !strings.HasPrefix(candidate, "sha256:") {
 		t.Fatalf("the candidate digest is %q", candidate)
 	}

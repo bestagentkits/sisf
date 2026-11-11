@@ -47,7 +47,7 @@ func TestProtectedPathNamesCIOwnershipPolicyAndMigrations(t *testing.T) {
 			t.Errorf("%s: got %q, %v; want %q", p, got, ok, want)
 		}
 	}
-	for _, p := range []string{"app/main.go", "docs/AGENTS.md", "ui/github/page.html", "src/codeowners_test.go", "migrationsfoo/x", "",
+	for _, p := range []string{"examples/hello-app/main.go", "docs/AGENTS.md", "ui/github/page.html", "src/codeowners_test.go", "migrationsfoo/x", "",
 		"pkg/state/state.go", "pkg/state/sqlstorefoo/x.go", "internal/pkg/state/sqlstore.go"} {
 		if kind, ok := ProtectedPath(p); ok {
 			t.Errorf("%s is not protected, got %q", p, kind)
@@ -73,7 +73,7 @@ func TestTheHardGatesUseTheSamePredicateAsTheBuilder(t *testing.T) {
 		"pkg/state/sqlstore/zone_ownership.go": qa.GateMigrations,
 	} {
 		for _, name := range []qa.GateName{qa.GatePermissions, qa.GateMigrations} {
-			passed, _, err := gates[name](context.Background(), qa.Candidate{ChangedPaths: []string{"app/main.go", p}})
+			passed, _, err := gates[name](context.Background(), qa.Candidate{ChangedPaths: []string{"examples/hello-app/main.go", p}})
 			if err != nil || passed == (name == failing) {
 				t.Errorf("%s under the %s gate: passed=%v, %v", p, name, passed, err)
 			}
@@ -127,10 +127,10 @@ func TestTheBuilderRefusesAProtectedPathBeforeReadingOrPushingAnything(t *testin
 		"a migration built in Go":       "--- a/pkg/state/sqlstore/migrations.go\n+++ b/pkg/state/sqlstore/migrations.go\n@@ -1 +1 @@\n-a\n+b\n",
 		"the zones' lifecycle steps":    "--- /dev/null\n+++ b/pkg/state/sqlstore/zz_steps.go\n@@ -0,0 +1 @@\n+package sqlstore\n",
 		"a rename away from a workflow": "--- a/.github/workflows/ci.yml\n+++ b/app/ci.yml\n@@ -1 +1 @@\n-a\n+b\n",
-		"one of several files": "--- a/app/main.go\n+++ b/app/main.go\n@@ -1 +1 @@\n-a\n+b\n" +
+		"one of several files": "--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-a\n+b\n" +
 			"--- /dev/null\n+++ b/.github/workflows/push.yml\n@@ -0,0 +1 @@\n+on: push\n",
 	} {
-		repo := &recordingRepo{files: map[string]string{"app/main.go": "a\n"}}
+		repo := &recordingRepo{files: map[string]string{"examples/hello-app/main.go": "a\n"}}
 		_, err := newTestBuilder(repo).Build(context.Background(), BuildRequest{RunID: "run-1", Attempt: 1, Base: baseSHA, Diff: diff})
 		refusal, ok := RefusalOf(err)
 		if !ok || refusal.Reason != RefusalProtectedPath || !core.HasCode(err, core.CodePermissionDenied) {
@@ -145,15 +145,15 @@ func TestTheBuilderRefusesAProtectedPathBeforeReadingOrPushingAnything(t *testin
 func TestOnlyFaultsOfThePatchAreRefusals(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	repo := &recordingRepo{files: map[string]string{"app/main.go": "a\n"}}
+	repo := &recordingRepo{files: map[string]string{"examples/hello-app/main.go": "a\n"}}
 	for name, c := range map[string]struct {
 		diff string
 		want RefusalReason
 	}{
 		"unreadable":      {"not a diff", RefusalUnreadable},
-		"does not apply":  {"--- a/app/main.go\n+++ b/app/main.go\n@@ -1 +1 @@\n-z\n+b\n", RefusalDoesNotApply},
+		"does not apply":  {"--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-z\n+b\n", RefusalDoesNotApply},
 		"missing in base": {"--- a/app/gone.go\n+++ b/app/gone.go\n@@ -1 +1 @@\n-z\n+b\n", RefusalDoesNotApply},
-		"spans two units": {"--- a/app/main.go\n+++ b/app/main.go\n@@ -1 +1 @@\n-a\n+b\n--- /dev/null\n+++ b/ui/x.html\n@@ -0,0 +1 @@\n+x\n", RefusalUnitSpan},
+		"spans two units": {"--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-a\n+b\n--- /dev/null\n+++ b/ui/x.html\n@@ -0,0 +1 @@\n+x\n", RefusalUnitSpan},
 	} {
 		_, err := newTestBuilder(repo).Build(ctx, BuildRequest{RunID: "run-1", Attempt: 1, Base: baseSHA, Diff: c.diff})
 		if r, ok := RefusalOf(err); !ok || r.Reason != c.want {
@@ -162,9 +162,9 @@ func TestOnlyFaultsOfThePatchAreRefusals(t *testing.T) {
 	}
 	// A GitHub 404 or 409 from the commit is an outage, not the patch's fault.
 	for _, code := range []core.ErrorCode{core.CodeNotFound, core.CodeConflict, core.CodeUnavailable} {
-		repo := &recordingRepo{files: map[string]string{"app/main.go": "a\n"}, commitErr: core.NewError(code, "github said no")}
+		repo := &recordingRepo{files: map[string]string{"examples/hello-app/main.go": "a\n"}, commitErr: core.NewError(code, "github said no")}
 		_, err := newTestBuilder(repo).Build(ctx, BuildRequest{RunID: "run-1", Attempt: 1, Base: baseSHA,
-			Diff: "--- a/app/main.go\n+++ b/app/main.go\n@@ -1 +1 @@\n-a\n+b\n"})
+			Diff: "--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-a\n+b\n"})
 		if _, refused := RefusalOf(err); refused || !core.HasCode(err, code) {
 			t.Errorf("a commit failing with %s: %v", code, err)
 		}

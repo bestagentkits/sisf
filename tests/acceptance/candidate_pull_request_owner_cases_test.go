@@ -65,7 +65,7 @@ func TestTwoVerifiedCandidatesAreBothMerged(t *testing.T) {
 		}
 	}
 	_, files, _ := f.GitData.Branch(f.Repo, "main")
-	if f.GitData.Merges() != 2 || files["app/main.go"] != greetedMain || !strings.Contains(files["ui/dashboard/status.html"], "Last checked by the factory") {
+	if f.GitData.Merges() != 2 || files["examples/hello-app/main.go"] != greetedMain || !strings.Contains(files["ui/dashboard/status.html"], "Last checked by the factory") {
 		t.Fatalf("main after %d merges: %v", f.GitData.Merges(), files)
 	}
 }

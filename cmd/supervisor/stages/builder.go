@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
@@ -201,56 +200,46 @@ func (b *CandidateBuilder) commitFault(ctx context.Context, base core.CommitSHA,
 	return classified
 }
 
-//go:generate go run ../../../internal/supervisor/trustedclosure/gentrustedpackages -root ../../.. -list control -out control_unit_package_dirs_generated.go -package stages
+// UnitRouter decides which runtime unit a change is a build of, from the
+// inputs of each unit (release.UnitOfPath): a path is the input of at most
+// one unit, and a path that is the input of none decides nothing.
+type UnitRouter struct{}
 
-// UnitRouter decides which runtime unit a change is a build of, by the
-// longest path prefix that covers a changed path.
-type UnitRouter struct {
-	// Prefixes maps a path prefix ("ui/") to a unit ("control").
-	Prefixes map[string]string
-	// Default is the unit of every other path; "app" when empty.
-	Default string
-}
+// DefaultUnitRouter returns the router of the units' inputs.
+func DefaultUnitRouter() UnitRouter { return UnitRouter{} }
 
-// DefaultUnitRouter routes code that only the control unit links (the
-// dashboard, the control plane and what they alone use) to the control
-// unit, and everything else to the application. A protected directory is
-// not routed: the pipeline refuses a change to it whatever its unit.
-func DefaultUnitRouter() UnitRouter {
-	protected := release.DefaultProtectedPaths()
-	prefixes := map[string]string{}
-	for _, dir := range controlUnitPackageDirs {
-		if !slices.ContainsFunc(protected, func(p string) bool { return strings.HasSuffix(p, "/") && strings.HasPrefix(dir, p) }) {
-			prefixes[dir] = "control"
-		}
-	}
-	return UnitRouter{Prefixes: prefixes, Default: "app"}
-}
+// judgedOnlyUnit is the unit a change that is the input of no unit is built
+// as. The build exists only so that QA judges the candidate and its pull
+// request is opened for the Owner: the release refuses such a candidate for
+// the Owner's approval, since none of its paths is an input of the unit it
+// would release.
+const judgedOnlyUnit = "app"
 
 // UnitOf returns the one unit a change set is a build of. A change set
-// that spans units is refused: one release replaces one unit, so the rest of
-// the change would never be deployed or observed.
-func (u UnitRouter) UnitOf(paths []string) (string, error) {
-	prefixes := slices.SortedFunc(maps.Keys(u.Prefixes), func(a, b string) int { return len(b) - len(a) })
-	unit := ""
+// that changes the inputs of two units is refused: one release replaces one
+// unit, so the rest of the change would never be deployed or observed. A
+// change set that changes the input of no unit is built as judgedOnlyUnit,
+// for the Owner to merge by hand once QA judged it.
+func (UnitRouter) UnitOf(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", core.NewError(core.CodeInvalidArgument, "the change touches no path")
+	}
+	unit, first := "", ""
 	for _, p := range paths {
-		of := u.Default
-		if of == "" {
-			of = "app"
-		}
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(p, prefix) {
-				of = u.Prefixes[prefix]
-				break
-			}
+		of, ok := release.UnitOfPath(p)
+		if !ok {
+			continue
 		}
 		if unit != "" && of != unit {
-			return "", core.NewError(core.CodeInvalidArgument, "the change spans the units "+unit+" and "+of+"; one candidate changes one unit")
+			return "", core.NewError(core.CodeInvalidArgument, "the change spans the units "+unit+" ("+first+") and "+of+" ("+p+
+				"); one candidate changes the inputs of one unit")
 		}
-		unit = of
+		if unit == "" {
+			unit, first = of, p
+		}
 	}
 	if unit == "" {
-		return "", core.NewError(core.CodeInvalidArgument, "the change touches no path")
+		return judgedOnlyUnit, nil
 	}
 	return unit, nil
 }

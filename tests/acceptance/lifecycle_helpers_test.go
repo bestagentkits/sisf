@@ -11,8 +11,8 @@ import (
 )
 
 // greetingDiff changes the application's greeting.
-const greetingDiff = `--- a/app/main.go
-+++ b/app/main.go
+const greetingDiff = `--- a/examples/hello-app/main.go
++++ b/examples/hello-app/main.go
 @@ -1,3 +1,3 @@
  package main
 

@@ -97,11 +97,14 @@ func checkSelfPublishable(units []string, unit string) error {
 	return err
 }
 
-// checkGovernance refuses a candidate that is the supervisor or changes the
-// trusted control surface, and one whose changes are not listed: a change
-// set nobody listed cannot be shown to leave that surface alone. Paths are
-// compared without regard to letter case, so a case-insensitive file system
-// cannot be used to slip past an entry.
+// checkGovernance refuses a candidate that is the supervisor, one whose
+// changes are not listed (a change set nobody listed cannot be shown to
+// leave the trusted surface alone), one that changes the trusted control
+// surface, and one that changes any path that is not an input of the unit
+// it releases (checkUnitInputs): the rule is default-deny, and the protected
+// list is a second refusal on top of it. Paths are compared without regard
+// to letter case, so a case-insensitive file system cannot be used to slip
+// past an entry.
 func checkGovernance(protected []string, unit string, changed []string) error {
 	if strings.EqualFold(strings.TrimSpace(unit), supervisorUnit) {
 		return governance("the candidate is a build of the supervisor itself")
@@ -122,7 +125,7 @@ func checkGovernance(protected []string, unit string, changed []string) error {
 			}
 		}
 	}
-	return nil
+	return checkUnitInputs(unit, changed)
 }
 
 // repoPath cleans a repository-relative path. A path that is absolute or

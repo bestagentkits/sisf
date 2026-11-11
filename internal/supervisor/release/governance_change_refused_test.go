@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -87,12 +88,26 @@ func TestABuildOfTheSupervisorIsNeverReleasedByThePipeline(t *testing.T) {
 	}
 }
 
-func TestAnOrdinaryCandidateIsNotAGovernanceChange(t *testing.T) {
+// A candidate that changes only inputs of the application, whatever the
+// letter case of their paths, is one the factory publishes by itself.
+func TestACandidateChangingOnlyTheApplicationsInputsIsNotAGovernanceChange(t *testing.T) {
 	t.Parallel()
-	changed := []string{"examples/hello-app/main.go", "internal/control/http_dashboard.go", "tests/acceptance/x_test.go", "internal/qatools/x.go",
-		"pkg/statefile/x.go", "examples/hello-app/synthetic_notes.md", "build/hello-app.Dockerfile", "internal/redaction_notes.md"}
+	changed := []string{"examples/hello-app/main.go", "examples/hello-app/app_test.go", "build/hello-app.Dockerfile",
+		"Examples/Hello-App/faults.go", "examples/hello-app/new_handler.go"}
 	if err := checkGovernance(DefaultProtectedPaths(), testUnit, changed); err != nil {
-		t.Fatalf("an ordinary candidate was refused: %v", err)
+		t.Fatalf("a candidate of the application's inputs was refused: %v", err)
+	}
+}
+
+// The protected list is a second refusal on top of the inputs: a path that
+// is an input of the unit and protected is refused all the same.
+func TestAnInputOfTheUnitThatIsProtectedIsRefused(t *testing.T) {
+	t.Parallel()
+	protected := append(DefaultProtectedPaths(), "examples/hello-app/main.go")
+	err := checkGovernance(protected, testUnit, []string{"examples/hello-app/MAIN.go"})
+	var refused *core.Error
+	if !errors.As(err, &refused) || refused.Code != core.CodeApprovalRequired || refused.Details["protected"] == "" {
+		t.Fatalf("a protected input = %v, want APPROVAL_REQUIRED naming the protected entry", err)
 	}
 }
 

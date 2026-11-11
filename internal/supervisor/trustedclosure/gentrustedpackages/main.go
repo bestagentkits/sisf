@@ -1,8 +1,8 @@
 // Command gentrustedpackages writes a generated list of Go package
 // directories: with -list trusted, the directories the trusted binaries
-// link (go generate ./internal/supervisor/release/); with -list control,
-// the directories only the control unit links (go generate
-// ./cmd/supervisor/stages/). See package trustedclosure.
+// link; with -list app, the directories of the packages the application
+// links (both: go generate ./internal/supervisor/release/). See package
+// trustedclosure.
 package main
 
 import (
@@ -17,7 +17,7 @@ func main() {
 	root := flag.String("root", ".", "the module's root directory")
 	out := flag.String("out", "", "the Go file to write")
 	pkg := flag.String("package", "", "the package of the Go file")
-	list := flag.String("list", "trusted", "the list to write: trusted or control")
+	list := flag.String("list", "trusted", "the list to write: trusted or app")
 	flag.Parse()
 	if err := run(*root, *out, *pkg, *list); err != nil {
 		fmt.Fprintln(os.Stderr, "gentrustedpackages:", err)
@@ -38,11 +38,11 @@ func run(root, out, pkg, list string) error {
 	case "trusted":
 		packages, err = trustedclosure.Packages(root)
 		of = trustedclosure.TrustedList
-	case "control":
-		packages, err = trustedclosure.ControlOnlyPackages(root)
-		of = trustedclosure.ControlList
+	case "app":
+		packages, err = trustedclosure.ApplicationPackages(root)
+		of = trustedclosure.AppList
 	default:
-		return fmt.Errorf("-list must be trusted or control, not %q", list)
+		return fmt.Errorf("-list must be trusted or app, not %q", list)
 	}
 	if err != nil {
 		return err

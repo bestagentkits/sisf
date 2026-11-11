@@ -180,7 +180,7 @@ func TestARefusedReleaseBlocksItsIssueUntilTheOwnerRetriesIt(t *testing.T) {
 	}
 	why := f.Explain(number)
 	if !why.Stopped || why.Cause != runactions.CauseReleaseRefused || !strings.Contains(why.Reason, retry) ||
-		!strings.Contains(why.Reason, "governance update") || !hasEvidence(why, "run_stop") {
+		!strings.Contains(why.Reason, "published only by a person") || !hasEvidence(why, "run_stop") {
 		t.Errorf("runs.explain answers %+v", why)
 	}
 	if seen := f.Inspect(number); seen.ReleaseHold != nil {

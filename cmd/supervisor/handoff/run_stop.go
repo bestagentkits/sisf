@@ -100,11 +100,11 @@ func (s RunStop) refusal() string {
 	case core.CodeExpired:
 		return "its QA receipt, or the key that signed the receipt or the build, has expired, so the candidate can no longer be verified"
 	case core.CodeApprovalRequired:
-		return "it changes the factory's trusted control surface, or it is a unit the policy does not let the factory publish by itself, " +
-			"which only a person may publish"
+		return "it changes a path the unit it releases does not consume, or the factory's trusted control surface, " +
+			"or it is a unit the policy does not let the factory publish by itself, which only a person may publish"
 	case core.CodeAlreadyExists:
-		return "the candidate builds the same program as the one serving, byte for byte, so there is nothing to deploy or judge; " +
-			"a change of tests or documentation only is taken by merging its pull request by hand"
+		return "the candidate builds the same program as the one serving, byte for byte, so there is nothing to deploy or judge, " +
+			"and no release observed what it changed; what it changed needs the Owner's review before its pull request is merged by hand"
 	case core.CodeSignatureInvalid, core.CodeTampered, core.CodeGuardFailed, core.CodePermissionDenied, core.CodeNotFound, core.CodeReplayed:
 		return "its QA receipt or its build did not verify as the candidate QA passed, signed by a key this factory trusts"
 	}
@@ -120,12 +120,13 @@ func (s RunStop) WayOut() string {
 			"the issue returns to Ready and a new run codes it under that policy."
 	case statemachine.BlockReleaseRefused:
 		if s.ReleaseCode == core.CodeApprovalRequired {
-			return "A change of the trusted control surface, or of a unit outside release.units, is published only in a governance update a person makes. " +
+			return "A change of a path the released unit does not consume, of the trusted control surface, or of a unit outside release.units, " +
+				"is published only by a person: review the candidate's pull request and merge it by hand, or leave it unmerged. " +
 				"To have the factory code the issue again within what it may publish, " + retry +
 				": the issue returns to Ready and a new run codes, judges and releases it, which spends agent budget. Otherwise close the issue."
 		}
 		if s.ReleaseCode == core.CodeAlreadyExists {
-			return "Review the candidate's pull request and merge its pull request by hand to take the change, then close the issue. " +
+			return "Review what the candidate changed in its pull request; merge it by hand only if you accept it, then close the issue. " +
 				"A retry would build the same program again; " + retry + " only if the issue needs a change the program shows."
 		}
 		return "A" + retry[1:] + ": the issue returns to Ready and a new run codes, judges and releases it afresh, which spends agent budget."

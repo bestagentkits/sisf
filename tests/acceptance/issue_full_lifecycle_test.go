@@ -45,8 +45,8 @@ func TestAnIssueIsDevelopedEvaluatedReleasedVerifiedAndClosed(t *testing.T) {
 	record := f.Record(number)
 	branch := stages.Branch(f.Manifest.FactoryID, record.RunID, 1)
 	_, files, ok := f.GitData.Branch(f.Repo, branch)
-	if !ok || files["app/main.go"] != "package main\n\nfunc main() { println(\"hello, world\") }\n" {
-		t.Fatalf("the candidate branch %s holds %v", branch, files["app/main.go"])
+	if !ok || files["examples/hello-app/main.go"] != "package main\n\nfunc main() { println(\"hello, world\") }\n" {
+		t.Fatalf("the candidate branch %s holds %v", branch, files["examples/hello-app/main.go"])
 	}
 	// The release went 5, 25 and 100 percent and the app is the new build.
 	staged := f.Deploy.Staged()

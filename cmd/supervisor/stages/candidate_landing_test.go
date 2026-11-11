@@ -49,7 +49,7 @@ func newLandingWorld(t *testing.T, store state.Store, changed ...string) *landin
 	if err != nil {
 		t.Fatal(err)
 	}
-	base, err := fake.Commit(landingRepo, map[string]string{"app/main.go": "old\n"})
+	base, err := fake.Commit(landingRepo, map[string]string{"examples/hello-app/main.go": "old\n"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,12 +65,12 @@ func newLandingWorld(t *testing.T, store state.Store, changed ...string) *landin
 	run := core.RunID("run-1")
 	branch := Branch("f", run, 1)
 	commit, err := client.CommitToBranch(ctx, repo, github.BranchCommit{Branch: branch, Base: core.CommitSHA(base), Message: "candidate",
-		Author: "service:builder", Files: map[string][]byte{"app/main.go": []byte("new\n")}})
+		Author: "service:builder", Files: map[string][]byte{"examples/hello-app/main.go": []byte("new\n")}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(changed) == 0 {
-		changed = []string{"app/main.go"}
+		changed = []string{"examples/hello-app/main.go"}
 	}
 	candidate := qa.Candidate{IssueID: issue, RunID: run, CommitSHA: commit, Digest: landingDigest, Attempt: 1, ChangedPaths: changed}
 	receipt := core.QAReceipt{Score: 92, PolicySHA: pinnedPolicy}
@@ -81,7 +81,7 @@ func newLandingWorld(t *testing.T, store state.Store, changed ...string) *landin
 		if err := handoff.PutDoc(ctx, tx, handoff.BuildNamespace, handoff.CandidateKey(run, 1), handoff.CandidateDoc{Candidate: candidate, Branch: branch}); err != nil {
 			return err
 		}
-		return handoff.PutDoc(ctx, tx, handoff.BuildNamespace, handoff.BuildKey(commit), handoff.BuildRecord{Commit: commit, Digest: landingDigest})
+		return handoff.PutDoc(ctx, tx, handoff.BuildNamespace, handoff.BuildKey(commit), handoff.BuildRecord{Commit: commit, Digest: landingDigest, Unit: "app"})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func newLandingWorld(t *testing.T, store state.Store, changed ...string) *landin
 
 func (w *landingWorld) mainHasTheChange() bool {
 	_, files, _ := w.data.Branch(landingRepo, "main")
-	return files["app/main.go"] == "new\n"
+	return files["examples/hello-app/main.go"] == "new\n"
 }
 
 // The supervisor merges a verified candidate only while everything it was
@@ -114,8 +114,12 @@ func TestAVerifiedCandidateIsMergedOnlyWhileItIsWhatWasJudgedAndReleased(t *test
 			reason  string // "" means merged
 		}{
 			"as judged and released": {},
-			"a foundation file":      {changed: []string{"app/main.go", "AGENTS.md"}, reason: "AGENTS.md, which only the Owner merges"},
+			"a foundation file":      {changed: []string{"examples/hello-app/main.go", "AGENTS.md"}, reason: "AGENTS.md, which only the Owner merges"},
 			"an architecture record": {changed: []string{"docs/adr/0099-x.md"}, reason: "docs/adr/0099-x.md"},
+			"a path the released unit does not consume": {changed: []string{"examples/hello-app/main.go", "Makefile"},
+				reason: "Makefile, which the unit \"app\" it releases does not consume"},
+			"a dashboard template in an application release": {changed: []string{"examples/hello-app/main.go", "ui/templates/a.html"},
+				reason: "ui/templates/a.html"},
 			"the policy changed": {bend: func(_ *testing.T, w *landingWorld) {
 				w.inForce = "3333333333333333333333333333333333333333"
 			}, reason: "policy in force changed"},
@@ -130,7 +134,7 @@ func TestAVerifiedCandidateIsMergedOnlyWhileItIsWhatWasJudgedAndReleased(t *test
 					t.Fatal(err)
 				}
 				if _, err := w.client.CommitToBranch(context.Background(), w.prs.Repo, github.BranchCommit{Branch: w.branch,
-					Base: w.req.Candidate.CommitSHA, Message: "more", Author: "someone", Files: map[string][]byte{"app/x.go": []byte("x\n")}}); err != nil {
+					Base: w.req.Candidate.CommitSHA, Message: "more", Author: "someone", Files: map[string][]byte{"examples/hello-app/x.go": []byte("x\n")}}); err != nil {
 					t.Fatal(err)
 				}
 			}, reason: "branch moved"},

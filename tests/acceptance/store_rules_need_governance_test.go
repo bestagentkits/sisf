@@ -114,7 +114,7 @@ func TestAnOrdinaryApplicationChangeIsStillStagedAndMerged(t *testing.T) {
 	if len(staged) == 0 || staged[len(staged)-1].Unit != "app" {
 		t.Fatalf("the application change was not staged: %+v", staged)
 	}
-	if _, files, ok := f.GitData.Branch(f.Repo, "main"); !ok || !strings.Contains(files["app/main.go"], "hello, world") || f.GitData.Merges() != 1 {
+	if _, files, ok := f.GitData.Branch(f.Repo, "main"); !ok || !strings.Contains(files["examples/hello-app/main.go"], "hello, world") || f.GitData.Merges() != 1 {
 		t.Fatalf("main does not carry the change after %d merges", f.GitData.Merges())
 	}
 }
