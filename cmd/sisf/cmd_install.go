@@ -100,11 +100,13 @@ returns. Ports used: 7460-7469 on 127.0.0.1, nothing else.`,
 	})
 	register(Command{
 		Path: []string{"stop"}, Args: "[--dir path]", Summary: "Stop the factory and keep everything it made",
-		Run: lifecycle("stop", func(ctx context.Context, in *install.Installer, _ bool) error { return in.Stop(ctx) }),
+		Flags: bindLifecycleFlags("stop", new(string), new(bool)),
+		Run:   lifecycle("stop", func(ctx context.Context, in *install.Installer, _ bool) error { return in.Stop(ctx) }),
 	})
 	register(Command{
 		Path: []string{"restart"}, Args: "[--dir path]", Summary: "Restart every unit of the running factory",
-		Run: lifecycle("restart", func(ctx context.Context, in *install.Installer, _ bool) error { return in.Restart(ctx) }),
+		Flags: bindLifecycleFlags("restart", new(string), new(bool)),
+		Run:   lifecycle("restart", func(ctx context.Context, in *install.Installer, _ bool) error { return in.Restart(ctx) }),
 	})
 	register(Command{
 		Path: []string{"down"}, Args: "[--dir path] [-v]", Summary: "Stop the factory and remove what a run created",
@@ -113,7 +115,8 @@ Stops the factory. In Docker mode it also removes the containers and networks
 of this install's Compose project. With -v the data is removed too (the
 state volume in Docker mode, the data directory in Standalone mode).
 Secrets and factory.yaml are never removed by this command.`,
-		Run: lifecycle("down", func(ctx context.Context, in *install.Installer, volumes bool) error { return in.Down(ctx, volumes) }),
+		Flags: bindLifecycleFlags("down", new(string), new(bool)),
+		Run:   lifecycle("down", func(ctx context.Context, in *install.Installer, volumes bool) error { return in.Down(ctx, volumes) }),
 	})
 }
 
@@ -235,11 +238,7 @@ func lifecycle(name string, act func(context.Context, *install.Installer, bool) 
 		var dir string
 		var volumes bool
 		fs := newFlagSet(name)
-		fs.StringVar(&dir, "dir", "", "install directory (default $"+homeEnv+" or ~/.sisf/factory)")
-		if name == "down" {
-			fs.BoolVar(&volumes, "v", false, "also remove the data")
-			fs.BoolVar(&volumes, "volumes", false, "also remove the data")
-		}
+		bindLifecycleFlags(name, &dir, &volumes)(fs)
 		if err := parseFlags(fs, args); err != nil {
 			return err
 		}
@@ -267,6 +266,18 @@ func lifecycle(name string, act func(context.Context, *install.Installer, bool) 
 			return err
 		}
 		return env.Printf("%s\n", lifecycleDone(name, abs, volumes, wasRunning || isDocker(in)))
+	}
+}
+
+// bindLifecycleFlags registers the flags of the lifecycle command name:
+// the install directory, and for down whether the data goes too.
+func bindLifecycleFlags(name string, dir *string, volumes *bool) func(*flag.FlagSet) {
+	return func(fs *flag.FlagSet) {
+		fs.StringVar(dir, "dir", "", "install directory (default $"+homeEnv+" or ~/.sisf/factory)")
+		if name == "down" {
+			fs.BoolVar(volumes, "v", false, "also remove the data")
+			fs.BoolVar(volumes, "volumes", false, "also remove the data")
+		}
 	}
 }
 

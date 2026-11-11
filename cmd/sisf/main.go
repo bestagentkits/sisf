@@ -326,6 +326,9 @@ func describe(w io.Writer, c Command) {
 	fs.VisitAll(func(f *flag.Flag) {
 		kind, usage := flag.UnquoteUsage(f)
 		left := "--" + f.Name
+		if len(f.Name) == 1 {
+			left = "-" + f.Name // as the usage lines write a one-letter flag, such as down's -v
+		}
 		if kind != "" {
 			left += " " + kind
 		}

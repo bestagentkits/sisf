@@ -189,17 +189,27 @@ asked for (default: every scope) and stores it owner-only (0600) as
 
 The control URL comes from --url, then $` + controlURLEnv + `, then the default ` + defaultControlURL + `.
 Approving needs a recent identity confirmation; the page offers it.`,
-		Run: runLogin,
+		Flags: bindLoginFlags(&connFlags{}, new(string), &stringList{}),
+		Run:   runLogin,
 	})
+}
+
+// bindLoginFlags registers login's flags: the factory to sign in to, the
+// label of the token and the scopes it may carry.
+func bindLoginFlags(conn *connFlags, name *string, scopes *stringList) func(*flag.FlagSet) {
+	return func(fs *flag.FlagSet) {
+		conn.register(fs)
+		fs.StringVar(name, "name", "sisf-cli", "label shown on the approval page")
+		fs.Var(scopes, "scope", "scope the token may carry (repeatable; default: all)")
+	}
 }
 
 func runLogin(ctx context.Context, env *Env, args []string) error {
 	fs := newFlagSet("login")
 	var conn connFlags
-	conn.register(fs)
-	name := fs.String("name", "sisf-cli", "label shown on the approval page")
+	name := new(string)
 	var scopes stringList
-	fs.Var(&scopes, "scope", "scope the token may carry (repeatable; default: all)")
+	bindLoginFlags(&conn, name, &scopes)(fs)
 	if _, err := parseInterspersed(fs, args, 0, ""); err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"io/fs"
 	"os"
 	"strings"
@@ -53,7 +54,8 @@ not answer; what was done is printed as JSON either way.
 
 --status asks the supervisor whether a stop is in force.
 --lift ends the stop through the store; the supervisor socket cannot lift one.`,
-		Run: runEmergencyStop,
+		Flags: bindEmergencyStopFlags(&emergencyStopFlags{}),
+		Run:   runEmergencyStop,
 	})
 }
 
@@ -63,18 +65,25 @@ type emergencyStopFlags struct {
 	status, lift                                 bool
 }
 
+// bindEmergencyStopFlags registers the command's flags into f.
+func bindEmergencyStopFlags(f *emergencyStopFlags) func(*flag.FlagSet) {
+	return func(fs *flag.FlagSet) {
+		fs.StringVar(&f.dir, "dir", "", "install directory to read the factory id, the store and the admin address from (default $"+homeEnv+" or ~/.sisf/factory)")
+		fs.StringVar(&f.factoryID, "factory-id", "", "factory id of the deployment to stop, when it is not installed here")
+		fs.StringVar(&f.actor, "actor", "", "who asks, for the audit log (default user:$USER)")
+		fs.StringVar(&f.reason, "reason", "", "why the factory is stopped or the stop is lifted")
+		fs.StringVar(&f.admin, "admin", "", "supervisor admin socket: unix:/absolute/path or a loopback host:port (default "+supervisor.DefaultAdminAddr+"); \"none\" skips it")
+		fs.StringVar(&f.dsnEnv, "state-dsn-env", killswitch.EnvStateDSN, "environment variable holding the state store connection")
+		fs.BoolVar(&f.status, "status", false, "only report whether a stop is in force")
+		fs.BoolVar(&f.lift, "lift", false, "lift the stop in force")
+	}
+}
+
 func runEmergencyStop(ctx context.Context, env *Env, args []string) error {
 	var f emergencyStopFlags
-	fs := newFlagSet("emergency-stop")
-	fs.StringVar(&f.dir, "dir", "", "install directory to read the factory id, the store and the admin address from (default $"+homeEnv+" or ~/.sisf/factory)")
-	fs.StringVar(&f.factoryID, "factory-id", "", "factory id of the deployment to stop, when it is not installed here")
-	fs.StringVar(&f.actor, "actor", "", "who asks, for the audit log (default user:$USER)")
-	fs.StringVar(&f.reason, "reason", "", "why the factory is stopped or the stop is lifted")
-	fs.StringVar(&f.admin, "admin", "", "supervisor admin socket: unix:/absolute/path or a loopback host:port (default "+supervisor.DefaultAdminAddr+"); \"none\" skips it")
-	fs.StringVar(&f.dsnEnv, "state-dsn-env", killswitch.EnvStateDSN, "environment variable holding the state store connection")
-	fs.BoolVar(&f.status, "status", false, "only report whether a stop is in force")
-	fs.BoolVar(&f.lift, "lift", false, "lift the stop in force")
-	if err := parseFlags(fs, args); err != nil {
+	flags := newFlagSet("emergency-stop")
+	bindEmergencyStopFlags(&f)(flags)
+	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
 	if f.status && f.lift {

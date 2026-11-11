@@ -223,3 +223,30 @@ func TestAResultThatCannotBeWrittenFailsTheCommand(t *testing.T) {
 		t.Fatalf("an unwritable error stream: status %d, want %d", status, exitUsage)
 	}
 }
+
+// The help of these commands ends with their flag reference, so a
+// flag and its special values are found without reading the source.
+func TestTheHelpOfTheOperatorCommandsListsTheirFlags(t *testing.T) {
+	t.Parallel()
+	for command, flags := range map[string][]string{
+		"emergency-stop": {"--dir", "--factory-id", "--actor", "--reason", "--admin", "--state-dsn-env", "--status", "--lift", `"none" skips it`},
+		"doctor":         {"--dir", "--json"},
+		"stop":           {"--dir"},
+		"restart":        {"--dir"},
+		"down":           {"--dir", "\n  -v ", "--volumes"},
+		"login":          {"--url", "--dir", "--allow-insecure-http", "--name", "--scope"},
+		"version":        {"--json"},
+	} {
+		status, stdout, _ := runWithOutput(t, "help", command)
+		_, table, found := strings.Cut(stdout, "\nFlags:\n")
+		if status != exitOK || !found {
+			t.Errorf("sisf help %s = %d, prints no Flags section:\n%s", command, status, stdout)
+			continue
+		}
+		for _, flag := range flags {
+			if !strings.Contains(table, flag) {
+				t.Errorf("the flags of sisf help %s lack %q:\n%s", command, flag, table)
+			}
+		}
+	}
+}

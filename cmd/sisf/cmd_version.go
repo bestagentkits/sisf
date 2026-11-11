@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"runtime"
 	"runtime/debug"
 )
@@ -90,10 +91,11 @@ Prints the version of this sisf, the commit it was built from, the build
 date, the Go version and the platform; name them in a bug report.
 sisf --version prints the same line. --json prints one object with the
 fields version, commit, build_date, modified, go_version and platform.`,
+		Flags: bindVersionFlags(new(bool)),
 		Run: func(_ context.Context, env *Env, args []string) error {
 			var asJSON bool
 			fs := newFlagSet("version")
-			fs.BoolVar(&asJSON, "json", false, "print one JSON object")
+			bindVersionFlags(&asJSON)(fs)
 			if err := parseFlags(fs, args); err != nil {
 				return err
 			}
@@ -103,4 +105,11 @@ fields version, commit, build_date, modified, go_version and platform.`,
 			return env.Printf("%s\n", versionLine())
 		},
 	})
+}
+
+// bindVersionFlags registers the version command's flag into asJSON.
+func bindVersionFlags(asJSON *bool) func(*flag.FlagSet) {
+	return func(fs *flag.FlagSet) {
+		fs.BoolVar(asJSON, "json", false, "print one JSON object")
+	}
 }

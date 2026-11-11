@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"strconv"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -44,7 +45,8 @@ Each line is ok, warn, fail or skip. A warning or a skipped check does not
 change the exit status; any failure exits 1. --json prints the same report
 as one object: dir, sisf_version, ok, counts and checks (name, verdict,
 detail).`,
-		Run: runDoctor,
+		Flags: bindDoctorFlags(new(string), new(bool)),
+		Run:   runDoctor,
 	})
 }
 
@@ -84,6 +86,14 @@ type doctorCounts struct {
 	Skipped int `json:"skipped"`
 }
 
+// bindDoctorFlags registers the doctor's flags into dir and asJSON.
+func bindDoctorFlags(dir *string, asJSON *bool) func(*flag.FlagSet) {
+	return func(fs *flag.FlagSet) {
+		fs.StringVar(dir, "dir", "", "install directory (default $"+homeEnv+" or ~/.sisf/factory)")
+		fs.BoolVar(asJSON, "json", false, "print the report as one JSON object")
+	}
+}
+
 type doctorCheck struct {
 	Name    string `json:"name"`
 	Verdict string `json:"verdict"`
@@ -94,8 +104,7 @@ func runDoctor(ctx context.Context, env *Env, args []string) error {
 	var dir string
 	var asJSON bool
 	fs := newFlagSet("doctor")
-	fs.StringVar(&dir, "dir", "", "install directory (default $"+homeEnv+" or ~/.sisf/factory)")
-	fs.BoolVar(&asJSON, "json", false, "print the report as one JSON object")
+	bindDoctorFlags(&dir, &asJSON)(fs)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
