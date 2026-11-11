@@ -63,6 +63,18 @@ func (s *phasedSandbox) Exec(_ context.Context, _ execution.SandboxID, cmd execu
 		}
 		result.Stdout = []byte(report(cmd.Env))
 	}
+	if cmd.Stdout != nil {
+		// Output a command streams is not captured; it arrives in pieces
+		// that end anywhere.
+		for out := result.Stdout; len(out) > 0; {
+			n := min(len(out), 7)
+			if _, err := cmd.Stdout.Write(out[:n]); err != nil {
+				return execution.ExecResult{}, err
+			}
+			out = out[n:]
+		}
+		result.Stdout = nil
+	}
 	return result, nil
 }
 

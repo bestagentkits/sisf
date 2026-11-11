@@ -1,18 +1,17 @@
 package stages
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"maps"
-	"slices"
+	"runtime"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/supervisor/programstore"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/execution"
 )
@@ -60,6 +59,17 @@ func (s SimulatedImages) BuildImage(ctx context.Context, req ImageRequest) (Imag
 //     on lines "sisf-report <nonce> <key>: <value>", with the keys
 //     image-digest, image, sbom and provenance, each exactly once.
 //
+// Where the deploy backend runs programs (SandboxImages.Programs), the
+// report phase is also told the supervisor's own operating system and
+// architecture, in SISF_REPORT_TARGET_OS and SISF_REPORT_TARGET_ARCH as Go
+// names them, and exports the unit's one program built for them on lines
+// "sisf-report <nonce> program: <base64>": any number of lines, in order,
+// each decoding by itself. The supervisor hashes the bytes it receives, and
+// image-digest must be the sha256 of exactly those bytes: the digest the
+// build record, the QA receipt and the signed artifact carry is then the
+// digest of the program that runs. Nothing else leaves the sandbox: no
+// mount, no archive, no service.
+//
 // Candidate code runs in the first two phases and can print anything on
 // their output, so nothing they print is read. The report phase is told the
 // candidate under names of its own (SISF_REPORT_COMMIT, SISF_REPORT_UNIT,
@@ -74,12 +84,6 @@ const (
 	phaseReport = "report"
 )
 
-// reportPrefix starts every line the report phase reports a result on.
-const reportPrefix = "sisf-report"
-
-// reportKeys are the keys of a report, each reported exactly once.
-var reportKeys = []string{"image-digest", "image", "sbom", "provenance"}
-
 // SandboxImages builds images by running a build command in a sandbox of
 // an isolating execution backend, phase by phase (see phaseTest). Every
 // phase gets the time the build has left of Timeout.
@@ -89,6 +93,10 @@ type SandboxImages struct {
 	Argv  []string
 	// Timeout bounds the whole build, every phase together.
 	Timeout time.Duration
+	// Programs keeps the program each build exports, for a deploy backend
+	// that runs programs. Nil where the backend runs images or nothing: a
+	// build then exports nothing and is told no target.
+	Programs *programstore.Store
 }
 
 // Name names the builder in build records.
@@ -123,11 +131,11 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 	deadline := time.Now().Add(s.Timeout)
 	candidate := map[string]string{"SISF_COMMIT": string(req.Commit), "SISF_UNIT": req.Unit, "SISF_BRANCH": req.Branch}
 
-	tested, err := s.phase(ctx, sandbox.ID, phaseTest, candidate, deadline)
+	tested, err := s.phase(ctx, sandbox.ID, phaseTest, candidate, deadline, nil)
 	if err != nil {
 		return ImageResult{}, err
 	}
-	built, err := s.phase(ctx, sandbox.ID, phaseBuild, candidate, deadline)
+	built, err := s.phase(ctx, sandbox.ID, phaseBuild, candidate, deadline, nil)
 	if err != nil {
 		return ImageResult{}, err
 	}
@@ -142,17 +150,35 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 	if err != nil {
 		return ImageResult{}, err
 	}
-	reported, err := s.phase(ctx, sandbox.ID, phaseReport, map[string]string{
+	env := map[string]string{
 		"SISF_REPORT_COMMIT": string(req.Commit), "SISF_REPORT_UNIT": req.Unit, "SISF_REPORT_BRANCH": req.Branch,
 		"SISF_REPORT_NONCE": nonce,
-	}, deadline)
+	}
+	report := newReportReader(nonce, nil)
+	var stream io.Writer
+	if s.Programs != nil {
+		// The program is too large to capture: the report is read as it
+		// is streamed, the program going straight to the store.
+		intake, err := s.Programs.Receive()
+		if err != nil {
+			return ImageResult{}, err
+		}
+		defer intake.Abort()
+		report = newReportReader(nonce, intake)
+		stream = report
+		env["SISF_REPORT_TARGET_OS"], env["SISF_REPORT_TARGET_ARCH"] = runtime.GOOS, runtime.GOARCH
+	}
+	reported, err := s.phase(ctx, sandbox.ID, phaseReport, env, deadline, stream)
 	if err != nil {
 		return ImageResult{}, err
 	}
 	if reported.ExitCode != 0 {
 		return ImageResult{}, reportUnusable("the report phase exited with status " + strconv.Itoa(reported.ExitCode))
 	}
-	out, err := readReport(reported.Stdout, nonce)
+	if stream == nil {
+		_, _ = report.Write(reported.Stdout) // the reader's Write never fails
+	}
+	out, err := report.result()
 	if err != nil {
 		return ImageResult{}, err
 	}
@@ -164,15 +190,16 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 // phase runs the build command for one phase within what is left of the
 // build's time. A phase the backend could not run or observe is its error;
 // one that ran out of time, or found none left, is refused as the
-// candidate's, since its tests and build are what spend the time.
-func (s SandboxImages) phase(ctx context.Context, id execution.SandboxID, phase string, env map[string]string, deadline time.Time) (execution.ExecResult, error) {
+// candidate's, since its tests and build are what spend the time. Output is
+// captured into the result unless stdout is given to stream it to.
+func (s SandboxImages) phase(ctx context.Context, id execution.SandboxID, phase string, env map[string]string, deadline time.Time, stdout io.Writer) (execution.ExecResult, error) {
 	left := time.Until(deadline)
 	if left <= 0 {
 		return execution.ExecResult{}, buildOverran(s.Timeout)
 	}
 	env = maps.Clone(env)
 	env["SISF_PHASE"] = phase
-	result, err := s.Exec.Exec(ctx, id, execution.Command{Argv: s.Argv, Timeout: left, Env: env})
+	result, err := s.Exec.Exec(ctx, id, execution.Command{Argv: s.Argv, Timeout: left, Env: env, Stdout: stdout})
 	switch {
 	case ctx.Err() != nil:
 		return execution.ExecResult{}, core.NewError(core.CodeUnavailable, "the sandboxed build was interrupted").WithCause(ctx.Err())
@@ -199,52 +226,6 @@ func reportNonce() (string, error) {
 		return "", core.NewError(core.CodeInternal, "a report nonce cannot be made").WithCause(err)
 	}
 	return hex.EncodeToString(raw[:]), nil
-}
-
-// readReport reads the lines of the report phase that carry the nonce.
-// Every key must be reported exactly once, the digest must be valid, the
-// image pinned to it and the SBOM and provenance named.
-func readReport(stdout []byte, nonce string) (ImageResult, error) {
-	values := map[string]string{}
-	scanner := bufio.NewScanner(bytes.NewReader(stdout))
-	for scanner.Scan() {
-		rest, ok := strings.CutPrefix(strings.TrimSpace(scanner.Text()), reportPrefix+" "+nonce+" ")
-		if !ok {
-			continue
-		}
-		key, value, ok := strings.Cut(rest, ":")
-		if !ok || !slices.Contains(reportKeys, key) {
-			return ImageResult{}, reportUnusable("the report names an unknown key")
-		}
-		if _, twice := values[key]; twice {
-			return ImageResult{}, reportUnusable("the report names " + key + " twice")
-		}
-		values[key] = strings.TrimSpace(value)
-	}
-	if err := scanner.Err(); err != nil {
-		return ImageResult{}, reportUnusable("the report cannot be read")
-	}
-	for _, key := range reportKeys {
-		if values[key] == "" {
-			return ImageResult{}, reportUnusable("the report does not name " + key)
-		}
-	}
-	digest := core.Digest(values["image-digest"])
-	switch {
-	case digest.Validate() != nil:
-		return ImageResult{}, reportUnusable("the reported image digest is not a digest")
-	case !strings.HasSuffix(values["image"], "@"+string(digest)):
-		return ImageResult{}, reportUnusable("the reported image is not pinned to the reported digest")
-	}
-	return ImageResult{Digest: digest, Image: values["image"], SBOMRef: values["sbom"], ProvenanceRef: values["provenance"]}, nil
-}
-
-// reportUnusable is the outage of a build command whose report phase did
-// not report as the phases ask: a fault of the configuration, retried and
-// then held for the Owner, never charged to the candidate.
-func reportUnusable(why string) *core.Error {
-	return core.NewError(core.CodeUnavailable, why+"; the build command must speak the phased protocol "+
-		"(SISF_PHASE test, build and report; see cmd/supervisor/stages/image_builders.go)")
 }
 
 // untrustedRefused is the typed refusal to run untrusted code on a backend
