@@ -29,6 +29,19 @@ func putLandingDue(ctx context.Context, tx state.Tx, req LandRequest) error {
 	return err
 }
 
+// deleteLandingDue forgets the landing the run owed, once its issue closes
+// on the decided landing; a run that owed none has nothing to forget.
+func deleteLandingDue(ctx context.Context, tx state.Tx, run core.RunID) error {
+	existing, err := tx.GetKV(ctx, RecoveryNamespace, LandingDueKey(run))
+	if core.HasCode(err, core.CodeNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return tx.DeleteKV(ctx, RecoveryNamespace, LandingDueKey(run), existing.Version)
+}
+
 // ReadLandingDue reads the landing the verified release of the run owes;
 // NOT_FOUND when its landing was never reached.
 func ReadLandingDue(ctx context.Context, tx state.Tx, run core.RunID) (LandRequest, error) {
@@ -91,7 +104,8 @@ func (p *Pipeline) land(ctx context.Context, req LandRequest) (Landing, error) {
 }
 
 // closeLanded closes the issue of a verified release after its landing.
-// The closing step says whether the change was merged.
+// The closing step says whether the change was merged, and forgets in the
+// same transaction that the landing was due: it is decided.
 func (p *Pipeline) closeLanded(ctx context.Context, h *holding, landing Landing, evidence []string) error {
 	reason := "verified, recorded as the LKG, changelog and catalog published"
 	if landing.Summary != "" {
@@ -100,7 +114,10 @@ func (p *Pipeline) closeLanded(ctx context.Context, h *holding, landing Landing,
 	if landing.Ref != "" {
 		evidence = append(evidence, landing.Ref)
 	}
-	return p.step(ctx, h, stepSpec{event: core.EventIssueClosed, reason: reason, evidence: evidence})
+	return p.step(ctx, h, stepSpec{event: core.EventIssueClosed, reason: reason, evidence: evidence,
+		also: func(ctx context.Context, tx state.Tx, r core.StateRecord) error {
+			return deleteLandingDue(ctx, tx, r.RunID)
+		}})
 }
 
 // FinishVerified lands and closes an issue left Verified because its
