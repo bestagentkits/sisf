@@ -98,7 +98,8 @@ func (c *Control) newSurfaces(ctx context.Context, sc SurfaceConfig, repo github
 	}
 	c.Identity, c.Authorizer = signIn.service, authz
 	return control.Surfaces{Identity: signIn.service, Actions: svc, OAuth: oauth, LoginProviders: signIn.providers,
-		FormOrigins: signIn.formOrigins, ExternalURL: sc.Identity.ExternalURL, Version: sc.Version}, nil
+		FormOrigins: signIn.formOrigins, ExternalURL: sc.Identity.ExternalURL, Version: sc.Version,
+		ClientKey: control.ClientAddress(cfg.TrustedProxies)}, nil
 }
 
 // registry registers every action set over the control zone's state.

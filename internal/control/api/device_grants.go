@@ -21,6 +21,9 @@ const (
 	userCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 	userCodeLen      = 8
 	maxOpenGrants    = 256
+	// maxOpenGrantsPerSource bounds the login requests one network source
+	// has waiting for approval.
+	maxOpenGrantsPerSource = 8
 )
 
 // grant is one login request. The device code stays with the CLI that
@@ -31,6 +34,10 @@ type grant struct {
 	scopes   []string
 	expires  time.Time
 	lastPoll time.Time
+	// source is the network source that started the request and seq the
+	// order requests were started in.
+	source string
+	seq    uint64
 	// claimed is set while a person's approval is being processed, so two
 	// approvals of one code cannot both mint a token.
 	claimed  bool
@@ -49,6 +56,7 @@ type deviceStore struct {
 	mu     sync.Mutex
 	grants map[string]*grant // by digest of the device code
 	byUser map[string]string // user code to digest of the device code
+	seq    uint64
 }
 
 func newDeviceStore(clock core.Clock, ttl, interval time.Duration) *deviceStore {
@@ -101,8 +109,13 @@ func (s *deviceStore) purgeLocked(now time.Time) {
 	}
 }
 
-// start opens a login request and returns its device code.
-func (s *deviceStore) start(name string, scopes []string) (deviceCode string, g grant, err error) {
+// start opens a login request from source and returns its device code.
+// Anyone may start one, so it first makes room: a source holding
+// maxOpenGrantsPerSource waiting requests loses its oldest, and while all
+// maxOpenGrants are taken, the oldest waiting request of the source holding
+// the most goes. A request being approved or approved and not yet collected
+// is never dropped; when nothing else is left, start is refused.
+func (s *deviceStore) start(name string, scopes []string, source string) (deviceCode string, g grant, err error) {
 	raw := make([]byte, 32)
 	if _, rerr := rand.Read(raw); rerr != nil {
 		return "", g, core.NewError(core.CodeInternal, "no randomness available").WithCause(rerr)
@@ -112,7 +125,7 @@ func (s *deviceStore) start(name string, scopes []string) (deviceCode string, g 
 	defer s.mu.Unlock()
 	now := s.clock.Now()
 	s.purgeLocked(now)
-	if len(s.grants) >= maxOpenGrants {
+	if !s.makeRoomLocked(source) {
 		return "", g, core.NewError(core.CodeRateLimited, "too many login requests are open; try again shortly")
 	}
 	var userCode string
@@ -128,10 +141,59 @@ func (s *deviceStore) start(name string, scopes []string) (deviceCode string, g 
 	if userCode == "" {
 		return "", g, core.NewError(core.CodeInternal, "no free login code")
 	}
-	open := &grant{userCode: userCode, name: name, scopes: slices.Clone(scopes), expires: now.Add(s.ttl)}
+	s.seq++
+	open := &grant{userCode: userCode, name: name, scopes: slices.Clone(scopes), expires: now.Add(s.ttl), source: source, seq: s.seq}
 	s.grants[digestOf(deviceCode)] = open
 	s.byUser[userCode] = digestOf(deviceCode)
 	return deviceCode, *open, nil
+}
+
+// waiting reports whether g waits for a person's approval: neither claimed
+// for one nor approved. Only such a request is dropped to make room.
+func (g *grant) waiting() bool { return !g.claimed && !g.approved }
+
+// makeRoomLocked drops waiting requests until source holds fewer than
+// maxOpenGrantsPerSource and fewer than maxOpenGrants are open, and reports
+// whether there is room.
+func (s *deviceStore) makeRoomLocked(source string) bool {
+	perSource := map[string]int{}
+	for _, g := range s.grants {
+		if g.waiting() {
+			perSource[g.source]++
+		}
+	}
+	for perSource[source] >= maxOpenGrantsPerSource {
+		s.dropOldestWaitingLocked(perSource, func(g *grant) bool { return g.source == source })
+	}
+	for len(s.grants) >= maxOpenGrants {
+		busiest := 0
+		for _, n := range perSource {
+			busiest = max(busiest, n)
+		}
+		if busiest == 0 {
+			return false
+		}
+		s.dropOldestWaitingLocked(perSource, func(g *grant) bool { return perSource[g.source] == busiest })
+	}
+	return true
+}
+
+// dropOldestWaitingLocked drops the oldest waiting request among those
+// eligible picks, keeping perSource, the count of waiting requests by
+// source, current.
+func (s *deviceStore) dropOldestWaitingLocked(perSource map[string]int, eligible func(*grant) bool) {
+	var key string
+	var victim *grant
+	for k, g := range s.grants {
+		if g.waiting() && eligible(g) && (victim == nil || g.seq < victim.seq) {
+			key, victim = k, g
+		}
+	}
+	if victim == nil {
+		return
+	}
+	s.dropLocked(key)
+	perSource[victim.source]--
 }
 
 // poll answers the CLI. It returns the token exactly once, then forgets the

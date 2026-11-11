@@ -46,6 +46,10 @@ type Surfaces struct {
 	ExternalURL string
 	// Version is reported to MCP clients; empty means "dev".
 	Version string
+	// ClientKey names the network source of a request for the limits on
+	// open login requests; ClientAddress builds one. Nil means the remote IP
+	// address.
+	ClientKey func(*http.Request) string
 }
 
 // mount builds every surface and routes it on mux.
@@ -55,7 +59,7 @@ func (s Surfaces) mount(mux *http.ServeMux, clock core.Clock, log *slog.Logger) 
 			"the control server needs the authentication service, the action service, the authorization server and a login provider")
 	}
 	rest, err := api.New(api.Config{Actions: s.Actions, Identity: s.Identity, Clock: clock,
-		ExternalURL: s.ExternalURL, LoginProviders: s.LoginProviders, FormOrigins: s.FormOrigins, Logger: log})
+		ExternalURL: s.ExternalURL, LoginProviders: s.LoginProviders, FormOrigins: s.FormOrigins, Logger: log, ClientKey: s.ClientKey})
 	if err != nil {
 		return err
 	}

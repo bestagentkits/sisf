@@ -73,6 +73,10 @@ type Config struct {
 	PollInterval time.Duration
 	// Logger receives the causes of internal failures; nil discards them.
 	Logger *slog.Logger
+	// ClientKey names the network source of a request, which bounds how
+	// many login requests one source may have open. Nil means the remote IP
+	// address.
+	ClientKey func(*http.Request) string
 }
 
 type handler struct {

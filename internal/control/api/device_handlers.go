@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net"
 	"net/http"
 	"regexp"
 	"slices"
@@ -44,7 +45,7 @@ func (h *handler) deviceStart(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, core.NewError(core.CodeNotSupported, "the factory has no action a token could be scoped to"))
 		return
 	}
-	deviceCode, g, err := h.devices.start(in.Name, scopes)
+	deviceCode, g, err := h.devices.start(in.Name, scopes, h.clientKey(r))
 	if err != nil {
 		h.fail(w, err)
 		return
@@ -60,6 +61,19 @@ func (h *handler) deviceStart(w http.ResponseWriter, r *http.Request) {
 		"interval":                  int(h.cfg.PollInterval / time.Second),
 		"scopes":                    scopes,
 	})
+}
+
+// clientKey names the network source of r: Config.ClientKey, or else the
+// remote IP address.
+func (h *handler) clientKey(r *http.Request) string {
+	if h.cfg.ClientKey != nil {
+		return h.cfg.ClientKey(r)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // baseURL is the public base of the control server.
