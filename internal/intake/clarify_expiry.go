@@ -10,7 +10,7 @@ import (
 
 // ExpireClarifications parks every issue whose wait for an answer was over
 // by answersThrough and returns them. It is what a timer calls, with the
-// time up to which every answer given on GitHub was taken in: an issue
+// time up to which every answer given on GitHub was taken in and handled: an issue
 // whose deadline passed after that may have an answer still on its way,
 // and waits. It reads only the operational store: an issue that nobody
 // answers costs no GitHub call and no model call, however long it stays

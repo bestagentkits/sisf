@@ -59,7 +59,9 @@ func backoffAfter(failures int) time.Duration {
 // deliveries that are due and a batch of failing ones cannot hold back those
 // behind them. A delivery that still fails maxDeliveryAge after it arrived
 // is parked: it is not tried again, and its last failure is kept in the
-// inbox and the audit log for the Owner.
+// inbox and the audit log for the Owner. It returns an error when the store
+// failed or a delivery was held back or parked, and nil otherwise, even
+// when deliveries beyond one batch are left for the next pass.
 func (c *Control) drainInbox(ctx context.Context) error {
 	var pending []state.InboxEntry
 	err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {

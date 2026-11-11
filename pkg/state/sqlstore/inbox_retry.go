@@ -89,6 +89,25 @@ func (s *Store) DeferDelivery(ctx context.Context, source, deliveryID, reason st
 	return failures, nil
 }
 
+// DeliveriesWaiting reports whether a delivery of source is not processed
+// yet, whether it is due now or held back for another try.
+func (s *Store) DeliveriesWaiting(ctx context.Context, source string) (bool, error) {
+	var waiting int64
+	err := s.inTx(ctx, true, func(ctx context.Context, q *querier) error {
+		t := &tx{store: s, q: q, readOnly: true}
+		if err := t.reads(tableInbox); err != nil {
+			return err
+		}
+		err := q.row(ctx, `SELECT COUNT(*) FROM inbox WHERE factory_id = ? AND source = ? AND processed_at = 0`,
+			string(s.factory), source).Scan(&waiting)
+		if err != nil {
+			return s.dialect.failure("count waiting deliveries", err)
+		}
+		return nil
+	})
+	return waiting > 0, err
+}
+
 // DeliveryRecord is what the inbox remembers about one delivery's handling.
 type DeliveryRecord struct {
 	Source        string

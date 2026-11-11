@@ -280,7 +280,9 @@ func (c *Control) Run(ctx context.Context, ln net.Listener, interval time.Durati
 // when an answer may not be known yet; when it is configured,
 // the decision layer reads the edge's counters. Once per reconciliation
 // interval it asks GitHub for the issue changes no webhook delivered. Each part runs even
-// when another failed; the error joins their failures.
+// when another failed, except the parking: a pass whose drain of the inbox
+// failed or held a delivery back parks nothing, since the delivery may be
+// an answer. The error joins their failures.
 //
 // On an install acting with the operator's token, a pass whose check of
 // the token finds its write access revoked does none of this and returns
@@ -291,12 +293,20 @@ func (c *Control) Pass(ctx context.Context) error {
 			return err
 		}
 	}
+	published := c.publishPolicy(ctx)
+	drained := c.drainInbox(ctx)
+	decided := c.reconcileDecided(ctx)
+	delivered := c.deliverOutbox(ctx)
+	var expired error
+	if drained == nil {
+		expired = c.expireClarifications(ctx)
+	}
 	return errors.Join(
-		c.publishPolicy(ctx),
-		c.drainInbox(ctx),
-		c.reconcileDecided(ctx),
-		c.deliverOutbox(ctx),
-		c.expireClarifications(ctx),
+		published,
+		drained,
+		decided,
+		delivered,
+		expired,
 		c.projectLifecycle(ctx),
 		c.runDecisions(ctx),
 		// Last, so a slow or failing GitHub delays nothing above; what it
