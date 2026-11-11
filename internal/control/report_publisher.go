@@ -275,6 +275,16 @@ func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (p
 	switch {
 	case refusesReport(err):
 		return false, nil, err, nil
+	case answeredWithClientError(err):
+		// GitHub answered, so no issue was opened: the attempt's charge
+		// is given back. An attempt left without an answer, or answered
+		// with an outage, stays charged, since it may have opened one.
+		if released := p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+			return releaseAttempt(ctx, tx, attempt.Publish.AttemptedAt, p.Clock.Now())
+		}); released != nil {
+			return false, nil, nil, errors.Join(err, released)
+		}
+		return false, nil, nil, err
 	case err != nil:
 		return false, nil, nil, err
 	}
@@ -441,18 +451,35 @@ func putIndex(ctx context.Context, tx state.Tx, fingerprint, key string) error {
 	return err
 }
 
+// answeredWithClientError reports whether err carries GitHub's answer
+// with a client error (4xx), a rate limit the client gave up waiting out
+// included: GitHub answered, and opened no issue.
+func answeredWithClientError(err error) bool {
+	if core.HasCode(err, core.CodeRateLimited) {
+		return true
+	}
+	status, ok := githubStatus(err)
+	return ok && status >= 400 && status < 500
+}
+
+// githubStatus is the HTTP status of GitHub's answer err carries.
+func githubStatus(err error) (int, bool) {
+	var typed *core.Error
+	if !errors.As(err, &typed) {
+		return 0, false
+	}
+	status, convErr := strconv.Atoi(typed.Details["status"])
+	return status, convErr == nil
+}
+
 // refusesReport reports whether err is GitHub refusing to open the issue
 // of one report: a client error (4xx) other than those that hold for every
 // report, a refused token (401), a missing permission or a rate limit
 // (403, 429) and a repository not found (404, 410). An outage (5xx) or an
 // error without GitHub's answer is not one either.
 func refusesReport(err error) bool {
-	var typed *core.Error
-	if !errors.As(err, &typed) {
-		return false
-	}
-	status, convErr := strconv.Atoi(typed.Details["status"])
-	if convErr != nil || status < 400 || status >= 500 {
+	status, ok := githubStatus(err)
+	if !ok || status < 400 || status >= 500 {
 		return false
 	}
 	switch status {

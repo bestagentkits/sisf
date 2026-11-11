@@ -10,6 +10,7 @@ import (
 
 	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/redact"
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
@@ -131,6 +132,38 @@ func TestAClockJumpWithinTheRetentionPrunesNoWaitingReport(t *testing.T) {
 		}
 		if n := countKeys(t, e, "r/"); n != 2 {
 			t.Fatalf("%d reports wait after a jump within the retention, want both", n)
+		}
+	})
+}
+
+// GitHub answering an attempt with a client error that holds for every
+// report, a token that may not open issues or a rate limit, opened no
+// issue, so the attempt gives its charge back: passes that fail that way
+// do not spend the day's budget, and publishing goes on once GitHub does.
+func TestAnAttemptAnsweredWithAClientErrorIsNotCharged(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e, gh, p := reportEnv(t, db)
+		if code, _ := sendReportText(t, e, "Search is slow", "Body.", 1); code != http.StatusAccepted {
+			t.Fatalf("the report: %d", code)
+		}
+		limited := core.NewError(core.CodeRateLimited, "GitHub rate limit on POST /repos/acme/app/issues")
+		for _, answer := range []error{rejected(http.StatusForbidden), rejected(http.StatusTooManyRequests), rejected(http.StatusUnauthorized), limited} {
+			for range control.ReportDailyPublishBudget/4 + 1 {
+				gh.fail = []error{answer}
+				if _, err := p.Publish(context.Background()); err == nil {
+					t.Fatalf("a pass GitHub answered %v reported no error, as when attempts that opened nothing spent the budget", answer)
+				}
+			}
+		}
+		if st := readPublication(t, e, db.Clock.Now()); !st.PausedUntil.IsZero() {
+			t.Fatalf("the status after failed passes: %+v, want no pause, as no issue was opened", st)
+		}
+		if res := publish(t, p); res.Published != 1 {
+			t.Fatalf("a pass once GitHub opens issues again: %+v, want the report published", res)
+		}
+		if n := len(gh.created()); n != 1 {
+			t.Fatalf("%d issues opened, want 1", n)
 		}
 	})
 }
