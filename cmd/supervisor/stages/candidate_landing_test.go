@@ -19,7 +19,6 @@ import (
 const (
 	landingRepo   = "acme/app"
 	landingDigest = core.Digest("sha256:1111111111111111111111111111111111111111111111111111111111111111")
-	pinnedPolicy  = core.CommitSHA("2222222222222222222222222222222222222222")
 )
 
 // landingWorld is a repository with a candidate branch off main, the
@@ -64,16 +63,23 @@ func newLandingWorld(t *testing.T, store state.Store, changed ...string) *landin
 	issue := core.IssueRef{Owner: "acme", Repo: "app", Number: number}
 	run := core.RunID("run-1")
 	branch := Branch("f", run, 1)
-	commit, err := client.CommitToBranch(ctx, repo, github.BranchCommit{Branch: branch, Base: core.CommitSHA(base), Message: "candidate",
-		Author: "service:builder", Files: map[string][]byte{"examples/hello-app/main.go": []byte("new\n")}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if len(changed) == 0 {
 		changed = []string{"examples/hello-app/main.go"}
 	}
+	// The candidate commit changes the application and every other path
+	// the case names, so GitHub's comparison lists them.
+	files := map[string][]byte{"examples/hello-app/main.go": []byte("new\n")}
+	for _, p := range changed {
+		files[p] = []byte("new\n")
+	}
+	commit, err := client.CommitToBranch(ctx, repo, github.BranchCommit{Branch: branch, Base: core.CommitSHA(base), Message: "candidate",
+		Author: "service:builder", Files: files})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned := core.CommitSHA(base)
 	candidate := qa.Candidate{IssueID: issue, RunID: run, CommitSHA: commit, Digest: landingDigest, Attempt: 1, ChangedPaths: changed}
-	receipt := core.QAReceipt{Score: 92, PolicySHA: pinnedPolicy}
+	receipt := core.QAReceipt{Score: 92, PolicySHA: pinned, CandidateSHA: commit}
 	err = store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		if err := put(ctx, tx, QAResultKey(run, 1), QAResult{Candidate: candidate, Receipt: receipt, Verdict: VerdictPassed}); err != nil {
 			return err
@@ -90,7 +96,7 @@ func newLandingWorld(t *testing.T, store state.Store, changed ...string) *landin
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := &landingWorld{fake: fake, data: data, client: client, branch: branch, inForce: pinnedPolicy,
+	w := &landingWorld{fake: fake, data: data, client: client, branch: branch, inForce: pinned,
 		req: release.LandRequest{IssueID: issue, RunID: run, Release: core.ReleaseDigest(landingDigest), Candidate: candidate, Receipt: receipt}}
 	w.prs = &CandidatePRs{Repo: repo, Base: "main", State: store, GitHub: client, Merger: merger, Clock: core.SystemClock{},
 		Policy: func(context.Context) (core.PolicyRefs, error) { return core.PolicyRefs{PolicySHA: w.inForce}, nil }}
@@ -139,6 +145,16 @@ func TestAVerifiedCandidateIsMergedOnlyWhileItIsWhatWasJudgedAndReleased(t *test
 			"its changes may be listed in part": {bend: func(_ *testing.T, w *landingWorld) {
 				w.req.Candidate.ChangedPathsIncomplete = true
 			}, reason: "only part of the paths"},
+			"github lists a path the stored list leaves out": {changed: []string{"examples/hello-app/main.go", "Makefile"},
+				bend: func(_ *testing.T, w *landingWorld) {
+					w.req.Candidate.ChangedPaths = []string{"examples/hello-app/main.go"}
+				}, reason: "Makefile, which the unit \"app\" it releases does not consume"},
+			"github cuts its comparison short": {bend: func(_ *testing.T, w *landingWorld) {
+				w.data.CompareBeyondTheLimit()
+			}, reason: "only part of the paths"},
+			"the receipt names another commit": {bend: func(_ *testing.T, w *landingWorld) {
+				w.req.Receipt.CandidateSHA = "3333333333333333333333333333333333333333"
+			}, reason: "another commit"},
 			"the branch moved": {bend: func(t *testing.T, w *landingWorld) {
 				if _, err := w.prs.ensure(context.Background(), w.req.IssueID, w.req.RunID, 1); err != nil {
 					t.Fatal(err)

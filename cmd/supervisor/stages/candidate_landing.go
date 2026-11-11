@@ -207,7 +207,8 @@ func (c *CandidatePRs) live(ctx context.Context, pr handoff.CandidatePR) (github
 }
 
 // mayNotMerge says why the factory may not merge this candidate, "" when
-// it may. An error means the policy in force could not be read.
+// it may. An error means the policy in force, the store or GitHub could
+// not be read, and nothing is decided.
 func (c *CandidatePRs) mayNotMerge(ctx context.Context, req release.LandRequest, pr handoff.CandidatePR) (string, error) {
 	if req.Superseded != "" {
 		return "a later release superseded it before it was recorded as the last known good release (" + req.Superseded +
@@ -225,11 +226,20 @@ func (c *CandidatePRs) mayNotMerge(ctx context.Context, req release.LandRequest,
 	if err != nil || string(build.Digest) != string(req.Release) || req.Candidate.CommitSHA != pr.Commit {
 		return "the verified release is not the build of the pull request's candidate commit", nil
 	}
-	if req.Candidate.ChangedPathsIncomplete {
+	// The paths are listed again from GitHub: the stored list decides
+	// nothing (changedPathsFromGitHub).
+	if req.Receipt.CandidateSHA != pr.Commit {
+		return "the QA receipt names another commit than the pull request's candidate", nil
+	}
+	candidate, err := changedPathsFromGitHub(ctx, Tree{GitHub: c.GitHub, Repo: c.Repo}, req.Receipt, req.Candidate)
+	if err != nil {
+		return "", err
+	}
+	if candidate.ChangedPathsIncomplete {
 		return "GitHub may list only part of the paths it changes, so only the Owner merges it", nil
 	}
 	var touched []string
-	for _, p := range req.Candidate.ChangedPaths {
+	for _, p := range candidate.ChangedPaths {
 		if foundationOrProtected(p) {
 			touched = append(touched, p)
 		}
@@ -240,7 +250,7 @@ func (c *CandidatePRs) mayNotMerge(ctx context.Context, req release.LandRequest,
 	// The rule the release was judged by, applied again to the unit the
 	// supervisor recorded when it built the candidate: only the inputs of
 	// that unit, none of them protected.
-	if err := release.CheckSelfPublishedChange(release.DefaultProtectedPaths(), c.UnitInputs, build.Unit, req.Candidate.ChangedPaths); err != nil {
+	if err := release.CheckSelfPublishedChange(release.DefaultProtectedPaths(), c.UnitInputs, build.Unit, candidate.ChangedPaths); err != nil {
 		var refused *core.Error
 		if errors.As(err, &refused) {
 			return refused.Message + ", so only the Owner merges it", nil

@@ -157,7 +157,7 @@ func New(cfg Config) (*Stages, error) {
 	if err != nil {
 		return nil, err
 	}
-	releaseStage := &ReleaseStage{FactoryID: cfg.FactoryID, State: cfg.State, Pipeline: pipeline, ArtifactSigner: cfg.ArtifactSigner, Clock: cfg.Clock}
+	releaseStage := &ReleaseStage{FactoryID: cfg.FactoryID, State: cfg.State, Pipeline: pipeline, ArtifactSigner: cfg.ArtifactSigner, Tree: tree, Clock: cfg.Clock}
 	if prs != nil {
 		releaseStage.Waits = prs
 	}

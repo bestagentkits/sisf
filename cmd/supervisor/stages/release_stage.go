@@ -32,7 +32,10 @@ type ReleaseStage struct {
 	Pipeline  Releaser
 	// ArtifactSigner is the supervisor's delegated deploy_artifact key.
 	ArtifactSigner core.Signer
-	Clock          core.Clock
+	// Tree lists, from GitHub, the paths a candidate changes when it is
+	// released; the stored list never decides the release.
+	Tree  Tree
+	Clock core.Clock
 	// Waits is optional; with it what a verified release waits on is
 	// recorded on its candidate's pull request.
 	Waits FinishWaits
@@ -133,6 +136,9 @@ func releaseDue(ctx context.Context, tx state.Tx, r core.StateRecord) (bool, err
 func (s *ReleaseStage) release(ctx context.Context, record core.StateRecord, r QAResult, doc handoff.CandidateDoc, build handoff.BuildRecord) (release.Outcome, error) {
 	req, err := s.request(ctx, record, r, doc, build)
 	if err != nil {
+		return release.Outcome{}, err
+	}
+	if req.Candidate, err = changedPathsFromGitHub(ctx, s.Tree, req.Receipt, req.Candidate); err != nil {
 		return release.Outcome{}, err
 	}
 	out, relErr := s.Pipeline.Release(ctx, req)
