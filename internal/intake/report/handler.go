@@ -151,22 +151,59 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // Visible drops from text the control characters other than line breaks
-// and tabs, and every format character (Unicode category Cf, which holds
-// the zero-width space, the soft hyphen and the byte order mark). Such a
-// character shows nothing, so it could split a secret to slip it past
-// redaction and then be dropped where the text is shown, joining the
-// secret again: the text is made visible before it is redacted and
-// fingerprinted, and so stored and published as a reader sees it.
+// and tabs, and every character that shows nothing (Invisible). Such a
+// character could split a secret to slip it past redaction and then be
+// dropped where the text is shown, joining the secret again: the text is
+// made visible before it is redacted and fingerprinted, and so stored and
+// published as a reader sees it.
 func Visible(text string) string {
 	return strings.Map(func(r rune) rune {
 		switch {
 		case r == '\n' || r == '\t':
 			return r
-		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+		case unicode.IsControl(r) || Invisible(r):
 			return -1
 		}
 		return r
 	}, text)
+}
+
+// invisibleRanges are the code points that show nothing beyond the format
+// characters: Unicode's Default_Ignorable_Code_Point, such as the soft
+// hyphen, the Hangul fillers, the variation selectors and the tags, and
+// the braille blank, which shows as empty space.
+var invisibleRanges = &unicode.RangeTable{
+	R16: []unicode.Range16{
+		{Lo: 0x00AD, Hi: 0x00AD, Stride: 1},
+		{Lo: 0x034F, Hi: 0x034F, Stride: 1},
+		{Lo: 0x061C, Hi: 0x061C, Stride: 1},
+		{Lo: 0x115F, Hi: 0x1160, Stride: 1},
+		{Lo: 0x17B4, Hi: 0x17B5, Stride: 1},
+		{Lo: 0x180B, Hi: 0x180F, Stride: 1},
+		{Lo: 0x200B, Hi: 0x200F, Stride: 1},
+		{Lo: 0x202A, Hi: 0x202E, Stride: 1},
+		{Lo: 0x2060, Hi: 0x206F, Stride: 1},
+		{Lo: 0x2800, Hi: 0x2800, Stride: 1},
+		{Lo: 0x3164, Hi: 0x3164, Stride: 1},
+		{Lo: 0xFE00, Hi: 0xFE0F, Stride: 1},
+		{Lo: 0xFEFF, Hi: 0xFEFF, Stride: 1},
+		{Lo: 0xFFA0, Hi: 0xFFA0, Stride: 1},
+		{Lo: 0xFFF0, Hi: 0xFFF8, Stride: 1},
+	},
+	R32: []unicode.Range32{
+		{Lo: 0x1BCA0, Hi: 0x1BCA3, Stride: 1},
+		{Lo: 0x1D173, Hi: 0x1D17A, Stride: 1},
+		{Lo: 0xE0000, Hi: 0xE0FFF, Stride: 1},
+	},
+	LatinOffset: 1,
+}
+
+// Invisible reports whether r shows nothing where text is read: a format
+// character (Unicode category Cf, which holds the zero-width space and the
+// byte order mark) or another code point of invisibleRanges. Control
+// characters are not counted; each caller decides which of them to keep.
+func Invisible(r rune) bool {
+	return unicode.Is(unicode.Cf, r) || unicode.Is(invisibleRanges, r)
 }
 
 // fingerprint hashes the content without regard to letter case or spacing.

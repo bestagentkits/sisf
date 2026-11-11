@@ -2,6 +2,7 @@ package control
 
 import (
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
 	"time"
@@ -38,8 +39,9 @@ var (
 // defuse makes text from a report inert on GitHub: no mention notifies
 // anyone, no reference links or cross-references an issue, and no HTML
 // comment, and so no marker the factory reads in issues and comments, can
-// be formed. Control and format characters, which can hide or reorder
-// text, are dropped; newlines and tabs are kept only when keepLines is set.
+// be formed. Control characters and every character that shows nothing
+// (report.Invisible), which can hide or reorder text, are dropped; newlines
+// and tabs are kept only when keepLines is set.
 func defuse(text string, keepLines bool) string {
 	text = strings.Map(func(r rune) rune {
 		switch {
@@ -47,7 +49,7 @@ func defuse(text string, keepLines bool) string {
 			return r
 		case r == '\n' || r == '\t' || r == '\r':
 			return ' '
-		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+		case unicode.IsControl(r) || report.Invisible(r):
 			return -1
 		}
 		return r
@@ -56,6 +58,19 @@ func defuse(text string, keepLines bool) string {
 	text = mentionForm.ReplaceAllString(text, "@"+zeroWidthSpace+"$1")
 	text = referenceForm.ReplaceAllString(text, "#"+zeroWidthSpace+"$1")
 	return shortReferenceForm.ReplaceAllString(text, "$1"+zeroWidthSpace+"$2")
+}
+
+// decodeReferences decodes the HTML character references in text until
+// none is left, so a reference encoded twice, &amp;#8203;, is decoded too.
+// Each pass that changes the text shortens it, so the loop ends.
+func decodeReferences(text string) string {
+	for {
+		decoded := html.UnescapeString(text)
+		if decoded == text {
+			return text
+		}
+		text = decoded
+	}
 }
 
 // cut bounds text to limit runes, saying so when it cut.
@@ -78,10 +93,13 @@ func fenced(text string) string {
 }
 
 // reportIssueTitle is the title of the issue for r: a fixed prefix and the
-// report's title on one line, defused, redacted once more by redact and
-// bounded.
+// report's title on one line, its character references decoded, defused,
+// redacted once more by redact and bounded. A title is not fenced, so
+// GitHub may show a reference such as &#8203; as the character it names;
+// decoded first, an invisible character it names is dropped like any
+// other and cannot rebuild a secret split by it.
 func reportIssueTitle(r report.Report, redact func(string) string) string {
-	title := strings.Join(strings.Fields(redact(defuse(r.Title, false))), " ")
+	title := strings.Join(strings.Fields(redact(defuse(decodeReferences(r.Title), false))), " ")
 	if title == "" {
 		title = "(no title)"
 	}
