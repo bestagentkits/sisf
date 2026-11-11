@@ -11,7 +11,7 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preload" href="/assets/fonts/archivo-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/assets/fonts/ibm-plex-mono-latin-500.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/assets/styles.css?v=20261110">
+<link rel="stylesheet" href="/assets/styles.css?v=20261111">
 <link rel="canonical" href="https://factory.agentkit.best/">
 <link rel="alternate" type="text/markdown" href="https://factory.agentkit.best/index.md" title="This page as Markdown">
 <link rel="alternate" type="text/plain" href="https://factory.agentkit.best/llms.txt" title="llms.txt">
@@ -81,7 +81,7 @@
   try { var t = localStorage.getItem('sisf-theme'); if (t === 'light' || t === 'dark') d.setAttribute('data-theme', t); } catch (e) {}
 })(document.documentElement);
 </script>
-<script src="/assets/app.js?v=20261110" defer></script>
+<script src="/assets/app.js?v=20261111" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -168,12 +168,125 @@
       </div>
     </section>
 
-    <!-- ===== How it works: Run the line ===== -->
+    <!-- ===== How it works: the loop, then the line ===== -->
     <section class="how wrap" id="how" aria-labelledby="how-h">
       <div class="how-head">
         <div>
           <p class="eyebrow">01 · How it works</p>
-          <h2 id="how-h">Run the line.</h2>
+          <h2 id="how-h">Watch it improve itself.</h2>
+        </div>
+        <p class="lead">One deployment, three zones and one self-improvement loop. The app reports how it is doing, the Decision Layer proposes a fix only when the evidence holds, separate agents build and grade it, and the supervisor ships it behind a canary before the loop goes back to watching.</p>
+      </div>
+
+      <!-- The loop: a Three.js scene, the isometric drawing, or the drawing as an image with every flow as text.
+           app.js picks the tier when the section nears the viewport (?scene=3d|2d|static forces one). -->
+<!-- how-loop:start -->
+      <div class="loop" data-loop>
+        <figure class="loop-fig">
+          <div class="loop-scene" data-scene>
+            <div class="loop-frame" data-frame role="img" aria-labelledby="loop-t" aria-describedby="loop-d">
+              <p class="vh" id="loop-t">Illustration of one SISF factory deployment and its self-improvement loop</p>
+              <p class="vh" id="loop-d">Three floors stacked one above another. Bottom, Zone 1 Application: the app behind edge, with a stable and a canary revision. Middle, Zone 2 Agent factory: the dispatcher, and a walled sandbox holding a runner, a separate qa-runner and the egress proxy. Top, Zone 3 Control plane: control, the Decision Layer, approvals, and the supervisor inside a hatched, locked vault. Shared state and artifacts run through all three floors. One ring circles the whole stack, low beside Zone 1 and high beside Zone 3: the self-improvement loop, travelled clockwise by an orange work item. Outside, GitHub and the Owner near the top and users at the bottom right. Illustration of the design, not live data.</p>
+              <img class="loop-poster" data-poster src="/assets/how-it-works-isometric.svg?v=20261111" width="1155" height="902" alt="" loading="lazy" decoding="async">
+              <div class="loop-labels" aria-hidden="true" data-labels><div class="loop-lbl loop-lbl-z" data-zone="3"><span class="loop-zk">Z<span class="loop-zk-long">one </span>3</span><span class="loop-zn">Control plane</span></div><div class="loop-lbl loop-lbl-z" data-zone="2"><span class="loop-zk">Z<span class="loop-zk-long">one </span>2</span><span class="loop-zn">Agent factory</span></div><div class="loop-lbl loop-lbl-z" data-zone="1"><span class="loop-zk">Z<span class="loop-zk-long">one </span>1</span><span class="loop-zn">Application</span></div><div class="loop-lbl loop-lbl-a" data-actor="github"><svg viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="4.5" cy="3.5" r="1.8"/><circle cx="4.5" cy="12.5" r="1.8"/><circle cx="11.5" cy="5.5" r="1.8"/><path d="M4.5 5.3v5.4M11.5 7.3c0 2.6-2.5 2.9-6 3.6"/></g></svg><span>GitHub</span></div><div class="loop-lbl loop-lbl-a" data-actor="owner"><svg viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="5" r="2.6"/><path d="M2.8 14.2c.6-3.2 2.6-4.8 5.2-4.8s4.6 1.6 5.2 4.8"/><path d="M12.6 1.6l.6 1.3 1.4.2-1 1 .2 1.4-1.2-.7-1.3.7.3-1.4-1-1 1.4-.2z" fill="currentColor" stroke-width=".6"/></g></svg><span>Owner</span></div><div class="loop-lbl loop-lbl-a" data-actor="users"><svg viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="5.5" cy="5.5" r="2.2"/><circle cx="11" cy="6" r="1.8"/><path d="M1.5 13.5c.4-2.6 2-3.9 4-3.9s3.6 1.3 4 3.9M10 9.8c2 0 3.6.9 4.3 3.4"/></g></svg><span>Users</span></div></div>
+            </div>
+            <div class="loop-note" aria-hidden="true" data-anno><svg class="loop-note-ln" focusable="false"><line data-anno-ln/><circle r="3.5" data-anno-pin/></svg><p class="loop-note-t" data-anno-t><span class="loop-note-k" data-anno-k></span><span class="loop-note-n" data-anno-n></span></p></div>
+            <div class="loop-ctl" data-view-ctl>
+              <button type="button" class="loop-vbtn" data-act="explode" aria-pressed="true"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M2 3.5 7 1l5 2.5L7 6zM2 7.5 7 5l5 2.5L7 10zM2 11.5 7 9l5 2.5L7 14z"/></svg>Exploded</button>
+              <button type="button" class="loop-vbtn" data-act="reset" aria-label="Reset the view"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M2.2 7a4.8 4.8 0 1 0 1.4-3.4M2 1.6v2.6h2.6"/></svg></button>
+            </div>
+            <p class="loop-chapter" aria-hidden="true" data-chapter><span class="loop-ch-k" data-ch-k></span><span class="loop-ch-t" data-ch-t></span></p>
+            <p class="loop-hint" aria-hidden="true" data-hint><span class="loop-hint-fine">Drag to turn · select a part</span><span class="loop-hint-touch">Swipe sideways to turn · tap a part</span></p>
+            <div class="loop-co" hidden data-callout>
+              <div aria-hidden="true"><p class="loop-co-k" data-co-k></p><p class="loop-co-n" data-co-n></p><p class="loop-co-t" data-co-t></p></div>
+              <button type="button" class="loop-co-x" data-act="close" aria-label="Close the note and return the view"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9"/></svg></button>
+            </div>
+          </div>
+          <p class="loop-now" aria-hidden="true" data-now><span class="loop-now-n" data-now-n>Flow 1</span><span class="loop-now-t is-in" data-now-t>Self-improvement loop</span></p>
+          <figcaption class="loop-cap"><b>Illustration of the design, not live data.</b> Values marked * are starting points, to be calibrated.</figcaption>
+        </figure>
+
+        <div class="loop-player" data-player>
+          <div class="loop-tabs" role="tablist" aria-label="Flows">
+            <button type="button" role="tab" id="loop-tab-1" aria-controls="loop-pan-1" aria-selected="true"><span class="loop-tab-n">1</span>Self-improvement loop</button>
+            <button type="button" role="tab" id="loop-tab-2" aria-controls="loop-pan-2" aria-selected="false" tabindex="-1"><span class="loop-tab-n">2</span>The factory fixes itself</button>
+            <button type="button" role="tab" id="loop-tab-3" aria-controls="loop-pan-3" aria-selected="false" tabindex="-1"><span class="loop-tab-n">3</span>Issue to release</button>
+            <button type="button" role="tab" id="loop-tab-4" aria-controls="loop-pan-4" aria-selected="false" tabindex="-1"><span class="loop-tab-n">4</span>Rollback</button>
+          </div>
+          <div class="loop-ro" data-readout>
+            <p class="loop-ro-k"><span data-ro-scn>Flow 1 of 4</span><span class="loop-ro-n" data-ro-n>8 steps</span></p>
+            <div class="loop-ro-words is-in" data-ro-words>
+              <p class="loop-ro-title" data-ro-title>Self-improvement loop.</p>
+              <p class="loop-ro-body" data-ro-body>A signal from the app becomes a fix that is shipped and verified.</p>
+            </div>
+            <ol class="loop-ro-dots" aria-hidden="true" data-ro-dots><li></li><li></li><li></li><li></li><li></li><li></li><li></li><li></li></ol>
+          </div>
+          <p class="vh" aria-live="polite" data-live></p>
+          <div class="loop-controls">
+            <button type="button" class="ctl" data-act="play" data-state="paused"><svg viewBox="0 0 12 12" aria-hidden="true"><path class="i-pause" d="M2.5 1.5h2.5v9H2.5zM7 1.5h2.5v9H7z" fill="currentColor"/><path class="i-play" d="M2.5 1.2L10.5 6 2.5 10.8z" fill="currentColor"/></svg><span data-play-lbl>Play</span></button>
+            <button type="button" class="ctl" data-act="back"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10.5 1.5L4.5 6l6 4.5zM1.5 1.5h2v9h-2z" fill="currentColor"/></svg>Back</button>
+            <button type="button" class="ctl" data-act="step"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 1.5L7.5 6 1.5 10.5zM8.5 1.5h2v9h-2z" fill="currentColor"/></svg>Step</button>
+          </div>
+          <div class="loop-panels">
+            <section class="loop-panel" role="tabpanel" id="loop-pan-1" aria-labelledby="loop-tab-1" tabindex="0">
+              <h3 class="loop-panel-h">Flow 1 · The self-improvement loop</h3>
+              <ol class="loop-steps" data-flow data-name="Self-improvement loop" data-sum="A signal from the app becomes a fix that is shipped and verified." data-t0="0">
+                <li data-at="app" data-note="Error rate climbing" data-t="0" data-units="app" data-fx="err"><b>Zone 1 reports how it is doing.</b> <span>Traces, logs and feedback leave the app as data only. Here, one endpoint’s error rate starts to climb.</span></li>
+                <li data-at="decision" data-note="Weighs the evidence" data-t="0.4" data-units="decision,state" data-fx="err" data-ghost><b>The Decision Layer weighs the evidence.</b> <span>Samples, baseline, trend and user impact. If the evidence is thin, it stops here: it collects more, or ignores the signal.</span></li>
+                <li data-at="approvals" data-note="Within delegated scope" data-t="0.48" data-units="decision,approvals" data-fx="err"><b>It proposes a fix within its authority.</b> <span>Within its delegated scope, an improvement to existing behaviour can go ahead. A new feature would wait here for the Owner.</span></li>
+                <li data-at="control" data-note="Opens a GitHub issue" data-t="0.55" data-units="control,github" data-fx="err"><b>The proposal becomes a GitHub issue.</b> <span>It carries the evidence, a scope and a measurable Definition of Done.</span></li>
+                <li data-at="runner" data-note="Writes the fix" data-t="0.7" data-units="dispatcher,runner,egress" data-fx="err"><b>A runner writes the fix.</b> <span>The dispatcher claims the issue. A fresh runner in the sandbox writes the fix and reaches out only through the egress proxy.</span></li>
+                <li data-at="qa-runner" data-note="Grades with its own identity" data-t="0.79" data-units="qa-runner" data-fx="err"><b>A different agent grades it.</b> <span>qa-runner, with its own identity, scores it against a read-only baseline; the result is kept in a signed qa_receipt. The writer never grades.</span></li>
+                <li data-at="canary" data-note="5% → 25% → 100%* of traffic" data-t="0.9" data-units="supervisor,app" data-fx="err,canary"><b>The supervisor ships a canary.</b> <span>Only the supervisor deploys: 5%, then 25%, then 100%* of traffic, while the error rate is compared with baseline.</span></li>
+                <li data-at="app" data-note="Error rate back to baseline" data-t="1" data-units="app,control,github" data-fx=""><b>The metric recovers. The loop closes.</b> <span>The issue is verified on the running revision and closed. The factory goes back to watching.</span></li>
+              </ol>
+            </section>
+            <section class="loop-panel" role="tabpanel" id="loop-pan-2" aria-labelledby="loop-tab-2" tabindex="0" hidden>
+              <h3 class="loop-panel-h">Flow 2 · The factory fixes itself</h3>
+              <ol class="loop-steps" data-flow data-name="The factory fixes itself" data-sum="The factory’s own code takes the same loop. Its trusted core stays locked." data-t0="0.5">
+                <li data-at="control" data-note="Stale dashboard page" data-t="0.5" data-units="control,github" data-fx="flaw"><b>The factory fixes itself, too.</b> <span>Here, a read-only dashboard page in Zone 3 shows stale data. The fix enters the same loop.</span></li>
+                <li data-at="runner" data-note="Built and graded as usual" data-t="0.72" data-units="dispatcher,runner,qa-runner" data-fx="flaw"><b>Built and graded the usual way.</b> <span>A runner writes the fix; a qa-runner with a different identity grades it.</span></li>
+                <li data-at="app" data-note="Keeps serving users" data-t="0.88" data-units="supervisor,control" data-fx="restart"><b>Zones 2 and 3 restart. Zone 1 keeps serving.</b> <span>The supervisor rolls out the new control. Users are not interrupted.</span></li>
+                <li data-at="supervisor" data-note="Locked: no fix can change it" data-t="0.88" data-units="supervisor" data-fx="lock"><b>The trusted core stays locked.</b> <span>The supervisor, signing keys, policy enforcement, QA baseline and rollback rules sit where no candidate can write, so no fix can change them.</span></li>
+                <li data-at="approvals" data-note="Needs the Owner’s approval" data-t="0.88" data-units="owner,approvals,supervisor" data-fx="lock"><b>Changing that core takes a human.</b> <span>It is a governance change: approved by the Owner and run as its own, separate cycle.</span></li>
+                <li data-at="control" data-note="Watched like any release" data-t="0.97" data-units="control" data-fx=""><b>Watched like any release.</b> <span>If the new control misbehaves, the supervisor restores the last known good on its own.</span></li>
+              </ol>
+            </section>
+            <section class="loop-panel" role="tabpanel" id="loop-pan-3" aria-labelledby="loop-tab-3" tabindex="0" hidden>
+              <h3 class="loop-panel-h">Flow 3 · Issue to release</h3>
+              <ol class="loop-steps" data-flow data-name="Issue to release" data-sum="One GitHub issue, from its label to an observed release." data-t0="0.5">
+                <li data-at="control" data-note="Signed webhook arrives" data-t="0.5" data-units="github,control" data-fx=""><b>An issue arrives.</b> <span>Labelled sisf:ready on GitHub, it reaches control as a signed webhook. The label asks; it grants nothing.</span></li>
+                <li data-at="approvals" data-note="Scope and Definition of Done" data-t="0.56" data-units="control,approvals" data-fx=""><b>Scope first.</b> <span>A versioned scope and Definition of Done. A new feature waits here for the Owner.</span></li>
+                <li data-at="runner" data-note="Lease claimed, change written" data-t="0.7" data-units="dispatcher,runner,egress" data-fx=""><b>Claimed and built.</b> <span>The dispatcher takes a lease over the authenticated API; a runner in the sandbox writes the change.</span></li>
+                <li data-at="qa-runner" data-note="85/100* and every hard gate" data-t="0.79" data-units="qa-runner" data-fx=""><b>Graded by another agent.</b> <span>A score of 85/100* and every hard gate, recorded in a signed qa_receipt.</span></li>
+                <li data-at="canary" data-note="5% → 25% → 100%* of traffic" data-t="0.9" data-units="supervisor,app" data-fx="canary"><b>Released as a canary.</b> <span>Only the supervisor deploys: 5% → 25% → 100%* of traffic, watched against baseline.</span></li>
+                <li data-at="app" data-note="Closed once observed" data-t="1" data-units="app,control,github" data-fx=""><b>Closed only when observed.</b> <span>The issue closes once the running revision meets the Definition of Done. A merge alone is not done.</span></li>
+              </ol>
+            </section>
+            <section class="loop-panel" role="tabpanel" id="loop-pan-4" aria-labelledby="loop-tab-4" tabindex="0" hidden>
+              <h3 class="loop-panel-h">Flow 4 · Rollback</h3>
+              <ol class="loop-steps" data-flow data-name="Rollback" data-sum="When a canary misbehaves, the supervisor puts the last known good back." data-t0="0.84">
+                <li data-at="canary" data-note="5%* of traffic" data-t="0.9" data-units="supervisor,app" data-fx="canary"><b>A canary goes out.</b> <span>The supervisor releases a new revision and the edge gives it 5%* of traffic.</span></li>
+                <li data-at="canary" data-note="5xx above 2%*" data-t="0.9" data-units="app" data-fx="canary,fault" data-bead="fault"><b>Errors cross the threshold.</b> <span>For example 5xx above 2%* and more than a point over baseline, after enough samples.</span></li>
+                <li data-at="supervisor" data-note="Restores the last known good" data-t="0.9" data-units="supervisor,app" data-fx="canary,fault,lkg" data-bead="fault"><b>The last known good comes back.</b> <span>The supervisor restores it on its own, from storage no agent can write. Code and config only; customer data is never overwritten.</span></li>
+                <li data-at="app" data-note="Back on stable" data-t="0.9" data-units="app" data-fx="" data-bead="fault"><b>Traffic is back on stable.</b> <span>Zone 1 keeps serving the verified revision. The candidate is gone.</span></li>
+                <li data-at="control" data-note="Issue blocked, with evidence" data-t="0.9" data-units="control,github" data-fx="" data-bead="fault"><b>The issue is blocked, with evidence.</b> <span>It stays open with a recovery report. Nothing is marked as a success.</span></li>
+              </ol>
+            </section>
+          </div>
+        </div>
+
+        <div class="loop-parts" role="group" aria-labelledby="loop-parts-h" data-parts>
+          <p class="loop-parts-h" id="loop-parts-h">Parts <span>Select one to look closer. Arrow keys move, Escape closes.</span></p>
+          <div class="loop-parts-grid"><div class="loop-pg"><p class="loop-pg-h"><b>Z3</b>Control plane</p><ul><li><button type="button" class="loop-pbtn" data-unit="control" data-kind="unit" data-where="Zone 3 · Control plane" aria-expanded="false" tabindex="0"><span data-pb-n>control</span><span class="vh">. Dashboard, API, CLI, MCP and WebMCP for the Owner. Only the GitHub webhook and the public report endpoint are reachable from outside.</span></button></li><li><button type="button" class="loop-pbtn" data-unit="decision" data-kind="unit" data-where="Zone 3 · Control plane" aria-expanded="false" tabindex="-1"><span data-pb-n>Decision Layer</span><span class="vh">. Turns telemetry and feedback into evidence-based proposals. It recommends; it never grants a permission.</span></button></li><li><button type="button" class="loop-pbtn" data-unit="approvals" data-kind="unit" data-where="Zone 3 · Control plane" aria-expanded="false" tabindex="-1"><span data-pb-n>approvals</span><span class="vh">. The approval inbox, where the Owner signs off new features, wider permissions and policy changes.</span></button></li><li><button type="button" class="loop-pbtn" data-unit="supervisor" data-kind="unit" data-where="Zone 3 · Control plane" aria-expanded="false" tabindex="-1"><span data-pb-n>supervisor</span><span class="vh">. The trusted release supervisor: the only unit that deploys. It holds the signing keys and the last known good where no agent can write.</span></button></li></ul></div><div class="loop-pg"><p class="loop-pg-h"><b>Z2</b>Agent factory</p><ul><li><button type="button" class="loop-pbtn" data-unit="dispatcher" data-kind="unit" data-where="Zone 2 · Agent factory" aria-expanded="false" tabindex="-1"><span data-pb-n>dispatcher</span><span class="vh">. Claims each task with a lease, keeps run state, and creates and destroys runners. It reaches Zone 3 only through the authenticated API.</span></button></li><li><button type="button" class="loop-pbtn" data-unit="runner" data-kind="unit" data-where="Zone 2 · Agent factory" aria-expanded="false" tabindex="-1"><span data-pb-n>runner</span><span class="vh">. One per run, in the sandbox: Claude CLI, Codex or Pi writes the change. No inbound connections, only that run’s secrets.</span></button></li><li><button type="button" class="loop-pbtn" data-unit="qa-runner" data-kind="unit" data-where="Zone 2 · Agent factory" aria-expanded="false" tabindex="-1"><span data-pb-n>qa-runner</span><span class="vh">. Grades the change with a different identity against a read-only baseline; the result is kept in a signed qa_receipt. The writer never grades.</span></button></li><li><button type="button" class="loop-pbtn" data-unit="egress" data-kind="unit" data-where="Zone 2 · Agent factory" aria-expanded="false" tabindex="-1"><span data-pb-n>egress proxy</span><span class="vh">. The sandbox’s only way out, through an allowlist the Owner sets. An agent cannot widen it for itself.</span></button></li></ul></div><div class="loop-pg"><p class="loop-pg-h"><b>Z1</b>Application</p><ul><li><button type="button" class="loop-pbtn" data-unit="app" data-kind="unit" data-where="Zone 1 · Application" aria-expanded="false" tabindex="-1"><span data-pb-n>app · edge</span><span class="vh">. The product your users use: Webapp, API, MCP and WebMCP behind edge, which splits traffic between the stable and canary revisions.</span></button></li></ul></div><div class="loop-pg"><p class="loop-pg-h">Shared</p><ul><li><button type="button" class="loop-pbtn" data-unit="state" data-kind="unit" data-where="Shared" aria-expanded="false" tabindex="-1"><span data-pb-n>state · artifacts</span><span class="vh">. Shared storage for run state, artifacts, logs and snapshots, with one role per zone.</span></button></li></ul></div><div class="loop-pg"><p class="loop-pg-h">Outside</p><ul><li><button type="button" class="loop-pbtn" data-unit="github" data-kind="actor" data-where="Outside" aria-expanded="false" tabindex="-1"><span data-pb-n>GitHub</span><span class="vh">. The source of truth. Issues, pull requests and checks carry the work and the evidence.</span></button></li><li><button type="button" class="loop-pbtn" data-unit="users" data-kind="actor" data-where="Outside" aria-expanded="false" tabindex="-1"><span data-pb-n>Users</span><span class="vh">. They use the app. Their traffic and feedback become telemetry: data, never instructions.</span></button></li><li><button type="button" class="loop-pbtn" data-unit="owner" data-kind="actor" data-where="Outside" aria-expanded="false" tabindex="-1"><span data-pb-n>Owner</span><span class="vh">. Approves new features, policy and permission changes, and can stop the whole factory.</span></button></li></ul></div></div>
+        </div>
+      </div>
+<!-- how-loop:end -->
+
+      <div class="how-head how-sub">
+        <div>
+          <p class="eyebrow">Run the line</p>
+          <h3 id="line-h">Every state, in order.</h3>
         </div>
         <p class="lead">Fifteen states, from a labelled issue to a verified release. Watch a pass, step through it, or inject a canary fault and watch the rollback. This is the lifecycle as designed in the brief (§5.2), not a recording of running software.</p>
       </div>
@@ -480,7 +593,7 @@
       </div>
 
       <details class="schedule" open>
-        <summary><h3>State schedule</h3><span class="sum-meta">15 states and their transitions · brief §5.2</span></summary>
+        <summary><h4>State schedule</h4><span class="sum-meta">15 states and their transitions · brief §5.2</span></summary>
         <ol class="states">
           <li data-state="Intake"><span class="s-n">01</span><span class="s-name">Intake</span><span class="s-zone">Z3 · Control plane</span><p class="s-note">A labelled issue arrives through a signed webhook or reconciliation and is recorded exactly once. The label asks for work; it grants no permission.</p><p class="s-next">Next: Clarifying if information is missing, otherwise ScopeDraft.</p></li>
           <li data-state="Clarifying"><span class="s-n">02</span><span class="s-name">Clarifying</span><span class="s-zone">Z3 · Control plane</span><p class="s-note">The factory asks its questions in one comment that it keeps updating. No answer before the timeout means needs-info, not endless spending.</p><p class="s-next">Next: ScopeDraft once the answer is complete.</p></li>

@@ -12,7 +12,7 @@ Important facts for anyone summarizing this project:
 ## Landing page
 
 - [Landing page in Markdown](https://factory.agentkit.best/index.md): the full content of the home page as Markdown
-- [Landing page](https://factory.agentkit.best/): the same content as HTML, with an interactive drawing of the issue lifecycle
+- [Landing page](https://factory.agentkit.best/): the same content as HTML, with an animated drawing of the self-improvement loop (four flows: self-improvement loop, the factory fixes itself, issue to release, rollback) and an interactive drawing of the 15-state issue lifecycle
 
 ## Design documents
 

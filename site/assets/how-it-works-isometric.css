@@ -1,0 +1,125 @@
+/* SISF · "How it works": colours for the isometric drawing when the 2D tier inlines it.
+   Loaded by how-it-works-isometric.js before the drawing goes in, so the page's first stylesheet
+   stays small. The static tier shows the same drawing as an <img> with its own theme-neutral
+   colours; here every class takes the page's theme tokens, so it follows the theme toggle. */
+.loop {
+  /* isometric shading: three faces of every solid (top, left-front, right-front) */
+  --s-top: #FBFCFD; --s-l: #DCE5EE; --s-r: #C7D3E0;
+  --u-top: #FFFFFF; --u-l: #E9EFF5; --u-r: #D5DFE9; --m-top: #EEF3F8;
+  --glass: rgba(14, 42, 71, .045); --glass-r: rgba(14, 42, 71, .085);
+  --sig-tint: #F6DED2; --sig-tint-2: #EFC9B6; --flt-tint: #F7D9D5; --floor-ln: #D2DCE6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .loop {
+    --s-top: #0F2C52; --s-l: #0B2546; --s-r: #081C38;
+    --u-top: #173C69; --u-l: #11325A; --u-r: #0C2748; --m-top: #1D4677;
+    --glass: rgba(232, 240, 248, .05); --glass-r: rgba(232, 240, 248, .085);
+    --sig-tint: #5A3A2C; --sig-tint-2: #48301F; --flt-tint: #57303A; --floor-ln: #163A64;
+  }
+}
+:root[data-theme="dark"] .loop {
+  --s-top: #0F2C52; --s-l: #0B2546; --s-r: #081C38;
+  --u-top: #173C69; --u-l: #11325A; --u-r: #0C2748; --m-top: #1D4677;
+  --glass: rgba(232, 240, 248, .05); --glass-r: rgba(232, 240, 248, .085);
+  --sig-tint: #5A3A2C; --sig-tint-2: #48301F; --flt-tint: #57303A; --floor-ln: #163A64;
+}
+.loop-svg .i-f-t, .loop-svg .i-f-l, .loop-svg .i-f-r { stroke: var(--ink); stroke-width: 1.1; stroke-linejoin: round; transition: fill .35s, stroke .35s; }
+.loop-svg .i-slab-b .i-f-t { fill: var(--s-top); }
+.loop-svg .i-slab-b .i-f-l { fill: var(--s-l); }
+.loop-svg .i-slab-b .i-f-r { fill: var(--s-r); }
+.loop-svg .i-slab-b > * { stroke-width: 1.4; }
+.loop-svg .i-floor-grid { fill: url(#iso-floor); }
+.loop-svg .i-floor-ln { fill: none; stroke: var(--floor-ln); stroke-width: 1; }
+.loop-svg .i-hatch-bg { fill: var(--u-top); }
+.loop-svg .i-hatch-ln { stroke: var(--ink); stroke-width: 1.1; opacity: .55; }
+.loop-svg .i-hatch-pad { fill: url(#iso-hatch); stroke: var(--ink); stroke-width: 1; opacity: .5; }
+.loop-svg .i-blk .i-f-t { fill: var(--u-top); }
+.loop-svg .i-blk .i-f-l { fill: var(--u-l); }
+.loop-svg .i-blk .i-f-r { fill: var(--u-r); }
+.loop-svg .i-mod .i-f-t { fill: var(--m-top); }
+.loop-svg .i-blk .i-f-t.i-hatch, .loop-svg .i-vault .i-f-l, .loop-svg .i-vault .i-f-r { fill: url(#iso-hatch); }
+.loop-svg .i-eph > *, .loop-svg .i-cnry > * { stroke-dasharray: 5 3.5; }
+.loop-svg .i-gate .i-f-t { fill: var(--ink); }
+.loop-svg .i-gate .i-f-l, .loop-svg .i-gate .i-f-r { fill: var(--soft); }
+.loop-svg .i-tray .i-f-t { fill: var(--paper-2); }
+.loop-svg .i-cyl .i-f-r { fill: var(--u-r); }
+.loop-svg .i-cyl .i-f-t { fill: var(--u-top); }
+.loop-svg .i-cyl .i-ring { fill: none; stroke: var(--ink); stroke-width: 1; opacity: .6; }
+.loop-svg .i-sb-floor { fill: var(--paper-2); stroke: var(--ink); stroke-width: .8; stroke-dasharray: 3 3; }
+.loop-svg .i-sb-rim { fill: none; stroke: var(--ink); stroke-width: 1.1; }
+.loop-svg .i-wall { fill: var(--glass-r); stroke: var(--ink); stroke-width: 1.1; }
+.loop-svg .i-wall--front { fill: var(--glass); }
+.loop-svg .i-wire { fill: none; stroke: var(--soft); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.loop-svg .i-wire--plan { stroke-dasharray: 1.5 4; }
+.loop-svg .i-wire--cn { stroke-dasharray: 5 4; opacity: .5; transition: opacity .4s; }
+.loop-svg .i-port { fill: var(--u-top); stroke: var(--ink); stroke-width: 1.1; }
+.loop-svg .i-port--pub, .loop-svg .i-port--api { fill: var(--ink); }
+.loop-svg .i-port--plan { stroke-dasharray: 1.5 2.5; }
+.loop-svg .i-riser { fill: none; stroke: var(--ink); stroke-width: 2.5; }
+.loop-svg .i-riser--tel { stroke: var(--soft); stroke-width: 1.6; stroke-dasharray: 6 4; }
+.loop-svg .i-bnd { fill: none; stroke: var(--ink); stroke-width: 1.2; stroke-dasharray: 16 4 2.5 4; opacity: .8; }
+.loop-svg .i-bnd--back { opacity: .45; }
+.loop-svg .i-core-f, .loop-svg .i-core-shaft { fill: var(--glass); stroke: var(--line); stroke-width: 1; }
+.loop-svg .i-core-r { fill: var(--glass-r); }
+.loop-svg .i-core-shaft { stroke-dasharray: 3 3; }
+.loop-svg .i-core-back { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 3; }
+.loop-svg .i-xline { fill: none; stroke: var(--soft); stroke-width: 1.4; stroke-linejoin: round; }
+.loop-svg .i-xline--open { stroke-dasharray: 5 4; }
+.loop-svg .i-bport { fill: var(--paper); stroke: var(--ink); stroke-width: 1.3; }
+.loop-svg .i-act-box { fill: var(--paper); stroke: var(--ink); stroke-width: 1.5; }
+.loop-svg .i-g-fill { fill: var(--ink); }
+.loop-svg .i-g-line, .loop-svg .i-g-key { fill: none; stroke: var(--ink); stroke-width: 1.6; stroke-linecap: round; }
+.loop-svg .i-g-key { stroke: var(--signal); }
+.loop-svg .i-gauge { fill: none; stroke: var(--ink); stroke-width: 1; }
+.loop-svg .i-bar { fill: var(--line); }
+.loop-svg .i-bar--err { transform-box: fill-box; transform-origin: 50% 100%; transition: transform .6s var(--ease), fill .4s; }
+.loop-svg .i-loop { fill: none; stroke: var(--line); stroke-width: 2; opacity: .75; }
+.loop-svg .i-loop--back { opacity: .4; }
+.loop-svg .i-chev { fill: var(--line); }
+.loop-svg .i-chev.is-on { fill: var(--signal); }
+.loop-svg.is-fault .i-chev.is-on { fill: var(--fault); }
+.loop-svg .i-lock { opacity: 0; transition: opacity .4s var(--ease); }
+.loop-svg .i-lock-b { fill: var(--sig-tint); stroke: var(--signal); stroke-width: 1.6; }
+.loop-svg .i-lock-sh { fill: none; stroke: var(--signal); stroke-width: 2.6; }
+.loop-svg .i-lock-k { fill: var(--signal); }
+.loop-svg [data-unit] { cursor: pointer; }
+/* parts at work, and the part under the pointer or the keyboard */
+.loop-svg .is-on .i-f-t, .loop-svg .is-hl .i-f-t { fill: var(--sig-tint); }
+.loop-svg .is-on .i-f-l, .loop-svg .is-on .i-f-r, .loop-svg .is-hl .i-f-l, .loop-svg .is-hl .i-f-r { fill: var(--sig-tint-2); }
+.loop-svg .is-on .i-f-t, .loop-svg .is-on .i-f-l, .loop-svg .is-on .i-f-r, .loop-svg .is-hl .i-f-t, .loop-svg .is-hl .i-f-l, .loop-svg .is-hl .i-f-r { stroke: var(--signal); stroke-width: 1.6; }
+.loop-svg .is-on .i-f-t.i-hatch, .loop-svg .is-hl .i-f-t.i-hatch { fill: url(#iso-hatch); }
+.loop-svg .is-on .i-act-box, .loop-svg .is-hl .i-act-box { stroke: var(--signal); stroke-width: 2.2; fill: var(--sig-tint); }
+.loop-svg .is-on > .i-riser { stroke: var(--signal); }
+.loop-svg #iso-u-runner, .loop-svg #iso-u-qa-runner { opacity: .38; transition: opacity .4s; }
+.loop-svg #iso-u-runner.is-on, .loop-svg #iso-u-qa-runner.is-on, .loop-svg #iso-u-runner.is-hl, .loop-svg #iso-u-qa-runner.is-hl { opacity: 1; }
+/* the canary revision: a ghost until a release, red when it fails */
+.loop-svg #iso-u-canary { opacity: .4; transition: opacity .4s; }
+.loop-svg.fx-canary #iso-u-canary, .loop-svg #iso-u-canary.is-hl { opacity: 1; }
+.loop-svg.fx-canary .i-wire--cn { opacity: 1; stroke: var(--signal); }
+.loop-svg.fx-canary .i-gauge { fill: var(--signal); stroke: var(--signal); }
+.loop-svg.fx-fault #iso-u-canary .i-f-t, .loop-svg.fx-fault #iso-u-canary .i-f-l, .loop-svg.fx-fault #iso-u-canary .i-f-r { stroke: var(--fault); fill: var(--flt-tint); stroke-width: 1.8; }
+.loop-svg.fx-fault .i-gauge { fill: none; stroke: var(--ink); }
+.loop-svg.fx-fault .i-gauge.i-g0 { fill: var(--fault); stroke: var(--fault); }
+/* the error rate climbs while the issue is open */
+.loop-svg.fx-err .i-bar--err { transform: scaleY(3); fill: var(--signal); }
+/* the factory fixes itself: the faulty control lights; the trusted core locks */
+.loop-svg.fx-flaw #iso-u-control .i-f-t { fill: var(--sig-tint); }
+.loop-svg.fx-flaw #iso-u-control .i-f-l, .loop-svg.fx-flaw #iso-u-control .i-f-r { fill: var(--sig-tint-2); }
+.loop-svg.fx-flaw #iso-u-control > g > * { stroke: var(--signal); }
+.loop-svg.fx-lock .i-lock { opacity: 1; }
+/* restart: Zones 2 and 3 blink twice, then stay dimmed while Zone 1 keeps serving */
+.loop-svg.fx-restart .i-zone[data-l="2"] .i-slab, .loop-svg.fx-restart .i-zone[data-l="3"] .i-slab,
+.loop-svg.fx-restart .i-zone[data-l="2"] .i-u:not(.is-on), .loop-svg.fx-restart .i-zone[data-l="3"] .i-u:not(.is-on) { opacity: .4; animation: loop-blink 1.3s ease-in-out 2; }
+@keyframes loop-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+/* the loop itself: progress, the work item, its tethers, the counter-case, the rollback beam */
+.loop-svg .loop-prog { fill: none; stroke: var(--signal); stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+.loop-svg .loop-tether { stroke: var(--signal); stroke-width: 1.4; stroke-dasharray: 4 3.5; }
+.loop-svg .loop-beam { stroke: var(--fault); stroke-width: 3; stroke-linecap: round; }
+.loop-svg .loop-ghost { fill: var(--paper); stroke: var(--soft); stroke-width: 1.6; }
+.loop-svg .loop-tok-b { fill: var(--signal); stroke: var(--paper); stroke-width: 2; }
+.loop-svg .loop-tok-halo { fill: var(--signal); opacity: .16; }
+.loop-svg .loop-tok-x { stroke: var(--paper); stroke-width: 1.8; stroke-linecap: round; display: none; }
+.loop-svg.is-fault .loop-prog, .loop-svg.is-fault .loop-tether { stroke: var(--fault); }
+.loop-svg.is-fault .loop-tok-b, .loop-svg.is-fault .loop-tok-halo { fill: var(--fault); }
+.loop-svg.is-fault .loop-tok-x { display: inline; }
+

@@ -20,6 +20,49 @@ SISF is an open-source framework for a closed-loop software factory. It takes in
 
 ## How it works
 
+One deployment, three zones and one self-improvement loop. The app reports how it is doing, the Decision Layer proposes a fix only when the evidence holds, separate agents build and grade it, and the supervisor ships it behind a canary before the loop goes back to watching.
+
+The page shows this as an animated 3D drawing (a 2.5D drawing on devices without GPU acceleration, a still drawing without JavaScript). It is an illustration of the design, not live data. Values marked * are starting points, to be calibrated.
+
+### Flow 1 · The self-improvement loop
+
+1. **Zone 1 reports how it is doing.** Traces, logs and feedback leave the app as data only. Here, one endpoint's error rate starts to climb.
+2. **The Decision Layer weighs the evidence.** Samples, baseline, trend and user impact. If the evidence is thin, it stops here: it collects more, or ignores the signal.
+3. **It proposes a fix within its authority.** Within its delegated scope, an improvement to existing behaviour can go ahead. A new feature would wait here for the Owner.
+4. **The proposal becomes a GitHub issue.** It carries the evidence, a scope and a measurable Definition of Done.
+5. **A runner writes the fix.** The dispatcher claims the issue. A fresh runner in the sandbox writes the fix and reaches out only through the egress proxy.
+6. **A different agent grades it.** `qa-runner`, with its own identity, scores it against a read-only baseline; the result is kept in a signed `qa_receipt`. The writer never grades.
+7. **The supervisor ships a canary.** Only the supervisor deploys: 5%, then 25%, then 100%* of traffic, while the error rate is compared with baseline.
+8. **The metric recovers. The loop closes.** The issue is verified on the running revision and closed. The factory goes back to watching.
+
+### Flow 2 · The factory fixes itself
+
+1. **The factory fixes itself, too.** Here, a read-only dashboard page in Zone 3 shows stale data. The fix enters the same loop.
+2. **Built and graded the usual way.** A runner writes the fix; a `qa-runner` with a different identity grades it.
+3. **Zones 2 and 3 restart. Zone 1 keeps serving.** The supervisor rolls out the new `control`. Users are not interrupted.
+4. **The trusted core stays locked.** The supervisor, signing keys, policy enforcement, QA baseline and rollback rules sit where no candidate can write, so no fix can change them.
+5. **Changing that core takes a human.** It is a governance change: approved by the Owner and run as its own, separate cycle.
+6. **Watched like any release.** If the new `control` misbehaves, the supervisor restores the last known good on its own.
+
+### Flow 3 · Issue to release
+
+1. **An issue arrives.** Labelled `sisf:ready` on GitHub, it reaches `control` as a signed webhook. The label asks; it grants nothing.
+2. **Scope first.** A versioned scope and Definition of Done. A new feature waits here for the Owner.
+3. **Claimed and built.** The dispatcher takes a lease over the authenticated API; a runner in the sandbox writes the change.
+4. **Graded by another agent.** A score of 85/100* and every hard gate, recorded in a signed `qa_receipt`.
+5. **Released as a canary.** Only the supervisor deploys: 5% → 25% → 100%* of traffic, watched against baseline.
+6. **Closed only when observed.** The issue closes once the running revision meets the Definition of Done. A merge alone is not done.
+
+### Flow 4 · Rollback
+
+1. **A canary goes out.** The supervisor releases a new revision and the edge gives it 5%* of traffic.
+2. **Errors cross the threshold.** For example 5xx above 2%* and more than a point over baseline, after enough samples.
+3. **The last known good comes back.** The supervisor restores it on its own, from storage no agent can write. Code and config only; customer data is never overwritten.
+4. **Traffic is back on stable.** Zone 1 keeps serving the verified revision. The candidate is gone.
+5. **The issue is blocked, with evidence.** It stays open with a recovery report. Nothing is marked as a success.
+
+### Run the line: every state, in order
+
 Label a GitHub issue. The factory scopes it, waits for the Owner when the work is new, builds it with one agent, grades it with another, and ships it through a supervisor that can always take it back.
 
 Six stations:

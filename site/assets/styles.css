@@ -13,7 +13,7 @@
      hatch    = trusted zone that agents cannot write
 
    Sections: 1 fonts · 2 tokens · 3 base · 4 header · 5 sheets · 6 buttons
-   7 hero · 8 run the line · 9 what · 10 architecture · 11 rules
+   7 hero · 8a the loop · 8 run the line · 9 what · 10 architecture · 11 rules
    12 tables · 13 roadmap · 14 get started · 15 docs + final · 16 footer
    17 no-js · 18 reduced motion
    ========================================================================== */
@@ -259,7 +259,273 @@ b, strong { font-weight: 700; }
 .h-lede { max-width: 40em; font-size: clamp(1.0625rem, .98rem + .3vw, 1.1875rem); line-height: 1.55; }
 .h-cta { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
 
-/* ---------- 8. How it works: Run the line ---------- */
+/* how-loop:start */
+/* ---------- 8a. How it works: the loop ----------
+   One section, three tiers, chosen by app.js and recorded on <html data-how>:
+     3d      the Three.js scene (how-it-works-scene.js)
+     2d      the isometric drawing, inlined and animated (how-it-works-isometric.js)
+     static  the same drawing as an <img>, with every flow as text (no JS, old browsers, or both tiers failed)
+   The isometric drawing's own colours live in how-it-works-isometric.css, loaded by the 2D tier.
+   "wait" is the moment before a tier is ready: the box already shows the static drawing and the
+   player keeps its final size, so nothing moves when the scene arrives. */
+.loop {
+  /* scene colours read by the Three.js view */
+  --g-slab: #F2F6F9; --g-unit: #FFFFFF; --g-edge: #0E2A47; --g-edge-a: .78; --g-slab-a: .5;
+  --g-glass: #0E2A47; --g-glass-a: .07; --g-shadow-a: .1;
+  --g-on: #FAE1D3; --g-flt: #F8D7D3; --g-signal: #D9530F;
+  --g-hemi: 2.35; --g-key: 1.15;
+  display: grid; gap: 18px; margin-bottom: 8px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .loop {
+    --g-slab: #0F2D53; --g-unit: #2C5C96; --g-edge: #D3E3F4; --g-edge-a: .74; --g-slab-a: .46;
+    --g-glass: #D3E3F4; --g-glass-a: .07; --g-shadow-a: .2;
+    --g-on: #6B4430; --g-flt: #6B3340; --g-signal: #FF8A3D;
+    --g-hemi: 2.1; --g-key: 1.0;
+  }
+}
+:root[data-theme="dark"] .loop {
+  --g-slab: #0F2D53; --g-unit: #2C5C96; --g-edge: #D3E3F4; --g-edge-a: .74; --g-slab-a: .46;
+  --g-glass: #D3E3F4; --g-glass-a: .07; --g-shadow-a: .2;
+  --g-on: #6B4430; --g-flt: #6B3340; --g-signal: #FF8A3D;
+  --g-hemi: 2.1; --g-key: 1.0;
+}
+/* source order is figure, player, parts: on phones and tablets the player follows the figure;
+   on wide screens it sits beside it and the parts list sits under the figure */
+@media (min-width: 1180px) {
+  .loop { grid-template-columns: minmax(0, 1fr) 344px; grid-template-rows: auto 1fr; grid-template-areas: "fig player" "parts player"; gap: 14px 24px; align-items: start; }
+  .loop-fig { grid-area: fig; }
+  .loop-player { grid-area: player; position: sticky; top: calc(var(--head-h) + 12px); }
+  .loop-parts { grid-area: parts; }
+}
+.loop-fig { margin: 0; min-width: 0; }
+
+/* the box: a fixed shape in every tier, so the page never shifts when the scene arrives */
+.loop-scene { position: relative; aspect-ratio: 16 / 10.4; border: 1px solid var(--line); background: var(--paper); overflow: hidden; }
+@media (max-width: 700px) { .loop-scene { aspect-ratio: 1 / 1.06; } }
+/* the drawing's frame: centred in the box at the drawing's own shape (placement generated below); the 3D view fills the box */
+.loop-frame { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+[data-how="3d"] .loop-frame { left: 0; top: 0; width: 100%; height: 100%; }
+.loop-poster, .loop-svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.loop-svg { overflow: visible; }
+[data-how="2d"] .loop-poster { display: none; }
+[data-how="3d"] .loop-poster { opacity: 0; visibility: hidden; transition: opacity .5s var(--ease), visibility 0s .5s; }
+.loop-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; outline: none; animation: loop-in .6s var(--ease) both; }
+.loop-canvas.is-hover { cursor: pointer; }
+.loop-canvas.is-drag { cursor: grabbing; }
+@keyframes loop-in { from { opacity: 0; } }
+
+/* persistent labels: the three zones and the three outside actors, nothing else */
+.loop-labels { position: absolute; inset: 0; pointer-events: none; }
+[data-how="3d"] .loop-labels { animation: loop-in .6s var(--ease) both; }
+.loop-lbl { position: absolute; white-space: nowrap; }
+[data-how="3d"] .loop-lbl { left: 0; top: 0; will-change: transform; }
+.loop-lbl-z { display: grid; justify-items: start; transition: opacity .3s var(--ease); }
+html:not([data-how="3d"]) .loop-lbl-z { justify-items: end; text-align: right; }
+.loop-lbl-z.is-away { opacity: 0; }
+.loop-zk { font: 500 10px/1.3 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--signal); }
+.loop-zn { font: 700 14px/1.2 var(--sans); color: var(--ink); text-shadow: 0 0 3px var(--paper), 0 0 3px var(--paper), 0 0 6px var(--paper); }
+.loop-lbl-a { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px 3px 5px; border: 1px solid var(--line); background: var(--paper); font: 600 12.5px/1.2 var(--sans); color: var(--ink); transition: border-color .4s var(--ease), color .4s var(--ease); }
+.loop-lbl-a svg { width: 16px; height: 16px; flex: none; }
+.loop-lbl-a.is-on { border-color: var(--signal); color: var(--signal); }
+[data-how="3d"] .loop-lbl-a, [data-how="2d"] .loop-lbl-a { pointer-events: auto; cursor: pointer; }
+/* the drawing's actor tiles already carry a glyph, so outside 3D the chip is the name alone */
+html:not([data-how="3d"]) .loop-lbl-a { padding-left: 8px; }
+html:not([data-how="3d"]) .loop-lbl-a svg { display: none; }
+@media (max-width: 700px) {
+  .loop-lbl-z, html:not([data-how="3d"]) .loop-lbl-z { display: flex; align-items: baseline; gap: 5px; padding: 2px 6px; background: var(--paper); border: 1px solid var(--line); }
+  .loop-zk { letter-spacing: .06em; }
+  .loop-zk-long { display: none; }
+  .loop-zn { font-size: 12px; text-shadow: none; }
+  .loop-lbl-a { font-size: 11.5px; padding: 2px 6px 2px 4px; }
+  .loop-lbl-a svg { width: 14px; height: 14px; }
+  html:not([data-how="3d"]) .loop-lbl-a { padding-left: 6px; }
+}
+
+/* view controls and the hint: only the 3D scene can turn and lift apart */
+.loop-ctl { position: absolute; z-index: 3; top: 10px; right: 10px; display: none; gap: 6px; }
+[data-how="3d"] .loop-ctl { display: flex; }
+.loop-vbtn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; min-width: 40px; padding: 0 11px;
+  border: 1.5px solid var(--ink); background: var(--paper); color: var(--ink);
+  font: 600 11.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; cursor: pointer;
+}
+.loop-vbtn:hover { background: var(--paper-2); }
+.loop-vbtn svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.loop-vbtn[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.loop-vbtn[aria-pressed="true"]:hover { background: var(--soft); }
+@media (pointer: coarse) { .loop-vbtn { min-height: 44px; min-width: 44px; } }
+.loop-hint { position: absolute; z-index: 2; left: 10px; bottom: 9px; display: none; font: 500 11px/1.3 var(--mono); letter-spacing: .04em; color: var(--soft); pointer-events: none; }
+[data-how="3d"] .loop-hint { display: block; }
+.loop-hint-touch { display: none; }
+@media (pointer: coarse) { .loop-hint-fine { display: none; } .loop-hint-touch { display: inline; } }
+
+/* one small callout for one part */
+.loop-co {
+  position: absolute; z-index: 4; left: 0; top: 0; width: max-content; max-width: min(300px, calc(100% - 20px));
+  padding: 10px 36px 11px 12px; background: var(--paper); border: 1.5px solid var(--ink);
+  box-shadow: 4px 4px 0 color-mix(in srgb, var(--ink) 14%, transparent);
+}
+.loop-co[hidden] { display: none; }
+.loop-co-k { font: 600 10.5px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--signal); }
+.loop-co-n { margin-top: 2px; font: 700 15px/1.25 var(--sans); }
+.loop-co-t { margin-top: 4px; font-size: 13.5px; line-height: 1.5; color: var(--soft); }
+.loop-co-x { position: absolute; top: 4px; right: 4px; display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; background: transparent; color: var(--ink); cursor: pointer; }
+.loop-co-x:hover { background: var(--paper-2); }
+.loop-co-x svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 1.6; fill: none; }
+@media (pointer: coarse) { .loop-co-x { width: 40px; height: 40px; top: 0; right: 0; } .loop-co { padding-right: 44px; } }
+.loop-co:not(.is-pinned) { padding-right: 12px; pointer-events: none; }
+.loop-co:not(.is-pinned) .loop-co-x { display: none; }
+
+/* the step note: one small label pinned to the part the current step is about, with a leader */
+.loop-note { position: absolute; inset: 0; z-index: 2; pointer-events: none; opacity: 0; transition: opacity .22s var(--ease); }
+.loop-note.is-in { opacity: 1; transition-duration: .45s; }
+.loop-note.is-in.is-away { opacity: 0; transition-duration: .2s; }
+.loop-note-ln { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.loop-note-ln line { stroke: var(--signal); stroke-width: 1.25; }
+.loop-note-ln circle { fill: var(--paper); stroke: var(--signal); stroke-width: 1.75; }
+.loop-note-t { position: absolute; left: 0; top: 0; display: grid; gap: 1px; padding: 5px 9px 6px; background: var(--paper); border: 1px solid var(--signal); white-space: nowrap; will-change: transform; }
+.loop-note-k { font: 600 10px/1.3 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--signal); }
+.loop-note-n { font: 600 13px/1.3 var(--sans); color: var(--ink); }
+.loop-note.is-fault .loop-note-ln line, .loop-note.is-fault .loop-note-ln circle { stroke: var(--fault); }
+.loop-note.is-fault .loop-note-t { border-color: var(--fault); }
+.loop-note.is-fault .loop-note-k { color: var(--fault); }
+@media (max-width: 700px) { .loop-note-t { padding: 4px 7px 5px; } .loop-note-k { font-size: 9.5px; } .loop-note-n { font-size: 12px; } }
+
+/* the title card between flows: names the next one for a moment */
+.loop-chapter {
+  position: absolute; z-index: 2; top: 14px; left: 50%; display: grid; justify-items: center; gap: 2px;
+  padding: 8px 16px 9px; background: var(--paper); border: 1px solid var(--line); text-align: center; pointer-events: none;
+  opacity: 0; transform: translate(-50%, -4px); transition: opacity .3s var(--ease), transform .3s var(--ease);
+}
+.loop-chapter.is-in { opacity: 1; transform: translate(-50%, 0); transition-duration: .5s; }
+.loop-ch-k { font: 600 10.5px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--signal); }
+.loop-ch-t { font: 700 15px/1.25 var(--sans); color: var(--ink); white-space: nowrap; }
+@media (max-width: 700px) { .loop-chapter { display: none; } }
+html:not([data-how="3d"]):not([data-how="2d"]) .loop-note,
+html:not([data-how="3d"]):not([data-how="2d"]) .loop-chapter { display: none; }
+
+/* the step caption under the box: only where the player is not beside it */
+.loop-now { display: flex; gap: 10px; align-items: baseline; min-height: 44px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-top: 0; background: var(--paper); font: 700 15px/1.35 var(--sans); }
+.loop-now-t { opacity: 0; transition: opacity .18s var(--ease); }
+.loop-now-t.is-in { opacity: 1; transition-duration: .4s; }
+.loop-now-n { flex: none; font: 600 11px/1.3 var(--mono); color: var(--signal); letter-spacing: .06em; }
+.loop-now.is-fault .loop-now-n { color: var(--fault); }
+@media (min-width: 1180px) { .loop-now { display: none; } }
+@media (max-width: 700px) { .loop-now { font-size: 14px; padding: 8px 10px; } }
+.loop-cap { margin-top: 12px; font: 500 12px/1.5 var(--mono); color: var(--soft); }
+.loop-cap b { color: var(--ink); font-weight: 600; }
+
+/* the parts: an accessible list that drives the same callout as the scene */
+.loop-parts { min-width: 0; }
+.loop-parts-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 8px; font: 600 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--soft); }
+.loop-parts-h span { font-weight: 500; letter-spacing: .02em; text-transform: none; }
+.loop-parts-grid { display: grid; gap: 8px 18px; }
+@media (min-width: 640px) { .loop-parts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1000px) { .loop-parts-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.loop-pg { display: grid; gap: 4px; align-content: start; }
+.loop-pg-h { font: 500 10.5px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--soft); }
+.loop-pg-h b { color: var(--signal); font-weight: 600; margin-right: 4px; }
+.loop-pg ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.loop-pbtn {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 10px 0 8px;
+  border: 1px solid var(--line); background: var(--paper); color: var(--ink); font: 600 13px/1.2 var(--sans); cursor: pointer; text-align: left;
+}
+.loop-pbtn::before { content: ""; flex: none; width: 9px; height: 9px; border: 1.5px solid var(--g-edge); background: var(--g-unit); }
+.loop-pbtn[data-unit="supervisor"]::before { background: repeating-linear-gradient(45deg, var(--line) 0 1px, transparent 1px 3px); }
+.loop-pbtn[data-kind="actor"]::before { border-radius: 50%; }
+.loop-pbtn:hover { border-color: var(--ink); }
+.loop-pbtn.is-on { border-color: var(--signal); }
+.loop-pbtn.is-on::before { background: var(--signal); border-color: var(--signal); }
+.loop-pbtn[aria-expanded="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+@media (pointer: coarse) { .loop-pbtn { min-height: 44px; } }
+
+/* the player: flows, caption, controls, the progressive step list */
+.loop-player { border: 1.5px solid var(--ink); background: var(--paper); min-width: 0; }
+.loop-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-bottom: 1.5px solid var(--ink); }
+.loop-tabs [role="tab"] {
+  display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 6px 10px; margin: 0;
+  border: 0; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  background: var(--paper); color: var(--soft); font: 600 13.5px/1.25 var(--sans); text-align: left; cursor: pointer;
+}
+.loop-tabs [role="tab"]:nth-child(2n) { border-right: 0; }
+.loop-tabs [role="tab"]:nth-child(n+3) { border-bottom: 0; }
+.loop-tabs [role="tab"]:hover { background: var(--paper-2); color: var(--ink); }
+.loop-tabs [role="tab"][aria-selected="true"] { background: var(--ink); color: var(--paper); }
+.loop-tabs [role="tab"]:focus-visible { outline-offset: -4px; }
+.loop-tab-n { flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1.5px solid currentColor; font: 600 11px/1 var(--mono); }
+.loop-tabs [aria-selected="true"] .loop-tab-n { background: var(--signal); border-color: var(--signal); color: var(--paper); }
+.loop-ro { position: relative; min-height: 164px; padding: 14px 14px 12px; border-bottom: 1px solid var(--line); }
+/* while a step's motion runs, a dashed hairline holds the place of its words */
+.loop-ro::after { content: ""; position: absolute; left: 14px; right: 38%; top: 58px; border-top: 1px dashed var(--line); opacity: 0; transition: opacity .2s var(--ease); }
+.loop-ro.is-wait::after { opacity: .6; }
+.loop-ro-k { display: flex; justify-content: space-between; gap: 12px; font: 500 11px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--soft); }
+.loop-ro-n { white-space: nowrap; color: var(--ink); font-weight: 600; }
+.loop-ro-words { opacity: 0; transform: translateY(4px); transition: opacity .16s var(--ease), transform .16s var(--ease); }
+.loop-ro-words.is-in { opacity: 1; transform: none; transition-duration: .4s; }
+.loop-ro-title { margin-top: 8px; font: 800 1.1875rem/1.25 var(--sans); letter-spacing: -.01em; }
+.loop-ro-body { margin-top: 6px; font-size: 15px; line-height: 1.55; color: var(--soft); }
+.loop-ro-dots { list-style: none; margin: 12px 0 0; padding: 0; display: flex; gap: 4px; }
+.loop-ro-dots li { flex: 1 1 0; height: 4px; background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line); }
+.loop-ro-dots li.is-done { background: var(--soft); box-shadow: none; }
+.loop-ro-dots li.is-cur { background: var(--signal); box-shadow: none; }
+.loop-ro.is-fault .loop-ro-dots li.is-cur { background: var(--fault); }
+.loop-controls { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.loop-panels { padding: 4px 0 6px; }
+.loop-panel { padding: 0 14px; }
+.loop-panel:focus-visible { outline-offset: -3px; }
+.loop-panel-h { padding: 10px 0 6px; font: 600 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--soft); }
+.loop-steps { list-style: none; margin: 0; padding: 0 0 8px; counter-reset: s; }
+.loop-steps li { counter-increment: s; position: relative; padding: 6px 0 6px 30px; font-size: 13.5px; line-height: 1.45; color: var(--soft); border-top: 1px solid var(--paper-2); }
+.loop-steps li::before { content: counter(s, decimal-leading-zero); position: absolute; left: 0; top: 7px; font: 600 11px/1.4 var(--mono); color: var(--soft); }
+.loop-steps li b { color: var(--ink); font-weight: 600; }
+.loop-steps li.is-cur::before { color: var(--paper); background: var(--signal); padding: 0 3px; margin-left: -3px; }
+/* with a player: only the current step shows its detail (all of it stays readable to screen readers);
+   steps appear as playback reaches them, later ones keep their place as a numbered hairline */
+.js:not([data-how="static"]) .loop-steps li { min-height: 32px; }
+.js:not([data-how="static"]) .loop-steps li span,
+.js:not([data-how="static"]) .loop-steps li.is-ahead > b { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.js:not([data-how="static"]) .loop-steps li.is-past b { color: var(--soft); font-weight: 500; }
+.js:not([data-how="static"]) .loop-steps li.is-cur b { font-weight: 700; }
+.js:not([data-how="static"]) .loop-steps li.is-ahead::before { opacity: .5; }
+.js:not([data-how="static"]) .loop-steps li.is-ahead::after { content: ""; position: absolute; left: 30px; right: 34%; top: 50%; border-top: 1px dashed var(--line); opacity: .6; }
+.loop-steps li.is-new { animation: loop-step-in .45s var(--ease) both; }
+@keyframes loop-step-in { from { opacity: 0; transform: translateY(5px); } }
+
+/* static tier (no JS, or no scene could start): the drawing plus every flow as an ordered list */
+.no-js .loop-tabs, [data-how="static"] .loop-tabs,
+.no-js .loop-ro, [data-how="static"] .loop-ro,
+.no-js .loop-controls, [data-how="static"] .loop-controls,
+.no-js .loop-parts, [data-how="static"] .loop-parts,
+.no-js .loop-now, [data-how="static"] .loop-now { display: none; }
+.no-js .loop-panel[hidden], [data-how="static"] .loop-panel[hidden] { display: block; }
+.no-js .loop-panel + .loop-panel, [data-how="static"] .loop-panel + .loop-panel { border-top: 1px solid var(--line); }
+.no-js .loop-player, [data-how="static"] .loop-player { position: static; }
+
+/* the line below: every state, in order */
+.how-sub { margin-top: 40px; padding-top: 26px; border-top: 1px dashed var(--line); }
+.how-sub h3 { font-weight: 800; font-size: clamp(1.5rem, 1.2rem + 1.1vw, 2.125rem); line-height: 1.1; letter-spacing: -.02em; }
+@media (min-width: 1100px) { .how-sub { margin-top: 48px; padding-top: 28px; } }
+/* generated by the section build: the drawing (1155x902) placed in the box, and its six labels */
+.loop-frame { left: 8.38%; top: 0%; width: 83.23%; height: 100%; }
+html:not([data-how="3d"]) .loop-lbl[data-zone="1"] { left: 13.12%; top: 67.63%; transform: translate(-100%, -50%); }
+html:not([data-how="3d"]) .loop-lbl[data-zone="2"] { left: 13.12%; top: 51%; transform: translate(-100%, -50%); }
+html:not([data-how="3d"]) .loop-lbl[data-zone="3"] { left: 13.12%; top: 34.37%; transform: translate(-100%, -50%); }
+html:not([data-how="3d"]) .loop-lbl[data-actor="github"] { left: 16.65%; top: 16.41%; transform: translate(-100%, -50%); }
+html:not([data-how="3d"]) .loop-lbl[data-actor="owner"] { left: 84.18%; top: 16.63%; transform: translate(0, -50%); }
+html:not([data-how="3d"]) .loop-lbl[data-actor="users"] { left: 89.25%; top: 86.03%; transform: translate(-50%, 0); }
+@media (max-width: 700px) {
+  .loop-frame { left: -17.08%; top: 2.69%; width: 128.44%; height: 94.62%; }
+  html:not([data-how="3d"]) .loop-lbl[data-zone="1"] { left: 14.54%; top: 67.63%; transform: translate(0, -50%); }
+  html:not([data-how="3d"]) .loop-lbl[data-zone="2"] { left: 14.54%; top: 51%; transform: translate(0, -50%); }
+  html:not([data-how="3d"]) .loop-lbl[data-zone="3"] { left: 14.54%; top: 34.37%; transform: translate(0, -50%); }
+  html:not([data-how="3d"]) .loop-lbl[data-actor="github"] { left: 17.34%; top: 13.53%; transform: translate(0, -100%); }
+  html:not([data-how="3d"]) .loop-lbl[data-actor="owner"] { left: 83.49%; top: 13.75%; transform: translate(-100%, -100%); }
+  html:not([data-how="3d"]) .loop-lbl[data-actor="users"] { left: 90.98%; top: 86.03%; transform: translate(-100%, 0); }
+}
+/* how-loop:end */
+
+/* ---------- 8. How it works: Run the line (every state, in order) ---------- */
 .how { margin-top: 36px; padding-top: 28px; border-top: 1px solid var(--line); }
 .how-head { display: grid; gap: 12px; margin-bottom: 20px; }
 @media (min-width: 1100px) {
@@ -428,7 +694,7 @@ b, strong { font-weight: 700; }
 .schedule { margin-top: 22px; border: 1.5px solid var(--ink); }
 .schedule > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; min-height: 52px; padding: 12px 48px 12px 14px; cursor: pointer; list-style: none; position: relative; }
 .schedule > summary::-webkit-details-marker { display: none; }
-.schedule > summary h3 { font-size: 1.0625rem; }
+.schedule > summary h4 { font-size: 1.0625rem; }
 .sum-meta { font: 500 11.5px/1.4 var(--mono); color: var(--soft); letter-spacing: .04em; }
 .schedule > summary:hover { background: var(--paper-2); }
 /* plus / minus drawn as two strokes */

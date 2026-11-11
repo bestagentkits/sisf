@@ -99,6 +99,82 @@
   })();
 
   /* ================================================================
+     How it works: the loop. Three tiers, recorded on <html data-how>:
+       3d      Three.js scene     (JS, a usable WebGL context, the module loads)
+       2d      isometric drawing  (JS but no usable WebGL, or the scene failed)
+       static  the drawing as an <img> plus every flow as text (no JS, no
+               module support, or both tiers failed)
+     Nothing heavy is fetched until the box is about 200px from the
+     viewport, and never before the page has finished loading. Until a
+     tier is ready the box shows the static drawing ("wait"), at the
+     same size, so nothing moves when the scene arrives.
+     Testing: ?scene=3d|2d|static forces a tier (3d skips the GPU check).
+     ================================================================ */
+  (function howItWorks() {
+    var host = $('[data-loop]');
+    if (!host) return;
+    var box = $('[data-scene]', host);
+    var V = '20261111';
+    var m = /[?&]scene=(3d|2d|static)\b/.exec(location.search);
+    var force = m ? m[1] : '';
+    var modern = 'noModule' in HTMLScriptElement.prototype && 'IntersectionObserver' in window && 'fetch' in window;
+    function set(mode) { root.setAttribute('data-how', mode); }
+    if (force === 'static' || !modern) { set('static'); return; }
+    set('wait');
+
+    var tried = {};
+    function load(tier) {
+      if (tried[tier]) { set('static'); return; }
+      tried[tier] = true;
+      var s = document.createElement('script');
+      s.type = 'module';
+      s.src = '/assets/how-it-works-' + (tier === '3d' ? 'scene' : 'isometric') + '.js?v=' + V;
+      /* a module or one of its imports failed to download or parse */
+      s.onerror = function () { fallback(tier); };
+      document.head.appendChild(s);
+    }
+    /* 3d falls back to 2d, 2d to static */
+    function fallback(from) { if (from === '3d') load('2d'); else set('static'); }
+    /* the modules raise this when they start but cannot run (no context, a lost context, a failed fetch) */
+    document.addEventListener('sisf:how-fallback', function (e) { fallback(e.detail && e.detail.from); });
+
+    /* a real GPU: software-only WebGL gets the lighter drawing instead of a slow scene.
+       The caveat flag alone is not enough: some Chromium builds hand out SwiftShader with it set,
+       and the scene's shaders can then hold the main thread for many seconds. So the renderer
+       name is checked too: Firefox gives the real one as RENDERER, Chromium only through the
+       debug-info extension (asked for only when RENDERER is the generic one). */
+    var SOFT = /swiftshader|llvmpipe|softpipe|software|basic render/i;
+    function gpu() {
+      try {
+        var c = document.createElement('canvas');
+        var o = { failIfMajorPerformanceCaveat: true };
+        var gl = c.getContext('webgl2', o) || c.getContext('webgl', o);
+        if (!gl) return false;
+        var name = String(gl.getParameter(gl.RENDERER) || '');
+        if (/^webkit webgl$/i.test(name)) {
+          var info = gl.getExtension('WEBGL_debug_renderer_info');
+          if (info) name = String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL) || '');
+        }
+        var lose = gl.getExtension('WEBGL_lose_context');
+        if (lose) lose.loseContext();
+        return !SOFT.test(name);
+      } catch (e) { return false; }
+    }
+    function go() { load(force === '2d' ? '2d' : force === '3d' || gpu() ? '3d' : '2d'); }
+
+    function arm() {
+      var io = new IntersectionObserver(function (entries) {
+        for (var i = 0; i < entries.length; i++) {
+          if (entries[i].isIntersecting) { io.disconnect(); go(); return; }
+        }
+      }, { rootMargin: '200px 0px' });
+      io.observe(box);
+    }
+    if (document.readyState === 'complete') arm();
+    else window.addEventListener('load', arm);
+  })();
+
+  /* ================================================================
      Run the line. One issue travels through 15 lifecycle states.
      The <ol class="states"> in the page is the single source of the
      zone and note for each state; only two extra frames live here.
