@@ -7,7 +7,6 @@ import (
 
 	"github.com/bestagentkits/sisf/internal/catalog"
 	"github.com/bestagentkits/sisf/pkg/core"
-	"github.com/bestagentkits/sisf/pkg/state"
 )
 
 // countingLander merges every landing it is asked for and counts them.
@@ -45,25 +44,21 @@ func TestALandingHeldByAnEmergencyStopIsFinishedOnceTheStopIsLifted(t *testing.T
 	issue, run := issueRef(30), core.RunID("run-30")
 	w.seedReleaseCandidate(issue, run, firstBuild)
 
-	out, err := w.pipeline().Release(ctx, w.request(issue, run, firstBuild))
+	req := w.request(issue, run, firstBuild)
+	out, err := w.pipeline().Release(ctx, req)
 	if !core.HasCode(err, core.CodeFrozen) || out.Result != ResultHeld {
 		t.Fatalf("Release = %+v, %v; want held by the emergency stop", out, err)
 	}
 	w.requireState(issue, core.StateVerified)
-	var due LandRequest
-	if err := w.store.View(ctx, func(ctx context.Context, tx state.Tx) error {
-		var err error
-		due, err = ReadLandingDue(ctx, tx, run)
-		return err
-	}); err != nil || due.Release != core.ReleaseDigest(firstBuild) {
-		t.Fatalf("the landing due is %+v, %v", due, err)
+	if due, found := w.finishDue(run); !found || due.Release != core.ReleaseDigest(firstBuild) || !due.Published {
+		t.Fatalf("the finish due is %+v (found %v), want the published release", due, found)
 	}
 	if lander.lands.Load() != 0 {
 		t.Fatal("a landing ran while the factory was frozen")
 	}
 
 	w.freeze.frozen.Store(false)
-	out, err = w.pipeline().FinishVerified(ctx, due)
+	out, err = w.pipeline().FinishVerified(ctx, req)
 	if err != nil || out.Result != ResultClosed {
 		t.Fatalf("FinishVerified = %+v, %v", out, err)
 	}

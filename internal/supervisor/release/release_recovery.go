@@ -63,6 +63,9 @@ func (p *Pipeline) Recover(ctx context.Context, issue core.IssueRef, unit string
 		return failed(holdf("the last known good release of %s cannot be read", unit).WithCause(err))
 	case !found:
 		return failed(holdf("unit %s has no last known good release to restore", unit))
+	case lkg.Digest == h.record.ReleaseDigest && h.record.State == core.StateMonitoring &&
+		lkg.Source == SourcePromoted && lkg.RunID == h.record.RunID:
+		return p.verifyRecordedLKG(ctx, h, unit, lkg)
 	case lkg.Digest == h.record.ReleaseDigest:
 		return failed(holdf("the release left in %s is already the last known good release of %s, so there is nothing to restore",
 			h.record.State, unit))
@@ -73,6 +76,47 @@ func (p *Pipeline) Recover(ctx context.Context, issue core.IssueRef, unit string
 		lkgRev: deploy.Revision{Unit: unit, Digest: lkg.Digest},
 	}
 	return p.restore(ctx, r, undo{cause: statemachine.BlockReleaseInterrupted, reason: interruptedReason})
+}
+
+// verifyRecordedLKG writes the Verified step of a release the pipeline
+// recorded as the LKG after its observation window, but whose Verified step
+// was never written because the supervisor stopped or the write failed in
+// between. Only the pipeline's finish records an LKG, and only after the
+// window, so the entry is the record that the release passed it; the
+// running system is read once more, and the step is written only when it
+// serves the release, healthy. What the release still owes is recorded as
+// due with the step, and FinishVerified takes it up. Restoring the LKG
+// would change nothing: the release is the LKG.
+func (p *Pipeline) verifyRecordedLKG(ctx context.Context, h *holding, unit string, lkg LKG) (Outcome, error) {
+	out := Outcome{State: h.record.State, Release: h.record.ReleaseDigest}
+	rev := deploy.Revision{Unit: unit, Digest: h.record.ReleaseDigest}
+	observed, err := p.cfg.Backend.ObservedRevision(ctx, unit)
+	if err != nil || !observed.Matches(rev) {
+		out.Result = ResultRestoreFailed
+		err = holdf("the release recorded as the last known good release of %s is not observed running and healthy", unit)
+		out.Reason = err.Error()
+		return out, err
+	}
+	out.Observed = observed
+	proof := statemachine.PostDeployProof{
+		IssueID: h.record.IssueID, RunID: h.record.RunID, Released: rev.Digest, Observed: observed.Digest,
+		Healthy: observed.Healthy, ObservedAt: observed.ObservedAt, WindowEndsAt: lkg.RecordedAt,
+		DoD: []statemachine.DoDResult{
+			{Item: "the release was recorded as the last known good release after its observation window", Met: true, EvidenceRef: "lkg:" + string(lkg.Digest)},
+			{Item: "the release is observed running and healthy", Met: true, EvidenceRef: "observed:" + string(observed.Digest)},
+		},
+	}
+	due := FinishDue{IssueID: h.record.IssueID, RunID: h.record.RunID, Release: rev.Digest, Unit: unit}
+	err = p.step(ctx, h, stepSpec{
+		event: core.EventPostDeployVerified, reason: "the release was recorded as the LKG after its observation window and is observed serving",
+		release: rev.Digest, evidence: []string{"observed:" + string(observed.Digest), "lkg:" + string(lkg.Digest)},
+		guards: statemachine.Guards{PostDeploy: statemachine.PostDeployGuardFunc(func(context.Context, core.Transition) (statemachine.PostDeployProof, error) {
+			return proof, nil
+		})},
+		also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error { return putFinishDue(ctx, tx, due) },
+	})
+	out.State = h.record.State
+	return out, err
 }
 
 // keepLease makes sure the pipeline still holds the issue lease it is about

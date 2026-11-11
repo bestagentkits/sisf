@@ -81,6 +81,11 @@ func logRelease(log *slog.Logger, issue core.IssueRef, out release.Outcome) {
 		log.Info("release closed: the verified release serves the application", "issue", issue.String(), "release", string(out.Release))
 		return
 	}
+	if out.State == core.StateVerified && out.Waits != "" {
+		log.Warn("verified release not finished yet: the issue stays Verified and the supervisor finishes it on a later pass",
+			"issue", issue.String(), "waits", out.Waits, "release", string(out.Release))
+		return
+	}
 	msg, ok := releaseMessages[out.Result]
 	if !ok {
 		msg = "release ended without closing the issue"
@@ -110,6 +115,12 @@ func (l *lifecycleFlags) startLifecycle(ctx context.Context, d lifecycleDeps, op
 	opts.Rollback = st.Pipeline.OwnerRollback
 	opts.HeldBuilds = heldBuilds(d.stop.store)
 	return func(ctx context.Context) {
+		// A supervisor that stopped between a verification and the write of
+		// its LKG left a Verified record whose release the LKG does not name
+		// yet: it is recorded first, so adoption starts what the record says.
+		if lkgs := st.Release.RecordVerifiedLKGs(ctx); ctx.Err() == nil {
+			logPass(d.log, stages.PassResult{Release: lkgs})
+		}
 		if l.adopter != nil && !l.adopter.until(ctx, l, d.clock, d.log) {
 			return
 		}

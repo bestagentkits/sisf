@@ -43,7 +43,7 @@ func TestTheLandingDueRecordIsDeletedWhenTheIssueClosesOnIt(t *testing.T) {
 			t.Fatalf("Release = %+v, %v", out, err)
 		}
 		w.requireState(issue, core.StateClosed)
-		if w.landingDue(run) {
+		if _, found := w.finishDue(run); found || w.landingDue(run) {
 			t.Fatal("the landing is still recorded as due after the issue closed on it")
 		}
 	})
@@ -54,25 +54,18 @@ func TestTheLandingDueRecordIsDeletedWhenTheIssueClosesOnIt(t *testing.T) {
 		w.cfg.Publisher = &freezingPublisher{freeze: w.freeze}
 		issue, run := issueRef(32), core.RunID("run-32")
 		w.seedReleaseCandidate(issue, run, firstBuild)
-		if _, err := w.pipeline().Release(ctx, w.request(issue, run, firstBuild)); !core.HasCode(err, core.CodeFrozen) {
+		req := w.request(issue, run, firstBuild)
+		if _, err := w.pipeline().Release(ctx, req); !core.HasCode(err, core.CodeFrozen) {
 			t.Fatalf("Release = %v; want held by the emergency stop", err)
 		}
-		if !w.landingDue(run) {
+		if _, found := w.finishDue(run); !found {
 			t.Fatal("a held landing is not recorded as due")
 		}
-		var due LandRequest
-		if err := w.store.View(ctx, func(ctx context.Context, tx state.Tx) error {
-			var err error
-			due, err = ReadLandingDue(ctx, tx, run)
-			return err
-		}); err != nil {
-			t.Fatal(err)
-		}
 		w.freeze.frozen.Store(false)
-		if out, err := w.pipeline().FinishVerified(ctx, due); err != nil || out.Result != ResultClosed {
+		if out, err := w.pipeline().FinishVerified(ctx, req); err != nil || out.Result != ResultClosed {
 			t.Fatalf("FinishVerified = %+v, %v", out, err)
 		}
-		if w.landingDue(run) {
+		if _, found := w.finishDue(run); found || w.landingDue(run) {
 			t.Fatal("the landing is still recorded as due after the issue closed on it")
 		}
 	})

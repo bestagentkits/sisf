@@ -67,3 +67,38 @@ func TestTheProgramsInFlightAreThoseOfCandidatesBetweenBuildAndTheEndOfTheirRele
 		t.Errorf("the states read are %v", inFlightStates)
 	}
 }
+
+// The program of a verified release stays while the release is still to be
+// finished, and is removed once its issue closed and a later release took
+// its place as the last known good release.
+func TestTheProgramOfAFinishedReleaseGoesOnceItIsNoLongerTheLastKnownGood(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, _ := trustStore(t)
+	verified, later := exported(t, store, "verified, finishing"), exported(t, store, "the later release")
+	kept := func(d core.Digest) bool {
+		_, err := store.Path(d)
+		return err == nil
+	}
+	records := []core.StateRecord{
+		{State: core.StateVerified, ReleaseDigest: core.ReleaseDigest(verified)},
+		{State: core.StateReleaseCandidate, CandidateDigest: later},
+	}
+	lkg := verified
+	r := &programRetention{
+		store:    store,
+		lkg:      func(context.Context) (core.Digest, error) { return lkg, nil },
+		inFlight: func(context.Context) ([]core.Digest, error) { return inFlightDigests(records), nil },
+	}
+	if removed, err := r.sweep(ctx); err != nil || !kept(verified) || !kept(later) {
+		t.Fatalf("while the release is finishing: removed %v (%v)", removed, err)
+	}
+	records[0].State = core.StateClosed
+	if removed, err := r.sweep(ctx); err != nil || !kept(verified) {
+		t.Fatalf("a closed release that is still the last known good: removed %v (%v)", removed, err)
+	}
+	lkg, records[1].State = later, core.StateClosed
+	if removed, err := r.sweep(ctx); err != nil || kept(verified) || !kept(later) {
+		t.Fatalf("after a later release became the last known good: removed %v (%v); finished kept %t", removed, err, kept(verified))
+	}
+}

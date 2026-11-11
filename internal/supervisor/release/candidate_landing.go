@@ -3,7 +3,6 @@ package release
 import (
 	"context"
 	"encoding/json"
-	"strconv"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/qa"
@@ -11,23 +10,9 @@ import (
 )
 
 // LandingDueKey is the key, in RecoveryNamespace, of the landing a
-// verified release of the run still owes.
+// verified release of the run owed, as an earlier build of the supervisor
+// recorded it before merging; FinishDueKey has replaced it.
 func LandingDueKey(run core.RunID) string { return "landing-due/" + string(run) }
-
-func putLandingDue(ctx context.Context, tx state.Tx, req LandRequest) error {
-	raw, err := json.Marshal(req)
-	if err != nil {
-		return invalid("the landing cannot be encoded").WithCause(err)
-	}
-	version := int64(0)
-	if existing, err := tx.GetKV(ctx, RecoveryNamespace, LandingDueKey(req.RunID)); err == nil {
-		version = existing.Version
-	} else if !core.HasCode(err, core.CodeNotFound) {
-		return err
-	}
-	_, err = tx.PutKV(ctx, state.KVEntry{Namespace: RecoveryNamespace, Key: LandingDueKey(req.RunID), Value: raw, Version: version})
-	return err
-}
 
 // deleteLandingDue forgets the landing the run owed, once its issue closes
 // on the decided landing; a run that owed none has nothing to forget.
@@ -42,8 +27,9 @@ func deleteLandingDue(ctx context.Context, tx state.Tx, run core.RunID) error {
 	return tx.DeleteKV(ctx, RecoveryNamespace, LandingDueKey(run), existing.Version)
 }
 
-// ReadLandingDue reads the landing the verified release of the run owes;
-// NOT_FOUND when its landing was never reached.
+// ReadLandingDue reads the landing an earlier build of the supervisor
+// recorded as due for the verified release of the run; NOT_FOUND when it
+// recorded none.
 func ReadLandingDue(ctx context.Context, tx state.Tx, run core.RunID) (LandRequest, error) {
 	entry, err := tx.GetKV(ctx, RecoveryNamespace, LandingDueKey(run))
 	if err != nil {
@@ -85,17 +71,14 @@ type Lander interface {
 	Land(ctx context.Context, req LandRequest) (Landing, error)
 }
 
-// land lands the change of a verified release before its issue closes. It
-// first records that the landing is due, so an issue held here by an
-// emergency stop, an outage of GitHub or a restart is finished later by
-// FinishVerified. An emergency stop holds it: nothing is merged while one
-// is in force.
+// land lands the change of a verified release before its issue closes.
+// What the release still owes is recorded as due (FinishDue) since its
+// verification, so an issue held here by an emergency stop, an outage of
+// GitHub or a restart is finished later by FinishVerified. An emergency
+// stop holds it: nothing is merged while one is in force.
 func (p *Pipeline) land(ctx context.Context, req LandRequest) (Landing, error) {
 	if p.cfg.Lander == nil {
 		return Landing{}, nil
-	}
-	if err := p.cfg.State.Update(ctx, func(ctx context.Context, tx state.Tx) error { return putLandingDue(ctx, tx, req) }); err != nil {
-		return Landing{}, err
 	}
 	if p.frozen(ctx) {
 		return Landing{}, core.NewError(core.CodeFrozen, "an emergency stop froze publishing; the verified change is not merged")
@@ -105,7 +88,7 @@ func (p *Pipeline) land(ctx context.Context, req LandRequest) (Landing, error) {
 
 // closeLanded closes the issue of a verified release after its landing.
 // The closing step says whether the change was merged, and forgets in the
-// same transaction that the landing was due: it is decided.
+// same transaction what the release owed: it is all done.
 func (p *Pipeline) closeLanded(ctx context.Context, h *holding, landing Landing, evidence []string) error {
 	reason := "verified, recorded as the LKG, changelog and catalog published"
 	if landing.Summary != "" {
@@ -116,37 +99,9 @@ func (p *Pipeline) closeLanded(ctx context.Context, h *holding, landing Landing,
 	}
 	return p.step(ctx, h, stepSpec{event: core.EventIssueClosed, reason: reason, evidence: evidence,
 		also: func(ctx context.Context, tx state.Tx, r core.StateRecord) error {
+			if err := deleteFinishDue(ctx, tx, r.RunID); err != nil {
+				return err
+			}
 			return deleteLandingDue(ctx, tx, r.RunID)
 		}})
-}
-
-// FinishVerified lands and closes an issue left Verified because its
-// landing could not be decided, for example after a restart, an emergency
-// stop or an outage of GitHub between the verification and the merge. Only
-// an issue whose landing is due (see ReadLandingDue) is resumed: everything
-// before the landing already happened.
-func (p *Pipeline) FinishVerified(ctx context.Context, req LandRequest) (Outcome, error) {
-	out := Outcome{Release: req.Release}
-	stop := func(result Result, err error) (Outcome, error) {
-		out.Result, out.Reason = result, err.Error()
-		return out, err
-	}
-	h, err := p.take(ctx, req.IssueID)
-	if err != nil {
-		return stop(ResultHeld, err)
-	}
-	defer p.letGo(ctx, h)
-	out.State = h.record.State
-	if h.record.State != core.StateVerified || h.record.RunID != req.RunID || h.record.ReleaseDigest != req.Release {
-		return stop(ResultRefused, core.NewError(core.CodeConflict, "the issue is not verified with this run's release"))
-	}
-	landing, err := p.land(ctx, req)
-	if err != nil {
-		return stop(ResultHeld, err)
-	}
-	if err := p.closeLanded(ctx, h, landing, []string{"release:" + string(req.Release)}); err != nil {
-		return stop(ResultHeld, err)
-	}
-	out.Result, out.State = ResultClosed, h.record.State
-	return out, p.audit(ctx, h, "release.land", core.OutcomeExecuted, map[string]string{"release": string(req.Release), "merged": strconv.FormatBool(landing.Merged)})
 }

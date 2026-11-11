@@ -4,24 +4,23 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/bestagentkits/sisf/internal/catalog"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
+	"github.com/bestagentkits/sisf/pkg/state"
 )
 
 // finish closes a release that passed its observation window. The revision
 // is read from the running system once more after the window: only the
-// release itself, healthy, is verified. The verified release then becomes
-// the LKG, the changelog and the catalog are published by the Publisher
-// identity, the change is landed on the default branch (see Lander), and
-// the issue closes. A step that cannot be taken leaves the
-// issue where it is, and the outcome says so.
+// release itself, healthy, is verified. The verified release is recorded
+// as the LKG first, so that a supervisor that stops at any later point
+// starts this release again, as the record will say. The Verified step is
+// written next, with what the release still owes (FinishDue) in the same
+// transaction; then the changelog and the catalog are published, the change
+// is landed and the issue closes (complete). A step after the Verified step
+// that cannot be taken leaves the issue Verified with its finish due, which
+// FinishVerified takes up on a later pass.
 func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
 	out := Outcome{Release: r.rev.Digest, Windows: r.windows, State: r.h.record.State}
-	held := func(err error) (Outcome, error) {
-		out.Result, out.Reason, out.State = ResultHeld, err.Error(), r.h.record.State
-		return out, err
-	}
 	windowEnd := p.cfg.Clock.Now()
 	observed, err := p.cfg.Backend.ObservedRevision(ctx, r.unit)
 	if err != nil {
@@ -42,43 +41,37 @@ func (p *Pipeline) finish(ctx context.Context, r *rollout) (Outcome, error) {
 		IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Released: r.rev.Digest, Observed: observed.Digest,
 		Healthy: observed.Healthy, ObservedAt: observed.ObservedAt, WindowEndsAt: windowEnd, DoD: dod,
 	}
+	// A failed write of the LKG changes nothing on the trust volume; the
+	// release is still verified, and the LKG is recorded on a later pass
+	// (FinishVerified) or before the LKG is adopted at the next start.
+	lkgErr := p.cfg.LKG.record(r.v)
+	due := FinishDue{IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Release: r.rev.Digest, Unit: r.unit}
 	err = p.step(ctx, r.h, stepSpec{
 		event: core.EventPostDeployVerified, reason: "the observed release met its DoD through the observation window",
 		release: r.rev.Digest, evidence: []string{"observed:" + string(observed.Digest)},
 		guards: statemachine.Guards{PostDeploy: statemachine.PostDeployGuardFunc(func(context.Context, core.Transition) (statemachine.PostDeployProof, error) {
 			return proof, nil
 		})},
+		also: func(ctx context.Context, tx state.Tx, _ core.StateRecord) error { return putFinishDue(ctx, tx, due) },
 	})
-	if err != nil {
-		// The release served through its window but its verification could
-		// not be recorded, so it cannot be left in Monitoring unwatched.
+	switch {
+	case err != nil && lkgErr == nil:
+		// The release is the LKG already, so restoring the LKG would
+		// change nothing; the recovery verifies it from the running system
+		// on the next pass instead.
+		out.Result, out.Reason, out.State = ResultInterrupted, "the verified release could not be recorded: "+err.Error(), r.h.record.State
+		return out, err
+	case err != nil:
+		// The release served through its window but neither its LKG nor its
+		// verification could be recorded, so it cannot be kept unwatched.
 		return p.restore(ctx, r, undo{cause: statemachine.BlockReleaseInterrupted,
 			reason: "the verified release could not be recorded, so it could not be kept: " + err.Error()})
+	case lkgErr != nil:
+		out.Result, out.Reason, out.State, out.Waits = ResultHeld, lkgErr.Error(), r.h.record.State, waits(waitsLKG, lkgErr)
+		return out, lkgErr
 	}
-	if err := p.cfg.LKG.record(r.v); err != nil {
-		return held(err)
-	}
-	if p.frozen(ctx) {
-		return held(core.NewError(core.CodeFrozen, "an emergency stop froze publishing; the verified release is not published"))
-	}
-	ref, err := p.cfg.Publisher.Publish(ctx, catalog.Entry{
-		IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Unit: r.unit, Release: r.rev.Digest,
-		Feature: r.feature, Summary: r.summary, VerifiedAt: p.cfg.Clock.Now().UTC(),
-	})
-	if err != nil {
-		return held(err)
-	}
-	out.PublicationRef = ref
-	landing, err := p.land(ctx, LandRequest{IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, Release: r.rev.Digest,
-		Candidate: r.candidate, Receipt: r.v.receipt})
-	if err != nil {
-		return held(err)
-	}
-	if err := p.closeLanded(ctx, r.h, landing, []string{"observed:" + string(observed.Digest), ref}); err != nil {
-		return held(err)
-	}
-	out.Result, out.State = ResultClosed, r.h.record.State
-	return out, p.audit(ctx, r.h, "release.promote", core.OutcomeExecuted, map[string]string{
-		"release": string(r.rev.Digest), "publication": ref,
-	})
+	done, err := p.complete(ctx, &finishing{h: r.h, due: due, feature: r.feature, summary: r.summary, candidate: r.candidate,
+		receipt: r.v.receipt, evidence: []string{"observed:" + string(observed.Digest)}})
+	done.Windows, done.Observed = r.windows, observed
+	return done, err
 }

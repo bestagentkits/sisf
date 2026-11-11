@@ -67,6 +67,32 @@ func (c *CandidatePRs) wait(ctx context.Context, run core.RunID, why string) err
 	})
 }
 
+// WaitToFinish records on the run's pull request what finishing its
+// verified release waits on, the way a landing that waits is shown: the
+// pull request is pending, since its release was verified, and Waiting
+// says on what. It reports whether the record changed, so the wait is
+// reported once per change. A run without a pull request has nothing to
+// record.
+func (c *CandidatePRs) WaitToFinish(ctx context.Context, run core.RunID, why string) (bool, error) {
+	changed := false
+	err := c.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		pr, err := handoff.ReadCandidatePR(ctx, tx, run)
+		if core.HasCode(err, core.CodeNotFound) {
+			return nil
+		}
+		if err != nil || pr.State.Final() || (pr.Waiting == why && pr.State == handoff.LandingPending) {
+			return err
+		}
+		pr.State, pr.Waiting = handoff.LandingPending, why
+		if pr.WaitingSince.IsZero() {
+			pr.WaitingSince = c.Clock.Now().UTC()
+		}
+		changed = true
+		return handoff.PutCandidatePR(ctx, tx, pr)
+	})
+	return changed, err
+}
+
 func (c *CandidatePRs) land(ctx context.Context, req release.LandRequest) (release.Landing, error) {
 	pr, err := c.ensure(ctx, req.IssueID, req.RunID, req.Candidate.Attempt)
 	if err != nil {

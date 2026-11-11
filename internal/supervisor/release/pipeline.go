@@ -54,6 +54,10 @@ type Outcome struct {
 	Windows        []WindowReport  `json:"windows,omitempty"`
 	Reason         string          `json:"reason,omitempty"`
 	PublicationRef string          `json:"publication_ref,omitempty"`
+	// Waits says, for a verified release that could not be finished yet,
+	// what finishing it waits on, in fixed words with an error code that
+	// are safe to show on the issue.
+	Waits string `json:"waits,omitempty"`
 }
 
 // Pipeline releases candidates of one factory.

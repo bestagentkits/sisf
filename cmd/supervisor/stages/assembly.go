@@ -113,7 +113,7 @@ func New(cfg Config) (*Stages, error) {
 	refs := QAPolicy(loader)
 	publisher, err := catalog.New(catalog.Config{
 		Repo: cfg.Repo, BaseBranch: cfg.BaseBranch, Actor: PublisherActor(), Files: cfg.GitHub,
-		Branches: Branches{GitHub: cfg.GitHub}, Pulls: cfg.GitHub,
+		Branches: Branches{GitHub: cfg.GitHub}, Pulls: PublicationPulls{GitHub: cfg.GitHub},
 	})
 	if err != nil {
 		return nil, err
@@ -156,6 +156,10 @@ func New(cfg Config) (*Stages, error) {
 	if err != nil {
 		return nil, err
 	}
+	releaseStage := &ReleaseStage{FactoryID: cfg.FactoryID, State: cfg.State, Pipeline: pipeline, ArtifactSigner: cfg.ArtifactSigner, Clock: cfg.Clock}
+	if prs != nil {
+		releaseStage.Waits = prs
+	}
 	return &Stages{
 		Pipeline:     pipeline,
 		CandidatePRs: prs,
@@ -168,7 +172,7 @@ func New(cfg Config) (*Stages, error) {
 			FactoryID: cfg.FactoryID, Owner: "supervisor-qa", State: cfg.State, Evaluator: evaluator, Tree: tree, Policy: refs,
 			MaxAttempts: cfg.MaxAttempts, PassScore: passScore(rc.PassScore), ExtraGates: rc.ExtraGates, Budget: cfg.Budget, Clock: cfg.Clock,
 		},
-		Release: &ReleaseStage{FactoryID: cfg.FactoryID, State: cfg.State, Pipeline: pipeline, ArtifactSigner: cfg.ArtifactSigner, Clock: cfg.Clock},
+		Release: releaseStage,
 	}, nil
 }
 

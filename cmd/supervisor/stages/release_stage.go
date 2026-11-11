@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
@@ -32,6 +33,14 @@ type ReleaseStage struct {
 	// ArtifactSigner is the supervisor's delegated deploy_artifact key.
 	ArtifactSigner core.Signer
 	Clock          core.Clock
+	// Waits is optional; with it what a verified release waits on is
+	// recorded on its candidate's pull request.
+	Waits FinishWaits
+
+	// mu guards reported: what each verified release was last reported
+	// to wait on, so a wait is reported once per change.
+	mu       sync.Mutex
+	reported map[core.IssueRef]string
 }
 
 // ReleasePassResult lists the releases one pass ran, by result.
@@ -66,12 +75,7 @@ func (s *ReleaseStage) Pass(ctx context.Context) ReleasePassResult {
 				continue
 			}
 			j := job{record: r}
-			if j.qa, err = ReadQAResult(ctx, tx, r.RunID, r.Attempt); err == nil {
-				if j.doc, err = handoff.ReadCandidate(ctx, tx, r.RunID, r.Attempt); err == nil {
-					j.build, err = handoff.ReadBuild(ctx, tx, j.qa.Candidate.CommitSHA)
-				}
-			}
-			if err != nil {
+			if j.qa, j.doc, j.build, err = readRequestRecords(ctx, tx, r); err != nil {
 				res.Errors = append(res.Errors, fmt.Errorf("%s: %w", r.IssueID, err))
 				continue
 			}
@@ -90,6 +94,9 @@ func (s *ReleaseStage) Pass(ctx context.Context) ReleasePassResult {
 			continue
 		}
 		res.Outcomes[j.record.IssueID] = out
+		if out.State == core.StateVerified && out.Waits != "" {
+			s.reportWait(ctx, j.record, out.Waits, &res)
+		}
 	}
 	s.resumeVerified(ctx, &res)
 	return res
@@ -124,21 +131,47 @@ func releaseDue(ctx context.Context, tx state.Tx, r core.StateRecord) (bool, err
 // whose block could not be written is recorded nowhere, so the next pass
 // judges it again.
 func (s *ReleaseStage) release(ctx context.Context, record core.StateRecord, r QAResult, doc handoff.CandidateDoc, build handoff.BuildRecord) (release.Outcome, error) {
+	req, err := s.request(ctx, record, r, doc, build)
+	if err != nil {
+		return release.Outcome{}, err
+	}
+	out, relErr := s.Pipeline.Release(ctx, req)
+	if out.Result == "" || (out.Result == release.ResultRefused && out.State == core.StateReleaseCandidate) {
+		return out, relErr
+	}
+	return out, errors.Join(relErr, s.recordOutcome(ctx, record, out, relErr))
+}
+
+// request is the release request of record's candidate: the build signed
+// as a deploy artifact, with the candidate and the receipt QA judged and
+// the changelog line of the run.
+func (s *ReleaseStage) request(ctx context.Context, record core.StateRecord, r QAResult, doc handoff.CandidateDoc, build handoff.BuildRecord) (release.Request, error) {
 	artifact, err := supplychain.SignArtifact(ctx, s.ArtifactSigner, deploy.Artifact{
 		FactoryID: s.FactoryID, Unit: build.Unit, Digest: core.ReleaseDigest(build.Digest), Image: build.Image,
 		SBOMRef: build.SBOMRef, ProvenanceRef: build.ProvenanceRef,
 	})
 	if err != nil {
-		return release.Outcome{}, err
+		return release.Request{}, err
 	}
-	out, relErr := s.Pipeline.Release(ctx, release.Request{
+	return release.Request{
 		IssueID: record.IssueID, RunID: record.RunID, Candidate: r.Candidate, Receipt: r.Receipt,
 		Artifact: artifact, Feature: doc.Feature, Summary: doc.Summary,
-	})
-	if out.Result == "" || (out.Result == release.ResultRefused && out.State == core.StateReleaseCandidate) {
-		return out, relErr
+	}, nil
+}
+
+// readRequestRecords reads what the release request of r's candidate is
+// rebuilt from: the QA result, the candidate document and the build.
+func readRequestRecords(ctx context.Context, tx state.Tx, r core.StateRecord) (QAResult, handoff.CandidateDoc, handoff.BuildRecord, error) {
+	q, err := ReadQAResult(ctx, tx, r.RunID, r.Attempt)
+	if err != nil {
+		return QAResult{}, handoff.CandidateDoc{}, handoff.BuildRecord{}, err
 	}
-	return out, errors.Join(relErr, s.recordOutcome(ctx, record, out, relErr))
+	doc, err := handoff.ReadCandidate(ctx, tx, r.RunID, r.Attempt)
+	if err != nil {
+		return QAResult{}, handoff.CandidateDoc{}, handoff.BuildRecord{}, err
+	}
+	build, err := handoff.ReadBuild(ctx, tx, q.Candidate.CommitSHA)
+	return q, doc, build, err
 }
 
 // recordOutcome keeps how a release of record's candidate ended and, for a

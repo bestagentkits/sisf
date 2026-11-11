@@ -29,11 +29,16 @@ type fakePublisher struct {
 	mu      sync.Mutex
 	entries []catalog.Entry
 	err     error
+	// hook, when set, is called on every Publish, before it answers.
+	hook func()
 }
 
 func (p *fakePublisher) Publish(_ context.Context, e catalog.Entry) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.hook != nil {
+		p.hook()
+	}
 	if p.err != nil {
 		return "", p.err
 	}
