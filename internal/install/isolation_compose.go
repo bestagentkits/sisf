@@ -110,21 +110,24 @@ func (c *composeChecker) add(rule, service, format string, args ...any) {
 	c.out = append(c.out, Violation{Rule: rule, Service: service, Message: fmt.Sprintf(format, args...)})
 }
 
-// names requires the project and everything it creates to carry the
-// project's prefix, which itself starts with "sisf-".
+// names requires the project's name to start with "sisf-" and each network
+// and volume to be named <project>-<key>. A name is what Docker opens, so a
+// key named after anything else could point at another zone's network or
+// volume, or at one outside the project; with every name derived from its
+// own key, no two keys share a name either.
 func (c *composeChecker) names() {
 	prefix := c.file.Name + "-"
 	if !strings.HasPrefix(c.file.Name, "sisf-") {
 		c.add(ruleNaming, "", "project name %q must start with sisf-", c.file.Name)
 	}
 	for _, n := range sortedKeys(c.file.Networks) {
-		if !strings.HasPrefix(c.file.Networks[n].Name, prefix) {
-			c.add(ruleNaming, "", "network %s must be named %s...", n, prefix)
+		if c.file.Networks[n].Name != prefix+n {
+			c.add(ruleNaming, "", "network %s must be named %s%s, after its own key", n, prefix, n)
 		}
 	}
 	for _, n := range sortedKeys(c.file.Volumes) {
-		if !strings.HasPrefix(c.file.Volumes[n].Name, prefix) {
-			c.add(ruleNaming, "", "volume %s must be named %s...", n, prefix)
+		if c.file.Volumes[n].Name != prefix+n {
+			c.add(ruleNaming, "", "volume %s must be named %s%s, after its own key", n, prefix, n)
 		}
 	}
 }
