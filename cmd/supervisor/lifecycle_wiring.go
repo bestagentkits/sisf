@@ -62,7 +62,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
-	keys, err := loadSupervisorKeys(ctx, d.cfg.TrustDir, m.FactoryID, rootPub, root, d.clock)
+	keys, err := loadSupervisorKeys(ctx, d.cfg.TrustDir, m.FactoryID, rootPub, root, d.clock, d.log)
 	if err != nil {
 		return nil, err
 	}

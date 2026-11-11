@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"time"
 
@@ -27,8 +28,8 @@ const maxKeyFile = 64 << 10
 // signers leave this file: QA and release code never sees key material.
 type supervisorKeys struct {
 	Verifier *delegation.ChainVerifier
-	QA       *delegation.DelegatedSigner
-	Artifact *delegation.DelegatedSigner
+	QA       core.Signer
+	Artifact core.Signer
 }
 
 // delegationFile and privateKeyFile name a purpose's key files on the trust
@@ -39,25 +40,31 @@ func privateKeyFile(p delegation.Purpose) string { return "delegation-" + string
 // loadSupervisorKeys loads the supervisor's delegated keys from trustDir.
 // With root, the root key of the local native profile, it first issues any
 // key that is missing or about to expire and keeps it on the trust volume;
-// without it, the Owner issued the keys and placed them there.
-func loadSupervisorKeys(ctx context.Context, trustDir string, factory core.FactoryID, rootPub ed25519.PublicKey, root core.Signer, clock core.Clock) (*supervisorKeys, error) {
+// without it, the Owner issued the keys and placed them there. The signers
+// do the same again while the supervisor runs.
+func loadSupervisorKeys(ctx context.Context, trustDir string, factory core.FactoryID, rootPub ed25519.PublicKey, root core.Signer, clock core.Clock, log *slog.Logger) (*supervisorKeys, error) {
 	verifier, err := delegation.NewChainVerifier(delegation.VerifierConfig{
 		FactoryID: factory, Root: rootPub, Clock: clock, RootKeyInFactoryStore: root != nil,
 	})
 	if err != nil {
 		return nil, err
 	}
-	load := func(p delegation.Purpose) (*delegation.DelegatedSigner, error) {
-		if root != nil {
-			if err := renewKey(ctx, trustDir, factory, p, root, clock); err != nil {
-				return nil, err
+	load := func(p delegation.Purpose) (core.Signer, error) {
+		return newReloadingSigner(ctx, p, func(ctx context.Context) (*delegation.DelegatedSigner, time.Time, error) {
+			if root != nil {
+				if err := renewKey(ctx, trustDir, factory, p, root, clock); err != nil {
+					return nil, time.Time{}, err
+				}
 			}
-		}
-		signed, priv, err := readKey(trustDir, p)
-		if err != nil {
-			return nil, err
-		}
-		return delegation.Load(ctx, verifier, delegation.LoadRequest{Holder: delegation.HolderSupervisor, Delegation: signed, PrivateKey: priv})
+			signed, priv, err := readKey(trustDir, p)
+			if err != nil {
+				return nil, time.Time{}, err
+			}
+			// Load adds the delegation to the verifier the stages check
+			// signatures with before it returns the signer.
+			signer, err := delegation.Load(ctx, verifier, delegation.LoadRequest{Holder: delegation.HolderSupervisor, Delegation: signed, PrivateKey: priv})
+			return signer, signed.Delegation.NotAfter, err
+		}, clock, log)
 	}
 	keys := &supervisorKeys{Verifier: verifier}
 	if keys.QA, err = load(delegation.PurposeQAReceipt); err != nil {
