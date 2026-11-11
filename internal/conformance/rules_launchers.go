@@ -71,12 +71,13 @@ const installBin = "bin"
 
 // factoryBinary reports whether the first word of a Standalone command is a
 // binary directly in the install's bin/ directory, written relative to the
-// install as every unit `sisf up` defines is, with no dot segment. Case is
-// folded, as the file system of the one machine may ignore it.
+// install as every unit `sisf up` defines is, with no dot segment. The
+// directory is matched exactly: on a file system that heeds case, BIN/ is
+// another directory, which `sisf up` does not write.
 func factoryBinary(word string) bool {
 	if word == "" || path.IsAbs(word) || strings.Contains(word, "\\") || path.Clean(word) != word {
 		return false
 	}
 	dir, file := path.Split(word)
-	return foldCase(dir) == foldCase(installBin+"/") && file != ""
+	return dir == installBin+"/" && file != ""
 }

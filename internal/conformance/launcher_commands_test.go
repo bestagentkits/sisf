@@ -94,6 +94,7 @@ func TestAStandaloneUnitStartsOnlyAFactoryBinaryFromTheInstallsBinDirectory(t *t
 		{"bin/tools/factoryd", "control"},
 		{"factoryd", "control"},
 		{"bin/", "control"},
+		{"BIN/factoryd", "control"},
 	}
 	for _, unit := range []manifest.UnitName{manifest.UnitApp, manifest.UnitControl, manifest.UnitDispatcher, manifest.UnitEdge, manifest.UnitRunner, manifest.UnitQARunner} {
 		for _, command := range refused {
@@ -106,15 +107,8 @@ func TestAStandaloneUnitStartsOnlyAFactoryBinaryFromTheInstallsBinDirectory(t *t
 		}
 	}
 
-	// What `sisf up` writes, in any letter case, is a factory binary.
-	m := standalone(t)
-	editUnit(m, manifest.UnitControl, func(u *manifest.Unit) { u.Command = []string{"BIN/factoryd", "control"} })
-	if report := Check(m); !report.Conformant() {
-		t.Fatalf("bin/ in another letter case is the same directory, got %+v", report.Findings)
-	}
-
 	// The supervisor, which has rules of its own, is refused too.
-	m = standalone(t)
+	m := standalone(t)
 	editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) { u.Command = []string{"python3", "-c", hidden} })
 	if report := Check(m); report.Conformant() || report.SelfUpdate {
 		t.Fatalf("a supervisor started through an interpreter was accepted: %+v", report)
