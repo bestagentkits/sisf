@@ -35,6 +35,7 @@ type lifecycleFlags struct {
 	runnerImage, buildCommand                          string
 	buildTimeout, interval                             time.Duration
 	deploy, edgeAdminURL, localProgram                 string
+	syntheticProgram                                   string
 	deployEndpoint, deployNetwork                      string
 	appPort, buildOutageLimit                          int
 	dispatcherAdminURL                                 string
@@ -63,6 +64,7 @@ func (l *lifecycleFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&l.deploy, "deploy", "local", "deploy backend of releases: local or compose")
 	fs.StringVar(&l.edgeAdminURL, "edge-admin-url", "", "admin URL of the edge; its token is read from "+envEdgeAdminToken)
 	fs.StringVar(&l.localProgram, "deploy-local-program", "", "deploy local: program started with a release's image reference as its argument")
+	fs.StringVar(&l.syntheticProgram, "synthetic-program", "", "absolute path of the application's synthetic suite, run with --url and --revision against a release whose real traffic is too low to judge it; without it such a release holds")
 	fs.StringVar(&l.deployEndpoint, "deploy-docker-endpoint", "", "deploy compose: the supervisor-only Docker endpoint")
 	fs.StringVar(&l.deployNetwork, "deploy-network", "", "deploy compose: the Compose network of the units")
 	fs.IntVar(&l.appPort, "deploy-app-port", 8080, "deploy compose: port the application listens on in its container")

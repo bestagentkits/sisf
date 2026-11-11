@@ -96,6 +96,12 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
+	// A release whose real traffic is too thin is judged by the
+	// application's synthetic suite; without one it holds.
+	synthetic, err := l.syntheticSuite(backend, d.log)
+	if err != nil {
+		return nil, err
+	}
 	if l.deploy == "local" {
 		l.adopter = &lkgAdopter{factory: m.FactoryID, backend: backend, lkg: book, signer: keys.Artifact, image: "local/" + string(m.FactoryID) + "/" + adoptedUnit}
 	}
@@ -138,7 +144,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 		QASigner: keys.QA, ArtifactSigner: keys.Artifact, Verifier: keys.Verifier, ApprovalVerifier: approvalVerifier,
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
 		BuildRetry: stages.BuildRetry{HoldAfter: l.buildOutageLimit}, Budget: spend,
-		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor,
+		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor, Synthetic: synthetic,
 			SelfPublishable: selfPublishableUnits(m),
 			// A rollback reserves through the rollback reserve and records
 			// its spend; an exhausted budget never blocks it.
