@@ -25,6 +25,7 @@ func validRollout() RolloutProof {
 		RollbackTarget:   deploy.Revision{Unit: "app", Digest: otherBuild, ID: "blue"},
 		RollbackVerified: true,
 		MetricsAvailable: true,
+		SelfPublishable:  []string{"app", "control", "dispatcher", "runner"},
 	}
 }
 

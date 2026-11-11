@@ -113,6 +113,7 @@ func (p *Pipeline) start(ctx context.Context, r *rollout) error {
 	proof := statemachine.RolloutProof{
 		IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, FactoryID: p.cfg.FactoryID,
 		Artifact: r.v.artifact, RollbackTarget: r.lkgRev, RollbackVerified: true, MetricsAvailable: true,
+		SelfPublishable: p.cfg.SelfPublishable,
 	}
 	return p.step(ctx, r.h, stepSpec{
 		event: core.EventRolloutStarted, reason: "the rollback preflight passed",

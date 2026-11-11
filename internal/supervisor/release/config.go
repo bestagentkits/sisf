@@ -16,6 +16,8 @@ package release
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -39,6 +41,14 @@ const (
 	// DefaultLeaseOwner is the owner the pipeline holds issue leases as.
 	DefaultLeaseOwner = "supervisor"
 )
+
+// DefaultSelfPublishable returns the units the pipeline may ever publish
+// without a person: the application and the Zone 2 and Zone 3 code the
+// factory is meant to repair by itself. The supervisor, the qa-runner that
+// judges every candidate, the edge that splits traffic and the stores whose
+// data outlives a release change only through a governance cycle a person
+// approves, whatever a manifest lists.
+func DefaultSelfPublishable() []string { return []string{"app", "control", "dispatcher", "runner"} }
 
 // DefaultCanarySteps returns the traffic shares of a canary rollout.
 func DefaultCanarySteps() []int { return []int{5, 25, 100} }
@@ -108,7 +118,13 @@ type Config struct {
 	PassScore  int
 	ExtraGates []string
 	// Protected lists the paths of the trusted control surface.
-	Protected          []string
+	Protected []string
+	// SelfPublishable lists the units the pipeline publishes by itself, as
+	// the manifest's release.units names them; a release of any other unit
+	// is refused for want of a person. Nil means DefaultSelfPublishable and
+	// an empty list publishes nothing. Every unit listed must be one of
+	// DefaultSelfPublishable.
+	SelfPublishable    []string
 	Monitor            MonitorConfig
 	CanarySteps        []int
 	StepWindows        int
@@ -144,6 +160,9 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.Protected == nil {
 		c.Protected = DefaultProtectedPaths()
+	}
+	if c.SelfPublishable == nil {
+		c.SelfPublishable = DefaultSelfPublishable()
 	}
 	c.Monitor = c.Monitor.withDefaults()
 	if c.LeaseTTL == 0 {
@@ -209,6 +228,12 @@ func (c Config) validate() error {
 		return invalid("the low-traffic hold must be positive")
 	case len(c.Protected) == 0:
 		return invalid("the trusted control surface cannot be empty")
+	}
+	for _, unit := range c.SelfPublishable {
+		if !slices.Contains(DefaultSelfPublishable(), unit) {
+			return invalid("unit %q cannot be published by the pipeline itself; it may publish only %s",
+				unit, strings.Join(DefaultSelfPublishable(), ", "))
+		}
 	}
 	if len(c.CanarySteps) == 0 || c.CanarySteps[len(c.CanarySteps)-1] != 100 {
 		return invalid("the canary steps must end at 100 percent")

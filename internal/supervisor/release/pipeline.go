@@ -77,6 +77,9 @@ func (p *Pipeline) Release(ctx context.Context, req Request) (Outcome, error) {
 	if err := checkGovernance(p.cfg.Protected, req.Artifact.Unit, req.Candidate.ChangedPaths); err != nil {
 		return stop(ResultRefused, err)
 	}
+	if err := checkSelfPublishable(p.cfg.SelfPublishable, req.Artifact.Unit); err != nil {
+		return stop(ResultRefused, err)
+	}
 	h, err := p.take(ctx, req.IssueID)
 	if err != nil {
 		return stop(ResultHeld, err)

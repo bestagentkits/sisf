@@ -2,6 +2,7 @@ package release
 
 import (
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -29,6 +30,18 @@ func DefaultProtectedPaths() []string {
 		// The rollback rules and the deployment contract they act through.
 		"pkg/deploy/", "adapters/deploy/",
 	}
+}
+
+// checkSelfPublishable refuses a build of a unit the pipeline may not
+// publish by itself. The rollout guard refuses it as well; refusing it here
+// stages nothing.
+func checkSelfPublishable(units []string, unit string) error {
+	if slices.Contains(units, unit) {
+		return nil
+	}
+	err := governance("unit %q is not one release.units lets the factory publish by itself", unit)
+	err.Details = map[string]string{"unit": unit}
+	return err
 }
 
 // checkGovernance refuses a candidate that is the supervisor or changes the

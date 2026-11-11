@@ -1,6 +1,7 @@
 package statemachine
 
 import (
+	"slices"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -27,8 +28,9 @@ func checkCandidate(t core.Transition) error {
 
 // checkRollout requires the preflight to be of the issue, the run and the
 // release of the transition, the release to be the candidate QA passed and a
-// signed build of this factory, and a verified revision to roll back to with
-// readable metrics. The last two missing mean hold.
+// signed build of this factory of a unit the factory may publish by itself,
+// and a verified revision to roll back to with readable metrics. The last
+// two missing mean hold.
 func checkRollout(t core.Transition, p RolloutProof) error {
 	artifact, target := p.Artifact, p.RollbackTarget
 	switch {
@@ -41,6 +43,12 @@ func checkRollout(t core.Transition, p RolloutProof) error {
 	}
 	if err := artifact.ValidateFor(p.FactoryID); err != nil {
 		return refuse(GuardRollout, t, "the artifact is not a signed build of this factory: %v", err).WithCause(err)
+	}
+	if !slices.Contains(p.SelfPublishable, artifact.Unit) {
+		refusal := refuse(GuardRollout, t,
+			"unit %q is not one the factory may publish by itself; it changes only through a governance cycle a person approves", artifact.Unit)
+		refusal.Details["unit"] = artifact.Unit
+		return refusal
 	}
 	switch {
 	case artifact.Digest != t.ReleaseDigest:
