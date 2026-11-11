@@ -54,7 +54,8 @@ func (l Layout) BudgetConfirmation() string {
 	return filepath.Join(l.Dir, "budget-confirmation.json")
 }
 
-// SimAgentDir holds the scripted agent's patch of the simulation profile.
+// SimAgentDir holds the scripted agent's patch, in the simulation profile
+// and in any install whose coding agent is the scripted one.
 // It is not secret: the dispatcher reads it, mounted read-only in Docker mode.
 func (l Layout) SimAgentDir() string { return filepath.Join(l.Dir, "sim", "agent") }
 

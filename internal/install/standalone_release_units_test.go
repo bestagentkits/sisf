@@ -82,3 +82,21 @@ func TestAProductionStandaloneInstallRunsTheAgentJudge(t *testing.T) {
 		t.Errorf("a plain build command was refused: %v", err)
 	}
 }
+
+// Outside the simulation the scripted coding agent, the default when no
+// real one is chosen, leaves the install's own patch, which a test or the
+// Owner may replace, after the same short work as in the simulation.
+func TestTheScriptedCoderOfAProductionInstallLeavesTheInstallsPatch(t *testing.T) {
+	t.Parallel()
+	in, _, _ := newTestInstaller(t)
+	args := in.standaloneDispatcherArgs(lifecycleChoice(Options{}, manifest.ModeStandalone), false)
+	for _, want := range []string{"--fake-agent-patch=" + in.Layout.SimAgentDir() + "/" + simPatchFile, "--fake-agent-work=" + simAgentWork} {
+		if !slices.Contains(args, want) {
+			t.Errorf("the dispatcher lacks %s: %v", want, args)
+		}
+	}
+	real := in.standaloneDispatcherArgs(lifecycleChoice(Options{Agents: AgentOptions{Coder: "claude"}}, manifest.ModeStandalone), false)
+	if strings.Contains(strings.Join(real, " "), "--fake-agent") {
+		t.Errorf("a real coding agent is given the scripted agent's patch: %v", real)
+	}
+}

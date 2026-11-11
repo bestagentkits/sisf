@@ -51,7 +51,8 @@ func (in *Installer) controlSubnets(ctx context.Context, m *manifest.Manifest) s
 
 // defaultSimPatch is the scripted agent's patch until a test or the Owner
 // replaces it: a note added to the repository, which builds and releases
-// as an ordinary change.
+// as an ordinary change. A Standalone install outside the simulation whose
+// coding agent is the scripted one gets it too.
 const defaultSimPatch = `diff --git a/docs/sim-agent-note.md b/docs/sim-agent-note.md
 new file mode 100644
 --- /dev/null

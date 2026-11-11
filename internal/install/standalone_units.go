@@ -1,6 +1,7 @@
 package install
 
 import (
+	"cmp"
 	"io"
 	"os"
 	"path/filepath"
@@ -144,15 +145,16 @@ func (in *Installer) standaloneControlEnv(o Options) []string {
 }
 
 // standaloneDispatcherArgs is the dispatcher's command line: the scripted
-// agent of the simulation, or the real coding agent with its workspaces,
-// and the amount each run sets aside from a capped budget.
+// agent, which leaves the install's scripted patch, or the real coding
+// agent with its workspaces, and the amount each run sets aside from a
+// capped budget.
 func (in *Installer) standaloneDispatcherArgs(c LifecycleChoice, sim bool) []string {
 	l := in.Layout
 	args := []string{"dispatcher", "--admin-listen=" + addr(PortDispatcherAdmin)}
 	switch {
-	case sim:
-		args = append(args, "--agent=fake", "--fake-agent-work="+c.AgentWork, "--fake-agent-patch="+filepath.Join(l.SimAgentDir(), simPatchFile))
-	case c.Agents.real():
+	case sim || !c.Agents.real():
+		args = append(args, "--agent=fake", "--fake-agent-work="+cmp.Or(c.AgentWork, simAgentWork), "--fake-agent-patch="+filepath.Join(l.SimAgentDir(), simPatchFile))
+	default:
 		a := c.Agents
 		args = append(args, "--agent="+a.Coder, "--workspace-root="+l.Data("workspaces"),
 			"--workspace-source="+a.WorkspaceSource, "--artifact-dir="+l.Data("artifacts"))

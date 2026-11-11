@@ -41,7 +41,7 @@ func (in *Installer) upStandalone(ctx context.Context, m *manifest.Manifest, rel
 	if err := in.writeAppLauncher(); err != nil {
 		return err
 	}
-	if m.Extensions["profile"] == profileSim {
+	if m.Extensions["profile"] == profileSim || !agentsOf(m).real() {
 		if err := in.ensureSimPatch(); err != nil {
 			return err
 		}
