@@ -85,7 +85,8 @@ type Records interface {
 	// statemachine.CheckRecordBinding(stored, t) with the record as it is
 	// before the write and returns its CONFLICT: a step whose t.RunID differs
 	// from the stored run is refused, except the claim, which starts a new
-	// run and must name another run than the stored one; a step that names
+	// run and must name a run the issue has never had, neither the stored
+	// one nor any run named by a step written before; a step that names
 	// another candidate or release than the stored one is refused, except the
 	// step that submits a candidate and the step that starts the rollout. A
 	// step whose t.Attempt is not the number its event demands is refused
