@@ -77,9 +77,10 @@ type Service struct {
 	tokenByID map[string]*token
 	flows     map[string]*flow // by digest of the state
 	flowSeq   uint64
-	// starts limits how often sign-ins and step-ups are started; made on
-	// first use (admitStart).
-	starts *report.Limiter
+	// starts limits how often sign-ins and step-ups are started and how
+	// often a start pushes out a flow chosen at random; made on first use
+	// (startsLocked).
+	starts *report.StartLimiter
 	// pick chooses which of n flows to push out when every source holds
 	// one; nil means randomIndex.
 	pick     func(n int) (int, error)

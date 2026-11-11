@@ -11,7 +11,7 @@ import (
 // client table is bounded: when it is full and nothing in it has expired, a
 // new client is refused, so many addresses cannot exhaust memory. It is
 // safe for concurrent use. The report route limits reports with it; the
-// sign-in, device login and client registration routes limit starts.
+// start limits (StartLimiter) are made of two.
 type Limiter struct {
 	mu         sync.Mutex
 	perClient  int
@@ -87,11 +87,11 @@ func RetryAfter(d time.Duration) string {
 	return strconv.FormatInt(max(seconds, 1), 10)
 }
 
-// FloodSafeRate is the most starts a limiter with fixed windows may allow
-// per window in front of a table of slots entries, full of one entry from
-// each of many sources, where each start pushes out an entry chosen at
-// random, so that an entry still survives the starts of one window's
-// length after it with at least probability survival. Fixed windows let
+// FloodSafeRate is the most random evictions a limiter with fixed windows
+// may allow per window from a table of slots entries, full of one entry
+// from each of many sources, where each start pushes out an entry chosen
+// at random, so that an entry still survives the evictions of one
+// window's length after it with at least probability survival. Fixed windows let
 // up to twice their rate through in one window's length, across the edge
 // of two windows, so the bound is the largest n with
 // (1 - 1/slots)^(2n) >= survival. For 1,024 slots and 0.85 it is 83, for
@@ -119,12 +119,54 @@ const (
 	maxStartSources = 10000
 )
 
-// NewStartLimiter returns the limiter of starts in front of a table of
-// slots entries where a start pushes out an entry chosen at random once
-// every source holds one: StartsPerSource from each source and, from all
-// together, FloodSafeRate(slots, StartSurvival) per StartWindow, so that a
-// flood rotating through any number of sources pushes out a given entry
-// within a StartWindow with probability at most 1 - StartSurvival.
-func NewStartLimiter(slots int) *Limiter {
-	return NewLimiter(StartsPerSource, FloodSafeRate(slots, StartSurvival), StartWindow, maxStartSources)
+// StartLimiter limits the starts in front of a table of open entries,
+// such as sign-ins, login requests or registered clients, where a start
+// pushes out an entry chosen at random once every source holds one. It
+// has two limits. Admit holds each source to StartsPerSource a
+// StartWindow and is asked of every start. Evict holds the random
+// evictions to a rate a person's entry outlasts, and is asked only of a
+// start that would push out an entry of another source chosen at random:
+// a start into a table with room, or one that pushes out an entry of a
+// source holding more than one, never spends it. So sources holding a
+// few entries each, however busy, never lock out a newcomer; only a
+// flood holding the whole table one entry per source, about as many live
+// sources as the table has slots, can hold up starts, and then only to
+// the rate a person's entry outlasts. It is safe for concurrent use.
+type StartLimiter struct {
+	sources   *Limiter
+	evictions *Limiter
+}
+
+// NewStartLimits returns a StartLimiter that admits perSource starts from
+// one source and evictions random evictions in each window, tracking at
+// most maxSources sources at once.
+func NewStartLimits(perSource, evictions int, window time.Duration, maxSources int) *StartLimiter {
+	return &StartLimiter{
+		sources:   NewLimiter(perSource, math.MaxInt, window, maxSources),
+		evictions: NewLimiter(evictions, evictions, window, 1),
+	}
+}
+
+// NewStartLimiter returns the start limits in front of a table of slots
+// entries: StartsPerSource from each source and FloodSafeRate(slots,
+// StartSurvival) random evictions per StartWindow, so that a flood
+// rotating through any number of sources pushes out a given entry within
+// a StartWindow with probability at most 1 - StartSurvival.
+func NewStartLimiter(slots int) *StartLimiter {
+	return NewStartLimits(StartsPerSource, FloodSafeRate(slots, StartSurvival), StartWindow, maxStartSources)
+}
+
+// Admit takes a start from source at now off the source's limit and
+// reports whether it is allowed, and if not, how long until it may be
+// tried again.
+func (l *StartLimiter) Admit(source string, now time.Time) (bool, time.Duration) {
+	return l.sources.Take(source, now)
+}
+
+// Evict takes one random eviction at now off the eviction limit and
+// reports whether it is allowed, and if not, how long until it may be
+// tried again. It is asked just before the eviction, so a refused start
+// leaves the table as it was.
+func (l *StartLimiter) Evict(now time.Time) (bool, time.Duration) {
+	return l.evictions.Take("", now)
 }

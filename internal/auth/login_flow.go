@@ -84,8 +84,8 @@ func (s *Service) beginFlow(providerName, returnTo, source, stepUpKey string, ta
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f.protected = s.protectedStepUpLocked(stepUpKey)
-	if !s.pruneFlowsLocked(now, source, stepUpKey, f.protected) {
-		return "", "", core.NewError(core.CodeRateLimited, "too many sign-ins are open; try again in a few minutes")
+	if err := s.pruneFlowsLocked(now, source, stepUpKey, f.protected); err != nil {
+		return "", "", err
 	}
 	s.flowSeq++
 	f.seq = s.flowSeq
@@ -93,29 +93,36 @@ func (s *Service) beginFlow(providerName, returnTo, source, stepUpKey string, ta
 	return authURL, binding, nil
 }
 
-// admitStart takes a start from source off the start limits
-// (report.NewStartLimiter): StartsPerSource a minute from one source and,
-// from all together, the rate at which a flood rotating through new
-// sources pushes out a person's sign-in finished within a minute with
-// probability at most 15%. A start beyond them is refused with
-// RATE_LIMITED and the seconds until it may be tried again. A step-up of a
-// person who holds a role is exempt: it is bounded per session
-// (maxStepUpsPerSession), needs that person's session, and must start
-// while a flood holds the limits.
+// admitStart takes a start from source off its source's start limit
+// (report.StartLimiter.Admit): StartsPerSource a minute. A start beyond it
+// is refused with RATE_LIMITED and the seconds until it may be tried
+// again. A step-up of a person who holds a role is exempt: it is bounded
+// per session (maxStepUpsPerSession), needs that person's session, and
+// must start while a flood holds the limits.
 func (s *Service) admitStart(source, stepUpKey string) error {
 	s.mu.Lock()
-	if s.starts == nil {
-		s.starts = report.NewStartLimiter(maxFlows)
-	}
-	protected, starts := s.protectedStepUpLocked(stepUpKey), s.starts
+	protected, starts := s.protectedStepUpLocked(stepUpKey), s.startsLocked()
 	s.mu.Unlock()
 	if protected {
 		return nil
 	}
-	ok, wait := starts.Take(source, s.cfg.Clock.Now())
-	if ok {
-		return nil
+	if ok, wait := starts.Admit(source, s.cfg.Clock.Now()); !ok {
+		return startRefused(wait)
 	}
+	return nil
+}
+
+// startsLocked returns the start limits, made on first use.
+func (s *Service) startsLocked() *report.StartLimiter {
+	if s.starts == nil {
+		s.starts = report.NewStartLimiter(maxFlows)
+	}
+	return s.starts
+}
+
+// startRefused is the refusal of a start over the start limits, with the
+// seconds until it may be tried again.
+func startRefused(wait time.Duration) error {
 	err := core.NewError(core.CodeRateLimited, "too many sign-ins are being started; try again shortly")
 	err.Details = map[string]string{"retry_after_seconds": report.RetryAfter(wait)}
 	return err
@@ -182,8 +189,7 @@ func (s *Service) completeFlow(ctx context.Context, providerName, state, code, b
 }
 
 // pruneFlowsLocked makes room for a flow from source, a step-up of the
-// session under stepUpKey when that is set, and reports whether there is
-// room. Anyone may start a sign-in and any account can sign in and start
+// session under stepUpKey when that is set, or says why there is none. Anyone may start a sign-in and any account can sign in and start
 // step-ups, so it drops expired flows, then the session's oldest step-up
 // while it holds maxStepUpsPerSession, and then, while all maxFlows are
 // taken:
@@ -194,18 +200,22 @@ func (s *Service) completeFlow(ctx context.Context, providerName, state, code, b
 //     sharing the person's address takes as many flows to reach theirs as
 //     there are slots;
 //   - when every source holds one, an unprotected flow chosen at random
-//     (crypto/rand): a new sign-in is never refused because the table is
-//     full of one flow from each of many addresses, so such a flood cannot
-//     lock everyone out, and it cannot aim at a person's flow either: at
-//     1.7 starts a second against 1,024 slots, a sign-in finished within a
-//     minute survives about nine times in ten.
+//     (crypto/rand), once the start limits allow another random eviction
+//     (report.StartLimiter.Evict): a flood that holds the table one flow
+//     from each of about maxFlows addresses cannot aim at a person's flow,
+//     and is held to the rate at which a sign-in finished within a minute
+//     survives at least 85% of the time. Only such a start is charged
+//     against that rate, so sources holding several flows each, however
+//     busy, never hold up a newcomer.
 //
 // A step-up of a person who holds a role (Config.HoldsRole) is protected:
 // it is never counted against a source and never pushed out for an
 // unprotected flow. It always finds room: when nothing else is left, it
-// pushes out the oldest protected flow. An unprotected flow is refused only
+// pushes out the oldest protected flow, and is not charged against the
+// eviction rate. An unprotected flow is refused when the eviction rate is
+// spent, with RATE_LIMITED and the seconds until it may be tried again, or
 // when every flow left is protected.
-func (s *Service) pruneFlowsLocked(now time.Time, source, stepUpKey string, protected bool) bool {
+func (s *Service) pruneFlowsLocked(now time.Time, source, stepUpKey string, protected bool) error {
 	// The newcomer's source is counted as if its new flow were in the
 	// table already, so a source that holds a flow loses its own oldest
 	// before any other source's flow is touched.
@@ -239,15 +249,20 @@ func (s *Service) pruneFlowsLocked(now time.Time, source, stepUpKey string, prot
 		case busiest > 1:
 			dropped = s.dropOldestFlowLocked(perSource, func(f *flow) bool { return !f.protected && perSource[f.source] == busiest })
 		case busiest == 1:
+			if !protected {
+				if ok, wait := s.startsLocked().Evict(now); !ok {
+					return startRefused(wait)
+				}
+			}
 			dropped = s.dropRandomFlowLocked(perSource)
 		case protected:
 			dropped = s.dropOldestFlowLocked(perSource, func(*flow) bool { return true })
 		}
 		if !dropped {
-			return false
+			return core.NewError(core.CodeRateLimited, "too many sign-ins are open; try again in a few minutes")
 		}
 	}
-	return true
+	return nil
 }
 
 // dropRandomFlowLocked drops an unprotected flow chosen at random, keeping

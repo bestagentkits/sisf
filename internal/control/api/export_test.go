@@ -18,5 +18,5 @@ func NewWithEvictionPick(cfg Config, pick func(n int) (int, error)) (http.Handle
 // a test of the table behind them: which request is dropped once the
 // limits let starts through.
 func LiftStartLimits(cfg *Config) {
-	cfg.deviceStarts = report.NewLimiter(1<<30, 1<<30, time.Minute, 1<<20)
+	cfg.deviceStarts = report.NewStartLimits(1<<30, 1<<30, time.Minute, 1<<20)
 }

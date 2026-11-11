@@ -12,7 +12,7 @@ import (
 func LiftStartLimits(s *Service) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.starts = report.NewLimiter(1<<30, 1<<30, time.Minute, 1<<20)
+	s.starts = report.NewStartLimits(1<<30, 1<<30, time.Minute, 1<<20)
 }
 
 // SetEvictionPick makes s choose which sign-in to push out with pick, so a

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -25,6 +26,7 @@ var _ core.Clock = (*fixedClock)(nil)
 // other request of the flood, and each is checked a minute after it
 // started. The table is filled at the start and the test ends before those
 // requests lapse, so every start drops one, the worst case of that rate.
+// The start limits are lifted: the test is about the table behind them.
 func TestAOnePerSourceFloodRarelyDropsAPersonsLoginRequest(t *testing.T) {
 	t.Parallel()
 	const people = 400
@@ -33,6 +35,7 @@ func TestAOnePerSourceFloodRarelyDropsAPersonsLoginRequest(t *testing.T) {
 	clock := &fixedClock{now: time.Date(2026, 11, 12, 8, 0, 0, 0, time.UTC)}
 	begin := clock.now
 	s := newDeviceStore(clock, 10*time.Minute, 5*time.Second)
+	s.starts = report.NewStartLimits(1<<30, 1<<30, time.Minute, 1<<20)
 	rng := rand.New(rand.NewPCG(5, 6))
 	s.pick = func(n int) (int, error) { return rng.IntN(n), nil }
 	start := func(source string) string {

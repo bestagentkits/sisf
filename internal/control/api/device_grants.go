@@ -65,8 +65,9 @@ type deviceStore struct {
 	// pick chooses which of n waiting requests to drop when every source
 	// holds one; nil means randomIndex.
 	pick func(n int) (int, error)
-	// starts limits how often login requests are started (admitStart).
-	starts *report.Limiter
+	// starts limits how often login requests are started (admitStart) and
+	// how often a start drops a request chosen at random (makeRoomLocked).
+	starts *report.StartLimiter
 }
 
 func newDeviceStore(clock core.Clock, ttl, interval time.Duration) *deviceStore {
@@ -74,17 +75,20 @@ func newDeviceStore(clock core.Clock, ttl, interval time.Duration) *deviceStore 
 		starts: report.NewStartLimiter(maxOpenGrants)}
 }
 
-// admitStart takes a login request from source off the start limits
-// (report.NewStartLimiter), before start: StartsPerSource a minute from
-// one source and, from all together, the rate at which a flood rotating
-// through new sources drops a person's request approved within a minute
-// with probability at most 15%. A start beyond them is refused with
-// RATE_LIMITED and the seconds until it may be tried again.
+// admitStart takes a login request from source off its source's start
+// limit (report.StartLimiter.Admit), before start: StartsPerSource a
+// minute. A start beyond it is refused with RATE_LIMITED and the seconds
+// until it may be tried again.
 func (s *deviceStore) admitStart(source string) error {
-	ok, wait := s.starts.Take(source, s.clock.Now())
-	if ok {
-		return nil
+	if ok, wait := s.starts.Admit(source, s.clock.Now()); !ok {
+		return loginStartRefused(wait)
 	}
+	return nil
+}
+
+// loginStartRefused is the refusal of a login request over the start
+// limits, with the seconds until it may be tried again.
+func loginStartRefused(wait time.Duration) error {
 	err := core.NewError(core.CodeRateLimited, "too many login requests are being started; try again shortly")
 	err.Details = map[string]string{"retry_after_seconds": report.RetryAfter(wait)}
 	return err
@@ -151,11 +155,16 @@ func (s *deviceStore) purgeLocked(now time.Time) {
 // source holds more than one: a flood from another address, or from a few,
 // does not reach a person's request, and one sharing the person's address
 // takes as many starts as there are slots. When every source holds one, it
-// drops a waiting request chosen at random (crypto/rand): a flood of one
-// start from each of many addresses neither locks out a new start nor aims
-// at a person's request. A request being approved, or approved and not yet
-// collected, is never dropped; start is refused only when every open
-// request is one of those.
+// drops a waiting request chosen at random (crypto/rand), once the start
+// limits allow another random eviction (report.StartLimiter.Evict): a
+// flood holding the table one request from each of about maxOpenGrants
+// addresses cannot aim at a person's request and is held to the rate at
+// which one approved within a minute survives at least 85% of the time;
+// only such a start is charged against that rate, so sources holding
+// several requests each, however busy, never hold up a newcomer. A
+// request being approved, or approved and not yet collected, is never
+// dropped; start is refused when the eviction rate is spent, or when every
+// open request is one of those.
 func (s *deviceStore) start(name string, scopes []string, source string) (deviceCode string, g grant, err error) {
 	raw := make([]byte, 32)
 	if _, rerr := rand.Read(raw); rerr != nil {
@@ -166,8 +175,8 @@ func (s *deviceStore) start(name string, scopes []string, source string) (device
 	defer s.mu.Unlock()
 	now := s.clock.Now()
 	s.purgeLocked(now)
-	if !s.makeRoomLocked(source) {
-		return "", g, core.NewError(core.CodeRateLimited, "too many login requests are open; try again shortly")
+	if err := s.makeRoomLocked(now, source); err != nil {
+		return "", g, err
 	}
 	var userCode string
 	for range 8 {
@@ -194,12 +203,13 @@ func (s *deviceStore) start(name string, scopes []string, source string) (device
 func (g *grant) waiting() bool { return !g.claimed && !g.approved }
 
 // makeRoomLocked drops waiting requests until fewer than maxOpenGrants are
-// open for a request from source, the oldest of the source holding the
-// most while one holds more than one and a random one otherwise, and
-// reports whether there is room. The newcomer's source is counted as if
-// its new request were in the table already, so a source that holds a
-// request loses its own oldest before any other source's is touched.
-func (s *deviceStore) makeRoomLocked(source string) bool {
+// open for a request from source at now, the oldest of the source holding
+// the most while one holds more than one and, as the eviction rate
+// allows, a random one otherwise, or says why there is no room. The
+// newcomer's source is counted as if its new request were in the table
+// already, so a source that holds a request loses its own oldest before
+// any other source's is touched.
+func (s *deviceStore) makeRoomLocked(now time.Time, source string) error {
 	perSource := map[string]int{source: 1}
 	for _, g := range s.grants {
 		if g.waiting() {
@@ -215,14 +225,23 @@ func (s *deviceStore) makeRoomLocked(source string) bool {
 		case busiest > 1:
 			s.dropOldestWaitingLocked(perSource, func(g *grant) bool { return perSource[g.source] == busiest })
 		case busiest == 1:
+			if ok, wait := s.starts.Evict(now); !ok {
+				return loginStartRefused(wait)
+			}
 			if !s.dropRandomWaitingLocked(perSource) {
-				return false
+				return loginRequestsFull()
 			}
 		default:
-			return false
+			return loginRequestsFull()
 		}
 	}
-	return true
+	return nil
+}
+
+// loginRequestsFull refuses a start while every open request is being
+// approved or waits to be collected.
+func loginRequestsFull() error {
+	return core.NewError(core.CodeRateLimited, "too many login requests are open; try again shortly")
 }
 
 // dropRandomWaitingLocked drops a waiting request chosen at random,

@@ -83,7 +83,7 @@ type Config struct {
 	ClientKey func(*http.Request) string
 	// deviceStarts replaces the start limits of login requests, for a test
 	// of the table behind them; nil means report.NewStartLimiter.
-	deviceStarts *report.Limiter
+	deviceStarts *report.StartLimiter
 }
 
 type handler struct {

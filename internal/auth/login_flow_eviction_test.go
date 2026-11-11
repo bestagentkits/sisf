@@ -5,18 +5,21 @@ import (
 	"math/rand/v2"
 	"testing"
 	"time"
+
+	"github.com/bestagentkits/sisf/internal/intake/report"
 )
 
 // flowTable is a service holding sign-in flows only, choosing which to push
-// out with rng.
+// out with rng, without the start limits: its tests are about the table.
 func flowTable(rng *rand.Rand) *Service {
-	return &Service{flows: map[string]*flow{}, pick: func(n int) (int, error) { return rng.IntN(n), nil }}
+	return &Service{flows: map[string]*flow{}, pick: func(n int) (int, error) { return rng.IntN(n), nil },
+		starts: report.NewStartLimits(1<<30, 1<<30, time.Minute, 1<<20)}
 }
 
 // admit starts a flow from source at now as beginFlow does and returns its
 // key, or "" when it was refused.
 func (s *Service) admit(now time.Time, source string, protected bool) string {
-	if !s.pruneFlowsLocked(now, source, "", protected) {
+	if s.pruneFlowsLocked(now, source, "", protected) != nil {
 		return ""
 	}
 	s.flowSeq++

@@ -80,7 +80,7 @@ type Config struct {
 	ClientKey func(*http.Request) string
 	// registrationLimits replaces the start limits of registrations, for a
 	// test of the table behind them; nil means report.NewStartLimiter.
-	registrationLimits *report.Limiter
+	registrationLimits *report.StartLimiter
 	// SigningKey signs access tokens; nil generates one, so a restart voids
 	// every token, which is the safe failure.
 	SigningKey *ecdsa.PrivateKey
@@ -103,9 +103,10 @@ type Server struct {
 	// pick chooses which of n registered clients to drop when every source
 	// holds one; nil means randomIndex.
 	pick func(n int) (int, error)
-	// registrations limits how often clients are registered; made on first
-	// use (admitRegistration).
-	registrations *report.Limiter
+	// registrations limits how often clients are registered and how often
+	// a registration drops a client chosen at random; made on first use
+	// (registrationLimitsLocked).
+	registrations *report.StartLimiter
 	pending       map[string]*pendingConsent // by digest of the consent ID
 	codes         map[string]*codeGrant      // by digest of the code
 	revoked       map[string]time.Time       // token ID -> its expiry

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -32,7 +33,7 @@ func (s *Server) register(source string) string {
 	s.mu.Lock()
 	id := fmt.Sprintf("client-%d", s.clientSeq+1)
 	s.mu.Unlock()
-	if !s.addDynamicClient(Client{ID: id, Dynamic: true}, source) {
+	if added, _ := s.addDynamicClient(Client{ID: id, Dynamic: true}, source); !added {
 		return ""
 	}
 	return id
@@ -46,6 +47,7 @@ func (s *Server) register(source string) string {
 // people register every other client of the flood, and each is checked a
 // minute after it was registered. The test ends before the unused clients
 // lapse, so every registration drops one, the worst case of that rate.
+// The start limits are lifted: the test is about the table behind them.
 func TestAOnePerSourceFloodRarelyDropsAPersonsClient(t *testing.T) {
 	t.Parallel()
 	const people = 400
@@ -54,6 +56,7 @@ func TestAOnePerSourceFloodRarelyDropsAPersonsClient(t *testing.T) {
 	clock := &stillClock{now: time.Date(2026, 11, 12, 8, 0, 0, 0, time.UTC)}
 	begin := clock.now
 	s := clientTable(clock, DefaultMaxClients, rand.New(rand.NewPCG(9, 10)))
+	s.registrations = report.NewStartLimits(1<<30, 1<<30, time.Minute, 1<<20)
 	consented := s.register("owner")
 	s.markClientUsedLocked(consented, clock.now)
 	for n := 0; len(s.dynamic) < DefaultMaxClients; n++ {

@@ -52,13 +52,13 @@ func waitOf(t *testing.T, err error) time.Duration {
 }
 
 // A flood rotating through a new source for every start, at 50 starts a
-// second against a table kept full of one request per source, is held to
-// the global start rate, and a person's request approved within a minute
+// second against a table kept full of one request per source, has its
+// random evictions held to the eviction rate, and a person's request approved within a minute
 // of its start survives in at least 85% of 400 cases. A person refused
 // while the flood holds the window starts again after the Retry-After it
 // was given; people arrive every five seconds, and each is checked a
 // minute after its start was admitted.
-func TestARotatingFloodOfLoginRequestsIsHeldToTheGlobalStartRate(t *testing.T) {
+func TestARotatingFloodOfLoginRequestsIsHeldToTheEvictionRate(t *testing.T) {
 	t.Parallel()
 	const (
 		people     = 400
@@ -69,7 +69,11 @@ func TestARotatingFloodOfLoginRequestsIsHeldToTheGlobalStartRate(t *testing.T) {
 	clock := &fixedClock{now: time.Date(2026, 11, 12, 8, 0, 0, 0, time.UTC)}
 	s := newDeviceStore(clock, 10*time.Minute, 5*time.Second)
 	rng := rand.New(rand.NewPCG(41, 42))
-	s.pick = func(n int) (int, error) { return rng.IntN(n), nil }
+	var evictions []time.Time
+	s.pick = func(n int) (int, error) {
+		evictions = append(evictions, clock.now)
+		return rng.IntN(n), nil
+	}
 	type person struct {
 		source   string
 		next     time.Time
@@ -77,12 +81,12 @@ func TestARotatingFloodOfLoginRequestsIsHeldToTheGlobalStartRate(t *testing.T) {
 		admitted time.Time
 	}
 	var (
-		waiting    []*person
-		admissions []time.Time
-		arrived    int
-		survived   int
-		checked    int
-		flood      int
+		waiting  []*person
+		admitted int
+		arrived  int
+		survived int
+		checked  int
+		flood    int
 	)
 	begin := clock.now
 	nextArrival := begin
@@ -104,12 +108,12 @@ func TestARotatingFloodOfLoginRequestsIsHeldToTheGlobalStartRate(t *testing.T) {
 				continue
 			}
 			p.key, p.admitted = key, clock.now
-			admissions = append(admissions, clock.now)
+			admitted++
 		}
 		clock.now = tick
 		s.topUpGrants()
 		if _, err := s.startThroughLimits(fmt.Sprint("flood-", flood)); err == nil {
-			admissions = append(admissions, clock.now)
+			admitted++
 		}
 		flood++
 		kept := waiting[:0]
@@ -127,24 +131,24 @@ func TestARotatingFloodOfLoginRequestsIsHeldToTheGlobalStartRate(t *testing.T) {
 		}
 		waiting = kept
 	}
-	slices.SortFunc(admissions, func(a, b time.Time) int { return a.Compare(b) })
-	for i, at := range admissions {
+	slices.SortFunc(evictions, func(a, b time.Time) int { return a.Compare(b) })
+	for i, at := range evictions {
 		n := 0
-		for _, other := range admissions[i:] {
+		for _, other := range evictions[i:] {
 			if other.Sub(at) < time.Minute {
 				n++
 			}
 		}
 		if n > 2*limit {
-			t.Fatalf("%d starts were admitted within a minute of %s, want at most %d across two windows of %d", n, at, 2*limit, limit)
+			t.Fatalf("%d random evictions within a minute of %s, want at most %d across two windows of %d", n, at, 2*limit, limit)
 		}
 	}
 	minutes := int(clock.now.Sub(begin)/time.Minute) + 1
-	if len(admissions) > minutes*limit {
-		t.Fatalf("%d starts admitted in %d minutes, want at most %d a minute", len(admissions), minutes, limit)
+	if len(evictions) > minutes*limit {
+		t.Fatalf("%d random evictions in %d minutes, want at most %d a minute", len(evictions), minutes, limit)
 	}
-	t.Logf("%d of %d starts admitted over %d minutes; %d of %d people's login requests survived a minute",
-		len(admissions), flood+people, minutes, survived, people)
+	t.Logf("%d of %d starts admitted, %d random evictions over %d minutes; %d of %d people's login requests survived a minute",
+		admitted, flood+people, len(evictions), minutes, survived, people)
 	if rate := float64(survived) / people; rate < 0.85 {
 		t.Fatalf("%d of %d people's login requests survived a minute of the flood (%.0f%%), want at least 85%%", survived, people, rate*100)
 	}

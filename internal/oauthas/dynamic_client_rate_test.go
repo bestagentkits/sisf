@@ -29,23 +29,30 @@ func (s *Server) topUpClients() {
 }
 
 // registerThroughLimits registers a client from source as the route does:
-// the start limits first, then the table. It returns the client's ID, or
-// "" and the wait the limits name.
+// the source's start limit first, then the table, which charges a random
+// eviction against the eviction rate. It returns the client's ID, or ""
+// and the wait the limits name, zero when the table had no room at all.
 func (s *Server) registerThroughLimits(source string) (string, time.Duration) {
 	if ok, wait := s.admitRegistration(source); !ok {
 		return "", wait
 	}
-	return s.register(source), 0
+	s.mu.Lock()
+	id := fmt.Sprintf("client-%d", s.clientSeq+1)
+	s.mu.Unlock()
+	if added, wait := s.addDynamicClient(Client{ID: id, Dynamic: true}, source); !added {
+		return "", wait
+	}
+	return id, 0
 }
 
 // A flood rotating through a new source for every registration, at 50 a
-// second against a table kept full of one unused client per source, is
-// held to the global start rate, and a person's client consented to
+// second against a table kept full of one unused client per source, has
+// its random evictions held to the eviction rate, and a person's client consented to
 // within a minute of its registration survives in at least 85% of 400
 // cases. A person refused while the flood holds the window registers again
 // after the Retry-After it was given; people arrive every five seconds,
 // and each is checked a minute after its registration was admitted.
-func TestARotatingFloodOfRegistrationsIsHeldToTheGlobalStartRate(t *testing.T) {
+func TestARotatingFloodOfRegistrationsIsHeldToTheEvictionRate(t *testing.T) {
 	t.Parallel()
 	const (
 		people     = 400
@@ -55,6 +62,12 @@ func TestARotatingFloodOfRegistrationsIsHeldToTheGlobalStartRate(t *testing.T) {
 	limit := report.FloodSafeRate(DefaultMaxClients, report.StartSurvival)
 	clock := &stillClock{now: time.Date(2026, 11, 12, 8, 0, 0, 0, time.UTC)}
 	s := clientTable(clock, DefaultMaxClients, rand.New(rand.NewPCG(51, 52)))
+	var evictions []time.Time
+	pick := s.pick
+	s.pick = func(n int) (int, error) {
+		evictions = append(evictions, clock.now)
+		return pick(n)
+	}
 	type person struct {
 		source   string
 		next     time.Time
@@ -62,12 +75,12 @@ func TestARotatingFloodOfRegistrationsIsHeldToTheGlobalStartRate(t *testing.T) {
 		admitted time.Time
 	}
 	var (
-		waiting    []*person
-		admissions []time.Time
-		arrived    int
-		survived   int
-		checked    int
-		flood      int
+		waiting  []*person
+		admitted int
+		arrived  int
+		survived int
+		checked  int
+		flood    int
 	)
 	begin := clock.now
 	nextArrival := begin
@@ -92,12 +105,12 @@ func TestARotatingFloodOfRegistrationsIsHeldToTheGlobalStartRate(t *testing.T) {
 				continue
 			}
 			p.id, p.admitted = id, clock.now
-			admissions = append(admissions, clock.now)
+			admitted++
 		}
 		clock.now = tick
 		s.topUpClients()
 		if id, _ := s.registerThroughLimits(fmt.Sprint("flood-", flood)); id != "" {
-			admissions = append(admissions, clock.now)
+			admitted++
 		}
 		flood++
 		kept := waiting[:0]
@@ -115,24 +128,24 @@ func TestARotatingFloodOfRegistrationsIsHeldToTheGlobalStartRate(t *testing.T) {
 		}
 		waiting = kept
 	}
-	slices.SortFunc(admissions, func(a, b time.Time) int { return a.Compare(b) })
-	for i, at := range admissions {
+	slices.SortFunc(evictions, func(a, b time.Time) int { return a.Compare(b) })
+	for i, at := range evictions {
 		n := 0
-		for _, other := range admissions[i:] {
+		for _, other := range evictions[i:] {
 			if other.Sub(at) < time.Minute {
 				n++
 			}
 		}
 		if n > 2*limit {
-			t.Fatalf("%d registrations were admitted within a minute of %s, want at most %d across two windows of %d", n, at, 2*limit, limit)
+			t.Fatalf("%d random evictions within a minute of %s, want at most %d across two windows of %d", n, at, 2*limit, limit)
 		}
 	}
 	minutes := int(clock.now.Sub(begin)/time.Minute) + 1
-	if len(admissions) > minutes*limit {
-		t.Fatalf("%d registrations admitted in %d minutes, want at most %d a minute", len(admissions), minutes, limit)
+	if len(evictions) > minutes*limit {
+		t.Fatalf("%d random evictions in %d minutes, want at most %d a minute", len(evictions), minutes, limit)
 	}
-	t.Logf("%d of %d registrations admitted over %d minutes; %d of %d people's clients survived a minute",
-		len(admissions), flood+people, minutes, survived, people)
+	t.Logf("%d of %d registrations admitted, %d random evictions over %d minutes; %d of %d people's clients survived a minute",
+		admitted, flood+people, len(evictions), minutes, survived, people)
 	if rate := float64(survived) / people; rate < 0.85 {
 		t.Fatalf("%d of %d people's clients survived a minute of the flood (%.0f%%), want at least 85%%", survived, people, rate*100)
 	}

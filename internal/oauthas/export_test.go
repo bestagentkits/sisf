@@ -10,5 +10,5 @@ import (
 // test of the table behind them: which client is dropped once the limits
 // let registrations through.
 func LiftStartLimits(cfg *Config) {
-	cfg.registrationLimits = report.NewLimiter(1<<30, 1<<30, time.Minute, 1<<20)
+	cfg.registrationLimits = report.NewStartLimits(1<<30, 1<<30, time.Minute, 1<<20)
 }

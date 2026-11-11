@@ -57,15 +57,20 @@ func (s *Server) clientKey(r *http.Request) string {
 	return host
 }
 
-// admitRegistration takes a registration from source off the start
-// limits (report.NewStartLimiter): StartsPerSource a minute from one
-// source and, from all together, the rate at which a flood rotating
-// through new sources drops a person's client consented to within a
-// minute with probability at most 15%, for a table of MaxClients. It
+// admitRegistration takes a registration from source off its source's
+// start limit (report.StartLimiter.Admit): StartsPerSource a minute. It
 // reports whether the registration may go on and, if not, how long until
 // it may be tried again.
 func (s *Server) admitRegistration(source string) (bool, time.Duration) {
 	s.mu.Lock()
+	limits := s.registrationLimitsLocked()
+	s.mu.Unlock()
+	return limits.Admit(source, s.cfg.Clock.Now())
+}
+
+// registrationLimitsLocked returns the start limits of registrations, made
+// on first use.
+func (s *Server) registrationLimitsLocked() *report.StartLimiter {
 	switch {
 	case s.registrations != nil:
 	case s.cfg.registrationLimits != nil:
@@ -73,33 +78,38 @@ func (s *Server) admitRegistration(source string) (bool, time.Duration) {
 	default:
 		s.registrations = report.NewStartLimiter(s.cfg.MaxClients)
 	}
-	limits := s.registrations
-	s.mu.Unlock()
-	return limits.Take(source, s.cfg.Clock.Now())
+	return s.registrations
 }
 
 // addDynamicClient stores c, registered from source, and reports whether
-// it found room. It first drops expired clients and then, while MaxClients
-// are registered, counting the newcomer's source as if its new client were
-// registered already, so a source that holds an unused client loses its
-// own oldest before any other source's is touched:
+// it found room and, when it did not because the eviction rate is spent,
+// how long until it may be tried again (retryAfter, zero otherwise). It
+// first drops expired clients and then, while MaxClients are registered,
+// counting the newcomer's source as if its new client were registered
+// already, so a source that holds an unused client loses its own oldest
+// before any other source's is touched:
 //
 //   - when some source holds more than one unused client, the oldest unused
 //     client of the source holding the most: a flood from another address,
 //     or from a few, does not reach a person's client, and one sharing the
 //     person's address takes as many registrations as there are slots;
 //   - when every source holds one, an unused client chosen at random
-//     (crypto/rand): a flood of one registration from each of many
-//     addresses neither locks out a new registration nor aims at a
-//     person's client;
+//     (crypto/rand), once the start limits allow another random eviction
+//     (report.StartLimiter.Evict): a flood holding the table one client
+//     from each of about MaxClients addresses cannot aim at a person's
+//     client, and is held to the rate at which one consented to within a
+//     minute survives at least 85% of the time;
 //   - when no unused client is left, a client a person consented to,
-//     chosen at random: one is never dropped while an unused one remains.
+//     chosen at random and charged the same way: one is never dropped
+//     while an unused one remains.
 //
-// A client a consent or code is pending for is never dropped; c is refused
-// only when every registered client is one of those. Only a person who
-// holds a scope reaches consent, so an account without a role cannot pin a
-// client this way.
-func (s *Server) addDynamicClient(c Client, source string) bool {
+// Only a random eviction is charged against that rate, so sources holding
+// several unused clients each, however busy, never hold up a newcomer. A
+// client a consent or code is pending for is never dropped; c is refused
+// when the eviction rate is spent, or when every registered client is one
+// of those. Only a person who holds a scope reaches consent, so an account
+// without a role cannot pin a client this way.
+func (s *Server) addDynamicClient(c Client, source string) (added bool, retryAfter time.Duration) {
 	now := s.cfg.Clock.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -118,24 +128,26 @@ func (s *Server) addDynamicClient(c Client, source string) bool {
 		for _, n := range unusedBySource {
 			busiest = max(busiest, n)
 		}
-		switch {
-		case busiest > 1:
+		if busiest > 1 {
 			s.dropOldestClientLocked(unusedBySource, func(id string, u *clientUse) bool {
 				return u.unused() && !inFlight[id] && unusedBySource[u.source] == busiest
 			})
-		case busiest == 1 && s.dropRandomClientLocked(unusedBySource, func(id string, u *clientUse) bool { return u.unused() && !inFlight[id] }):
-			// Only the newcomer's own source may be counted at one with no
-			// unused client registered; then a consented one goes.
-		default:
-			if !s.dropRandomClientLocked(unusedBySource, func(id string, _ *clientUse) bool { return !inFlight[id] }) {
-				return false
-			}
+			continue
+		}
+		if ok, wait := s.registrationLimitsLocked().Evict(now); !ok {
+			return false, wait
+		}
+		// Only the newcomer's own source may be counted at one with no
+		// unused client registered; then a consented one goes.
+		if !s.dropRandomClientLocked(unusedBySource, func(id string, u *clientUse) bool { return u.unused() && !inFlight[id] }) &&
+			!s.dropRandomClientLocked(unusedBySource, func(id string, _ *clientUse) bool { return !inFlight[id] }) {
+			return false, 0
 		}
 	}
 	s.clientSeq++
 	s.clients[c.ID] = c
 	s.dynamic[c.ID] = &clientUse{source: source, seq: s.clientSeq, registered: now}
-	return true
+	return true, 0
 }
 
 // dropRandomClientLocked drops a registration among those eligible picks,
