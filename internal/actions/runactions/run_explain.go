@@ -21,10 +21,14 @@ const (
 	CauseAwaitingInformation Cause = "awaiting_information"
 	CauseAttemptsExhausted   Cause = "attempts_exhausted"
 	CauseFinished            Cause = "finished"
-	// CauseReleaseHeld: the supervisor held or refused the release of a
-	// candidate QA passed, and the issue waits in ReleaseCandidate.
+	// CauseReleaseHeld: the supervisor held the release of a candidate QA
+	// passed, and the issue waits in ReleaseCandidate for the Owner's retry.
 	CauseReleaseHeld Cause = "release_held"
-	CauseInProgress  Cause = "in_progress"
+	// CauseReleaseRefused: the supervisor refused the release of a
+	// candidate QA passed. The refusal is final for that candidate; the
+	// issue waits in ReleaseCandidate.
+	CauseReleaseRefused Cause = "release_refused"
+	CauseInProgress     Cause = "in_progress"
 )
 
 // Evidence is one fact an explanation rests on, with where to find it.
@@ -141,7 +145,10 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 		out.NextActions = []core.NextAction{inspect}
 	case released != nil && !released.Resumed:
 		out.Stopped, out.Cause = true, CauseReleaseHeld
-		out.Reason = released.Summary + " " + releaseWayOut(*released, issue)
+		if released.Result == releaseRefused {
+			out.Cause = CauseReleaseRefused
+		}
+		out.Reason = released.Summary + releaseWayOut(*released, issue)
 		out.Evidence = append(out.Evidence, Evidence{Kind: "release_hold", Ref: released.Ref, At: released.At,
 			Summary: fmt.Sprintf("release %s with %s: %s", released.Result, released.Code, released.Reason)})
 		out.NextActions = []core.NextAction{inspect}
@@ -220,15 +227,21 @@ func (h handlers) releaseHold(ctx context.Context, r core.StateRecord) (*Release
 	return &hold, nil
 }
 
-// releaseWayOut says how the Owner gets the issue out of ReleaseCandidate.
-// A held release starts over on the Owner's retry, on the factory's host,
-// once its cause is removed; no surface action retries an issue yet. A
-// refused release is never tried again.
+// releaseRefused is the result of a release the supervisor refused, as the
+// release pipeline names it.
+const releaseRefused = "refused"
+
+// releaseWayOut says how the Owner gets the issue out of ReleaseCandidate,
+// as a sentence that follows the summary. A held release starts over on
+// the Owner's retry, on the factory's host, once its cause is removed; no
+// surface action retries an issue yet. A refused release is final for its
+// candidate: its summary already says what is left to the Owner, and no
+// retry is offered.
 func releaseWayOut(hold ReleaseHold, issue string) string {
-	if hold.Result != "held" {
-		return "The Owner merges or closes its pull request by hand."
+	if hold.Result == releaseRefused {
+		return ""
 	}
-	return "Remove the cause in the evidence, then, as the Owner on the factory's host, run `factoryd issue retry --issue " + issue + "` to start the release over."
+	return " Remove the cause in the evidence, then, as the Owner on the factory's host, run `factoryd issue retry --issue " + issue + "` to start the release over."
 }
 
 func approvalSteps(pending string, inspect core.NextAction) []core.NextAction {

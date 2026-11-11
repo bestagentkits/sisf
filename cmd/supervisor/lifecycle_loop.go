@@ -64,14 +64,14 @@ func logPass(log *slog.Logger, res stages.PassResult) {
 // releaseMessages say what each release result means for the issue.
 var releaseMessages = map[release.Result]string{
 	release.ResultHeld:          "release held: the issue waits in ReleaseCandidate for the Owner",
-	release.ResultRefused:       "release refused: it is not tried again, and the issue waits in ReleaseCandidate for the Owner",
+	release.ResultRefused:       "release refused: the refusal is final for this candidate and it is not tried again; the issue waits in ReleaseCandidate until the Owner changes the policy in a governed update or closes the issue",
 	release.ResultBlocked:       "release rolled back: the issue is blocked",
 	release.ResultRestoreFailed: "release could not be undone: the last known good release is not observed running again, and a person must act",
 }
 
 // logRelease logs one release that ended. A release that did not go ahead
-// is logged once, when it ends; it is not tried again until the Owner's
-// retry starts it over.
+// is logged once, when it ends: a held one is not tried again until the
+// Owner's retry starts it over, and a refused one never.
 func logRelease(log *slog.Logger, issue core.IssueRef, out release.Outcome) {
 	if out.Result == release.ResultClosed {
 		log.Info("release closed: the verified release serves the application", "issue", issue.String(), "release", string(out.Release))

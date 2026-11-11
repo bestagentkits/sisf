@@ -21,7 +21,8 @@ type progressFacts struct {
 	hold  *handoff.QAHold
 	pr    *handoff.CandidatePR
 	// release is the held or refused release of a candidate waiting in
-	// ReleaseCandidate; its Summary is the only part shown.
+	// ReleaseCandidate; its Summary is the only part shown, under a label
+	// chosen by its result.
 	release  *handoff.ReleaseHold
 	restored core.ReleaseDigest
 	// stop is why the control zone blocked the issue when its run stopped
@@ -76,7 +77,11 @@ func renderProgress(f progressFacts) string {
 		line("Release: %s.", reached)
 	}
 	if f.release != nil && f.release.Waiting() {
-		line("**Release waiting:** %s", f.release.Summary())
+		label := "Release waiting"
+		if f.release.Result == handoff.ReleaseResultRefused {
+			label = "Release refused"
+		}
+		line("**%s:** %s", label, f.release.Summary())
 	}
 	if f.restored != "" && core.Digest(f.restored).Validate() == nil {
 		line("**Rolled back** to the last known good release `%s`; the factory will not merge this candidate.", f.restored)

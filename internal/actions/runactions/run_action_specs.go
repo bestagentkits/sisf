@@ -58,7 +58,7 @@ func Specs() []core.ActionSpec {
 			Sensitivity: core.SensitivityRead, Scopes: []string{"runs:read"}, Roles: readers,
 			Input: actions.Schema(targetSchema),
 			Output: actions.Schema(`{"type":"object","properties":{"issue":{"type":"string"},"state":{"type":"string"},"run_id":{"type":"string"},
-"stopped":{"type":"boolean"},"cause":{"type":"string","enum":["blocked","rolled_back","awaiting_approval","awaiting_information","attempts_exhausted","release_held","finished","in_progress"]},
+"stopped":{"type":"boolean"},"cause":{"type":"string","enum":["blocked","rolled_back","awaiting_approval","awaiting_information","attempts_exhausted","release_held","release_refused","finished","in_progress"]},
 "reason":{"type":"string"},"evidence":{"type":"array","items":{"type":"object","properties":{"kind":{"type":"string"},"ref":{"type":"string"},"summary":{"type":"string"},"at":{"type":"string","format":"date-time"}}}},
 "next_actions":{"type":"array","items":{"type":"object"}}}}`)},
 	}

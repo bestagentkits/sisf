@@ -1064,6 +1064,7 @@ paths:
                           - awaiting_information
                           - attempts_exhausted
                           - release_held
+                          - release_refused
                           - finished
                           - in_progress
                         type: string

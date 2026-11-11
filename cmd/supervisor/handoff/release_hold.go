@@ -22,7 +22,8 @@ const (
 // other records. A held or refused release is not tried again by itself:
 // the issue waits in ReleaseCandidate. Only the Owner's retry of the issue
 // lets a held release start over (ResumeHeldRelease); a refused one is
-// final.
+// final for its candidate, and what is left to the Owner is to change the
+// policy in a governed update or to close the issue.
 //
 // Reason is the pipeline's own sentence, for the Owner's authenticated
 // surfaces and the supervisor's log. It can name units, backends and what
@@ -117,9 +118,10 @@ func (h ReleaseHold) Summary() string {
 	if h.Result == ReleaseResultRefused {
 		why := "the release was refused before anything was deployed"
 		if h.Code == core.CodeApprovalRequired {
-			why = "the change touches the factory's trusted control surface, which only a person may publish"
+			why = "the change touches the factory's trusted control surface, or a unit the policy does not let the factory publish by itself, which only a person may publish"
 		}
-		return fmt.Sprintf("The release of run %s was refused: %s. It is not tried again, and the issue waits in ReleaseCandidate for the Owner.", h.RunID, why)
+		return fmt.Sprintf("The release of run %s was refused: %s. The refusal is final for this candidate and it is never tried again; "+
+			"the issue waits in ReleaseCandidate until the Owner changes the policy in a governed update or closes the issue.", h.RunID, why)
 	}
 	var why string
 	switch h.Code {

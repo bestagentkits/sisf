@@ -126,3 +126,61 @@ func releaseHoldOf(t *testing.T, f *harness.Factory, r core.StateRecord) handoff
 	}
 	return h
 }
+
+// A release the supervisor refuses, here because release.units does not
+// let the factory publish the unit by itself, is as visible as a held one
+// and is not mistaken for it: runs.explain reports the run stopped with a
+// cause of its own, the code and the supervisor's reason as evidence, and
+// says that the refusal is final for this candidate and what the Owner can
+// do; runs.inspect shows the refusal; and the issue's progress comment says
+// so in words chosen by the result and the code alone. Nothing offers a
+// retry, and the Owner's retry is refused.
+func TestARefusedReleaseIsShownAsFinalForItsCandidate(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := harness.New(t, harness.Options{})
+	number := f.OpenIssue("maintainer", "MEMBER", "Say who checked the status", dashboardBody, github.LabelReady, github.LabelKindBug)
+	f.ScriptPatch(number, 0, dashboardDiff)
+	f.Cycle(6)
+	wantSurfaces(t, f, number, core.StateReleaseCandidate)
+	record := f.Record(number)
+	hold := releaseHoldOf(t, f, record)
+	if hold.Result != handoff.ReleaseResultRefused || hold.Code != core.CodeApprovalRequired || !hold.Waiting() {
+		t.Fatalf("the release hold: %+v", hold)
+	}
+
+	comment := commentContaining(t, f, number, "<!-- sisf:progress ")
+	if !strings.Contains(comment, "**Release refused:**") || !strings.Contains(comment, hold.Summary()) ||
+		strings.Contains(comment, "Release waiting") || strings.Contains(comment, "release.units") {
+		t.Errorf("the progress comment does not say the release was refused, in public words:\n%s", comment)
+	}
+	for _, shown := range []string{hold.Summary(), f.Explain(number).Reason} {
+		if !strings.Contains(shown, "final for this candidate") || !strings.Contains(shown, "governed update") ||
+			!strings.Contains(shown, "closes the issue") || strings.Contains(shown, "issue retry") {
+			t.Errorf("a refused release is not said to be final, with what the Owner can do: %q", shown)
+		}
+	}
+	why := f.Explain(number)
+	if !why.Stopped || why.Cause != runactions.CauseReleaseRefused {
+		t.Errorf("runs.explain answers %+v", why)
+	}
+	if !slices.ContainsFunc(why.Evidence, func(e runactions.Evidence) bool {
+		return e.Kind == "release_hold" && strings.Contains(e.Summary, string(core.CodeApprovalRequired)) && strings.Contains(e.Summary, "release.units")
+	}) {
+		t.Errorf("runs.explain does not give the code and the supervisor's reason: %+v", why.Evidence)
+	}
+	if seen := f.Inspect(number); seen.ReleaseHold == nil || seen.ReleaseHold.Result != handoff.ReleaseResultRefused ||
+		seen.ReleaseHold.Code != string(core.CodeApprovalRequired) {
+		t.Errorf("runs.inspect shows the refusal %+v", seen.ReleaseHold)
+	}
+
+	// It is final: nothing tries it again, and the Owner's retry does not either.
+	rec := releaseRecordOf(t, f, record)
+	if _, err := f.Control.Retry(ctx, f.Issue(number), ownerActor(f)); !core.HasCode(err, core.CodeConflict) {
+		t.Fatalf("the Owner's retry of a refused release: %v", err)
+	}
+	f.Cycle(2)
+	if again := releaseRecordOf(t, f, record); !again.At.Equal(rec.At) || len(f.Deploy.Staged()) != 0 {
+		t.Fatalf("a refused release was tried again: %+v", again)
+	}
+}
