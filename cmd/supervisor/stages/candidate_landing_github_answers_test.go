@@ -86,6 +86,14 @@ func TestALandingIsDecidedByWhatGitHubDidNotByItsAnswer(t *testing.T) {
 				t.Fatalf("after %d retries: %+v, %v", maxMergeRetries, landing, err)
 			}
 		})
+		t.Run("GitHub refuses to list the branch's pull requests", func(t *testing.T) {
+			w := landingFactory(t, db, "list refused")
+			w.data.FailOn(http.MethodGet, "/pulls", http.StatusForbidden, "Resource not accessible by integration")
+			landing, err := w.prs.Land(ctx, w.req)
+			if err != nil || landing.Merged || !strings.Contains(landing.Summary, "status 403") || w.data.Merges() != 0 {
+				t.Fatalf("Land = %+v, %v", landing, err)
+			}
+		})
 		t.Run("GitHub refuses to open the pull request", func(t *testing.T) {
 			w := landingFactory(t, db, "open refused")
 			w.data.FailOn(http.MethodPost, "/pulls", http.StatusForbidden, "Resource not accessible by integration")
@@ -215,4 +223,31 @@ func TestTheInstallNamesTheFactorysAccount(t *testing.T) {
 			t.Fatalf("Land = %+v, %v after %d merges", landing, err, w.data.Merges())
 		}
 	})
+}
+
+// An install may name the App's numeric ID where GitHub shows the bot
+// user's: the login still tells the factory's own pull request.
+func TestTheFactorysPullRequestIsKnownByItsLoginWhenTheIDsDiffer(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		ctx := context.Background()
+		w := newLandingWorld(t, db.Open(t, core.ZoneControl))
+		w.prs.self = github.User{ID: 4242, Login: w.fake.Bot().Login}
+		if _, err := w.prs.ensure(ctx, w.req.IssueID, w.req.RunID, 1); err != nil {
+			t.Fatal(err)
+		}
+		if landing, err := w.prs.Land(ctx, w.req); err != nil || !landing.Merged {
+			t.Fatalf("Land = %+v, %v", landing, err)
+		}
+	})
+}
+
+// The paths a candidate is judged, released and merged on are every path
+// of its patch and every path GitHub's comparison lists, once each.
+func TestTheChangedPathsAreThePatchsAndGitHubsTogether(t *testing.T) {
+	t.Parallel()
+	got := unionPaths([]string{"b.go", "a.go"}, []string{"c.go", "a.go"})
+	if strings.Join(got, ",") != "a.go,b.go,c.go" {
+		t.Fatalf("unionPaths = %v", got)
+	}
 }
