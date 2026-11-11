@@ -91,3 +91,27 @@ func TestBranchNamesThatCouldLeaveTheirRefAreRefused(t *testing.T) {
 		t.Fatalf("a missing branch: %v", err)
 	}
 }
+
+// The factory writes only its own branches: no commit through the client
+// can move the default branch or any branch a person owns.
+func TestCommitToBranchWritesOnlyTheFactorysOwnBranches(t *testing.T) {
+	t.Parallel()
+	fake, data, client := gitDataClient(t)
+	base, err := fake.Commit(testRepo, map[string]string{"README.md": "hello\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.SetBranch(testRepo, "main", base); err != nil {
+		t.Fatal(err)
+	}
+	for _, branch := range []string{"main", "release/1.0", "feature/sisf/x"} {
+		_, err := client.CommitToBranch(bg, repoRef, github.BranchCommit{Branch: branch, Base: core.CommitSHA(base), Message: "m",
+			Files: map[string][]byte{"README.md": []byte("changed\n")}})
+		if !core.HasCode(err, core.CodePermissionDenied) {
+			t.Errorf("CommitToBranch(%s) = %v", branch, err)
+		}
+	}
+	if head, _, _ := data.Branch(testRepo, "main"); head != base || data.Writes() != 0 {
+		t.Fatalf("main moved to %s after %d writes", head, data.Writes())
+	}
+}

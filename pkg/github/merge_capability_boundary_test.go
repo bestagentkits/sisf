@@ -1,21 +1,105 @@
 package github_test
 
 import (
-	"io/fs"
-	"os"
+	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/bestagentkits/sisf/pkg/github"
 )
 
+const (
+	modulePath = "github.com/bestagentkits/sisf"
+	githubPkg  = modulePath + "/pkg/github"
+)
+
+// mergeNames are the names of pkg/github that make or describe a merge.
+var mergeNames = map[string]bool{"NewMerger": true, "Merger": true, "MergeRequest": true, "Merged": true}
+
+// listedPackage is what `go list` says of one package.
+type listedPackage struct {
+	ImportPath string
+	Dir        string
+	GoFiles    []string
+}
+
+// buildGraph lists every package of this module compiled into the binary
+// of cmd, from the build graph rather than from file names.
+func buildGraph(t *testing.T, cmd string) []listedPackage {
+	t.Helper()
+	list := exec.Command("go", "list", "-deps", "-json=ImportPath,Dir,GoFiles", "./cmd/"+cmd)
+	list.Dir = filepath.Join("..", "..")
+	out, err := list.Output()
+	if err != nil {
+		t.Fatalf("go list -deps ./cmd/%s: %v", cmd, err)
+	}
+	var pkgs []listedPackage
+	dec := json.NewDecoder(strings.NewReader(string(out)))
+	for dec.More() {
+		var p listedPackage
+		if err := dec.Decode(&p); err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(p.ImportPath, modulePath+"/") && p.ImportPath != githubPkg {
+			pkgs = append(pkgs, p)
+		}
+	}
+	return pkgs
+}
+
+// mergeUses lists where the package's source names one of mergeNames of
+// pkg/github, whatever name it imports pkg/github under. A dot import of
+// pkg/github counts as a use: it would hide one.
+func mergeUses(t *testing.T, p listedPackage) []string {
+	t.Helper()
+	var uses []string
+	fset := token.NewFileSet()
+	for _, name := range p.GoFiles {
+		file, err := parser.ParseFile(fset, filepath.Join(p.Dir, name), nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		local := ""
+		for _, imp := range file.Imports {
+			if path, _ := strconv.Unquote(imp.Path.Value); path == githubPkg {
+				local = "github"
+				if imp.Name != nil {
+					local = imp.Name.Name
+				}
+			}
+		}
+		switch local {
+		case "", "_":
+			continue
+		case ".":
+			uses = append(uses, p.ImportPath+"/"+name+": dot import of pkg/github")
+			continue
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				if x, ok := sel.X.(*ast.Ident); ok && x.Name == local && mergeNames[sel.Sel.Name] {
+					uses = append(uses, fset.Position(sel.Pos()).String()+": "+local+"."+sel.Sel.Name)
+				}
+			}
+			return true
+		})
+	}
+	return uses
+}
+
 // Only the supervisor can merge into a default branch. Neither the client
 // the agent and control zones are handed nor the REST client itself has a
-// merge method, and the one type that merges is built and named nowhere in
-// the product but in the supervisor's command (and the test kit, which
-// wires a whole factory the way the supervisor's command does).
+// merge method, and no package compiled into the control and dispatcher
+// binary (factoryd), the edge or the command-line tool names the merger,
+// under any import name. The supervisor's binary does, which shows the
+// check finds a use where there is one.
 func TestOnlyTheSupervisorHasAWayToMerge(t *testing.T) {
 	t.Parallel()
 	for _, typ := range []reflect.Type{reflect.TypeFor[github.Client](), reflect.TypeFor[*github.RESTClient]()} {
@@ -25,34 +109,18 @@ func TestOnlyTheSupervisorHasAWayToMerge(t *testing.T) {
 			}
 		}
 	}
-	root := filepath.Join("..", "..")
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(root, path)
-		rel = filepath.ToSlash(rel)
-		if d.IsDir() {
-			if rel == "node_modules" || rel == "ui/node_modules" || strings.HasPrefix(rel, ".") && rel != "." {
-				return filepath.SkipDir
+	for _, cmd := range []string{"factoryd", "edge", "sisf"} {
+		for _, p := range buildGraph(t, cmd) {
+			for _, use := range mergeUses(t, p) {
+				t.Errorf("cmd/%s is built with %s, which reaches the merger: %s", cmd, p.ImportPath, use)
 			}
-			return nil
 		}
-		if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") || strings.HasPrefix(rel, "pkg/github/") ||
-			strings.HasPrefix(rel, "cmd/supervisor/") || strings.HasPrefix(rel, "internal/testkit/") {
-			return nil
-		}
-		src, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if text := string(src); strings.Contains(text, "github.NewMerger") || strings.Contains(text, "github.Merger") ||
-			strings.Contains(text, "github.MergeRequest") {
-			t.Errorf("%s reaches the merger; only cmd/supervisor may", rel)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
+	}
+	found := false
+	for _, p := range buildGraph(t, "supervisor") {
+		found = found || len(mergeUses(t, p)) > 0
+	}
+	if !found {
+		t.Fatal("no package of the supervisor's binary names the merger: the check would find nothing anywhere")
 	}
 }

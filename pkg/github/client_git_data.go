@@ -77,9 +77,16 @@ func (c *RESTClient) CommitExists(ctx context.Context, repo RepoRef, commit core
 	return atStep(err, StepBaseCommit)
 }
 
+// FactoryBranchPrefix starts every branch the factory writes: candidate
+// branches (sisf/<factory>/<run>-<attempt>), release notes and decision
+// proposals. CommitToBranch writes no other branch, so no caller of it can
+// move the default branch; only a supervisor merge (Merger) changes that.
+const FactoryBranchPrefix = "sisf/"
+
 // CommitToBranch writes the files of bc as one commit on top of its base and
 // points its branch at that commit, creating the branch when it does not
-// exist. It never touches any other branch. It returns the new commit.
+// exist. The branch must be one of the factory's own (FactoryBranchPrefix);
+// it never touches any other branch. It returns the new commit.
 // Every error names the step it came from (ErrorStep), and a path no
 // commit can hold (see ValidTreePath) is refused before any write.
 func (c *RESTClient) CommitToBranch(ctx context.Context, repo RepoRef, bc BranchCommit) (core.CommitSHA, error) {
@@ -88,6 +95,9 @@ func (c *RESTClient) CommitToBranch(ctx context.Context, repo RepoRef, bc Branch
 	}
 	if err := validBranch(bc.Branch); err != nil {
 		return "", err
+	}
+	if !strings.HasPrefix(bc.Branch, FactoryBranchPrefix) {
+		return "", core.NewError(core.CodePermissionDenied, "branch "+bc.Branch+" is not one of the factory's own; only "+FactoryBranchPrefix+"* branches are written")
 	}
 	if err := bc.Base.Validate(); err != nil {
 		return "", err
