@@ -23,15 +23,17 @@ type Viewer interface {
 
 // activeStates are the states of a run in flight, whose issue's progress
 // comment follows it every pass.
+// RolledBack is one of them: a restore always goes on to Blocked with its
+// recovery report, which the comment must still show.
 var activeStates = []core.State{
 	core.StateClaimed, core.StateDeveloping, core.StateQAEvaluation, core.StateReleaseCandidate, core.StateCanary,
-	core.StateMonitoring, core.StateVerified,
+	core.StateMonitoring, core.StateVerified, core.StateRolledBack,
 }
 
 // endState reports whether s ends a run: its progress is shown once more
 // and then left alone.
 func endState(s core.State) bool {
-	return s == core.StateClosed || s == core.StateRolledBack || s == core.StateBlocked
+	return s == core.StateClosed || s == core.StateBlocked
 }
 
 // projectProgress keeps one progress comment on every issue a run claimed,
@@ -92,8 +94,10 @@ func (c *Control) showProgress(ctx context.Context, r core.StateRecord) error {
 	if err != nil {
 		return err
 	}
-	if !found && endState(r.State) {
-		return nil // ended before it had a progress comment, or already shown at its end
+	if !found && (endState(r.State) || r.State == core.StateRolledBack) {
+		// Ended, or rolled back on its way to Blocked, before it had a
+		// progress comment; or already shown at its end.
+		return nil
 	}
 	ended := endState(r.State)
 	if found && ended && !entry.AtEnd {
