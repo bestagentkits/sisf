@@ -53,7 +53,7 @@ func Specs() []core.ActionSpec {
 			Output: actions.Schema(`{"type":"object","properties":{"record":{"type":"object"},"run":{"type":["object","null"]},
 "qa_hold":{"type":"object","description":"Present when QA held the run's candidate and the issue waits in QAEvaluation for the Owner."},
 "pull_request":{"type":"object","description":"The pull request of the run's candidate QA passed: its number, URL and whether the supervisor merged it."},
-"release_hold":{"type":"object","description":"Present when the supervisor held or refused the release of the candidate and the issue waits in ReleaseCandidate: the result, the code, the public summary, the supervisor's reason and whether the Owner's retry resumed it."}}}`)},
+"release_hold":{"type":"object","description":"Present when the supervisor held or refused the release of the candidate and the issue waits in ReleaseCandidate: the result, the code, the public summary, the supervisor's reason (to the Owner only) and whether the Owner's retry resumed it."}}}`)},
 		{Name: ActionRunsExplain, Summary: "Explain why an issue's run is stopped or blocked, with evidence, its current state and the next valid steps.",
 			Sensitivity: core.SensitivityRead, Scopes: []string{"runs:read"}, Roles: readers,
 			Input: actions.Schema(targetSchema),

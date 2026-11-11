@@ -66,15 +66,17 @@ func (h handlers) runsExplain(ctx context.Context, req core.ActionRequest) (core
 	if len(requests) > maxApprovalEvidence {
 		requests = requests[len(requests)-maxApprovalEvidence:]
 	}
-	out, err := h.explain(ctx, target, requests)
+	out, err := h.explain(ctx, target, requests, req.Actor.HasRole(core.RoleOwner))
 	if err != nil {
 		return core.ActionResult{}, err
 	}
 	return actions.JSONResult(out)
 }
 
-// explain judges the record, the run and the approvals of one issue.
-func (h handlers) explain(ctx context.Context, t Inspection, requests []approvals.Request) (Explanation, error) {
+// explain judges the record, the run and the approvals of one issue. owner
+// says the caller holds the Owner role, the only one shown the supervisor's
+// own reason for a held release.
+func (h handlers) explain(ctx context.Context, t Inspection, requests []approvals.Request, owner bool) (Explanation, error) {
 	r := t.Record
 	issue := r.IssueID.String()
 	out := Explanation{Issue: issue, State: r.State, RunID: r.RunID, Evidence: []Evidence{{
@@ -102,7 +104,7 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 	if err != nil {
 		return Explanation{}, err
 	}
-	released, err := h.releaseHold(ctx, r)
+	released, err := h.releaseHold(ctx, r, owner)
 	if err != nil {
 		return Explanation{}, err
 	}
@@ -149,8 +151,11 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 			out.Cause = CauseReleaseRefused
 		}
 		out.Reason = released.Summary + releaseWayOut(*released, issue)
-		out.Evidence = append(out.Evidence, Evidence{Kind: "release_hold", Ref: released.Ref, At: released.At,
-			Summary: fmt.Sprintf("release %s with %s: %s", released.Result, released.Code, released.Reason)})
+		summary := fmt.Sprintf("release %s with %s", released.Result, released.Code)
+		if released.Reason != "" {
+			summary += ": " + released.Reason
+		}
+		out.Evidence = append(out.Evidence, Evidence{Kind: "release_hold", Ref: released.Ref, At: released.At, Summary: summary})
 		out.NextActions = []core.NextAction{inspect}
 	case exhausted:
 		out.Stopped, out.Cause = true, CauseAttemptsExhausted
@@ -212,8 +217,10 @@ func (h handlers) runStop(ctx context.Context, r core.StateRecord) (*RunStop, er
 
 // releaseHold reads the held or refused release of an issue in
 // ReleaseCandidate, nil when its release was neither or no reader is
-// wired. A held release the Owner resumed is not waiting any more.
-func (h handlers) releaseHold(ctx context.Context, r core.StateRecord) (*ReleaseHold, error) {
+// wired. A held release the Owner resumed is not waiting any more. The
+// supervisor's reason is its own error text, for the Owner's eyes: it is
+// left out unless owner says the caller holds the Owner role.
+func (h handlers) releaseHold(ctx context.Context, r core.StateRecord, owner bool) (*ReleaseHold, error) {
 	if h.ReleaseHolds == nil || r.State != core.StateReleaseCandidate || r.RunID == "" {
 		return nil, nil
 	}
@@ -223,6 +230,9 @@ func (h handlers) releaseHold(ctx context.Context, r core.StateRecord) (*Release
 		return nil, nil
 	case err != nil:
 		return nil, err
+	}
+	if !owner {
+		hold.Reason = ""
 	}
 	return &hold, nil
 }

@@ -1156,7 +1156,7 @@ paths:
                       record:
                         type: object
                       release_hold:
-                        description: 'Present when the supervisor held or refused the release of the candidate and the issue waits in ReleaseCandidate: the result, the code, the public summary, the supervisor''s reason and whether the Owner''s retry resumed it.'
+                        description: 'Present when the supervisor held or refused the release of the candidate and the issue waits in ReleaseCandidate: the result, the code, the public summary, the supervisor''s reason (to the Owner only) and whether the Owner''s retry resumed it.'
                         type: object
                       run:
                         type:

@@ -78,16 +78,17 @@ func record(n int, st core.State, run core.RunID, minutes int) core.StateRecord 
 }
 
 type world struct {
-	records records
-	runs    runs
-	inbox   inbox
-	holds   runactions.QAHolds
+	records  records
+	runs     runs
+	inbox    inbox
+	holds    runactions.QAHolds
+	releases runactions.ReleaseHolds
 }
 
 func (w world) action(t *testing.T, name string) core.Action {
 	t.Helper()
 	all, err := runactions.New(runactions.Deps{FactoryID: "acme-app", Records: w.records, Runs: w.runs,
-		Approvals: w.inbox, QAHolds: w.holds, Clock: intaketest.NewClock(t0)})
+		Approvals: w.inbox, QAHolds: w.holds, ReleaseHolds: w.releases, Clock: intaketest.NewClock(t0)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +103,14 @@ func (w world) action(t *testing.T, name string) core.Action {
 
 func call[T any](t *testing.T, a core.Action, in string) (T, error) {
 	t.Helper()
+	return callAs[T](t, a, in, core.Actor{})
+}
+
+// callAs is call by actor.
+func callAs[T any](t *testing.T, a core.Action, in string, actor core.Actor) (T, error) {
+	t.Helper()
 	var out T
-	res, err := a.Handle(context.Background(), core.ActionRequest{Input: json.RawMessage(in)})
+	res, err := a.Handle(context.Background(), core.ActionRequest{Actor: actor, Input: json.RawMessage(in)})
 	if err != nil {
 		return out, err
 	}

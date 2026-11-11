@@ -41,7 +41,7 @@ func (h handlers) runsInspect(ctx context.Context, req core.ActionRequest) (core
 	if target.PullRequest, err = h.candidatePR(ctx, target.Record); err != nil {
 		return core.ActionResult{}, err
 	}
-	if target.ReleaseHold, err = h.releaseHold(ctx, target.Record); err != nil {
+	if target.ReleaseHold, err = h.releaseHold(ctx, target.Record, req.Actor.HasRole(core.RoleOwner)); err != nil {
 		return core.ActionResult{}, err
 	}
 	return actions.JSONResult(target)

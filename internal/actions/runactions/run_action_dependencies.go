@@ -46,7 +46,8 @@ type ReleaseHold struct {
 	Result string `json:"result"`
 	Code   string `json:"code"`
 	// Summary is the public sentence the issue's progress comment shows;
-	// Reason is the supervisor's own, for the Owner.
+	// Reason is the supervisor's own, shown only to a caller who holds the
+	// Owner role and empty for every other.
 	Summary string `json:"summary"`
 	Reason  string `json:"reason,omitempty"`
 	// Resumed is set once the Owner's retry let a held release start over.
