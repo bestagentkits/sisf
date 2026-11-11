@@ -1140,6 +1140,9 @@ paths:
                 properties:
                   output:
                     properties:
+                      pull_request:
+                        description: 'The pull request of the run''s candidate QA passed: its number, URL and whether the supervisor merged it.'
+                        type: object
                       qa_hold:
                         description: Present when QA held the run's candidate and the issue waits in QAEvaluation for the Owner.
                         type: object

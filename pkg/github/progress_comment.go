@@ -9,6 +9,13 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
+// CommentWriter lists, writes and edits an issue's comments; Client is one.
+type CommentWriter interface {
+	ListComments(ctx context.Context, ref core.IssueRef, since time.Time) ([]Comment, error)
+	CreateComment(ctx context.Context, ref core.IssueRef, body string) (Comment, error)
+	UpdateComment(ctx context.Context, repo RepoRef, commentID int64, body string) (Comment, error)
+}
+
 // ProgressComment keeps one status comment per issue, updated in place, so an
 // issue shows the current state and not a log of every step.
 //
@@ -17,7 +24,7 @@ import (
 // own comment. The comment is trusted as ours only when the factory's account
 // wrote it.
 type ProgressComment struct {
-	Issues Issues
+	Issues CommentWriter
 	// Self is the factory's own account.
 	Self Identity
 	// Factory is named in the marker, so two factories on the same

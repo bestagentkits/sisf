@@ -60,6 +60,8 @@ type Deps struct {
 	GitHub func(ctx context.Context) (GitHubSync, error)
 	// QAHolds reads the supervisor's QA holds; nil leaves them out.
 	QAHolds QAHolds
+	// CandidatePRs reads the candidates' pull requests; nil leaves them out.
+	CandidatePRs CandidatePRs
 }
 
 // New returns the actions of this package over deps.

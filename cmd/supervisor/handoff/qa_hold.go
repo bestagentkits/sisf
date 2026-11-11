@@ -11,8 +11,9 @@ import (
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
-// TopicQAHeld is the outbox topic that tells the Owner, on the issue, that
-// QA held a candidate and the issue waits in QAEvaluation for a person.
+// TopicQAHeld is the outbox topic an earlier release queued a separate
+// notice of a hold under. Holds are shown in the issue's progress comment
+// now; a message still queued under it is drained without a comment.
 const TopicQAHeld = "qa.held"
 
 // QAHoldCause says why QA held a candidate.
@@ -50,24 +51,10 @@ type QAHold struct {
 // QAHoldKey is the key of the hold of one evaluator attempt.
 func QAHoldKey(run core.RunID, attempt int) string { return fmt.Sprintf("qa-hold/%s/%d", run, attempt) }
 
-// PutQAHold records a hold and queues its notice for the issue, in the
-// transaction that records the verdict.
+// PutQAHold records a hold in the transaction that records the verdict.
+// The issue's progress comment shows it; nothing more is queued.
 func PutQAHold(ctx context.Context, tx state.Tx, h QAHold) error {
-	raw, err := json.Marshal(h)
-	if err != nil {
-		return core.NewError(core.CodeInternal, "a QA hold cannot be encoded").WithCause(err)
-	}
-	key := QAHoldKey(h.RunID, h.Attempt)
-	version := int64(0)
-	if entry, err := tx.GetKV(ctx, BuildNamespace, key); err == nil {
-		version = entry.Version
-	} else if !core.HasCode(err, core.CodeNotFound) {
-		return err
-	}
-	if _, err := tx.PutKV(ctx, state.KVEntry{Namespace: BuildNamespace, Key: key, Value: raw, Version: version}); err != nil {
-		return err
-	}
-	return tx.Enqueue(ctx, state.OutboxMessage{Topic: TopicQAHeld, Payload: raw, Key: key})
+	return putReplacing(ctx, tx, QAHoldKey(h.RunID, h.Attempt), h)
 }
 
 // ReadQAHold reads the hold of one evaluator attempt, NOT_FOUND when QA

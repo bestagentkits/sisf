@@ -132,7 +132,9 @@ func (h handlers) explain(ctx context.Context, t Inspection, requests []approval
 		out.Cause, out.Reason = CauseInProgress, "The run is not stopped; the issue is in "+string(r.State)+"."
 		out.NextActions = []core.NextAction{inspect}
 	}
-	return out, nil
+	pr, err := h.candidatePR(ctx, r)
+	explainPullRequest(&out, pr)
+	return out, err
 }
 
 // qaHold reads the QA hold of an issue in QAEvaluation, nil when QA did

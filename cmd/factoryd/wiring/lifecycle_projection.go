@@ -66,6 +66,11 @@ func (c *Control) projectLifecycle(ctx context.Context) error {
 		if shown {
 			continue
 		}
+		// An issue closes only after its progress comment shows the end.
+		if err := c.showProgress(ctx, r); err != nil {
+			failed = append(failed, fmt.Errorf("show the progress of %s: %w", r.IssueID, err))
+			continue
+		}
 		if err := c.editIssue(ctx, r.IssueID, c.showIntent(r), func(ctx context.Context) error { return c.show(ctx, r) }); err != nil {
 			failed = append(failed, fmt.Errorf("show %s on GitHub: %w", r.IssueID, err))
 			continue

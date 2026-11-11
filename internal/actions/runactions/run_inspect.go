@@ -23,6 +23,8 @@ type Inspection struct {
 	Record core.StateRecord      `json:"record"`
 	Run    *dispatcher.RunRecord `json:"run"`
 	QAHold *QAHold               `json:"qa_hold,omitempty"`
+	// PullRequest is the pull request of the run's candidate QA passed.
+	PullRequest *CandidatePR `json:"pull_request,omitempty"`
 }
 
 func (h handlers) runsInspect(ctx context.Context, req core.ActionRequest) (core.ActionResult, error) {
@@ -31,6 +33,9 @@ func (h handlers) runsInspect(ctx context.Context, req core.ActionRequest) (core
 		return core.ActionResult{}, err
 	}
 	if target.QAHold, err = h.qaHold(ctx, target.Record); err != nil {
+		return core.ActionResult{}, err
+	}
+	if target.PullRequest, err = h.candidatePR(ctx, target.Record); err != nil {
 		return core.ActionResult{}, err
 	}
 	return actions.JSONResult(target)

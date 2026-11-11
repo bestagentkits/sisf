@@ -19,9 +19,10 @@ import (
 
 // When the last attempt a run is allowed fails QA, the verdict is held and
 // the issue stays in QAEvaluation, which the lifecycle has no step out of.
-// The factory says so where the Owner looks: a comment on the issue that
-// names the attempt, the score against the pass mark and the failed gates,
-// and runs.explain, which reports the run stopped. The run's reservation is
+// The factory says so where the Owner looks: the issue's one progress
+// comment, edited at every attempt, names the attempt, the score against
+// the pass mark and the failed gates; runs.explain reports the run
+// stopped. A candidate QA did not pass gets no pull request. The run's reservation is
 // closed, and what its real agents reported is in the ledger: the Claude
 // coder's cost for every attempt and the Codex judge's tokens.
 func TestAQAHoldAtTheAttemptLimitIsShownToTheOwnerAndTheRunIsBooked(t *testing.T) {
@@ -47,16 +48,24 @@ func TestAQAHoldAtTheAttemptLimitIsShownToTheOwnerAndTheRunIsBooked(t *testing.T
 	}
 	f.Cycle(1) // the control zone posts what the supervisor queued
 
-	// The issue says why it stopped, once.
-	comment := commentContaining(t, f, number, "<!-- sisf:qa-held ")
-	for _, want := range []string{"attempt 3 of 3", "score 70", "pass mark 85", "QAEvaluation"} {
+	// The issue's one progress comment, edited in place through the three
+	// attempts, ends with why the run stopped.
+	comment := commentContaining(t, f, number, "<!-- sisf:progress ")
+	for _, want := range []string{"QA attempt 1 of 3: failed", "QA attempt 2 of 3: failed", "QA attempt 3 of 3: held",
+		"attempt 3 of 3", "score 70", "pass mark 85", "QAEvaluation"} {
 		if !strings.Contains(comment, want) {
-			t.Errorf("the held notice lacks %q:\n%s", want, comment)
+			t.Errorf("the progress comment lacks %q:\n%s", want, comment)
 		}
 	}
+	if strings.Contains(comment, "Candidate pull request") {
+		t.Errorf("a candidate QA held got a pull request:\n%s", comment)
+	}
 	f.Cycle(2)
-	if n := countComments(t, f, number, "<!-- sisf:qa-held "); n != 1 {
-		t.Errorf("the held notice was posted %d times", n)
+	if n := countComments(t, f, number, "<!-- sisf:progress "); n != 1 {
+		t.Errorf("the issue carries %d progress comments", n)
+	}
+	if n := countComments(t, f, number, "<!-- sisf:qa-held "); n != 0 {
+		t.Errorf("the hold was posted as a comment of its own %d times", n)
 	}
 
 	// runs.explain reports the run stopped, with the hold as evidence.

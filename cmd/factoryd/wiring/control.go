@@ -44,6 +44,8 @@ type GitHub interface {
 	BranchHead(ctx context.Context, repo github.RepoRef, branch string) (core.CommitSHA, error)
 	CommitToBranch(ctx context.Context, repo github.RepoRef, bc github.BranchCommit) (core.CommitSHA, error)
 	CreatePullRequest(ctx context.Context, repo github.RepoRef, pr github.NewPullRequest) (github.PullRequest, error)
+	// The issue's progress comment is edited in place.
+	UpdateComment(ctx context.Context, repo github.RepoRef, commentID int64, body string) (github.Comment, error)
 }
 
 // ControlConfig is what the control zone is built from.
@@ -109,6 +111,11 @@ type Control struct {
 	backoff map[string]retryAt
 	// projected is the record version last shown on GitHub, per issue.
 	projected map[core.IssueRef]int64
+	// progress writes the issues' progress comments; progressShown is the
+	// body last written per issue, and redactor scrubs every body.
+	progress      *github.ProgressComment
+	progressShown map[core.IssueRef]string
+	redactor      *redact.Redactor
 	// decisions runs the decision layer; nil when it is not configured.
 	decisions *decisionRunner
 	// reconcile polls GitHub for the changes no webhook delivered; on an
@@ -150,7 +157,9 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 		return nil, err
 	}
 	repo := github.RepoRef{Owner: m.Repository.Owner, Name: m.Repository.Repo}
-	c := &Control{cfg: cfg, log: cfg.Logger, backoff: map[string]retryAt{}, projected: map[core.IssueRef]int64{}}
+	c := &Control{cfg: cfg, log: cfg.Logger, backoff: map[string]retryAt{}, projected: map[core.IssueRef]int64{},
+		progress:      &github.ProgressComment{Issues: cfg.GitHub, Self: settings.Self, Factory: m.FactoryID},
+		progressShown: map[core.IssueRef]string{}, redactor: redact.New(redact.Config{})}
 	c.Audit = audit.New(cfg.Store, cfg.Clock)
 	reconcile, err := cfg.Reconcile.withDefaults()
 	if err != nil {
@@ -307,6 +316,9 @@ func (c *Control) Pass(ctx context.Context) error {
 		decided,
 		delivered,
 		expired,
+		// The progress first: an issue is closed on GitHub only after its
+		// progress comment says how it ended.
+		c.projectProgress(ctx),
 		c.projectLifecycle(ctx),
 		c.runDecisions(ctx),
 		// Last, so a slow or failing GitHub delays nothing above; what it
