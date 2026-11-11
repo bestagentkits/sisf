@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -87,7 +88,7 @@ type liveContainer struct {
 	Labels map[string]string `json:"Labels"`
 }
 
-func TestTheDockerFilterRefusesControlContainersAndPrivilegedRunnersOnTheLiveDaemon(t *testing.T) {
+func TestTheDockerFilterRefusesControlContainersAndEscapingRunnersOnTheLiveDaemon(t *testing.T) {
 	socket := liveDockerSocket(t)
 	f, err := dockerfilter.New(dockerfilter.Config{
 		Upstream: dockerfilter.NewUnixTransport(socket), RunnerValue: liveFilterFactory,
@@ -127,30 +128,67 @@ func TestTheDockerFilterRefusesControlContainersAndPrivilegedRunnersOnTheLiveDae
 		}
 	}
 
-	// A privileged runner is refused and never created.
-	name := "sisf-runner-e2e-privileged"
-	create := map[string]any{
-		"Image": liveFilterImage, "Cmd": []string{"/bin/true"},
-		"Labels": map[string]string{dockerfilter.DefaultRunnerLabel: liveFilterFactory}, "User": "65534:65534",
-		"HostConfig": map[string]any{
-			"NetworkMode": liveFilterNetwork, "ReadonlyRootfs": true, "Privileged": true,
-			"CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges"},
-			"Memory": 256 << 20, "MemorySwap": 256 << 20, "NanoCpus": 500_000_000, "PidsLimit": 64,
+	// A runner that asks for privilege, the host's network or PID namespace,
+	// another network or a bind of the host's root or of the Docker socket
+	// is refused and never created.
+	escapes := map[string]func(host map[string]any, body map[string]any){
+		"privileged":    func(h, _ map[string]any) { h["Privileged"] = true },
+		"host network":  func(h, _ map[string]any) { h["NetworkMode"] = "host" },
+		"other network": func(h, _ map[string]any) { h["NetworkMode"] = "bridge" },
+		"host pid":      func(h, _ map[string]any) { h["PidMode"] = "host" },
+		"bind of root":  func(h, _ map[string]any) { h["Binds"] = []string{"/:/host"} },
+		"docker socket": func(h, _ map[string]any) { h["Binds"] = []string{"/var/run/docker.sock:/var/run/docker.sock"} },
+		"second network": func(_, b map[string]any) {
+			b["NetworkingConfig"] = map[string]any{"EndpointsConfig": map[string]any{liveFilterNetwork: map[string]any{}, "bridge": map[string]any{}}}
 		},
 	}
-	raw, err := json.Marshal(create)
-	if err != nil {
-		t.Fatal(err)
+	var names []string
+	for escape, mutate := range escapes {
+		name := "sisf-runner-e2e-" + strings.ReplaceAll(escape, " ", "-")
+		names = append(names, name)
+		host := map[string]any{
+			"NetworkMode": liveFilterNetwork, "ReadonlyRootfs": true,
+			"CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges"},
+			"Memory": 256 << 20, "MemorySwap": 256 << 20, "NanoCpus": 500_000_000, "PidsLimit": 64,
+		}
+		create := map[string]any{
+			"Image": liveFilterImage, "Cmd": []string{"/bin/true"},
+			"Labels": map[string]string{dockerfilter.DefaultRunnerLabel: liveFilterFactory}, "User": "65534:65534",
+			"HostConfig": host,
+		}
+		mutate(host, create)
+		raw, err := json.Marshal(create)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if code, body := liveFilterDo(t, f, http.MethodPost, "/containers/create?name="+name, raw); code != http.StatusForbidden {
+			t.Errorf("a create with %s: %d %s", escape, code, body)
+		}
 	}
-	if code, body := liveFilterDo(t, f, http.MethodPost, "/containers/create?name="+name, raw); code != http.StatusForbidden {
-		t.Fatalf("a privileged create: %d %s", code, body)
+
+	// Moving a container to another network or changing its limits is
+	// refused whatever container it names.
+	target := "sisf-runner-e2e-absent"
+	if other != nil {
+		target = other.ID
 	}
+	for _, probe := range []struct{ path, body string }{
+		{"/networks/bridge/connect", `{"Container":"` + target + `","EndpointConfig":{}}`},
+		{"/networks/" + liveFilterNetwork + "/connect", `{"Container":"` + target + `","EndpointConfig":{"Aliases":["egress"]}}`},
+		{"/networks/bridge/disconnect", `{"Container":"` + target + `","Force":true}`},
+		{"/containers/" + target + "/update", `{"Memory":0,"PidsLimit":-1,"RestartPolicy":{"Name":"always"}}`},
+	} {
+		if code, body := liveFilterDo(t, f, http.MethodPost, probe.path, []byte(probe.body)); code != http.StatusForbidden {
+			t.Errorf("POST %s: %d %s", probe.path, code, body)
+		}
+	}
+
 	var all []liveContainer
 	liveDockerRaw(t, socket, "/containers/json?all=1", &all)
 	for _, c := range all {
 		for _, n := range c.Names {
-			if strings.TrimPrefix(n, "/") == name {
-				t.Fatalf("the refused privileged runner %s exists on the daemon", name)
+			if slices.Contains(names, strings.TrimPrefix(n, "/")) {
+				t.Fatalf("the refused runner %s exists on the daemon", n)
 			}
 		}
 	}
