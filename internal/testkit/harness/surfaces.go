@@ -108,19 +108,33 @@ func (f *Factory) SurfaceStates(number int) (api, dashboard string) {
 	return api, dashboard
 }
 
-// Explain asks runs.explain about issue number through the REST API, as
-// the Owner signed in to the dashboard.
+// Explain asks runs.explain about issue number over HTTP, as the Owner.
 func (f *Factory) Explain(number int) runactions.Explanation {
+	f.t.Helper()
+	var out runactions.Explanation
+	f.readRun(runactions.ActionRunsExplain, number, &out)
+	return out
+}
+
+// Inspect asks runs.inspect about issue number over HTTP, as the Owner.
+func (f *Factory) Inspect(number int) runactions.Inspection {
+	f.t.Helper()
+	var out runactions.Inspection
+	f.readRun(runactions.ActionRunsInspect, number, &out)
+	return out
+}
+
+// readRun calls a run action about issue number and decodes its output.
+func (f *Factory) readRun(action string, number int, output any) {
 	f.t.Helper()
 	f.ownerOnce.Do(func() { f.owner = f.SignInOwner() })
 	input, _ := json.Marshal(map[string]any{"input": map[string]string{"issue": f.Issue(number).String()}})
-	resp := f.owner.Do(http.MethodPost, "/api/v1/actions/runs.explain", bytes.NewReader(input),
+	resp := f.owner.Do(http.MethodPost, "/api/v1/actions/"+action, bytes.NewReader(input),
 		http.Header{"Content-Type": {"application/json"}, "X-Csrf-Token": {f.owner.CSRF()}})
-	var out struct {
-		Output runactions.Explanation `json:"output"`
-	}
+	out := struct {
+		Output any `json:"output"`
+	}{Output: output}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusOK {
-		f.t.Fatalf("harness: runs.explain answered %d: %v", resp.StatusCode, err)
+		f.t.Fatalf("harness: %s answered %d: %v", action, resp.StatusCode, err)
 	}
-	return out.Output
 }

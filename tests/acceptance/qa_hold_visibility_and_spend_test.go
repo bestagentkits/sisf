@@ -64,6 +64,10 @@ func TestAQAHoldAtTheAttemptLimitIsShownToTheOwnerAndTheRunIsBooked(t *testing.T
 	if !why.Stopped || why.Cause != runactions.CauseAttemptsExhausted || !strings.Contains(why.Reason, "score 70") || !hasEvidence(why, "qa_hold") {
 		t.Errorf("runs.explain answers %+v", why)
 	}
+	// runs.inspect carries the hold beside the dispatcher's finished run.
+	if seen := f.Inspect(number); seen.QAHold == nil || !strings.Contains(seen.QAHold.Summary, "attempt 3 of 3") {
+		t.Errorf("runs.inspect shows the hold %+v", seen.QAHold)
+	}
 
 	// The Owner's retry finds no step out of a held evaluation.
 	owner := core.Actor{ID: "owner:local", Kind: core.ActorHuman, Roles: []core.Role{core.RoleOwner}, Surface: core.SurfaceCLI, StepUpAt: f.Clock.Now()}

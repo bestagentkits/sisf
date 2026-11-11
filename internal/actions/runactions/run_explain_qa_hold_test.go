@@ -66,3 +66,32 @@ func TestExplainReportsAHeldEvaluationAsStopped(t *testing.T) {
 		}
 	}
 }
+
+// The dispatcher's record of a run ends when its coder finishes, so a run
+// whose candidate QA held reads as succeeded there. runs.inspect carries
+// the hold beside it, and nothing for a run still in evaluation.
+func TestInspectShowsTheQAHoldOfAHeldRun(t *testing.T) {
+	t.Parallel()
+	w := world{
+		records: records{
+			issueRef(1): record(1, core.StateQAEvaluation, "run-1", 1),
+			issueRef(2): record(2, core.StateQAEvaluation, "run-2", 1),
+		},
+		runs: runs{
+			"run-1": {Issue: issueRef(1), RunID: "run-1", Status: dispatcher.RunSucceeded, Attempt: 3},
+			"run-2": {Issue: issueRef(2), RunID: "run-2", Status: dispatcher.RunSucceeded, Attempt: 1},
+		},
+		holds: holds{"run-1": {Ref: "qa-hold/run-1/1", Summary: "QA failed attempt 3 of 3 of run run-1.", At: t0}},
+	}
+	inspect := w.action(t, runactions.ActionRunsInspect)
+	got, err := call[runactions.Inspection](t, inspect, `{"issue":"acme/app#1"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.QAHold == nil || got.QAHold.Ref != "qa-hold/run-1/1" || !strings.Contains(got.QAHold.Summary, "attempt 3 of 3") {
+		t.Errorf("runs.inspect of a held run shows the hold %+v", got.QAHold)
+	}
+	if got, err := call[runactions.Inspection](t, inspect, `{"issue":"acme/app#2"}`); err != nil || got.QAHold != nil {
+		t.Errorf("runs.inspect of a run in evaluation shows the hold %+v, error %v", got.QAHold, err)
+	}
+}

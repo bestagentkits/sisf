@@ -16,15 +16,21 @@ type targetInput struct {
 
 // Inspection is what runs.inspect returns: an issue's record and the
 // dispatcher record of its current run, nil when no run was claimed or the
-// dispatcher holds no record of it.
+// dispatcher holds no record of it. The dispatcher's record ends when the
+// coder finishes, so a run whose candidate QA held reads as succeeded
+// there; QAHold says the issue waits in QAEvaluation for the Owner.
 type Inspection struct {
 	Record core.StateRecord      `json:"record"`
 	Run    *dispatcher.RunRecord `json:"run"`
+	QAHold *QAHold               `json:"qa_hold,omitempty"`
 }
 
 func (h handlers) runsInspect(ctx context.Context, req core.ActionRequest) (core.ActionResult, error) {
 	target, err := h.resolve(ctx, req)
 	if err != nil {
+		return core.ActionResult{}, err
+	}
+	if target.QAHold, err = h.qaHold(ctx, target.Record); err != nil {
 		return core.ActionResult{}, err
 	}
 	return actions.JSONResult(target)
