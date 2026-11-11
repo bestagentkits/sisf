@@ -11,7 +11,9 @@ import (
 )
 
 // ReportDailyPublishBudget bounds the report issues the publisher opens in
-// any 24 hours, on top of the spacing between publications. Anyone may send
+// any 24 hours, on top of the spacing between publications. Each attempt
+// to open one is charged when it is recorded, in the same write, and the
+// charge is taken back when GitHub refuses the issue. Anyone may send
 // a report, so whatever the route accepts, the factory's token spends at
 // most this much of its content-creating budget on reports a day. Once it
 // is spent, publishing pauses until the oldest publication counted is a
@@ -66,19 +68,48 @@ func (b publishBudget) pausedUntil() time.Time {
 	return b.times[len(b.times)-ReportDailyPublishBudget].Add(reportBudgetPeriod)
 }
 
-// chargePublication counts a report issue opened at now against the
-// budget, in the transaction that records the report as published.
-func chargePublication(ctx context.Context, tx state.Tx, now time.Time) error {
+// reserveAttempt checks and charges the budget for an issue asked for at
+// now, in the transaction that records the attempt, so publishers sharing
+// the store cannot together exceed it. Every attempt is charged, one whose
+// answer was lost included: whether it opened an issue is not known, and
+// another publisher may still be waiting for its answer. It reports
+// whether the budget had room; when it had none, nothing is written.
+func reserveAttempt(ctx context.Context, tx state.Tx, now time.Time) (bool, error) {
+	budget, err := readPublishBudget(ctx, tx, now)
+	if err != nil {
+		return false, err
+	}
+	if budget.remaining() == 0 {
+		return false, nil
+	}
+	return true, budget.put(ctx, tx, append(budget.times, now.UTC()))
+}
+
+// releaseAttempt takes back the charge of an attempt made at attempted
+// that GitHub refused, so it opened no issue. A zero time names none.
+func releaseAttempt(ctx context.Context, tx state.Tx, attempted, now time.Time) error {
+	if attempted.IsZero() {
+		return nil
+	}
 	budget, err := readPublishBudget(ctx, tx, now)
 	if err != nil {
 		return err
 	}
-	raw, err := json.Marshal(append(budget.times, now.UTC()))
+	i := slices.IndexFunc(budget.times, attempted.Equal)
+	if i < 0 {
+		return nil
+	}
+	return budget.put(ctx, tx, slices.Delete(budget.times, i, i+1))
+}
+
+// put stores times as the budget.
+func (b publishBudget) put(ctx context.Context, tx state.Tx, times []time.Time) error {
+	raw, err := json.Marshal(times)
 	if err != nil {
 		return core.NewError(core.CodeInternal, "the budget of report publications cannot be encoded").WithCause(err)
 	}
-	budget.entry.Value = raw
-	_, err = tx.PutKV(ctx, budget.entry)
+	b.entry.Value = raw
+	_, err = tx.PutKV(ctx, b.entry)
 	return err
 }
 

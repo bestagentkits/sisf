@@ -135,7 +135,7 @@ func (p ReportPublisher) Publish(ctx context.Context) (ReportPublishResult, erro
 	if noted := p.noteError(ctx, failure, result.Published > result.Unlabelled); err == nil {
 		err = noted
 	}
-	if err == nil && result.Published > 0 {
+	if err == nil {
 		err = p.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
 			budget, err := readPublishBudget(ctx, tx, p.Clock.Now())
 			result.PausedUntil = budget.pausedUntil()
@@ -156,8 +156,12 @@ func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEnt
 			if err := p.reject(ctx, entry.Key, core.CodeOf(refused)); err != nil && !core.HasCode(err, core.CodeConflict) {
 				return err
 			}
+		case errors.Is(err, errBudgetSpent):
+			// Another publisher spent what was left of the budget.
+			return nil
 		case core.HasCode(err, core.CodeConflict):
-			// The report changed meanwhile, a duplicate counted; the next
+			// The report or the budget changed meanwhile, a duplicate
+			// counted or another publisher's attempt recorded; the next
 			// call reads it again.
 		case err != nil:
 			return err
@@ -171,6 +175,10 @@ func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEnt
 	}
 	return nil
 }
+
+// errBudgetSpent ends a batch whose next attempt found the daily budget
+// spent, as by another publisher sharing the store.
+var errBudgetSpent = errors.New("the daily budget of report issues is spent")
 
 // missingLabelPermissionMessage opens what the status says while report
 // issues are opened without their label.
@@ -243,10 +251,18 @@ func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (p
 	}
 	attempt := stored
 	attempt.Publish.AttemptedAt = p.Clock.Now().UTC()
+	spent := false
 	if err := p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		room, err := reserveAttempt(ctx, tx, attempt.Publish.AttemptedAt)
+		if spent = !room; err != nil || spent {
+			return err
+		}
 		return putStored(ctx, tx, entry.Key, entry.Version, attempt)
 	}); err != nil {
 		return false, nil, nil, err
+	}
+	if spent {
+		return false, nil, nil, errBudgetSpent
 	}
 	// The text is made visible and redacted again, as the route does, in
 	// case it was stored by an older route, and redacted once more after
@@ -310,15 +326,12 @@ func (p ReportPublisher) findIssue(ctx context.Context, r storedReport) (github.
 }
 
 // markPublished replaces the report stored at key with what answers a
-// duplicate of it, the issue it is shown as included, and counts the issue
-// against the daily budget, in one write. The
+// duplicate of it, the issue it is shown as included, in one write; the
+// issue was charged against the daily budget when it was asked for. The
 // report may have been counted again, pruned or pushed out meanwhile; what
 // answers a duplicate is recorded all the same.
 func (p ReportPublisher) markPublished(ctx context.Context, key string, r storedReport, number int) error {
 	return p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-		if err := chargePublication(ctx, tx, p.Clock.Now()); err != nil {
-			return err
-		}
 		count, err := readCounter(ctx, tx, reportCountKey)
 		if err != nil {
 			return err
@@ -369,6 +382,10 @@ func (p ReportPublisher) reject(ctx context.Context, key string, code core.Error
 		var stored storedReport
 		readable := json.Unmarshal(entry.Value, &stored) == nil
 		unreadable := !readable || code == core.CodeTampered
+		// The refused attempt opened no issue, so its charge is taken back.
+		if err := releaseAttempt(ctx, tx, stored.Publish.AttemptedAt, p.Clock.Now()); err != nil {
+			return err
+		}
 		stored.Publish.AttemptedAt = time.Time{}
 		stored.Publish.Rejections++
 		if !unreadable && stored.Publish.Rejections < maxReportRejections {
