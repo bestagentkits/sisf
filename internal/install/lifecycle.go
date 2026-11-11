@@ -2,7 +2,6 @@ package install
 
 import (
 	"context"
-	"os"
 	"syscall"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -116,7 +115,8 @@ func (in *Installer) stopStandalone(ctx context.Context) error {
 // Down stops the factory and removes what a run created. In Docker mode that
 // is the containers and networks, and with removeData the volumes too; in
 // Standalone mode there is nothing to remove but the data directory, and only
-// removeData deletes it. Secrets and the manifest are never removed here.
+// removeData deletes it. Secrets and the manifest are never removed here,
+// nor the control zone's secret store below the data directory.
 func (in *Installer) Down(ctx context.Context, removeData bool) error {
 	m, err := in.Layout.LoadManifest()
 	if err != nil {
@@ -138,10 +138,7 @@ func (in *Installer) Down(ctx context.Context, removeData bool) error {
 		return err
 	}
 	defer func() { _ = lock.Close() }() // drops the lock
-	if err := os.RemoveAll(in.Layout.Data()); err != nil {
-		return unavailablef(err, "cannot remove %s", in.Layout.Data())
-	}
-	return nil
+	return in.removeData()
 }
 
 // Restart restarts every unit of the running factory.

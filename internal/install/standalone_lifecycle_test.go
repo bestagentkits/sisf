@@ -2,6 +2,7 @@ package install
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -300,5 +301,38 @@ func TestADownThatTheFactoryDoesNotObeyReportsATimeoutAndKeepsTheData(t *testing
 	}
 	if _, err := os.Stat(data); err != nil {
 		t.Fatal("data was deleted while the units were still running")
+	}
+}
+
+// The control zone keeps its encrypted secret store below the data
+// directory. Down -v removes the data a run made, never those secrets.
+func TestDownWithDataKeepsTheControlZonesSecretStore(t *testing.T) {
+	t.Parallel()
+	signals := &fakeSignals{}
+	in := withPIDFile(t, 4242, signals)
+	store := in.Layout.ControlSecretStore()
+	for _, f := range []string{
+		filepath.Join(store, "control.key"), filepath.Join(store, "control.secrets"),
+		in.Layout.StateDB(), in.Layout.Data("control", "other"), in.Layout.Data("workspaces", "w1", "file"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := in.Down(t.Context(), true); err != nil {
+		t.Fatal(err)
+	}
+	for _, kept := range []string{filepath.Join(store, "control.key"), filepath.Join(store, "control.secrets")} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("down -v removed the secret store file %s", kept)
+		}
+	}
+	for _, gone := range []string{in.Layout.Data("state"), in.Layout.Data("control", "other"), in.Layout.Data("workspaces")} {
+		if _, err := os.Stat(gone); !os.IsNotExist(err) {
+			t.Errorf("down -v kept %s", gone)
+		}
 	}
 }
