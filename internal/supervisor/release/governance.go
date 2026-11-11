@@ -34,7 +34,16 @@ const supervisorUnit = "supervisor"
 // being linked into the supervisor (the installer, the CLI, the synthetic
 // suite).
 func DefaultProtectedPaths() []string {
-	return slices.Concat(handKeptProtectedPaths(), trustedGoPackageDirs)
+	return slices.Concat(handKeptProtectedPaths(), identityAndAccessPaths(), trustedGoPackageDirs)
+}
+
+// identityAndAccessPaths are the Go packages that decide who is the Owner
+// and who may approve: sign-in, roles and the identities they name. A
+// factory that rewrote them could grant itself the approval a governance
+// change needs. The trusted binaries do not link them, so the generated
+// closure cannot find them; they are kept here by hand.
+func identityAndAccessPaths() []string {
+	return []string{"internal/auth/", "internal/rbac/", "internal/oauthas/", "pkg/identity/"}
 }
 
 // handKeptProtectedPaths are the protected paths the dependency closure of
