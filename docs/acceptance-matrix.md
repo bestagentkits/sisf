@@ -55,7 +55,12 @@ Status meanings: **present** means the file exists in this branch and its packag
 | A verified release whose publication failed, or that an emergency stop held, is finished on a later pass | `internal/supervisor/release/verified_release_finished_after_failure_test.go` (`TestAVerifiedReleaseWhosePublicationFailedIsFinishedOnALaterPass`), `tests/acceptance/verified_release_publication_outage_test.go` | present |
 | An unwatched release is rolled back even when another holder keeps its issue lease | `internal/supervisor/release/recovery_without_the_issue_lease_test.go` (`TestAnUnwatchedReleaseIsRolledBackEvenWhenAnotherHolderKeepsItsLease`) | present |
 | A candidate that changes only identity or access code is refused for approval | `internal/supervisor/release/identity_and_access_protected_test.go` (`TestACandidateThatChangesOnlyIdentityOrAccessCodeIsRefusedForApproval`) | present |
-| The edge and the module's dependencies are protected | `internal/supervisor/release/edge_and_dependencies_protected_test.go` (`TestTheEdgeAndTheModulesDependenciesAreProtected`) | present |
+| The protected Go packages are the supervisor's dependency closure, and a candidate that changes only a linked package is refused for approval | `internal/supervisor/release/trusted_go_packages_protected_test.go` | present |
+| The supervisor links no part of the control unit; code only the control unit links is a build of the control unit | `cmd/supervisor/trusted_dependency_boundary_test.go`, `cmd/supervisor/stages/control_unit_routing_test.go` | present |
+| A candidate that builds the serving program is refused, not held | `internal/supervisor/release/same_program_as_serving_refused_test.go` | present |
+| An emergency stop leaves releases in flight to the supervisor's recovery | `internal/supervisor/killswitch/release_in_flight_not_held_test.go` | present |
+| Label names are read without regard to case | `internal/intake/labels_test.go` (`TestLabelsAreReadWithoutRegardToCase`), `pkg/github/github_test.go` (`TestHasLabelIgnoresCase`) | present |
+| The edge and the module's dependencies are protected `internal/supervisor/release/edge_and_dependencies_protected_test.go` (`TestTheEdgeAndTheModulesDependenciesAreProtected`) | present |
 | A held build is listed and its Owner reminded | `tests/acceptance/held_build_listing_test.go`, `tests/acceptance/held_build_reminder_test.go` | present |
 | A sandboxed build that reports no SBOM or provenance is held before QA | `tests/acceptance/candidate_build_without_supply_chain_refs_test.go` | present |
 
@@ -71,15 +76,15 @@ Status meanings: **present** means the file exists in this branch and its packag
 | Behaviour | Test file | Status |
 |---|---|---|
 | Reports are kept in the control store across a restart, bounded, and pruned after their retention | `internal/control/report_store_test.go` | present |
-| A stored report becomes one issue labelled `sisf:report`, its text inert; a refused report is given up after a few tries and an outage counts against none; a full store makes room only from reports given up | `internal/control/report_publisher_test.go` | present |
+| A stored report becomes one issue labelled `sisf:report`, its text inert; a refused report is given up after a few tries and an outage counts against none; a full store makes room first from reports given up, then from the busiest client's newest waiting report, never one being published | `internal/control/report_publisher_test.go` | present |
 | Reports are published one batch a minute, and never by an install that names the factory by its ID only | `cmd/factoryd/wiring/control_report_publish_test.go`, `cmd/factoryd/wiring/control_report_publish_id_only_test.go` | present |
-| `factory.status` counts reports waiting and given up | `cmd/factoryd/wiring/control_report_status_test.go` | present |
+| `factory.status` counts reports waiting, given up and dropped, and shows until when publishing pauses | `cmd/factoryd/wiring/control_report_status_test.go` | present |
 | A report issue is never taken up alone, and when asked for it is the request of someone without access | `internal/intake/report_issue_requester_test.go` | present |
 | A report flood opens at most the daily budget of issues, in receipt order, and nothing waiting is dropped | `internal/control/report_flood_test.go` (`TestAReportFloodOpensAtMostTheDailyBudgetInReceiptOrder`) | present |
 | A flood that fills the report store does not stop a person's report | `internal/control/report_store_fairness_test.go` (`TestAFloodFillingTheStoreDoesNotStopAPersonsReport`) | present |
 | A secret split by invisible characters is not published | `internal/control/report_hidden_secret_test.go` (`TestASecretSplitByInvisibleCharactersIsNotPublished`) | present |
-| Floods of sign-ins, device logins and client registrations, one request per source, are refused rather than evicting a person's | `internal/auth/sign_in_exhaustion_negative_test.go`, `internal/control/api/device_start_exhaustion_negative_test.go`, `internal/oauthas/client_registration_exhaustion_negative_test.go` | present |
-| A one-per-source flood rarely evicts a person's sign-in, login request or client, which a random pick among the unprotected entries keeps unaimed | `internal/auth/login_flow_eviction_test.go` (`TestAOnePerSourceFloodRarelyEvictsAPersonsSignIn`), `internal/control/api/device_grants_eviction_test.go` (`TestAOnePerSourceFloodRarelyDropsAPersonsLoginRequest`), `internal/oauthas/dynamic_client_eviction_test.go` (`TestAOnePerSourceFloodRarelyDropsAPersonsClient`) | present |
+| A flood of sign-ins, device logins or client registrations from one source pushes out its own entries, never another source's, and never locks out a new one | `internal/auth/sign_in_exhaustion_negative_test.go`, `internal/control/api/device_start_exhaustion_negative_test.go`, `internal/oauthas/client_registration_exhaustion_negative_test.go` | present |
+| When every source holds one entry, a one-per-source flood rarely evicts a person's sign-in, login request or client, because the entry dropped is picked at random among the unprotected ones | `internal/auth/login_flow_eviction_test.go` (`TestAOnePerSourceFloodRarelyEvictsAPersonsSignIn`), `internal/control/api/device_grants_eviction_test.go` (`TestAOnePerSourceFloodRarelyDropsAPersonsLoginRequest`), `internal/oauthas/dynamic_client_eviction_test.go` (`TestAOnePerSourceFloodRarelyDropsAPersonsClient`) | present |
 
 ## Additional security requirements (brief §7)
 

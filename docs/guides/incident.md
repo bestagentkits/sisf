@@ -4,9 +4,9 @@ For when the factory misbehaves and automatic rollback has not, or cannot, fix i
 
 ## 1. Stop the damage
 
-An emergency stop freezes publishing, holds every issue so nothing is claimed, cancels the runs in flight and revokes their secrets. It has two routes (`internal/supervisor/killswitch`):
+An emergency stop freezes publishing, holds every open issue so nothing is claimed (all but those in Canary, Monitoring or RolledBack, whose release the supervisor may still roll back), cancels the runs in flight and revokes their secrets. It has two routes (`internal/supervisor/killswitch`):
 
-- the **store**: the stop is recorded straight in the state store, which alone freezes publishing and holds every issue. Only this route can lift a stop.
+- the **store**: the stop is recorded straight in the state store, which alone freezes publishing and holds the issues. Only this route can lift a stop.
 - the **supervisor**: its admin socket records the same stop and also cancels runs and revokes their secrets.
 
 `sisf emergency-stop` uses every route it is given and needs neither the control plane nor the dispatcher. It prints what each route did as JSON and exits 1 when a route it was given failed, so a partial stop never looks complete. Running it twice is safe: the second run reports the stop already in force.

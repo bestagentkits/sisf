@@ -155,9 +155,9 @@ Listed by `sisf help` but started by `sisf up` or its Compose project, not by ha
 |---|---|
 | `--trust-dir` | the supervisor's trust volume |
 
-## Owner commands on the factory host: `factoryd`
+## Commands of `factoryd`
 
-Some Owner operations have no `sisf` command yet. They are subcommands of `factoryd`, the control and dispatcher program, run on the factory's host with the control zone's environment, except `report`, which the agent zone's environment serves (`cmd/factoryd/main.go`, `cmd/factoryd/roles.go`, `cmd/factoryd/approval_public_key.go`):
+Some Owner operations have no `sisf` command yet, and two more commands belong to the factory's own programs. They are subcommands of `factoryd`, the control and dispatcher program, run on the factory's host with the control zone's environment, except `report`, which the agent zone's environment serves (`cmd/factoryd/main.go`, `cmd/factoryd/roles.go`, `cmd/factoryd/approval_public_key.go`):
 
 | Command | What it does |
 |---|---|
