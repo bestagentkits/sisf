@@ -34,6 +34,9 @@ type GitData struct {
 	writes, merges int
 	// routeFaults are canned refusals of chosen routes; see FailOn.
 	routeFaults []routeFault
+	// beyondLimit makes every comparison answer as one of more files than
+	// GitHub lists; see CompareBeyondTheLimit.
+	beyondLimit bool
 }
 
 // NewGitData wraps s.

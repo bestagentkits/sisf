@@ -1,6 +1,7 @@
 package fakegithub
 
 import (
+	"fmt"
 	"maps"
 	"net/http"
 	"slices"
@@ -202,7 +203,26 @@ func (g *GitData) compare(w http.ResponseWriter, r *http.Request) {
 			files = append(files, jFile{path, "removed"})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+	g.mu.Lock()
+	beyond := g.beyondLimit
+	g.mu.Unlock()
+	for n := len(files); beyond && n < compareFileLimit; n++ {
+		files = append(files, jFile{fmt.Sprintf("listed-beyond/%03d.txt", n), "added"})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files[:min(len(files), compareFileLimit)]})
+}
+
+// compareFileLimit is how many files GitHub lists in a comparison at most.
+const compareFileLimit = 300
+
+// CompareBeyondTheLimit makes every later comparison answer as GitHub does
+// for one of more files than it lists: exactly compareFileLimit files, the
+// paths that really differ first and made-up ones after them. A candidate
+// patch is too small to reach the limit, so this is how a test sees it.
+func (g *GitData) CompareBeyondTheLimit() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.beyondLimit = true
 }
 
 // revision is the commit a branch name points at, or rev itself when no
