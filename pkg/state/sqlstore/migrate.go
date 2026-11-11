@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
@@ -58,7 +59,10 @@ func (s *Store) Pending(ctx context.Context) ([]state.Migration, error) {
 }
 
 // Migrate applies the pending migrations in order, all in one transaction:
-// either every one of them is applied or the schema stays where it was. A
+// either every one of them is applied or the schema stays where it was. On
+// SQLite a migrator that finds the write lock held past its busy timeout
+// tries again, for up to migrateBusyWait, and then finds the schema as the
+// other migrator left it. A
 // pending migration that is not backward compatible needs
 // opts.AllowIncompatible, else APPROVAL_REQUIRED and nothing is applied.
 // Only a store opened for the control zone migrates.
@@ -74,7 +78,48 @@ func (s *Store) Migrate(ctx context.Context, opts state.MigrateOptions) error {
 	if err := state.ValidateMigrations(known); err != nil {
 		return err
 	}
-	err := s.inRawTx(ctx, false, func(ctx context.Context, q *querier) error {
+	err := s.whileBusy(ctx, func() error { return s.migrate(ctx, opts, known) })
+	if err == nil {
+		s.schemaChecked.Store(false)
+	}
+	return err
+}
+
+// migrateBusyWait bounds how long a SQLite migrator keeps trying while other
+// connections hold the write lock, beyond the busy timeout of each try.
+// Migrators of one file start together, such as the units of a Standalone
+// install, and the one that loses the race waits for the winner instead of
+// failing the start.
+const migrateBusyWait = 2 * time.Minute
+
+// migrateBusyPause is the pause between two tries, for a lock that is
+// reported busy without waiting out the busy timeout.
+const migrateBusyPause = 50 * time.Millisecond
+
+// whileBusy runs try until it succeeds, fails for another reason than a
+// SQLite lock held by another connection, ctx ends, or migrateBusyWait has
+// passed. The wait is in real time, as the busy timeout of SQLite is.
+// PostgreSQL migrators queue on their advisory lock instead.
+func (s *Store) whileBusy(ctx context.Context, try func() error) error {
+	deadline := time.Now().Add(migrateBusyWait)
+	for {
+		err := try()
+		if err == nil || s.dialect != DialectSQLite || !sqliteBusyError(err) || !time.Now().Before(deadline) {
+			return err
+		}
+		pause := time.NewTimer(migrateBusyPause)
+		select {
+		case <-ctx.Done():
+			pause.Stop()
+			return err
+		case <-pause.C:
+		}
+	}
+}
+
+// migrate is one try of Migrate: the pending migrations in one transaction.
+func (s *Store) migrate(ctx context.Context, opts state.MigrateOptions, known []state.Migration) error {
+	return s.inRawTx(ctx, false, func(ctx context.Context, q *querier) error {
 		if s.dialect == DialectPostgres {
 			if _, err := q.exec(ctx, "lock migrations", lockMigrations, migrationLockClass); err != nil {
 				return err
@@ -111,10 +156,6 @@ func (s *Store) Migrate(ctx context.Context, opts state.MigrateOptions) error {
 		}
 		return nil
 	})
-	if err == nil {
-		s.schemaChecked.Store(false)
-	}
-	return err
 }
 
 // approvalRequired names the migrations that wait for the Owner.

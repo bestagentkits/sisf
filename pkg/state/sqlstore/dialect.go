@@ -87,10 +87,7 @@ func (d Dialect) failure(operation string, err error) error {
 		return err
 	}
 	code := core.CodeInternal
-	var (
-		pgErr     *pgconn.PgError
-		sqliteErr *sqlite.Error
-	)
+	var pgErr *pgconn.PgError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		code = core.CodeTimeout
@@ -104,10 +101,20 @@ func (d Dialect) failure(operation string, err error) error {
 			// serialization failure, deadlock, lock not available, connection lost
 			code = core.CodeUnavailable
 		}
-	case errors.As(err, &sqliteErr):
-		if primary := sqliteErr.Code() & 0xff; primary == sqliteBusy || primary == sqliteLocked {
-			code = core.CodeUnavailable
-		}
+	case sqliteBusyError(err):
+		code = core.CodeUnavailable
 	}
 	return core.NewError(code, "state store: "+operation+" failed").WithCause(err)
+}
+
+// sqliteBusyError reports whether err comes from a SQLite lock another
+// connection holds. A cancelled or expired context is not one, even though
+// failure reports both as UNAVAILABLE.
+func sqliteBusyError(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	primary := sqliteErr.Code() & 0xff
+	return primary == sqliteBusy || primary == sqliteLocked
 }
