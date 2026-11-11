@@ -56,6 +56,10 @@ Report vulnerabilities privately; see the [security policy](docs/SECURITY.md).
 | P3 | GitHub/Google SSO, five control surfaces, Decision Layer, budgets |
 | P4 | Remote agent adapters, Kubernetes and serverless profiles, public conformance matrix |
 
+## Contributing / Development
+
+You need Go 1.25.14 or newer, a C compiler for the race detector, GNU Make and golangci-lint v2.12.2. `make help` lists every target; `make check` runs what CI runs, without Docker. See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules, the [test layers](docs/contributing/testing.md), the [project layout](docs/contributing/project-layout.md) and [common changes](docs/contributing/common-changes.md).
+
 ## License
 
 [Apache-2.0](LICENSE). See [NOTICE](NOTICE).
