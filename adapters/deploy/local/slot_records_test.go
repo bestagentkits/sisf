@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/adapters/deploy/local"
+	"github.com/bestagentkits/sisf/internal/edge"
 	"github.com/bestagentkits/sisf/pkg/deploy"
 )
 
@@ -293,5 +294,36 @@ func TestARestartedBackendStopsAProcessItsLauncherExecedInto(t *testing.T) {
 			t.Fatalf("process %d still runs after the restarted backend stopped it", rec.PID)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// A process found again after a restart is outside the process group of
+// the supervisor that found it, so it is stopped when that supervisor
+// closes the backend; a process the backend started itself is left to end
+// with its owner.
+func TestClosingABackendStopsOnlyTheProcessesItFoundAgain(t *testing.T) {
+	t.Parallel()
+	app := startSleeper(t)
+	_, dir := stagedWithRecord(t, app)
+	w := restarted(t, dir)
+	// The edge serves the release found again on blue, so green is staged.
+	if err := w.splitter.SetSplit(context.Background(), edge.Split{Stable: edge.Target{Revision: string(digestA), URL: "http://" + w.addr(0)}}); err != nil {
+		t.Fatal(err)
+	}
+	w.stage(digestB)
+	if app.gone(100 * time.Millisecond) {
+		t.Fatal("the process found again was stopped before the backend closed")
+	}
+	if err := w.backend.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !app.gone(10 * time.Second) {
+		t.Fatal("the process found again still runs after the backend closed")
+	}
+	if _, ok := readSlotRecord(t, filepath.Join(dir, "blue.json")); ok {
+		t.Fatal("the record of the stopped process is still there")
+	}
+	if !w.alive(1) {
+		t.Fatal("closing the backend stopped a process it started itself")
 	}
 }

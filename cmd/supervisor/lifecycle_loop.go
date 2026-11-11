@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/supervisor"
@@ -121,6 +122,7 @@ func (l *lifecycleFlags) startLifecycle(ctx context.Context, d lifecycleDeps, op
 	opts.Rollback = st.Pipeline.OwnerRollback
 	opts.HeldBuilds = heldBuilds(d.stop.store)
 	return func(ctx context.Context) {
+		defer l.closeDeployBackend(ctx, d.log)
 		startup{
 			recordVerifiedLKGs: func(ctx context.Context) {
 				if lkgs := st.Release.RecordVerifiedLKGs(ctx); ctx.Err() == nil {
@@ -138,6 +140,24 @@ func (l *lifecycleFlags) startLifecycle(ctx context.Context, d lifecycleDeps, op
 			run: func(ctx context.Context) { runStages(ctx, st, l, d.clock, d.log) },
 		}.start(ctx)
 	}, nil
+}
+
+// closeDeployBackendWait bounds how long the lifecycle waits, as it ends,
+// for the deploy backend to stop what it found again after a restart.
+const closeDeployBackendWait = 15 * time.Second
+
+// closeDeployBackend stops, as the lifecycle ends, the processes the deploy
+// backend found again after a restart: they are outside the supervisor's
+// process group, so stopping the supervisor's group does not reach them.
+func (l *lifecycleFlags) closeDeployBackend(ctx context.Context, log *slog.Logger) {
+	if l.closeBackend == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeDeployBackendWait)
+	defer cancel()
+	if err := l.closeBackend(ctx); err != nil {
+		log.Warn("a process found again after a restart could not be stopped", "error", err.Error())
+	}
 }
 
 // startup is what the lifecycle does when the supervisor starts, in the

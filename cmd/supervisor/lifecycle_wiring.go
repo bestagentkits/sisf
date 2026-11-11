@@ -112,6 +112,9 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
+	if closer, ok := backend.(interface{ Close(context.Context) error }); ok {
+		l.closeBackend = closer.Close
+	}
 	if l.deploy == "local" {
 		l.adopter = &lkgAdopter{factory: m.FactoryID, backend: backend, lkg: book, signer: keys.Artifact, image: "local/" + string(m.FactoryID) + "/" + adoptedUnit}
 	}

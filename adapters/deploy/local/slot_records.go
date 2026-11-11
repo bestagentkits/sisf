@@ -175,6 +175,31 @@ func (b *Backend) reattachSlot(ctx context.Context, s *slot) error {
 	return nil
 }
 
+// Close stops the processes the backend found again after a restart
+// (reattach), as the supervisor that owns it stops. A process the backend
+// started itself is a child of its owner, in its owner's process group, and
+// ends with it; one an earlier supervisor started is in that supervisor's
+// group, which no signal to its owner's group reaches, so it is stopped
+// here, only while its pid still names the process recorded. The
+// processes the backend started itself are left alone.
+func (b *Backend) Close(ctx context.Context) error {
+	b.ops.Lock()
+	defer b.ops.Unlock()
+	var failed []error
+	for _, s := range b.slot {
+		b.mu.Lock()
+		_, found := s.proc.(*recordedProcess)
+		b.mu.Unlock()
+		if !found {
+			continue
+		}
+		if err := b.stopSlot(ctx, s); err != nil {
+			failed = append(failed, fmt.Errorf("slot %s: %w", s.name, err))
+		}
+	}
+	return errors.Join(failed...)
+}
+
 // recordedProcess is a process an earlier backend started and recorded,
 // found again after a restart. Its pid is trusted only while it names the
 // process recorded: it is alive only then, and each signal that stops it is

@@ -44,6 +44,9 @@ type lifecycleFlags struct {
 	// adopter starts the LKG under the local deploy backend; set when the
 	// lifecycle is wired.
 	adopter *lkgAdopter
+	// closeBackend, when set, stops what the deploy backend found again
+	// after a restart, as the lifecycle ends.
+	closeBackend func(context.Context) error
 	// programs is what the local deploy backend starts for a release, and
 	// retention keeps its program store down to what can still run; both
 	// set when the lifecycle is wired, retention only where programs are
