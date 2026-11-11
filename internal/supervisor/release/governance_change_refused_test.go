@@ -13,6 +13,12 @@ func TestACandidateThatTouchesTheTrustedControlSurfaceIsAGovernanceChange(t *tes
 		"the supervisor":               {"internal/supervisor/release/monitor.go"},
 		"the supervisor binary":        {"cmd/supervisor/main.go"},
 		"the signing keys":             {"internal/signing/delegation/delegation.go"},
+		"the supply-chain checks":      {"internal/supplychain/artifact.go"},
+		"a new supply-chain file":      {"internal/supplychain/zz_accept_all.go"},
+		"the redaction of secrets":     {"internal/redact/redactor.go"},
+		"the agents' runner image":     {"build/runner.Dockerfile"},
+		"the evaluator's runner image": {"build/qa-runner.Dockerfile"},
+		"an image named in other case": {"Build/Runner.Dockerfile"},
 		"policy enforcement":           {"internal/policy/policy.go"},
 		"the factory configuration":    {".sisf/factory.yaml"},
 		"the QA baseline":              {"internal/qa/hard_gates.go"},
@@ -84,7 +90,7 @@ func TestABuildOfTheSupervisorIsNeverReleasedByThePipeline(t *testing.T) {
 func TestAnOrdinaryCandidateIsNotAGovernanceChange(t *testing.T) {
 	t.Parallel()
 	changed := []string{"examples/hello-app/main.go", "internal/control/http_dashboard.go", "tests/acceptance/x_test.go", "internal/qatools/x.go",
-		"pkg/statefile/x.go", "examples/hello-app/synthetic_notes.md"}
+		"pkg/statefile/x.go", "examples/hello-app/synthetic_notes.md", "build/hello-app.Dockerfile", "internal/redaction_notes.md"}
 	if err := checkGovernance(DefaultProtectedPaths(), testUnit, changed); err != nil {
 		t.Fatalf("an ordinary candidate was refused: %v", err)
 	}

@@ -12,11 +12,13 @@ import (
 const supervisorUnit = "supervisor"
 
 // DefaultProtectedPaths returns the trusted control surface of the factory
-// source: the supervisor, the signing keys, policy enforcement, the rules of
-// who may take which lifecycle step, the QA baseline, the rollback rules, the
-// installer and CI. An entry ending in "/" covers a directory; any other
-// entry is one file. A candidate that changes any of them is a governance
-// change that needs a person, in a cycle of its own.
+// source: the supervisor, the signing keys, the supply-chain checks, the
+// redaction of secrets, the agents' and the evaluator's images, policy
+// enforcement, the rules of who may take which lifecycle step, the QA
+// baseline, the rollback rules, the installer and CI. An entry ending in
+// "/" covers a directory; any other entry is one file. A candidate that
+// changes any of them is a governance change that needs a person, in a
+// cycle of its own.
 //
 // Directories are listed rather than files where code in any file of a Go
 // package can change what the package enforces: a new file in the state
@@ -26,8 +28,13 @@ func DefaultProtectedPaths() []string {
 	return []string{
 		// The trusted release supervisor and how it is built and deployed.
 		"cmd/supervisor/", "internal/supervisor/", "build/supervisor.Dockerfile", "templates/",
-		// Signing keys and secrets.
-		"internal/signing/", "pkg/secrets/", "internal/secretbroker/",
+		// Signing keys and secrets, the supply-chain checks of what is
+		// built and signed, and the redaction that keeps secrets and
+		// personal data out of logs, evidence and the issue.
+		"internal/signing/", "pkg/secrets/", "internal/secretbroker/", "internal/supplychain/", "internal/redact/",
+		// The images the coding agents and the QA evaluator run in, which
+		// fix what reaches the sandbox.
+		"build/runner.Dockerfile", "build/qa-runner.Dockerfile",
 		// Policy enforcement and the foundation files it reads.
 		"internal/policy/", "pkg/core/", "internal/egress/", "internal/dockerfilter/", ".sisf/",
 		"AGENTS.md", "REVIEW.md", "DECISIONS.md", "FEATURES.md", "features.yaml", "docs/adr/",
