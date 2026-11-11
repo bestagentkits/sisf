@@ -200,6 +200,7 @@ stateDiagram-v2
   Monitoring --> Verified: post-deploy DoD + observation
   Monitoring --> RolledBack: regression
   Verified --> Closed: close issue + changelog + feature catalog
+  Verified --> Blocked: verified release no longer judged serving, not superseded / LKG restored / waits for the Owner
   RolledBack --> Blocked: evidence + recovery report
   Blocked --> Ready: safe authorized retry
 ```

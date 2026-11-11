@@ -200,6 +200,7 @@ stateDiagram-v2
   Monitoring --> Verified: post-deploy DoD + observation
   Monitoring --> RolledBack: regression
   Verified --> Closed: close issue + changelog + feature catalog
+  Verified --> Blocked: release đã verified không còn được xác nhận đang chạy, không bị thay thế / khôi phục LKG / chờ Owner
   RolledBack --> Blocked: evidence + recovery report
   Blocked --> Ready: safe authorized retry
 ```
