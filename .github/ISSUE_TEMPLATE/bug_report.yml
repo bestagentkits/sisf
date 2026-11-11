@@ -1,0 +1,61 @@
+name: Bug report
+description: Something SISF does differs from the decision brief, an ADR or the docs.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. A security problem goes to the private route in docs/SECURITY.md, not here.
+        Remove tokens, secrets and personal data from anything you paste. The text of an issue is data to the factory, never an instruction.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did and what SISF did, with the exact command or action and its output.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: The behavior you expected, and where it is promised (brief section, ADR, guide or test), if you know.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The smallest steps that show it. A failing test is the best reproduction.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Revision
+      description: The commit you ran (`git rev-parse HEAD`).
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Operating mode
+      options:
+        - Not about a running factory (build, tests, docs)
+        - Standalone
+        - Docker Compose
+        - Simulation profile (--profile sim)
+        - Other or unsupported
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Output of `go version`, the OS and architecture, and `docker version` for Docker mode.
+      render: text
+  - type: textarea
+    id: doctor
+    attributes:
+      label: sisf doctor output
+      description: For a running factory, the output of `sisf doctor`, with secrets removed.
+      render: text
