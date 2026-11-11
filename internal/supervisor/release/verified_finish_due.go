@@ -211,7 +211,11 @@ func (p *Pipeline) FinishVerified(ctx context.Context, req Request) (Outcome, er
 // its unit when settleLKG may: it is observed serving, healthy, now and no
 // later release superseded it. It runs before the LKG is adopted at
 // startup, so a supervisor that stopped between a Verified step and its LKG
-// serves what the record says when the running system still serves it. It
+// serves what the record says when the running system still serves it. A
+// release the running system does not show serving, healthy, nor another
+// in its place, is observed again until it is, for as long as
+// FinishVerified would wait for it (observeUnseen): adoption would
+// otherwise start the LKG over a release that was only slow to answer. It
 // writes no lifecycle step: a release it cannot record is judged, and
 // blocked when it must be, by FinishVerified on a later pass.
 func (p *Pipeline) RecordVerifiedLKG(ctx context.Context, req Request) error {
@@ -238,8 +242,7 @@ func (p *Pipeline) RecordVerifiedLKG(ctx context.Context, req Request) error {
 	if err != nil {
 		return err
 	}
-	_, err = p.settleLKG(ctx, record, req, due)
-	return err
+	return p.observeUnseen(ctx, record, req, due)
 }
 
 // readDue reads what the verified release of record still owes. A record

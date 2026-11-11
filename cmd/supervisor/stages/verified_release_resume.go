@@ -143,9 +143,10 @@ func (s *ReleaseStage) forgetWait(issue core.IssueRef) {
 // release superseded it. It runs at startup, before the LKG is adopted, so
 // that a supervisor that stopped between a Verified step and the write of
 // its LKG starts the verified release again when the running system still
-// serves it. A backend that observes only what it started itself observes
-// nothing yet: the LKG before the release is adopted, and the next pass
-// blocks the verified release it can no longer judge.
+// serves it. The local backend finds again the processes it recorded before
+// the restart, so it observes the release it started. A release that is not
+// seen is observed again for as long as a later pass would wait for it;
+// one still not seen then is blocked by a later pass, the LKG restored.
 func (s *ReleaseStage) RecordVerifiedLKGs(ctx context.Context) ReleasePassResult {
 	res := ReleasePassResult{Outcomes: map[core.IssueRef]release.Outcome{}}
 	finisher, ok := s.Pipeline.(VerifiedFinisher)

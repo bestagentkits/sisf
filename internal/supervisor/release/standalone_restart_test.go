@@ -23,6 +23,9 @@ import (
 const (
 	appEnv     = "SISF_RELEASE_TEST_APP"
 	appAddrEnv = "SISF_LISTEN"
+	// appDownEnv names a file whose presence makes the application answer
+	// its health check as down.
+	appDownEnv = "SISF_RELEASE_TEST_APP_DOWN"
 )
 
 func TestMain(m *testing.M) {
@@ -37,10 +40,15 @@ func TestMain(m *testing.M) {
 // tests. It writes nothing to its standard error, whose reader goes away
 // with the backend that started it.
 func serveTestApp() {
-	revision := os.Getenv(local.RevisionEnv)
+	revision, down := os.Getenv(local.RevisionEnv), os.Getenv(appDownEnv)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "revision": revision})
+		status := "ok"
+		if _, err := os.Stat(down); down != "" && err == nil {
+			status = "down"
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": status, "revision": revision})
 	})
 	srv := &http.Server{Addr: os.Getenv(appAddrEnv), Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
@@ -118,14 +126,68 @@ func slotPID(t *testing.T, dir, slot string) int {
 	return rec.PID
 }
 
+// downOnce makes the application answer its health check as down to the
+// first observation of what serves the unit, as an application busy for a
+// moment after a restart would, and as itself afterwards.
+type downOnce struct {
+	deploy.Backend
+	flag string
+	once sync.Once
+}
+
+func (b *downOnce) ObservedRevision(ctx context.Context, unit string) (deploy.Observed, error) {
+	first := false
+	b.once.Do(func() { first = true })
+	if !first {
+		return b.Backend.ObservedRevision(ctx, unit)
+	}
+	if err := os.WriteFile(b.flag, nil, 0o600); err != nil {
+		return deploy.Observed{}, err
+	}
+	defer func() { _ = os.Remove(b.flag) }()
+	return b.Backend.ObservedRevision(ctx, unit)
+}
+
+// adoptLKG starts the LKG of the unit and sends it all traffic unless it is
+// observed serving, as the supervisor's startup adoption does
+// (cmd/supervisor/lkg_adoption.go).
+func (w *world) adoptLKG(ctx context.Context, b deploy.Backend) {
+	w.t.Helper()
+	lkg := w.lkg()
+	if observed, err := b.ObservedRevision(ctx, testUnit); err == nil && observed.Matches(deploy.Revision{Unit: testUnit, Digest: lkg.Digest}) {
+		return
+	}
+	rev, err := b.Stage(ctx, w.keys.artifactFor(w.t, core.Digest(lkg.Digest)))
+	if err != nil {
+		w.t.Fatalf("adopt %s: %v", lkg.Digest, err)
+	}
+	if err := b.Promote(ctx, rev, 100); err != nil {
+		w.t.Fatalf("adopt %s: %v", lkg.Digest, err)
+	}
+}
+
 // Standalone: the supervisor stops between the Verified step of a release
 // and the write of its LKG, and starts again while the release's process
 // and the edge run on. The restarted backend finds the slots it recorded,
 // so at startup the release is observed serving, healthy, and recorded as
 // the LKG before the LKG is adopted, and it is finished: the process that
-// serves is neither stopped nor replaced by the release before it.
+// serves is neither stopped nor replaced by the release before it. An
+// application that answers its health check as down at the first look
+// after the restart is observed again rather than replaced.
 func TestAStandaloneSupervisorRestartedBetweenTheVerifiedStepAndTheLKGKeepsTheRelease(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		downOnce bool
+	}{{"the release answers", false}, {"the release answers as down once", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			restartKeepsTheVerifiedRelease(t, tc.downOnce)
+		})
+	}
+}
+
+func restartKeepsTheVerifiedRelease(t *testing.T, downFirst bool) {
 	ctx := context.Background()
 	w := newWorld(t)
 	w.cfg.Lander = &countingLander{}
@@ -133,8 +195,9 @@ func TestAStandaloneSupervisorRestartedBetweenTheVerifiedStepAndTheLKGKeepsTheRe
 	if err != nil {
 		t.Fatal(err)
 	}
+	flag := filepath.Join(t.TempDir(), "down")
 	starter := &startedProcesses{Starter: local.ExecStarter{
-		AddrEnv: appAddrEnv, Env: []string{appEnv + "=1"},
+		AddrEnv: appAddrEnv, Env: []string{appEnv + "=1", appDownEnv + "=" + flag},
 		Command: func(string) (string, []string, error) { return exe, []string{"-test.run=^$"}, nil },
 	}}
 	t.Cleanup(starter.stopAll)
@@ -165,12 +228,18 @@ func TestAStandaloneSupervisorRestartedBetweenTheVerifiedStepAndTheLKGKeepsTheRe
 	pid := slotPID(t, dir, "green")
 
 	// It stops before it writes the LKG. The next one starts over the same
-	// records and edge, and records the LKG of the verified release first.
-	w.cfg.Backend = standaloneBackend(t, ports, splitter, dir, starter)
+	// records and edge: it records the LKG of the verified release, then
+	// adopts the LKG.
+	var restarted deploy.Backend = standaloneBackend(t, ports, splitter, dir, starter)
+	if downFirst {
+		restarted = &downOnce{Backend: restarted, flag: flag}
+	}
+	w.cfg.Backend = restarted
 	p := w.pipeline()
 	if err := p.RecordVerifiedLKG(ctx, req); err != nil {
 		t.Fatalf("RecordVerifiedLKG at startup: %v", err)
 	}
+	w.adoptLKG(ctx, restarted)
 	if lkg := w.lkg(); lkg.Digest != core.ReleaseDigest(firstBuild) || lkg.RunID != run {
 		t.Fatalf("the LKG adopted at the restart is %+v, want the verified release", lkg)
 	}
@@ -180,7 +249,7 @@ func TestAStandaloneSupervisorRestartedBetweenTheVerifiedStepAndTheLKGKeepsTheRe
 	if now := slotPID(t, dir, "green"); now != pid {
 		t.Fatalf("the release's process %d was replaced by %d", pid, now)
 	}
-	if serving, err := w.cfg.Backend.ObservedRevision(ctx, testUnit); err != nil || serving.Digest != core.ReleaseDigest(firstBuild) || !serving.Healthy {
+	if serving, err := restarted.ObservedRevision(ctx, testUnit); err != nil || serving.Digest != core.ReleaseDigest(firstBuild) || !serving.Healthy {
 		t.Fatalf("after the restart %+v serves (%v), want the verified release", serving, err)
 	}
 }

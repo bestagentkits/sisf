@@ -12,6 +12,10 @@ import (
 const waitsUnseen = "the running system does not show the verified release serving, healthy, nor another release in its place; " +
 	"it is observed again on every pass, for as long as a release is watched before it is verified"
 
+// unseenPoll is how often a release that is not seen is observed again
+// while the supervisor starts.
+const unseenPoll = 5 * time.Second
+
 // unseenWait is how long a verified release that is not observed serving,
 // healthy, without another release observed serving in its place, waits
 // before it is blocked: as long as a release is watched before it is
@@ -29,16 +33,8 @@ func (p *Pipeline) unseenWait() time.Duration {
 // is kept by this process only: it starts again when the supervisor does,
 // and no document of the control zone can shorten or end it.
 func (p *Pipeline) waitUnseen(ctx context.Context, h *holding, unit string, d lkgDecision) (Outcome, error) {
-	now := p.cfg.Clock.Now()
 	wait := p.unseenWait()
-	p.mu.Lock()
-	since, waiting := p.unseenSince[h.record.RunID]
-	if !waiting {
-		since = now
-		p.unseenSince[h.record.RunID] = now
-	}
-	p.mu.Unlock()
-	if now.Sub(since) < wait {
+	if p.unseenFor(h.record.RunID) < wait {
 		err := core.NewError(core.CodeUnavailable, d.reason+"; it is observed again until it is, or another release is")
 		return Outcome{Release: h.record.ReleaseDigest, State: h.record.State, Result: ResultHeld, Observed: d.observed,
 			Reason: err.Error(), Waits: waitsUnseen}, err
@@ -52,9 +48,48 @@ func (p *Pipeline) waitUnseen(ctx context.Context, h *holding, unit string, d lk
 	return out, err
 }
 
+// unseenFor is how long this process has not seen the verified release of
+// run, counted from now when this is the first time.
+func (p *Pipeline) unseenFor(run core.RunID) time.Duration {
+	now := p.cfg.Clock.Now()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	since, waiting := p.unseenSince[run]
+	if !waiting {
+		since = now
+		p.unseenSince[run] = now
+	}
+	return now.Sub(since)
+}
+
 // seen forgets that the verified release of run was not seen.
 func (p *Pipeline) seen(run core.RunID) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.unseenSince, run)
+}
+
+// observeUnseen settles the LKG of a verified release at startup, and
+// observes a release that is not seen (lkgUnseen) again every unseenPoll
+// until it is settled otherwise or unseenWait has passed since this
+// process first did not see it. The wait it spends is the one
+// FinishVerified continues.
+func (p *Pipeline) observeUnseen(ctx context.Context, record core.StateRecord, req Request, due FinishDue) error {
+	for {
+		d, err := p.settleLKG(ctx, record, req, due)
+		if err != nil || d.verdict != lkgUnseen {
+			if err == nil {
+				p.seen(record.RunID)
+			}
+			return err
+		}
+		if p.unseenFor(record.RunID) >= p.unseenWait() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-p.cfg.Clock.After(unseenPoll):
+		}
+	}
 }
