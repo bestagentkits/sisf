@@ -124,7 +124,7 @@ func (c *checker) spelled(file string) string {
 // name, found through the search path, or the path the executable is
 // started from, written any way that cleans to it or under a directory the
 // manifest does not name (/opt/factory/bin/x is bin/x of a factory rooted
-// there). A word that merely ends in the name, such as logs/sisf-supervisor
+// there); an executable started by its bare name may lie in any directory. A word that merely ends in the name, such as logs/sisf-supervisor
 // or a URL, names another file.
 func (c *checker) namesExecutable(command, executables []string) bool {
 	names := c.executableNames(executables)
@@ -146,7 +146,12 @@ func (c *checker) namesExecutable(command, executables []string) bool {
 				}
 				continue
 			}
-			if slices.ContainsFunc(paths, func(started string) bool { return samePlace(c.spelled(path.Clean(file)), started) }) {
+			// A path started by its bare name is found through the search
+			// path, so any directory may hold it.
+			if slices.ContainsFunc(paths, func(started string) bool {
+				return samePlace(c.spelled(path.Clean(file)), started) ||
+					(!strings.Contains(started, "/") && c.spelled(executableName(file)) == started)
+			}) {
 				return true
 			}
 		}

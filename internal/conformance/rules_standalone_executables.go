@@ -72,10 +72,22 @@ func namedFiles(word string) []string {
 // the word itself, or the path of a file URL. A URL of any other scheme and
 // an empty word name none.
 func localFile(word string) (string, bool) {
-	if rest, found := strings.CutPrefix(strings.ToLower(word), "file://"); found {
-		return word[len(word)-len(rest):], rest != ""
+	const scheme = "file://"
+	if len(word) >= len(scheme) && strings.EqualFold(word[:len(scheme)], scheme) {
+		return word[len(scheme):], len(word) > len(scheme)
 	}
 	return word, word != "" && !strings.Contains(word, "://")
+}
+
+// climbsOut reports whether a started file is named by a path that climbs
+// out of the factory root. A later argument that is the root of the file
+// system, as in --base-path=/, names a directory, which no program runs,
+// or a route; it holds no file of its own, so it is not taken to climb.
+func climbsOut(started startedFile) bool {
+	if started.argument && path.Clean(started.file) == "/" {
+		return false
+	}
+	return climbs(started.file)
 }
 
 // climbingFileFix says why a path that climbs out of the factory root is
@@ -139,7 +151,7 @@ func (c *checker) checkSupervisorExecutable(sup manifest.Supervisor) {
 		if started.file == "" {
 			continue
 		}
-		if climbs(started.file) {
+		if climbsOut(started) {
 			c.addOnce(RuleSupervisorNotPinned, started.at, climbingFileFix,
 				"the supervisor's command names a file through a path that climbs out of the factory root, so it may lie in a directory a unit mounts and whoever writes that directory would change what the supervisor runs")
 			continue
@@ -176,7 +188,7 @@ func (c *checker) checkStandaloneExecutables() {
 			continue
 		}
 		for _, started := range startedFiles(name, unit) {
-			if climbs(started.file) {
+			if climbsOut(started) {
 				c.addOnce(RuleExecutableInAnotherUnitsDirectory, started.at, climbingFileFix,
 					"unit %q starts or names a file through a path that climbs out of the factory root; on one machine that path may lie in another unit's directory, and that unit would then rewrite what %q runs", name, name)
 				continue

@@ -185,6 +185,11 @@ func TestInStandaloneModeNoUnitStartsABinaryFromAnotherUnitsDirectory(t *testing
 			[]string{"python3", "/home/owner/factory/data/workspaces/dispatch.py"}, "units.dispatcher.command[1]"},
 		{"control runs a script given as a file URL", manifest.UnitControl,
 			[]string{"deno", "run", "file://data/workspaces/control.ts"}, "units.control.command[2]"},
+		// Lowering these letters changes their length in bytes.
+		{"control runs a script given as a file URL with a name in dotted capitals", manifest.UnitControl,
+			[]string{"deno", "run", "FILE://data/workspaces/\u0130\u0130\u0130\u0130\u0130.ts"}, "units.control.command[2]"},
+		{"control runs a script given as a file URL with a name that grows when lowered", manifest.UnitControl,
+			[]string{"deno", "run", "file://data/workspaces/" + strings.Repeat("\u023a", 8)}, "units.control.command[2]"},
 		// The factory root's name is unknown, so ../factory/data/workspaces
 		// may be the coder's workspace.
 		{"control runs a script through a path that climbs out of the factory root", manifest.UnitControl,
@@ -229,7 +234,7 @@ func TestInStandaloneModeNoUnitStartsABinaryFromAnotherUnitsDirectory(t *testing
 	m = standalone(t)
 	editUnit(m, manifest.UnitControl, func(u *manifest.Unit) {
 		u.Command = []string{"bin/factoryd", "control", "--listen=127.0.0.1:7463", "--upstream", "http://127.0.0.1:7461/data/app",
-			"--data", "data/control", "--log-dir=logs/control"}
+			"--data", "data/control", "--log-dir=logs/control", "--base-path=/", "/", "/healthz"}
 	})
 	if report := Check(m); !report.Conformant() {
 		t.Fatalf("arguments outside other units' directories must be allowed, got %+v", report.Findings)
@@ -298,8 +303,18 @@ func TestNoOtherUnitNamesTheSupervisorExecutableInItsCommand(t *testing.T) {
 		}
 	}
 
-	// A Docker unit without an image of its own is what it starts.
+	// A supervisor started by its bare name is found through the search
+	// path, so its directory is unknown and any path ending in its name
+	// may be it.
 	m := docker(t)
+	editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) { u.Command = []string{"sisf-supervisor"} })
+	editUnit(m, manifest.UnitApp, func(u *manifest.Unit) {
+		u.Image, u.Command = "", []string{"tini", "--", "/usr/local/bin/sisf-supervisor"}
+	})
+	wantOnly(t, Check(m), RuleSupervisorSharesArtifact, "units.app.command")
+
+	// A Docker unit without an image of its own is what it starts.
+	m = docker(t)
 	editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) { u.Command = []string{"sisf-supervisor"} })
 	editUnit(m, manifest.UnitApp, func(u *manifest.Unit) { u.Image, u.Command = "", []string{"tini", "--", "sisf-supervisor"} })
 	wantOnly(t, Check(m), RuleSupervisorSharesArtifact, "units.app.command")
