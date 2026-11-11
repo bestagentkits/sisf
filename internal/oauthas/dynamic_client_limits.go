@@ -16,9 +16,6 @@ const (
 	// last consented to it. Each authorization asks for consent again, so a
 	// client in use renews it.
 	idleClientTTL = 30 * 24 * time.Hour
-	// maxUnusedClientsPerSource bounds the clients nobody has consented to
-	// that one network source may hold.
-	maxUnusedClientsPerSource = 10
 )
 
 // clientUse is the bookkeeping of one dynamically registered client.
@@ -55,11 +52,14 @@ func (s *Server) clientKey(r *http.Request) string {
 }
 
 // addDynamicClient stores c, registered from source. It first drops expired
-// clients, then the oldest unused client of source while source holds
-// maxUnusedClientsPerSource, and then, while MaxClients are registered, the
-// oldest unused client of the source holding the most. A client a person
+// clients and then, while MaxClients are registered, the oldest unused
+// client of the source holding the most: a flood from another address, or
+// from many, does not reach a person's client, and one sharing the person's
+// address takes as many registrations as there are slots. A client a person
 // consented to, or one a consent or code is pending for, is never dropped
-// to make room; when nothing else is left, c is refused.
+// to make room; when nothing else is left, c is refused. Only a person who
+// holds a scope reaches consent, so an account without a role cannot pin a
+// client this way.
 func (s *Server) addDynamicClient(c Client, source string) bool {
 	now := s.cfg.Clock.Now()
 	s.mu.Lock()
@@ -74,10 +74,6 @@ func (s *Server) addDynamicClient(c Client, source string) bool {
 			unusedBySource[u.source]++
 		}
 	}
-	droppable := func(id string, u *clientUse) bool { return u.unused() && !inFlight[id] }
-	for unusedBySource[source] >= maxUnusedClientsPerSource {
-		s.dropOldestClientLocked(unusedBySource, func(id string, u *clientUse) bool { return droppable(id, u) && u.source == source })
-	}
 	for len(s.dynamic) >= s.cfg.MaxClients {
 		busiest := 0
 		for _, n := range unusedBySource {
@@ -87,7 +83,7 @@ func (s *Server) addDynamicClient(c Client, source string) bool {
 			return false
 		}
 		s.dropOldestClientLocked(unusedBySource, func(id string, u *clientUse) bool {
-			return droppable(id, u) && unusedBySource[u.source] == busiest
+			return u.unused() && !inFlight[id] && unusedBySource[u.source] == busiest
 		})
 	}
 	s.clientSeq++

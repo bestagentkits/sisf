@@ -131,3 +131,38 @@ func TestAClientInUseOutlastsARegistrationFlood(t *testing.T) {
 		t.Fatal("a registration flood dropped a client in use")
 	}
 }
+
+// A client counts as in use only through the consent of a person who holds
+// a scope: a signed-in account with no role reaches neither consent nor a
+// code, so it cannot pin registered clients against a flood.
+func TestAnAccountWithoutARoleCannotPinRegisteredClients(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, registrationLimits(20))
+	nobody := signedIn(t, e, "nobody-sub")
+	for range 20 {
+		_, id := registerFrom(t, e, "203.0.113.1")
+		q := e.AuthorizeQuery(oauthastest.NewPKCE(t))
+		q.Set("client_id", id)
+		if resp := authorize(t, e, nobody, q); resp.StatusCode == http.StatusOK {
+			t.Fatal("an account without a role reached the consent page")
+		}
+	}
+	if status, _ := registerFrom(t, e, "192.0.2.10"); status != http.StatusCreated {
+		t.Fatalf("a registration after a role-less account tried every client: %d, want it registered", status)
+	}
+}
+
+// A flood from the address a person shares, as behind a proxy that forwards
+// no client address, reaches the person's unused client only once it has
+// registered as many as there are slots.
+func TestARegistrationFloodSharingThePersonsAddressTakesEverySlotToDropTheirClient(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, registrationLimits(20))
+	_, id := registerFrom(t, e, "192.0.2.10")
+	for range 15 {
+		registerFrom(t, e, "192.0.2.10")
+	}
+	if !registered(t, e, id) {
+		t.Fatal("a client was dropped after fewer registrations than slots from its own address")
+	}
+}

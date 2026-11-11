@@ -70,9 +70,9 @@ type Config struct {
 	DynamicRegistration bool
 	// MaxClients bounds dynamically registered clients.
 	MaxClients int
-	// ClientKey names the network source of a registration, which bounds
-	// how many unused clients one source may hold. Nil means the remote IP
-	// address.
+	// ClientKey names the network source of a registration: when MaxClients
+	// are registered, the unused clients of the source holding the most go
+	// first. Nil means the remote IP address.
 	ClientKey func(*http.Request) string
 	// SigningKey signs access tokens; nil generates one, so a restart voids
 	// every token, which is the safe failure.
