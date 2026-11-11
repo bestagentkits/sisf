@@ -165,6 +165,9 @@ func (r *registry) under(prefix []string) []Command {
 // isHelpFlag reports whether arg asks for help.
 func isHelpFlag(arg string) bool { return arg == "-h" || arg == "-help" || arg == "--help" }
 
+// isVersionFlag reports whether arg asks for the version.
+func isVersionFlag(arg string) bool { return arg == "--version" || arg == "-version" || arg == "-v" }
+
 // run executes the command line args and returns the exit status.
 func (r *registry) run(ctx context.Context, env *Env, args []string) int {
 	switch {
@@ -173,6 +176,9 @@ func (r *registry) run(ctx context.Context, env *Env, args []string) int {
 		return exitUsage
 	case isHelpFlag(args[0]):
 		r.list(env.Stdout, nil)
+		return exitOK
+	case isVersionFlag(args[0]):
+		say(env.Stdout, "%s\n", versionLine())
 		return exitOK
 	case args[0] == "help":
 		return r.help(env, args[1:])
