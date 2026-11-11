@@ -57,11 +57,18 @@ func TestASignInFloodFromManyAddressesDoesNotEvictAPersonsSignIn(t *testing.T) {
 	}
 }
 
-// A step-up comes from a signed-in session; unauthenticated sign-ins never
-// push it out, however many addresses they come from.
+// ownerHoldsARole names the Owner as holding a role, as the wiring does for
+// the Owners named at install.
+func ownerHoldsARole(e *env, cfg *auth.Config) {
+	owner := e.actorID("owner-sub")
+	cfg.HoldsRole = func(actorID string) bool { return actorID == owner }
+}
+
+// A step-up of a person who holds a role is never pushed out by
+// unauthenticated sign-ins, however many addresses they come from.
 func TestAStepUpOutlastsAFloodOfUnauthenticatedSignIns(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
+	e := newEnv(t, ownerHoldsARole)
 	b := e.browser(t)
 	csrf := signedIn(t, b, "owner-sub")
 	target := auth.PATRequest{Name: "cli", Scopes: []string{"prs:write"}}.StepUpTarget()
@@ -76,15 +83,57 @@ func TestAStepUpOutlastsAFloodOfUnauthenticatedSignIns(t *testing.T) {
 	}
 }
 
+// Any account can sign in and start step-ups, so a role-less account
+// starting them by the thousand pushes out neither a person's sign-in nor
+// the Owner's step-up, even from the same address.
+func TestStepUpsOfARoleLessAccountPushOutNobodyElse(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, ownerHoldsARole)
+	owner := e.browser(t)
+	csrf := signedIn(t, owner, "owner-sub")
+	target := auth.PATRequest{Name: "cli", Scopes: []string{"prs:write"}}.StepUpTarget()
+	_, ownerStepUp := owner.hop(t, http.MethodPost, "/auth/step-up/google"+stepUpQuery(target), map[string]string{auth.CSRFHeader: csrf})
+	person := e.browser(t)
+	signIn := person.toProvider(t, "google")
+	e.clock.Advance(time.Second) // the person's flows are the oldest open ones
+	mallory := e.browser(t)
+	malloryCSRF := signedIn(t, mallory, "mallory-sub")
+	for range 1100 {
+		mallory.hop(t, http.MethodPost, "/auth/step-up/google"+stepUpQuery(target), map[string]string{auth.CSRFHeader: malloryCSRF})
+	}
+	if resp, _ := person.hop(t, http.MethodGet, person.atProvider(t, "alice-sub", signIn), nil); resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("a sign-in after a role-less account's step-ups: %d, want it completed", resp.StatusCode)
+	}
+	if resp, _ := owner.hop(t, http.MethodGet, owner.atProvider(t, "owner-sub", ownerStepUp), nil); resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("the Owner's step-up after a role-less account's step-ups: %d, want it completed", resp.StatusCode)
+	}
+}
+
+// A flood from the address a person shares, as behind a proxy that forwards
+// no client address, reaches the person's sign-in only once it has started
+// as many as every slot holds, as it did before sources were told apart.
+func TestASignInFloodSharingThePersonsAddressTakesEverySlotToEvictIt(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	b := e.browser(t)
+	providerURL := b.toProvider(t, "google")
+	e.clock.Advance(time.Second)
+	handler := e.svc.Handler()
+	for range 1000 {
+		req := httptest.NewRequest(http.MethodGet, "/auth/login/google?return_to=/", nil)
+		req.RemoteAddr = "127.0.0.1:4000"
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	if resp, _ := b.hop(t, http.MethodGet, b.atProvider(t, "owner-sub", providerURL), nil); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("a sign-in after fewer flows than slots from its own address: %d, want it completed", resp.StatusCode)
+	}
+}
+
 // Any account at the provider can sign in, so role-less sign-ins filling
 // every session slot must not sign out a person who holds a role.
 func TestSessionsOfAPersonWithARoleOutlastRoleLessSignIns(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, func(e *env, cfg *auth.Config) {
-		cfg.MaxSessions = 4
-		owner := e.actorID("owner-sub")
-		cfg.HoldsRole = func(actorID string) bool { return actorID == owner }
-	})
+	e := newEnv(t, ownerHoldsARole, func(_ *env, cfg *auth.Config) { cfg.MaxSessions = 4 })
 	owner := e.browser(t)
 	owner.signIn(t, "google", "owner-sub")
 	e.clock.Advance(time.Second) // the Owner's session is the closest to expiry

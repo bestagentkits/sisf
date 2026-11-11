@@ -28,6 +28,9 @@ type flow struct {
 	// and seq the order flows were started in.
 	source string
 	seq    uint64
+	// protected marks a step-up of a person who holds a role; it is the
+	// last to be dropped to make room.
+	protected bool
 	// stepUpKey is the session being stepped up; empty for a sign-in.
 	stepUpKey string
 	// stepUpFor is what the step-up confirms.
@@ -75,7 +78,10 @@ func (s *Service) beginFlow(providerName, returnTo, source, stepUpKey string, ta
 		returnTo: returnTo, started: now, expires: now.Add(flowTTL), source: source, stepUpKey: stepUpKey, stepUpFor: target}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pruneFlowsLocked(now, source)
+	if ss, ok := s.sessions[stepUpKey]; ok && s.cfg.HoldsRole != nil {
+		f.protected = s.cfg.HoldsRole(ss.actorID)
+	}
+	s.pruneFlowsLocked(now, source, stepUpKey)
 	s.flowSeq++
 	f.seq = s.flowSeq
 	s.flows[digest(state)] = f
@@ -135,56 +141,50 @@ func (s *Service) completeFlow(ctx context.Context, providerName, state, code, b
 	return flowResult{returnTo: f.returnTo, cookie: cookie, session: ss}, nil
 }
 
-// goesBefore reports whether f is dropped before other when room is needed:
-// a sign-in before a step-up, and the older of two of a kind.
-func (f *flow) goesBefore(other *flow) bool {
-	if signIn := f.stepUpKey == ""; signIn != (other.stepUpKey == "") {
-		return signIn
-	}
-	return f.seq < other.seq
-}
-
-// pruneFlowsLocked makes room for a flow from source. Anyone may start a
-// sign-in, so it drops expired flows, then the oldest flow of source while
-// source holds maxFlowsPerSource, and then, while all maxFlows are taken, a
-// sign-in of the source holding the most: a flood, from one address or
-// many, pushes out its own flows before a person's single one. A step-up,
-// which only a signed-in session can start, goes only when nothing but
-// step-ups is left.
-func (s *Service) pruneFlowsLocked(now time.Time, source string) {
+// pruneFlowsLocked makes room for a flow from source, a step-up of the
+// session under stepUpKey when that is set. Anyone may start a sign-in and
+// any account can sign in and start step-ups, so it drops expired flows,
+// then the session's oldest step-up while it holds maxStepUpsPerSession,
+// and then, while all maxFlows are taken, the oldest flow of the source
+// holding the most: a flood, from one address or from many, pushes out its
+// own flows before a person's single one, and one sharing the person's
+// address takes as many flows to reach theirs as it always did. A step-up
+// of a person who holds a role (Config.HoldsRole) is never counted against
+// a source and goes only when nothing else is left.
+func (s *Service) pruneFlowsLocked(now time.Time, source, stepUpKey string) {
 	perSource := map[string]int{}
+	stepUps := 0
 	for k, f := range s.flows {
-		if !now.Before(f.expires) {
+		switch {
+		case !now.Before(f.expires):
 			delete(s.flows, k)
 			continue
-		}
-		if f.stepUpKey == "" {
+		case !f.protected:
 			perSource[f.source]++
 		}
+		if stepUpKey != "" && f.stepUpKey == stepUpKey {
+			stepUps++
+		}
 	}
-	for perSource[source] >= maxFlowsPerSource {
-		s.dropFlowLocked(perSource, func(f *flow) bool { return f.source == source })
+	for ; stepUps >= maxStepUpsPerSession; stepUps-- {
+		s.dropOldestFlowLocked(perSource, func(f *flow) bool { return f.stepUpKey == stepUpKey })
 	}
 	for len(s.flows) >= maxFlows {
 		busiest := 0
 		for _, n := range perSource {
 			busiest = max(busiest, n)
 		}
-		s.dropFlowLocked(perSource, func(f *flow) bool { return busiest == 0 || perSource[f.source] == busiest })
+		s.dropOldestFlowLocked(perSource, func(f *flow) bool { return busiest == 0 || !f.protected && perSource[f.source] == busiest })
 	}
 }
 
-// dropFlowLocked drops the first flow to go among those eligible picks: a
-// sign-in before a step-up, the oldest first. It keeps perSource, the count
-// of open sign-ins by source, current.
-func (s *Service) dropFlowLocked(perSource map[string]int, eligible func(*flow) bool) {
+// dropOldestFlowLocked drops the oldest flow among those eligible picks,
+// keeping perSource, the count of unprotected flows by source, current.
+func (s *Service) dropOldestFlowLocked(perSource map[string]int, eligible func(*flow) bool) {
 	var key string
 	var victim *flow
 	for k, f := range s.flows {
-		if !eligible(f) {
-			continue
-		}
-		if victim == nil || f.goesBefore(victim) {
+		if eligible(f) && (victim == nil || f.seq < victim.seq) {
 			key, victim = k, f
 		}
 	}
@@ -192,7 +192,7 @@ func (s *Service) dropFlowLocked(perSource map[string]int, eligible func(*flow) 
 		return
 	}
 	delete(s.flows, key)
-	if victim.stepUpKey == "" {
+	if !victim.protected {
 		perSource[victim.source]--
 	}
 }

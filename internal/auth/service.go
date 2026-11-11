@@ -24,9 +24,9 @@ const (
 	DefaultMaxSessions     = 10000
 	flowTTL                = 10 * time.Minute
 	maxFlows               = 1024
-	// maxFlowsPerSource bounds the sign-ins one network source has open.
-	maxFlowsPerSource = 16
-	userActorPrefix   = "user:"
+	// maxStepUpsPerSession bounds the step-ups one session has open.
+	maxStepUpsPerSession = 4
+	userActorPrefix      = "user:"
 )
 
 // Config configures the authentication service.
@@ -49,13 +49,13 @@ type Config struct {
 	// one closest to expiry first.
 	MaxSessions int
 	// HoldsRole reports whether an actor holds a role by a local grant, such
-	// as the Owner. It is read only to choose which session to drop when
-	// MaxSessions is reached, never to authorize, and must not block: it is
-	// called with the service's lock held. Nil means nobody does.
+	// as the Owner. It is read only to choose which session or step-up to
+	// drop when room is needed, never to authorize, and must not block: it
+	// is called with the service's lock held. Nil means nobody does.
 	HoldsRole func(actorID string) bool
-	// ClientKey names the network source of a request, which bounds how
-	// many sign-ins one source may have open. Nil means the remote IP
-	// address.
+	// ClientKey names the network source of a request: when every sign-in
+	// slot is taken, the flows of the source holding the most go first. Nil
+	// means the remote IP address.
 	ClientKey func(*http.Request) string
 }
 
