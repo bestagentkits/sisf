@@ -178,7 +178,7 @@ func storedReportCount(t *testing.T, e *env) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fmt.Sprint(n) != counter && !(n == 0 && counter == "") {
+	if fmt.Sprint(n) != counter && (n != 0 || counter != "") {
 		t.Errorf("the stored counter says %q, the store holds %d", counter, n)
 	}
 	return n
