@@ -100,12 +100,12 @@ func (c *checker) checkStandalonePaths() {
 }
 
 // refuseClimbingMount reports a mount whose directory climbs out of the
-// factory root. Such a directory holds every relative directory of the
-// deployment, so it is reported once, as an exposure of the trust volume
-// when it is or holds that volume's directory and as an overlap of owners
-// otherwise, and is not compared pair by pair.
+// factory root or is the root of the file system. Such a directory holds
+// every relative directory of the deployment, so it is reported once, as an
+// exposure of the trust volume when it is or holds that volume's directory
+// and as an overlap of owners otherwise, and is not compared pair by pair.
 func (c *checker) refuseClimbingMount(mount placedMount, trust string, placed []placedMount) {
-	const fix = "mount the volume at a directory inside the factory root, without .. climbing above it, or at an absolute directory of its own"
+	const fix = "mount the volume at a directory inside the factory root, without .. climbing above it, or at an absolute directory of its own other than the root of the file system"
 	holdsTrust := trust != "" && (mount.volume == trust || slices.ContainsFunc(placed, func(other placedMount) bool {
 		return other.volume == trust && within(other.dir, mount.dir)
 	}))
@@ -121,17 +121,22 @@ func (c *checker) refuseClimbingMount(mount placedMount, trust string, placed []
 // overlap reports whether two cleaned directories are equal or nested.
 func overlap(a, b string) bool { return within(a, b) || within(b, a) }
 
-// climbs reports whether a relative path leads out of the directory it is
-// relative to once cleaned, such as ".." or "../elsewhere".
+// climbs reports whether a path leads out of the factory root once cleaned:
+// a relative path that climbs out of the directory it is relative to, such
+// as ".." or "../elsewhere", or the root of the file system, which holds the
+// factory root wherever it is.
 func climbs(file string) bool {
 	file = path.Clean(file)
-	return file == ".." || strings.HasPrefix(file, "../")
+	return file == ".." || strings.HasPrefix(file, "../") || file == "/"
 }
 
 // within reports whether location is root or a path below it.
 func within(location, root string) bool {
 	location, root = path.Clean(location), path.Clean(root)
 	switch {
+	case root == "/":
+		// The root of the file system holds every path, relative or not.
+		return true
 	case climbs(root):
 		// A directory above the working directory holds the working
 		// directory, so it is taken to hold every relative path; how far a

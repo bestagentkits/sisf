@@ -21,6 +21,9 @@ func TestInStandaloneModeNoMountClimbsOutOfTheFactoryRoot(t *testing.T) {
 		{"a directory that cleans to the parent", manifest.UnitApp, "data/../../"},
 		{"a sibling of the factory root", manifest.UnitApp, "../app-data"},
 		{"Zone 3's data is the parent directory", manifest.UnitControl, ".."},
+		// The root of the file system holds the factory root, wherever it is.
+		{"the application's data is the file system root", manifest.UnitApp, "/"},
+		{"a directory that cleans to the file system root", manifest.UnitApp, "//var/.."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -56,6 +59,14 @@ func TestInStandaloneModeNoMountClimbsOutOfTheFactoryRoot(t *testing.T) {
 	wantOnly(t, report, RuleVolumePathOverlap, "units.app.mounts[0].path")
 	if len(report.Findings) != 1 || !report.SelfUpdate {
 		t.Fatalf("want one isolation finding with the supervisor boundary intact, got %+v", report)
+	}
+
+	// The root of the file system also holds an absolute trust directory.
+	m = standalone(t)
+	remount(m, manifest.UnitSupervisor, "/var/lib/sisf/trust")
+	remount(m, manifest.UnitApp, "/")
+	if report := Check(m); !report.reportedAt(RuleTrustVolumeExposed, "units.app.mounts[0].path") || report.SelfUpdate {
+		t.Fatalf("a mount at the file system root holds an absolute trust directory, got %+v", report.Findings)
 	}
 
 	// The trust volume itself placed above the factory root holds the stores
