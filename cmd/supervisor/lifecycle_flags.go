@@ -44,9 +44,12 @@ type lifecycleFlags struct {
 	// adopter starts the LKG under the local deploy backend; set when the
 	// lifecycle is wired.
 	adopter *lkgAdopter
-	// programs is what the local deploy backend starts for a release; set
-	// when the lifecycle is wired.
-	programs *localPrograms
+	// programs is what the local deploy backend starts for a release, and
+	// retention keeps its program store down to what can still run; both
+	// set when the lifecycle is wired, retention only where programs are
+	// kept.
+	programs  *localPrograms
+	retention *programRetention
 }
 
 func (l *lifecycleFlags) register(fs *flag.FlagSet) {

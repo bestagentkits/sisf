@@ -20,6 +20,7 @@ func runStages(ctx context.Context, st *stages.Stages, l *lifecycleFlags, clock 
 		res := st.Pass(ctx)
 		if ctx.Err() == nil {
 			logPass(log, res)
+			l.sweepPrograms(ctx, log)
 		}
 		select {
 		case <-ctx.Done():
