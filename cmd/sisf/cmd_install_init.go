@@ -44,7 +44,7 @@ func runInit(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return asUsage(err)
 	}
-	return printInit(env, res)
+	return printInit(env, res, in.SourceDir)
 }
 
 // asUsage turns an option the installer refused as INVALID_ARGUMENT into a
@@ -76,11 +76,19 @@ func isTerminal(env *Env) bool {
 	return ok && isTerminalFile(file)
 }
 
-func printInit(env *Env, res install.InitResult) error {
+// printInit reports a new install. It names the source checkout init
+// recorded, found by walking up from the current directory unless --source
+// named one, because every later `sisf up` builds the supervisor from it.
+func printInit(env *Env, res install.InitResult, source string) error {
 	id := res.Options.Identity
 	if err := env.Printf("factory %s created in %s\nsign in at %s as the Owner %s\n",
 		res.FactoryID, res.Options.Dir, id.ExternalURL, strings.Join(id.Owners, ", ")); err != nil {
 		return err
+	}
+	if source != "" {
+		if err := env.Printf("source checkout %s: every `sisf up` of this install builds its programs from it\n", source); err != nil {
+			return err
+		}
 	}
 	for _, w := range res.Warnings {
 		if err := env.Printf("warning: %s\n", w); err != nil {

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/bestagentkits/sisf/internal/install"
 )
 
 // runWithOutput runs one command line and returns its status and both streams.
@@ -255,6 +257,38 @@ func TestLifecycleCommandsSayWhatTheyDid(t *testing.T) {
 		status, stdout, stderr := runWithOutput(t, append(tc.args, "--dir", dir)...)
 		if status != exitOK || !strings.Contains(stdout, "the factory in "+dir+" "+tc.want) {
 			t.Errorf("%v = %d %q %q, want a line saying it %s", tc.args, status, stdout, stderr, tc.want)
+		}
+	}
+}
+
+// Init finds the source checkout by walking up from the current directory,
+// and every later up builds the supervisor from it, so it names the one it
+// chose: the default and one given with --source.
+func TestInitNamesTheSourceCheckoutItRecorded(t *testing.T) {
+	t.Parallel()
+	given := t.TempDir()
+	if err := os.WriteFile(filepath.Join(given, "go.mod"), []byte("module example.test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"", given} {
+		dir := filepath.Join(t.TempDir(), "factory")
+		args := []string{"init", "--dir", dir, "--profile", "sim", "--repo", "acme/hello-app", "--confirm-unlimited", "--no-alert"}
+		if source != "" {
+			args = append(args, "--source", source)
+		}
+		status, stdout, stderr := runWithOutput(t, args...)
+		if status != exitOK {
+			t.Fatalf("init = %d: %s", status, stderr)
+		}
+		recorded, err := install.RecordedSource(dir)
+		if err != nil || recorded == "" {
+			t.Fatalf("recorded source = %q %v", recorded, err)
+		}
+		if source != "" && recorded != source {
+			t.Fatalf("recorded source = %q, want %q", recorded, source)
+		}
+		if want := "source checkout " + recorded + ": every `sisf up`"; !strings.Contains(stdout, want) {
+			t.Errorf("init output does not contain %q:\n%s", want, stdout)
 		}
 	}
 }

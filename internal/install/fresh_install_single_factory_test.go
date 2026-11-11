@@ -1,6 +1,7 @@
 package install
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"syscall"
@@ -23,6 +24,10 @@ func TestFreshStandaloneInstallIsOneFactoryAcrossAllThreeZones(t *testing.T) {
 	t.Parallel()
 	r := startStandalone(t, nil)
 	r.stop(t)
+	// up created the install, so it names the checkout it builds from.
+	if out := r.in.Out.(*bytes.Buffer).String(); !strings.Contains(out, "source checkout "+r.in.SourceDir+":") {
+		t.Errorf("up on a new directory does not name its source checkout:\n%s", out)
+	}
 
 	for _, p := range r.procs {
 		if !p.terminated {
