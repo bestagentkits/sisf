@@ -225,9 +225,14 @@ func TestAJudgmentIsRefusedWhenTheAgentsOutputWasCutShort(t *testing.T) {
 		flood = append(flood, clitest.Step{Emit: codexLine(map[string]any{"type": "item.started",
 			"item": map[string]any{"id": fmt.Sprintf("c%d", i), "type": "command_execution", "command": "true"}})})
 	}
+	withoutTurnEnd := codexRun(append(append([]clitest.Step{early}, flood...), retraction)...)
 	cases := map[string][]clitest.Step{
 		"events past the cap":  codexRun(append(append([]clitest.Step{early}, flood...), retraction)...),
 		"an oversized message": codexRun(early, codexMessage("m2", strings.Repeat("x", 4<<20+1))),
+		// The run's end was among what the adapter did not keep, so the run
+		// reads as one that never reported: the cut transcript is still
+		// the reason the judgment is refused.
+		"events past the cap and the end of the turn": withoutTurnEnd[:len(withoutTurnEnd)-1],
 	}
 	for name, steps := range cases {
 		t.Run(name, func(t *testing.T) {
