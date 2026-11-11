@@ -15,9 +15,7 @@ func TestNoFlagHelpTurnsABackQuotedPhraseIntoItsValueName(t *testing.T) {
 		if c.Flags == nil {
 			continue
 		}
-		fs := flag.NewFlagSet(c.name(), flag.ContinueOnError)
-		c.Flags(fs)
-		fs.VisitAll(func(f *flag.Flag) {
+		helpFlags(c).VisitAll(func(f *flag.Flag) {
 			if kind, _ := flag.UnquoteUsage(f); strings.ContainsAny(kind, " \t") {
 				t.Errorf("%s --%s shows %q as the name of its value", c.name(), f.Name, kind)
 			}

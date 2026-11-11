@@ -22,6 +22,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/bestagentkits/sisf/internal/install"
@@ -311,6 +312,20 @@ func (r *registry) list(w io.Writer, prefix []string) {
 	say(w, "\nRun \"%s help <command>\" for its arguments and flags.\n", program)
 }
 
+// helpFlagsBinding serializes helpFlags: a command's Flags binds into
+// placeholders the command keeps for its help, so two help renderings in one
+// process (parallel tests) would otherwise write the same placeholders.
+var helpFlagsBinding sync.Mutex
+
+// helpFlags returns the flags of c as its help shows them.
+func helpFlags(c Command) *flag.FlagSet {
+	helpFlagsBinding.Lock()
+	defer helpFlagsBinding.Unlock()
+	fs := flag.NewFlagSet(c.name(), flag.ContinueOnError)
+	c.Flags(fs)
+	return fs
+}
+
 // describe prints the help of one command, ending with its flag reference.
 func describe(w io.Writer, c Command) {
 	say(w, "%s\n\nUsage:\n  %s\n", c.Summary, c.synopsis())
@@ -320,8 +335,7 @@ func describe(w io.Writer, c Command) {
 	if c.Flags == nil {
 		return
 	}
-	fs := flag.NewFlagSet(c.name(), flag.ContinueOnError)
-	c.Flags(fs)
+	fs := helpFlags(c)
 	var rows [][2]string
 	width := 0
 	fs.VisitAll(func(f *flag.Flag) {
