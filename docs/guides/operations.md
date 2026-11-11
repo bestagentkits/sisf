@@ -123,6 +123,19 @@ Real coding and QA agents run only in Standalone mode under `trusted_code_only`;
 
 The edge (`cmd/edge`) reads two tokens from its environment. `EDGE_ADMIN_TOKEN` guards its admin listener (`--admin-listen`) and can change the traffic split; only the release supervisor holds it. `EDGE_COUNTERS_TOKEN`, which `sisf init` writes for the edge and the control process alike, authorizes `GET /counters` and nothing else; every other request with it is refused with 403. The two must differ, or the edge refuses to start. The control process reads the counters with `EDGE_COUNTERS_TOKEN` through a client that has no way to change the split (`internal/edge/admin_client.go`).
 
+## A held release
+
+A release the supervisor holds or refuses is not tried again by itself: nothing was deployed, and the issue waits in ReleaseCandidate. It shows in four places.
+
+- The supervisor logs it once per decision, at warning level: `release held: the issue waits in ReleaseCandidate for the Owner` (or `release refused`), with the issue, `result`, `state`, `code`, `reason` and `release` (`cmd/supervisor/lifecycle_loop.go`).
+- `sisf runs explain <issue>` answers stopped with cause `release_held`, the supervisor's reason as `release_hold` evidence, and the way out. `sisf runs inspect <issue>` shows `release_hold`.
+- The issue's progress comment adds a **Release waiting:** line. It is chosen by the result and the code only and never carries the reason (`cmd/supervisor/handoff/release_hold.go`).
+- The record is `release-hold/<run>/<attempt>` in the supervisor's `build` namespace.
+
+The usual cause is `RELEASE_HOLD` with "real traffic is too low to judge the release and the application has no synthetic suite". A release with fewer real requests than `release.rollback.min_samples` in a window is judged by the application's synthetic suite for at least `release.low_traffic.min_hold`. The supervisor runs the suite only when it is given `--synthetic-program`. A Standalone install builds `bin/hello-app-synthetic` and passes it when the manifest names `release.low_traffic.synthetic_suite`. A Docker install has no synthetic suite yet, so a release there with too little traffic holds; once real traffic reaches the minimum, the Owner's retry lets it start over.
+
+The way out: remove the cause (send traffic, give the supervisor its synthetic suite, lift the emergency stop), then run `factoryd issue retry --issue owner/repo#N` on the factory's host, as the Owner, with the control zone's environment. The supervisor releases the candidate again on its next round, and the hold is cleared once that release goes ahead. A retry by anyone else is denied, and a second retry before the new release ends answers `CONFLICT`. A refused release (a change to the factory's trusted control surface, say) is never tried again: merge or close its pull request by hand.
+
 ## Ports
 
 Host ports 7460-7469 on 127.0.0.1; the owner is `internal/install/options.go`. The ports are fixed, so one machine runs one factory: [one factory per machine](install.md#one-factory-per-machine).
