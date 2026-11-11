@@ -9,7 +9,7 @@ Status meanings: **present** means the file exists in this branch and its packag
 | ID | Test file | Status |
 |---|---|---|
 | SISF-01 | `internal/install/fresh_install_single_factory_test.go` (Standalone) and `internal/install/docker_lifecycle_test.go` (`TestFreshDockerInstallIsOneComposeProjectOfOneFactory`, Compose) | present (both modes against fakes of `go` and `docker`) |
-| SISF-02 | `tests/acceptance/issue_full_lifecycle_test.go` (with `tests/acceptance/candidate_pull_request_landing_test.go` for the candidate's pull request, its merge after verification and the cases left for the Owner, and `tests/acceptance/qa_hold_visibility_and_spend_test.go` for the one progress comment) | present |
+| SISF-02 | `tests/acceptance/issue_full_lifecycle_test.go` (with `tests/acceptance/candidate_pull_request_landing_test.go` and `candidate_pull_request_owner_cases_test.go` for the candidate's pull request, its merge after verification and the cases left for the Owner, `cmd/supervisor/stages/candidate_landing_github_answers_test.go` for a lost merge answer, a retried or refused merge, a refused pull request and one the factory did not open, and `tests/acceptance/qa_hold_visibility_and_spend_test.go` for the one progress comment) | present |
 | SISF-03 | `internal/intake/unauthorized_and_new_feature_test.go` | present |
 | SISF-04 | `tests/acceptance/duplicate_reordered_webhooks_test.go` (with `cmd/factoryd/wiring/control_reconcile_test.go` for reconciliation) | present |
 | SISF-05 | `internal/dispatcher/worker_crash_fencing_test.go` | present |
