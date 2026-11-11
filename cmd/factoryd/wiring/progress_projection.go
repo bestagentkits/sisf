@@ -108,7 +108,8 @@ func (c *Control) showProgress(ctx context.Context, r core.StateRecord) error {
 	c.mu.Lock()
 	shown := c.progressShown[r.IssueID] == body
 	c.mu.Unlock()
-	if !shown && !(found && entry.Digest == progressDigest(body)) {
+	stored := found && entry.Digest == progressDigest(body)
+	if !shown && !stored {
 		if err := c.writeProgress(ctx, r.IssueID, body); err != nil {
 			entry.Issue, entry.Failures = r.IssueID, entry.Failures+1
 			entry.RetryAt = now.Add(progressPause(entry.Failures))
