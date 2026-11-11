@@ -2,11 +2,10 @@ package wiring
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
@@ -22,24 +21,50 @@ type Viewer interface {
 	Viewer(ctx context.Context) (github.User, error)
 }
 
-// progressStates are the states whose issues carry a progress comment:
-// from the claim on.
-var progressStates = []core.State{
+// activeStates are the states of a run in flight, whose issue's progress
+// comment follows it every pass.
+var activeStates = []core.State{
 	core.StateClaimed, core.StateDeveloping, core.StateQAEvaluation, core.StateReleaseCandidate, core.StateCanary,
-	core.StateMonitoring, core.StateVerified, core.StateClosed, core.StateRolledBack, core.StateBlocked,
+	core.StateMonitoring, core.StateVerified,
+}
+
+// endState reports whether s ends a run: its progress is shown once more
+// and then left alone.
+func endState(s core.State) bool {
+	return s == core.StateClosed || s == core.StateRolledBack || s == core.StateBlocked
 }
 
 // projectProgress keeps one progress comment on every issue a run claimed,
-// edited in place as the run passes its checkpoints. What was last written
-// is remembered per issue, so an issue whose progress did not change costs
-// no call to GitHub; after a restart each comment is compared once and
-// left alone when it is the same.
+// edited in place as the run passes its checkpoints. It reads the issues
+// of runs in flight, and those that ended since their comment was last
+// written (they still have a progress entry); an issue that ended before
+// it ever had one, as before this comment existed, is never given one.
+// What was last written is remembered per issue, so an issue whose
+// progress did not change costs no call to GitHub.
 func (c *Control) projectProgress(ctx context.Context) error {
 	var records []core.StateRecord
 	err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
 		var err error
-		records, err = tx.ListRecords(ctx, state.RecordFilter{States: progressStates})
-		return err
+		if records, err = tx.ListRecords(ctx, state.RecordFilter{States: activeStates}); err != nil {
+			return err
+		}
+		entries, err := tx.ListKV(ctx, progressNamespace, "", 0)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			entry, ok := decodeProgress(e)
+			if !ok {
+				continue
+			}
+			r, err := tx.GetRecord(ctx, entry.Issue)
+			if err == nil && endState(r.State) {
+				records = append(records, r)
+			} else if err != nil && !core.HasCode(err, core.CodeNotFound) {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return err
@@ -53,10 +78,24 @@ func (c *Control) projectProgress(ctx context.Context) error {
 	return errors.Join(failed...)
 }
 
-// showProgress writes the progress of one issue when it changed.
+// showProgress writes the progress of one issue when it changed. An issue
+// whose comment cannot be written, a locked one say, is tried again only
+// after a pause that doubles each time; an ended issue is given up after
+// maxProgressFailures, so its close is not held back by it.
 func (c *Control) showProgress(ctx context.Context, r core.StateRecord) error {
 	if r.RunID == "" {
 		return nil
+	}
+	entry, found, err := c.progressEntry(ctx, r.IssueID)
+	if err != nil {
+		return err
+	}
+	if !found && endState(r.State) {
+		return nil // ended before it had a progress comment, or already shown at its end
+	}
+	now := c.cfg.Clock.Now().UTC()
+	if found && now.Before(entry.RetryAt) {
+		return core.NewError(core.CodeUnavailable, "the progress comment could not be written; it is tried again after "+entry.RetryAt.Format(time.RFC3339))
 	}
 	facts, err := c.progressFacts(ctx, r)
 	if err != nil {
@@ -69,61 +108,56 @@ func (c *Control) showProgress(ctx context.Context, r core.StateRecord) error {
 	c.mu.Lock()
 	shown := c.progressShown[r.IssueID] == body
 	c.mu.Unlock()
-	if shown || c.progressStored(ctx, r.IssueID, body) {
-		c.mu.Lock()
-		c.progressShown[r.IssueID] = body
-		c.mu.Unlock()
-		return nil
-	}
-	writer, err := c.progressWriter(ctx)
-	if err != nil {
-		return err
-	}
-	err = c.editIssue(ctx, r.IssueID, editIntent{}, func(ctx context.Context) error {
-		_, err := writer.Upsert(ctx, r.IssueID, body)
-		return err
-	})
-	if err != nil {
-		return err
+	if !shown && !(found && entry.Digest == progressDigest(body)) {
+		if err := c.writeProgress(ctx, r.IssueID, body); err != nil {
+			entry.Issue, entry.Failures = r.IssueID, entry.Failures+1
+			entry.RetryAt = now.Add(progressPause(entry.Failures))
+			if endState(r.State) && entry.Failures >= maxProgressFailures {
+				return errors.Join(err, c.dropProgress(ctx, r.IssueID))
+			}
+			return errors.Join(err, c.storeProgress(ctx, entry))
+		}
 	}
 	c.mu.Lock()
 	c.progressShown[r.IssueID] = body
 	c.mu.Unlock()
-	return c.storeProgress(ctx, r.IssueID, body)
+	if endState(r.State) {
+		return c.dropProgress(ctx, r.IssueID)
+	}
+	return c.storeProgress(ctx, progressEntry{Issue: r.IssueID, Digest: progressDigest(body)})
 }
 
-// progressNamespace keeps the digest of the progress each issue shows, so
-// a restart does not read every issue's comments again to learn it.
-const progressNamespace = "progress"
-
-func progressDigest(body string) []byte {
-	sum := sha256.Sum256([]byte(body))
-	return []byte(hex.EncodeToString(sum[:]))
+// progressGivenUp reports whether the issue's progress is no longer
+// written: it ended and its comment could not be written in
+// maxProgressFailures tries, or it never had one.
+func (c *Control) progressGivenUp(ctx context.Context, issue core.IssueRef) bool {
+	_, found, err := c.progressEntry(ctx, issue)
+	return err == nil && !found
 }
 
-// progressStored reports whether the issue already shows body.
-func (c *Control) progressStored(ctx context.Context, issue core.IssueRef, body string) bool {
-	stored := false
-	_ = c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
-		entry, err := tx.GetKV(ctx, progressNamespace, issue.String())
-		stored = err == nil && string(entry.Value) == string(progressDigest(body))
-		return nil
-	})
-	return stored
-}
-
-// storeProgress records that the issue shows body.
-func (c *Control) storeProgress(ctx context.Context, issue core.IssueRef, body string) error {
-	return c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-		version := int64(0)
-		if entry, err := tx.GetKV(ctx, progressNamespace, issue.String()); err == nil {
-			version = entry.Version
-		} else if !core.HasCode(err, core.CodeNotFound) {
-			return err
-		}
-		_, err := tx.PutKV(ctx, state.KVEntry{Namespace: progressNamespace, Key: issue.String(), Value: progressDigest(body), Version: version})
+func (c *Control) writeProgress(ctx context.Context, issue core.IssueRef, body string) error {
+	writer, err := c.progressWriter(ctx)
+	if err != nil {
+		return err
+	}
+	return c.editIssue(ctx, issue, editIntent{}, func(ctx context.Context) error {
+		_, err := writer.Upsert(ctx, issue, body)
 		return err
 	})
+}
+
+// maxProgressFailures is how often an ended issue's last progress is tried
+// before it is given up.
+const maxProgressFailures = 3
+
+// progressPause is the pause after the n-th failure in a row to write an
+// issue's progress: a minute, doubled each time, at most an hour.
+func progressPause(n int) time.Duration {
+	pause := time.Minute
+	for range min(n-1, 6) {
+		pause *= 2
+	}
+	return min(pause, time.Hour)
 }
 
 // progressWriter is the progress comment writer, its account learned from
