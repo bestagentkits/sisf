@@ -75,13 +75,19 @@ func describeReleaseRecord(key string, r releaseRecord) string {
 // prefix, keyed by key. The prefix is compared as text, not as a LIKE
 // pattern, so a run ID cannot widen it.
 func (o *factoryObserver) supervisorRecords(ctx context.Context, prefix string) (map[string][]byte, error) {
+	return o.records(ctx, supervisorNamespace, prefix)
+}
+
+// records returns the records of namespace whose keys start with prefix,
+// read-only like supervisorRecords.
+func (o *factoryObserver) records(ctx context.Context, namespace, prefix string) (map[string][]byte, error) {
 	db, err := sql.Open("sqlite", "file:"+o.stateDB+"?mode=ro&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = db.Close() }()
 	rows, err := db.QueryContext(ctx, `SELECT entry_key, entry_value FROM kv
-		WHERE factory_id = ? AND namespace = ? AND substr(entry_key, 1, length(?)) = ?`, o.factoryID, supervisorNamespace, prefix, prefix)
+		WHERE factory_id = ? AND namespace = ? AND substr(entry_key, 1, length(?)) = ?`, o.factoryID, namespace, prefix, prefix)
 	if err != nil {
 		return nil, err
 	}

@@ -4,16 +4,19 @@ package smoke
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
 	execdocker "github.com/bestagentkits/sisf/adapters/exec/docker"
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
+	"github.com/bestagentkits/sisf/internal/supervisor/programstore"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/execution"
 )
@@ -166,8 +169,19 @@ func (s *buildSandbox) selfBuild(ctx context.Context, r *commandRunner, factory 
 	if err != nil {
 		r.fatalf("build sandbox: %v", err)
 	}
+	// The build exports its program as it will to the supervisor, into a
+	// store of the check's own.
+	trust := filepath.Join(r.t.TempDir(), "trust")
+	if err := os.Mkdir(trust, 0o700); err != nil {
+		r.fatalf("build sandbox: %v", err)
+	}
+	programs, err := programstore.Open(trust)
+	if err != nil {
+		r.fatalf("build sandbox: %v", err)
+	}
 	images, err := stages.SelectImageBuilder(ctx, stages.ExecutionChoice{
-		Profile: stages.ProfileProduction, Agent: "claude", Docker: backend,
+		Programs: programs,
+		Profile:  stages.ProfileProduction, Agent: "claude", Docker: backend,
 		Specs:     stages.SandboxSpecs{Image: s.runnerImage, Egress: core.EgressPolicy{Mode: core.EgressAllowlist}, Limits: execution.Limits{Timeout: 15 * time.Minute}},
 		BuildArgv: []string{sandboxBuildCommand}, BuildTimeout: 15 * time.Minute,
 	})
@@ -178,6 +192,15 @@ func (s *buildSandbox) selfBuild(ctx context.Context, r *commandRunner, factory 
 	if err != nil {
 		r.fatalf("build sandbox: the sandboxed build of %s failed: %v", commit, err)
 	}
-	r.report.check("sandboxed build of the sandbox's head", statusPass, string(result.Digest)+", tests "+map[bool]string{true: "passed", false: "failed"}[result.TestsPassed])
+	exported := "no program was exported"
+	if path, err := programs.Path(result.Digest); err == nil {
+		if info, err := os.Stat(path); err == nil {
+			exported = fmt.Sprintf("the program it exported for %s/%s is %d bytes and hashes to that digest", runtime.GOOS, runtime.GOARCH, info.Size())
+		}
+	} else {
+		r.fatalf("build sandbox: the sandboxed build of %s exported no program with its digest %s: %v", commit, result.Digest, err)
+	}
+	r.report.check("sandboxed build of the sandbox's head", statusPass, string(result.Digest)+", tests "+
+		map[bool]string{true: "passed", false: "failed"}[result.TestsPassed]+"; "+exported)
 	return result
 }

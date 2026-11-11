@@ -31,13 +31,18 @@ import (
 //
 // With SISF_SMOKE_REHEARSAL=1 the run spends nothing either but goes the
 // whole way: a scripted coder and a fake QA judge take one issue through
-// the real build sandbox, release, merge and close (release_rehearsal_test.go).
+// the real build sandbox and release, to merge and close or, with
+// SISF_SMOKE_REHEARSAL_CANDIDATE=bad, to a rollback (release_rehearsal_test.go).
 func TestRealLifecycleSmoke(t *testing.T) {
 	mode, err := runModeFrom(os.Getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
 	upOnly := mode == modeUpOnly
+	reh, err := newRehearsal(time.Now(), os.Getenv(rehearsalCandidateEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
 	// The temporary directory is created first so that it is removed last,
 	// after the teardown and the report have read the install's logs.
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -72,7 +77,11 @@ func TestRealLifecycleSmoke(t *testing.T) {
 		case modeRehearsal:
 			rep.Outcome += " (release rehearsal: no model ran, nothing was spent)"
 		}
-		path := filepath.Join(repoRoot(), reportPath(mode))
+		rel := reportPath(mode)
+		if mode == modeRehearsal {
+			rel = reh.reportPath()
+		}
+		path := filepath.Join(repoRoot(), rel)
 		if err := writeReport(path, rep, scrub); err != nil {
 			t.Errorf("the report could not be written to %s: %v", path, err)
 			return
@@ -123,7 +132,6 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	stage, started = "install", time.Now()
 	env := sisfEnv("SISF_HOME=" + home)
 	initLine := initArgs(home, choices)
-	reh := newRehearsal(time.Now())
 	if mode == modeRehearsal {
 		initLine = rehearsalInitArgs(home, choices)
 	}
@@ -133,19 +141,32 @@ func TestRealLifecycleSmoke(t *testing.T) {
 		r.fatalf("sisf init: %v", err)
 	}
 	r.logf("sisf init:\n%s", out)
-	if mode == modeRehearsal {
-		reh.writePatch(r, home)
-	}
 	factoryID := installedFactoryID(r, home)
 	sb.startFilter(ctx, r, bins.sisf, factoryID, filepath.Join(root, "docker-filter.log"))
 	head, err := defaultBranchRevision(ctx, r)
 	if err != nil {
 		r.fatalf("the sandbox's head commit cannot be read: %v", err)
 	}
+	if mode == modeRehearsal {
+		page, err := sandboxFile(ctx, r, rehearsalPage, head)
+		if err != nil {
+			r.fatalf("the sandbox's %s cannot be read: %v", rehearsalPage, err)
+		}
+		patch, err := reh.patch(page)
+		if err != nil {
+			r.fatalf("the rehearsal's patch: %v", err)
+		}
+		reh.writePatch(r, home, patch)
+	}
 	sb.selfBuild(ctx, r, factoryID, core.CommitSHA(head))
-	rep.check("released artifact is the sandboxed build", statusNotChecked,
-		"Standalone's local deploy backend serves the installed application rather than the candidate build for every release; "+
-			"the sandboxed build is tested and digested, not deployed, so the run looks for the requested change in the merged commit instead")
+	// What a rehearsal leaves open in the sandbox is closed after the
+	// factory stopped, whatever the outcome.
+	number := 0
+	t.Cleanup(func() {
+		if mode == modeRehearsal && number != 0 {
+			closeRehearsalWork(r, number, rep.PullRequests)
+		}
+	})
 	proc, err := startFactory(r, bins.sisf, upArgs(home, repoRoot()), env, upLog)
 	if err != nil {
 		r.fatalf("start sisf up: %v", err)
@@ -171,6 +192,11 @@ func TestRealLifecycleSmoke(t *testing.T) {
 		return
 	}
 	approvePolicy(ctx, r, home)
+	installed, err := installedAppDigest(home)
+	if err != nil {
+		r.fatalf("the installed application's digest cannot be read: %v", err)
+	}
+	watch := &candidateWatch{home: home, installed: installed}
 	obs, err := newFactoryObserver(r, bins.sisf, home)
 	if err != nil {
 		r.fatalf("%v", err)
@@ -183,15 +209,21 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	if mode == modeRehearsal {
 		title, body = reh.issueTitle(), reh.issueBody()
 	}
-	number, url, err := openIssue(ctx, r, title, body)
+	opened, url, err := openIssue(ctx, r, title, body)
 	if err != nil {
 		r.fatalf("open the issue: %v", err)
 	}
+	number = opened
 	rep.IssueURL = url
 	issue := sandboxRepo + "#" + strconv.Itoa(number)
 	r.logf("opened %s", url)
-	runErr := waitForClose(ctx, r, obs, proc, issue, number)
-	rep.phase("run (issue opened to closed)", started)
+	rollback := mode == modeRehearsal && reh.bad
+	runErr := waitForClose(ctx, r, obs, proc, watch, issue, number, rollback)
+	if rollback {
+		rep.phase("run (issue opened to rolled back and blocked)", started)
+	} else {
+		rep.phase("run (issue opened to closed)", started)
+	}
 	if runErr != nil {
 		r.errorf("%v", runErr)
 	}
@@ -202,9 +234,20 @@ func TestRealLifecycleSmoke(t *testing.T) {
 	if mode == modeRehearsal {
 		rehearsed = &reh
 	}
-	assertOutcome(ctx, r, obs, facts.login, issue, number, rep.Started, rehearsed)
+	if rollback {
+		assertRolledBack(ctx, r, obs, watch, facts.login, issue, number, rep.Started)
+	} else {
+		assertOutcome(ctx, r, obs, watch, facts.login, issue, number, rep.Started, rehearsed)
+	}
 	closeReleaseRecords(ctx, r, rep.RunIDs)
 	rep.phase("assertions", started)
+	if rehearsed != nil && !rollback && !t.Failed() {
+		stage, started = "restarts", time.Now()
+		v, _ := obs.inspect(ctx, issue)
+		proc = assertPromotedSurvivesRestarts(ctx, r, proc, bins.sisf, home, filepath.Join(root, "up-again.log"), env,
+			v.Output.Record.CandidateDigest, reh.greeting())
+		rep.phase("restarts (units restarted, then sisf down and sisf up)", started)
+	}
 }
 
 // upOnlyEnv names the switch of the run that spends nothing.

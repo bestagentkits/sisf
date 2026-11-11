@@ -32,7 +32,11 @@ var endStates = map[string]bool{"RolledBack": true, "Blocked": true}
 // candidate or the run stalled in a state (see qaStopped), or the deadline
 // passes. A failure ends the wait at once; the test's cleanup adds the
 // unit log tails to the report.
-func waitForClose(ctx context.Context, r *commandRunner, o *factoryObserver, proc *factoryProcess, issue string, number int) error {
+//
+// Along the way watch looks for the candidate on the edge. With wantBlocked
+// the run is the rehearsal of a rollback: Blocked is then the end it waits
+// for, and a closed issue the failure.
+func waitForClose(ctx context.Context, r *commandRunner, o *factoryObserver, proc *factoryProcess, watch *candidateWatch, issue string, number int, wantBlocked bool) error {
 	ctx, cancel := context.WithTimeout(ctx, runDeadline)
 	defer cancel()
 	tick := time.NewTicker(runPollInterval)
@@ -60,7 +64,17 @@ func waitForClose(ctx context.Context, r *commandRunner, o *factoryObserver, pro
 				r.logf("%s is %s", issue, rec.State)
 				last = rec.State
 			}
-			if endStates[rec.State] {
+			pull := ""
+			if pr := v.Output.PullRequest; pr != nil {
+				pull = pr.URL
+			}
+			watch.look(ctx, r, rec.CandidateDigest, pull)
+			switch {
+			case wantBlocked && rec.State == "Blocked":
+				return nil
+			case wantBlocked && rec.State == "RolledBack":
+				// On its way to Blocked, once the recovery report is written.
+			case endStates[rec.State]:
 				return fmt.Errorf("the run ended in %s", rec.State)
 			}
 			if rec.State == "ApprovalPending" && !approvalsShown {
@@ -79,11 +93,14 @@ func waitForClose(ctx context.Context, r *commandRunner, o *factoryObserver, pro
 			return fmt.Errorf("the factory cannot finish the run, last state %q: %s", last, reason)
 		}
 		if state, err := issueState(ctx, r, number); err == nil && strings.HasPrefix(state, "CLOSED") {
+			if wantBlocked {
+				return fmt.Errorf("the issue was closed, but the release of this candidate had to be rolled back; last factory state %q", last)
+			}
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("the issue was not closed within %s; last factory state %q", runDeadline, last)
+			return fmt.Errorf("the run did not end within %s; last factory state %q", runDeadline, last)
 		case <-tick.C:
 		}
 	}
@@ -91,9 +108,9 @@ func waitForClose(ctx context.Context, r *commandRunner, o *factoryObserver, pro
 
 // assertOutcome checks what the plan requires of a finished run and
 // records each result, pass or fail, in the report. A rehearsal, when
-// given, is checked for its note instead of the paid run's route, and for
+// given, is checked for its greeting instead of the paid run's route, and for
 // running no paid model instead of a non-empty usage ledger.
-func assertOutcome(ctx context.Context, r *commandRunner, o *factoryObserver, login, issue string, number int, start time.Time, reh *rehearsal) {
+func assertOutcome(ctx context.Context, r *commandRunner, o *factoryObserver, watch *candidateWatch, login, issue string, number int, start time.Time, reh *rehearsal) {
 	rep := r.report
 	journal, err := o.journal(ctx, issue)
 	if err != nil {
@@ -139,14 +156,21 @@ func assertOutcome(ctx context.Context, r *commandRunner, o *factoryObserver, lo
 	result(r, "pull request linked to the issue", linked, linkEvidence)
 	result(r, "pull request merged in the sandbox", merged.MergeCommit != "", mergeEvidence)
 
-	// The proof the agent's change landed: Standalone deploys the installed
-	// application, not the candidate, so the change is looked for where it
-	// was merged.
+	// The release ran the candidate's own build: the edge served its
+	// digest, and the store's file for it has that sha256, while the pull
+	// request was still open. A rehearsal knows what its page must say.
+	wantPage := ""
+	if reh != nil {
+		wantPage = reh.greeting()
+	}
+	assertCandidateServed(r, watch, rec.CandidateDigest, http.StatusOK, wantPage)
+
+	// The proof the change landed on the default branch.
 	landed, landEvidence := false, "no merged pull request"
 	if merged.MergeCommit != "" {
 		ok, evidence, err := false, "", error(nil)
 		if reh != nil {
-			ok, evidence, err = noteOnDefaultBranch(ctx, r, merged.MergeCommit, reh.note)
+			ok, evidence, err = greetingOnDefaultBranch(ctx, r, merged.MergeCommit, reh.greeting())
 		} else {
 			ok, evidence, err = changeOnDefaultBranch(ctx, r, merged.MergeCommit, versionRoute)
 		}

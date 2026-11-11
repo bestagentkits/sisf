@@ -6,6 +6,9 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -39,9 +42,14 @@ func TestTheRunModeComesFromTheEnvironment(t *testing.T) {
 	if modeRehearsal.spends() || modeUpOnly.spends() || !modePaid.spends() {
 		t.Error("only the paid run spends")
 	}
-	paths := map[string]bool{reportPath(modePaid): true, reportPath(modeUpOnly): true, reportPath(modeRehearsal): true}
-	if len(paths) != 3 || reportPath(modeRehearsal) != rehearsalReportRelPath {
-		t.Errorf("the reports of the three runs share a file: %v", paths)
+	good, _ := newRehearsal(time.Now(), "")
+	bad, _ := newRehearsal(time.Now(), "bad")
+	paths := map[string]bool{reportPath(modePaid): true, reportPath(modeUpOnly): true, good.reportPath(): true, bad.reportPath(): true}
+	if len(paths) != 4 || reportPath(modeRehearsal) != good.reportPath() {
+		t.Errorf("the reports of the four runs share a file: %v", paths)
+	}
+	if _, err := newRehearsal(time.Now(), "worse"); err == nil {
+		t.Error("a candidate that is neither good nor bad was accepted")
 	}
 	if !strings.Contains(modeRehearsal.title(), "not the paid smoke") {
 		t.Errorf("the rehearsal's report is titled %q", modeRehearsal.title())
@@ -113,33 +121,113 @@ func TestTheFakeQAJudgeAnswersWithAFullValidJudgment(t *testing.T) {
 	}
 }
 
-// The rehearsal's issue goes straight to Ready through intake, like the
-// paid run's, and its patch adds a new note on a path no run used, outside
-// every protected path, and asks for nothing the paid run asks for.
-func TestTheRehearsalsIssueAndPatchStayOffThePaidRunsTask(t *testing.T) {
+// The issue of either rehearsal goes straight to Ready through intake,
+// like the paid run's, touches no protected path and asks for nothing the
+// paid run asks for.
+func TestTheRehearsalsIssuesNeedNoOwnerAndStayOffThePaidRunsTask(t *testing.T) {
 	t.Parallel()
-	r := newRehearsal(time.Date(2026, 11, 11, 20, 0, 0, 0, time.UTC))
 	var labels []github.Label
 	for _, name := range issueLabels {
 		labels = append(labels, github.Label{Name: name})
 	}
 	read := intake.ReadLabels(labels, intake.LabelRules{})
-	draft := intake.Analyze(github.Issue{Title: r.issueTitle(), Body: r.issueBody(), Labels: labels,
-		Author: github.User{ID: 1, Login: "operator"}, AuthorAssociation: github.AssociationMember}, nil, read)
-	if !draft.Complete() {
-		t.Fatalf("intake would ask for %v", draft.Missing)
+	for _, candidate := range []string{"good", "bad"} {
+		r, err := newRehearsal(time.Date(2026, 11, 11, 20, 0, 0, 0, time.UTC), candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		draft := intake.Analyze(github.Issue{Title: r.issueTitle(), Body: r.issueBody(), Labels: labels,
+			Author: github.User{ID: 1, Login: "operator"}, AuthorAssociation: github.AssociationMember}, nil, read)
+		if !draft.Complete() {
+			t.Fatalf("%s: intake would ask for %v", candidate, draft.Missing)
+		}
+		if verdict := intake.Classify(draft, github.AssociationMember, sandboxCatalog); verdict.NeedsApproval || verdict.Kind != decision.KindExistingImprovement {
+			t.Errorf("%s: the rehearsal's issue needs the Owner: %+v", candidate, verdict)
+		}
+		if strings.Contains(r.issueBody(), versionRoute) {
+			t.Errorf("%s: the rehearsal asks for the paid run's task", candidate)
+		}
 	}
-	if verdict := intake.Classify(draft, github.AssociationMember, sandboxCatalog); verdict.NeedsApproval || verdict.Kind != decision.KindExistingImprovement {
-		t.Errorf("the rehearsal's issue needs the Owner: %+v", verdict)
+	for _, path := range []string{rehearsalPage, rehearsalFaultFile} {
+		if _, protected := stages.ProtectedPath(path); protected {
+			t.Errorf("the rehearsal touches the protected path %s", path)
+		}
 	}
-	patch := r.patch()
-	if !strings.HasPrefix(patch, "diff --git a/"+r.note+" b/"+r.note+"\nnew file mode 100644\n--- /dev/null\n+++ b/"+r.note+"\n@@ -0,0 +1,3 @@\n") {
-		t.Errorf("the patch:\n%s", patch)
+}
+
+// rehearsedPage is the application's page as the sandbox holds it.
+const rehearsedPage = "package main\n\nfunc page() {\n\tn := 1\n" +
+	"\t_, _ = fmt.Fprintf(w, \"Hello from the sample app: visit %d\\n\", n)\n}\n"
+
+// applyPatch applies patch with git to a directory holding files and
+// returns the directory.
+func applyPatch(t *testing.T, files map[string]string, patch string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, protected := stages.ProtectedPath(r.note); protected || strings.Contains(patch+r.issueBody(), versionRoute) {
-		t.Errorf("the rehearsal touches a protected path or the paid run's task: %s", r.note)
+	cmd := exec.Command("git", "apply", "-")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(patch)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git apply: %v\n%s\nthe patch:\n%s", err, out, patch)
 	}
-	if newRehearsal(time.Date(2026, 11, 11, 20, 0, 1, 0, time.UTC)).note == r.note {
-		t.Error("two rehearsals a second apart write the same note")
+	return dir
+}
+
+// The good candidate's patch is one git applies to the page and that
+// changes its greeting, also after an earlier rehearsal changed it; two
+// rehearsals a second apart ask for different greetings.
+func TestTheGoodCandidatesPatchChangesTheGreetingOfThePage(t *testing.T) {
+	t.Parallel()
+	r, _ := newRehearsal(time.Date(2026, 11, 11, 20, 0, 0, 0, time.UTC), "good")
+	page := rehearsedPage
+	for _, reh := range []rehearsal{r, {stamp: "20261111-200001"}} {
+		patch, err := reh.patch(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(filepath.Join(applyPatch(t, map[string]string{rehearsalPage: page}, patch), rehearsalPage))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := strings.Replace(rehearsedPage, "Hello from the sample app", reh.greeting(), 1)
+		if string(raw) != want || !addsGreeting(patch, reh.greeting()) {
+			t.Errorf("the patched page:\n%s\nwant:\n%s", raw, want)
+		}
+		page = string(raw)
+	}
+	if r.greeting() == (rehearsal{stamp: "20261111-200001"}).greeting() {
+		t.Error("two rehearsals a second apart ask for the same greeting")
+	}
+	for name, page := range map[string]string{
+		"no greeting":   "package main\n\nfunc page() {}\n",
+		"two greetings": rehearsedPage + strings.SplitAfter(rehearsedPage, "\n")[4] + "\n",
+	} {
+		if patch, err := r.patch(page); err == nil {
+			t.Errorf("a page with %s was patched:\n%s", name, patch)
+		}
+	}
+}
+
+// The bad candidate's patch adds one file, whatever the page says, that
+// git applies and that turns the page's injected failures on for every
+// request.
+func TestTheBadCandidatesPatchAddsAFileThatFailsEveryPage(t *testing.T) {
+	t.Parallel()
+	r, _ := newRehearsal(time.Date(2026, 11, 11, 20, 0, 0, 0, time.UTC), "bad")
+	patch, err := r.patch("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(applyPatch(t, nil, patch), rehearsalFaultFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(raw), "package main\n") || !strings.Contains(string(raw), `os.Setenv("HELLO_FAULT_ERROR_PERCENT", "100")`) {
+		t.Errorf("the file the bad candidate adds:\n%s", raw)
 	}
 }
