@@ -110,7 +110,10 @@ func (p *Pipeline) settleLKG(ctx context.Context, record core.StateRecord, req R
 // another release verified after it, when a later install pins the LKG,
 // or when another release of the unit was verified after it and still
 // waits to be finished. Releases are ordered by their Verified step; equal
-// instants supersede nothing.
+// instants supersede nothing. The unit of another release is the one its
+// build record names (unitOfRelease), never what a document of what it
+// still owes says: that document is written by the control zone, which
+// factoryd shares.
 func (p *Pipeline) supersededBy(ctx context.Context, record core.StateRecord, unit string, lkg LKG, found bool) (string, error) {
 	verifiedAt := record.UpdatedAt
 	if found {
@@ -131,14 +134,11 @@ func (p *Pipeline) supersededBy(ctx context.Context, record core.StateRecord, un
 			if r.IssueID == record.IssueID || !r.UpdatedAt.After(verifiedAt) {
 				continue
 			}
-			due, err := ReadFinishDue(ctx, tx, r.RunID)
-			if core.HasCode(err, core.CodeNotFound) {
-				continue // an earlier build's record names no unit
-			}
+			built, found, err := unitOfRelease(ctx, tx, r)
 			if err != nil {
 				return err
 			}
-			if due.Unit == unit && due.Release == r.ReleaseDigest {
+			if found && built == unit {
 				later = "the release of " + string(r.RunID) + " (" + string(r.ReleaseDigest) + ") was verified later"
 				return nil
 			}

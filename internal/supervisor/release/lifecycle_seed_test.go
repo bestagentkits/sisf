@@ -2,9 +2,12 @@ package release
 
 import (
 	"context"
+	"strings"
 	"time"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/qa"
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
@@ -68,6 +71,26 @@ func (w *world) seedReleaseCandidate(issue core.IssueRef, run core.RunID, build 
 	})
 	if err != nil {
 		w.t.Fatalf("seed %s to ReleaseCandidate: %v", issue, err)
+	}
+	w.seedBuild(run, 1, build, testUnit)
+}
+
+// seedBuild writes the candidate of run's attempt and the build record of
+// its commit, a build of unit, the way the supervisor's build stage writes
+// them. Each build has a commit of its own.
+func (w *world) seedBuild(run core.RunID, attempt int, build core.Digest, unit string) {
+	w.t.Helper()
+	commit := core.CommitSHA(strings.TrimPrefix(string(build), "sha256:")[:40])
+	doc := handoff.CandidateDoc{Candidate: qa.Candidate{RunID: run, Attempt: attempt, CommitSHA: commit, Digest: build}, Unit: unit}
+	record := handoff.BuildRecord{Commit: commit, Digest: build, Unit: unit, Builder: "simulated", TestsPassed: true}
+	err := w.store.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
+		if err := handoff.PutDoc(ctx, tx, handoff.BuildNamespace, handoff.BuildKey(commit), record); err != nil {
+			return err
+		}
+		return handoff.PutDoc(ctx, tx, handoff.BuildNamespace, handoff.CandidateKey(run, attempt), doc)
+	})
+	if err != nil {
+		w.t.Fatalf("seed the build of %s: %v", run, err)
 	}
 }
 
