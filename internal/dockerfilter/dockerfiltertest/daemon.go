@@ -351,7 +351,7 @@ func (d *Daemon) view(c *Container) map[string]any {
 		status = "exited"
 	}
 	return map[string]any{
-		"Id": c.ID, "Name": "/" + c.Name, "Image": "sha256:" + strings.Repeat("0", 64),
+		"Id": c.ID, "Name": "/" + c.Name, "Image": imageID(c.Image),
 		"Config":     map[string]any{"Labels": c.Labels, "Image": c.Image, "Env": c.Env, "User": c.User, "Cmd": c.Cmd},
 		"HostConfig": c.Host,
 		"State":      map[string]any{"Status": status, "Running": c.Running, "ExitCode": c.ExitCode},
@@ -373,4 +373,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v) // a broken test connection fails the test elsewhere
+}
+
+// imageID is the ID of the image a container was created from, as the
+// daemon reports it: the reference itself when it is an image ID, and a
+// fixed stand-in for the local image a registry digest resolves to.
+func imageID(ref string) string {
+	if rest, ok := strings.CutPrefix(ref, "sha256:"); ok && len(rest) == 64 {
+		return ref
+	}
+	return "sha256:" + strings.Repeat("0", 64)
 }

@@ -123,7 +123,9 @@ func (c *client) create(ctx context.Context, name string, req dockerfilter.Creat
 
 // containerView is what the adapter reads back about a container.
 type containerView struct {
-	ID     string `json:"Id"`
+	ID string `json:"Id"`
+	// Image is the ID of the image the daemon created the container from.
+	Image  string `json:"Image"`
 	Config struct {
 		Labels map[string]string `json:"Labels"`
 		Image  string            `json:"Image"`
