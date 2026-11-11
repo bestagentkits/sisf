@@ -56,6 +56,17 @@ The supervisor commits each agent's patch with its GitHub token to a branch `sis
 - The supervisor's token should not carry the `workflow` scope; `sisf doctor` warns when a classic token reports it.
 - **Operator requirement:** CI must not run secret-bearing jobs on pushes to `sisf/**` branches. A candidate branch holds code no reviewer has seen yet; anything CI already runs on a push (build scripts, test fixtures, `Makefile` targets) is under the agent's control there. Run secret-free checks only, or restrict secret-bearing workflows to protected branches and reviewed pull requests.
 
+### Merging a verified candidate (TM-02, TM-08)
+
+The supervisor merges a candidate's pull request into the default branch with its GitHub token ([ADR 0021](adr/0021-candidate-lands-by-supervisor-merge.md)). This is the factory's only write to the default branch. Required behavior:
+
+- The merge happens only after the release of that exact candidate build reached Verified, and only while the verified release is the build of the commit QA judged, the pull request targets the default branch, and its head is still that commit. The merge request carries the commit as `sha`, so GitHub refuses it if the branch moved (`cmd/supervisor/stages/candidate_landing.go`).
+- A candidate that changes a foundation or policy file (`stages.ProtectedPath`, ADRs included) is never merged by the factory; the Owner decides. The builder already refuses such patches; this is a second check at merge time.
+- No merge while the policy in force differs from the policy the run was pinned to, or while the factory is frozen. A rolled-back release is never merged.
+- Only the supervisor can merge. `github.Merger` is built from the supervisor's client; `*github.RESTClient` and the `github.Client` interface expose no merge, and a source scan fails the build if code outside `pkg/github`, `cmd/supervisor` and the test kit builds a merger (`pkg/github/merge_capability_boundary_test.go`).
+- **Limit:** control and the supervisor hold the same GitHub token in today's installs, so the boundary is in code, not in the credential. A compromised control process could merge with that token. Separate per-zone tokens would make it a credential boundary.
+- **Operator requirement:** protect the default branch if every change must be reviewed by a person before it lands; the factory then leaves each pull request open for the Owner.
+
 ### Agent process environment (TM-01, TM-13)
 
 A coding or QA agent never inherits the environment of the process that starts it: it gets a PATH, a private HOME and TMPDIR, its own provider's credential variables and the names the operator allows (`--agent-env`, `--qa-agent-env`); names starting with `SISF_`, `EDGE_` or `DOCKER_` and the state store's DSN variable are always refused (`pkg/agent/agentenv`). Because a child of the same OS user can still read its parent's `/proc/<pid>/environ`, the dispatcher starts a real coding agent only when it runs `--sandboxed` with an isolating execution backend, when `--agent-binary` names a sandboxing launcher, or when the manifest states `trusted_code_only`, which `sisf doctor` reports as a warning.

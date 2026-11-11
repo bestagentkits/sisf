@@ -34,6 +34,15 @@ Every surface runs through one action service and one action registry (`internal
 
 Parity across the five surfaces is proven by `tests/acceptance/five_surface_parity_test.go`; see the [acceptance matrix](../acceptance-matrix.md).
 
+## Progress on the issue and the candidate's pull request
+
+- Each claimed issue carries one factory comment, marked `<!-- sisf:progress -->`, edited in place at every checkpoint: the claim, each failed coding attempt, each QA verdict (score, pass mark, failed hard gates), a QA hold, the candidate's pull request, the release steps, a rollback, the merge or why there was none, and the close. It is rendered from the factory's records only, redacted, and written only when it changed (`cmd/factoryd/wiring/progress_projection.go`, `progress_render.go`).
+- When QA passes a candidate, the supervisor opens one pull request from `sisf/<factory>/<run>-<attempt>` to `main`, saying `Refs #N` so the merge does not close the issue (`cmd/supervisor/stages/candidate_pull_request.go`). `sisf runs inspect` shows it as `pull_request` with its state: `open`, `pending` (merging), `merged`, `left_for_owner` or `rolled_back`.
+- After the release of that candidate is verified, the supervisor merges the pull request at the candidate commit, then the issue closes ([ADR 0021](../adr/0021-candidate-lands-by-supervisor-merge.md), `cmd/supervisor/stages/candidate_landing.go`). It does not merge a candidate that changes a foundation or policy file, whose branch moved, whose policy pin no longer holds, or whose release was rolled back; the pull request is then left open with a note, `sisf runs explain` gives the reason, and the progress comment says the change is **not** merged. Merge or close those by hand.
+- When GitHub cannot be reached for the merge, or an emergency stop is in force when the merge is due, the issue stays in Verified with its landing recorded as due, and the merge is tried again on a later round (after the stop is lifted, and also after a restart); it is never merged twice.
+- The supervisor's token needs Contents: write and Pull requests: write. A protected default branch that refuses the factory's merge leaves every pull request for the Owner.
+- Candidate branches are never deleted by the factory. Delete them once their pull request is merged or closed.
+
 ## Signing in
 
 `sisf login` starts a device-style login: open the printed URL, check the code and approve. The CLI stores a short-lived token owner-only. The control URL comes from `--url`, then `$SISF_URL`, then `http://127.0.0.1:7463`; `$SISF_TOKEN` overrides the stored login.

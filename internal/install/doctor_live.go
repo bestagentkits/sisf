@@ -178,7 +178,7 @@ func (in *Installer) checkGitHub(ctx context.Context, c *collector, m *manifest.
 	case code != http.StatusOK:
 		c.fail("github", "answered %d for %s", code, repo)
 	case json.Unmarshal(body, &reply) == nil && reply.Permissions != nil && !reply.Permissions.Push:
-		c.fail("github", "the token can read %s but not write: issues, comments and pull requests need write access", repo)
+		c.fail("github", "the token can read %s but not write: issues, comments, candidate branches and pull requests, which the supervisor opens and merges, need write access", repo)
 	case reply.Permissions == nil:
 		c.ok("github", "%s is reachable; GitHub did not report the token's permissions", repo)
 	default:
