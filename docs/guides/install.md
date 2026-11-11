@@ -21,7 +21,7 @@ Requirements for every install:
 - `sisf` built once and kept at a stable path: `make install` in the checkout installs it into `$(go env GOPATH)/bin`, stamped with its version, commit and build date (`Makefile`); `sisf version` prints them. A plain `go install ./cmd/sisf` also works but reports its version as `devel`. Do not run `sisf init` from `go run`: the service units name the running executable, so `init` skips them for such a build.
 - Docker mode, or a Standalone build sandbox: Docker with Compose.
 - Free ports 7460-7469 on 127.0.0.1 (`internal/install/options.go`).
-- A new or empty install directory, on a file system that supports `flock`: `init` refuses one that holds other files, and a Standalone `sisf up` holds a lock on `<dir>/run/sisf.lock` and passes it to every unit it starts, so the install counts as running while any unit lives, also after that `sisf up` was killed, and a second `up` of the same install is refused until `sisf stop --dir <dir>` has stopped what is left (`internal/install/run_lock.go`, [operations](operations.md#lifecycle)).
+- A new or empty install directory, on a file system that supports `flock`: `init` refuses one that holds other files, and a Standalone `sisf up` holds a lock on `<dir>/run/sisf.lock` and passes it to every unit it starts, so the install counts as running while any unit lives, also after that `sisf up` was killed (on Linux the units of a killed `sisf up` are told to stop when it dies; elsewhere they keep running), and a second `up` of the same install is refused until `sisf stop --dir <dir>` has stopped what is left (`internal/install/run_lock.go`, [operations](operations.md#lifecycle)).
 
 ### One factory per machine
 
@@ -31,7 +31,7 @@ The ports are fixed, so one machine runs one factory. `init` does not check this
 - `sisf call`, `sisf login` and the commands built on `call` send nothing to a server that does not say it is the factory of the install in `--dir` or `$SISF_HOME` (`cmd/sisf/cmd_call_factory_identity.go`).
 - `sisf emergency-stop` sends a stop only to a supervisor that proves it serves this factory, and a supervisor refuses a stop for any factory but its own (`internal/supervisor/admin_emergency_stop.go`).
 
-In Standalone mode each factory unit may start only its own binary from the install's `bin/`: control and dispatcher `bin/factoryd`, edge `bin/sisf-edge`, runner `bin/sisf-runner`, qa-runner `bin/sisf-qa-runner`. The application unit may start the application launcher only without arguments, since the launcher runs the program its argument names. `sisf conformance check` refuses a manifest that does otherwise (`internal/conformance/rules_launchers.go`, `rules_standalone_executables.go`).
+In Standalone mode each factory unit may start only its own binary from the install's `bin/`: control and dispatcher `bin/factoryd`, edge `bin/sisf-edge`, runner `bin/sisf-runner`, qa-runner `bin/sisf-qa-runner`. The application unit may start the application launcher only without arguments, since the launcher runs the program its argument names. The `state` and `artifacts` units start no program of `bin/`, a command word with whitespace around the file name it names is refused, and `sisf-supervisor` always counts as the factory's binary, so the application unit may not start it. `sisf conformance check` refuses a manifest that does otherwise (`internal/conformance/rules_launchers.go`, `rules_standalone_executables.go`).
 
 Two Docker installs of repositories with the same name share a Compose project name (`sisf-<repository name>`). The second one's `up`, `stop`, `restart` and `down` refuse to touch a project another install made (`internal/install/docker_project_owner.go`); give the second install its own `--factory-id`.
 
@@ -129,6 +129,22 @@ Every port is bound to 127.0.0.1. Run a reverse proxy with TLS that forwards `<e
 4. Sign in at the external URL as the Owner, and `sisf login --url https://factory.example.com` for the CLI.
 
 Undo: `sisf down -v --dir /srv/sisf/factory` stops it if it runs and removes its data; then delete the directory, which holds the secrets and `factory.yaml`.
+
+## Declare the inputs of the application
+
+The factory publishes a candidate by itself only when every path it changes is an input of the one unit it releases; any other path is refused for the Owner's approval, and its pull request stays open for you ([threat model](../threat-model.md#merging-a-verified-candidate-tm-02-tm-08), `internal/supervisor/release/unit_inputs.go`). Built in, the inputs of `app` are the packages of `examples/hello-app/` and `build/hello-app.Dockerfile`. An application not laid out like `examples/hello-app/` must declare its inputs, otherwise every one of its candidates is refused for approval. Add `release.unit_inputs` to the install's `<dir>/factory.yaml`, the manifest the supervisor reads, and restart the factory, since the supervisor reads it when it starts:
+
+```yaml
+release:
+  units: [app]
+  unit_inputs:
+    app: ["*.go"]
+```
+
+- A pattern is a path relative to the repository root, matched against the whole path without regard to letter case; `*` stays within one directory, so `*.go` is the Go files at the root and `web/*.html` the pages directly in `web/`. A name without a wildcard is that one file. An entry replaces the built-in inputs of that unit. A unit needs an entry in `release.units` to have one.
+- `**`, an absolute path, `..` and a pattern made only of wildcards are refused (`pkg/manifest/unit_inputs.go`).
+- `sisf conformance check <dir>/factory.yaml` and `sisf up` refuse a pattern that can match a protected path (`release.unit_inputs_protected`), a `control` pattern that can match a file the Go toolchain reads (`release.unit_inputs_control_go_code`), and a pattern that can match a path another unit consumes (`release.unit_inputs_overlap`).
+- The supervisor never reads inputs from the repository, so a candidate cannot widen its own. The installed file is Owner-declared and protected by the install directory's permissions (a read-only mount in Docker mode); it is not signed.
 
 ## Running Standalone as a service
 

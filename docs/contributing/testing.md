@@ -32,6 +32,8 @@ CI ([.github/workflows/ci.yml](../../.github/workflows/ci.yml)) runs three jobs 
 
 `make check` runs the same locally, plus a plain `gofmt -l` that lists any unformatted file, and needs no Docker, network service or account.
 
+One acceptance test, `TestAVerifiedReleaseThatNoLongerServesBlocksItsIssueUntilTheOwnerRetriesIt` in `tests/acceptance/verified_release_unjudged_test.go`, needs a directory that cannot be written. It skips when run as root, which writes there anyway; run the suite as an ordinary user to exercise it.
+
 The generated API documents are checked by a test, not a separate step: `TestGeneratedDocumentsAreFresh` in `internal/actions/apispec` fails when `api/openapi.yaml` or `api/llms.txt` differ from what `make generate` writes.
 
 ## Running a subset
