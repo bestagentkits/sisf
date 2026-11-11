@@ -114,10 +114,11 @@ The fake GitHub keeps everything in memory. After a restart of the factory, post
 ## 5. Stop and clean up
 
 ```sh
-sisf stop          # or Ctrl-C in the terminal running sisf up; keeps everything
-sisf down -v       # also removes the data (issues, state); secrets and factory.yaml stay
-rm -rf "$SISF_HOME"
+sisf down -v           # while it runs: stops it and removes the data; secrets and factory.yaml stay
+rm -rf "$SISF_HOME"    # removes the install itself
 ```
+
+`sisf stop` (or Ctrl-C in the terminal running `sisf up`) stops it and keeps everything. Once a Standalone factory is stopped, `sisf stop`, `sisf down` and `sisf down -v` answer `NOT_FOUND: no running standalone factory was found` and change nothing; delete `$SISF_HOME/data` or the whole directory yourself.
 
 ## Docker Compose mode
 
@@ -137,6 +138,18 @@ docker exec sisf-hello-control factoryd policy approve --revision "$SHA"
 ```
 
 Clean up with `sisf down -v`, which also removes the project's containers, networks and volumes.
+
+## Development install
+
+Moved: [development install](install.md#development-install).
+
+## Real agents in Standalone
+
+Moved: [real agents in Standalone](install.md#real-agents-in-standalone).
+
+### Building in a Docker sandbox
+
+Moved: [building in a Docker sandbox](install.md#building-in-a-docker-sandbox).
 
 ## Next
 

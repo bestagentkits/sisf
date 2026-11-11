@@ -117,7 +117,7 @@ The control process opens two secret providers, and no other zone opens any (`cm
 
 ## Agents and builds
 
-Real coding and QA agents run only in Standalone mode under `trusted_code_only`; the flags and the refusal of `--agent-home` and `--qa-home` near the factory's protected paths are in [real agents in Standalone](install.md#real-agents-in-standalone). With `--exec local` candidate builds are held: the supervisor refuses to build an agent's code with the local backend. A Standalone install builds in a Docker sandbox the operator provides (`--exec docker` with the runner filter, sandbox network, egress proxy, runner image and a QA launcher); see [building in a Docker sandbox](install.md#building-in-a-docker-sandbox).
+Real coding and QA agents run only in Standalone mode under `trusted_code_only`; the flags and the refusal of `--agent-home` and `--qa-home` near the factory's protected paths are in the [quickstart](quickstart.md#real-agents-in-standalone). With `--exec local` candidate builds are held: the supervisor refuses to build an agent's code with the local backend. A Standalone install builds in a Docker sandbox the operator provides (`--exec docker` with the runner filter, sandbox network, egress proxy, runner image and a QA launcher); see the [quickstart](quickstart.md#building-in-a-docker-sandbox).
 
 ## Edge tokens
 
