@@ -60,6 +60,19 @@ func TestCompareListsWhatHeadChangedSinceTheMergeBase(t *testing.T) {
 	if files := listed(root, change); len(files) != 1 {
 		t.Fatalf("a base without head lists %v, want b.txt", files)
 	}
+	// A merge whose first parent is the commit the branch was made on: the
+	// merge base of the branch and the merge is the branch itself, not the
+	// older commit both descend from, which a search reaches first.
+	branch := commit(later, "d.txt", "d\n")
+	tree := call(http.MethodPost, "/git/trees", map[string]any{"base_tree": later,
+		"tree": []map[string]any{{"path": "d.txt", "mode": "100644", "type": "blob", "content": "d\n"}}})["sha"].(string)
+	merge := call(http.MethodPost, "/git/commits", map[string]any{"message": "merge", "tree": tree, "parents": []string{later, branch}})["sha"].(string)
+	if got := data.mergeBase("acme/app", branch, merge); got != branch {
+		t.Fatalf("the merge base of a merged branch and the merge is %s, want the branch %s", got, branch)
+	}
+	if files := listed(branch, merge); len(files) != 0 {
+		t.Fatalf("the merge lists %v since the branch, want nothing", files)
+	}
 }
 
 // Like a git commit, a commit made on a parent is a commit of its own even

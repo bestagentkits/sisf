@@ -241,38 +241,47 @@ func (g *GitData) revision(repoName, rev string) string {
 	return rev
 }
 
-// mergeBase is the nearest commit head descends from that base descends
-// from too, each counted as descending from itself; base when the history
-// this fake knows has none.
+// mergeBase is a best common ancestor of base and head, as git's merge
+// base: a commit both descend from, each counted as descending from itself,
+// that no other such commit descends from. A search's first common commit
+// is not enough: after a merge whose first parent is the commit a branch
+// was made on, that commit is reached before the branch. It is base when
+// the history this fake knows has none.
 func (g *GitData) mergeBase(repoName, base, head string) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	key := strings.ToLower(repoName) + "@"
-	walk := func(from string, visit func(string) bool) {
-		queue, seen := []string{from}, map[string]bool{from: true}
-		for len(queue) > 0 {
-			c := queue[0]
-			queue = queue[1:]
-			if !visit(c) {
-				return
-			}
-			for _, p := range g.parents[key+c] {
+	ancestors := func(from string) map[string]bool {
+		seen := map[string]bool{from: true}
+		for queue := []string{from}; len(queue) > 0; queue = queue[1:] {
+			for _, p := range g.parents[key+queue[0]] {
 				if !seen[p] {
 					seen[p] = true
 					queue = append(queue, p)
 				}
 			}
 		}
+		return seen
 	}
-	ofBase := map[string]bool{}
-	walk(base, func(c string) bool { ofBase[c] = true; return true })
-	found := base
-	walk(head, func(c string) bool {
+	ofBase, ofHead := ancestors(base), ancestors(head)
+	var common []string
+	for c := range ofHead {
 		if ofBase[c] {
-			found = c
-			return false
+			common = append(common, c)
 		}
-		return true
-	})
-	return found
+	}
+	slices.Sort(common) // a stable answer when several are best
+	for _, c := range common {
+		best := true
+		for _, other := range common {
+			if other != c && ancestors(other)[c] {
+				best = false
+				break
+			}
+		}
+		if best {
+			return c
+		}
+	}
+	return base
 }
