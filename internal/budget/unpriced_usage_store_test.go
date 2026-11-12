@@ -74,7 +74,8 @@ func bookRunWithoutACost(ctx context.Context, gate *budget.Gate, tx state.Tx, es
 
 // unpricedWarning is the one warning about usage without a reported cost.
 // It may say what such usage counts through, never that it was charged:
-// budget.get does not know whether anything was.
+// budget.get does not know whether anything was. It says that only the part
+// of the reservation not covered by reported costs can be charged.
 func unpricedWarning(t *testing.T, st budget.Status) {
 	t.Helper()
 	var found []string
@@ -86,10 +87,13 @@ func unpricedWarning(t *testing.T, st budget.Status) {
 	if len(found) != 1 {
 		t.Fatalf("warnings = %v, want one about usage with no cost reported", st.Warnings)
 	}
-	for _, claim := range []string{"was charged", "it is charged", "charged at", "is not counted in"} {
+	for _, claim := range []string{"was charged", "it is charged", "is charged when", "charged at", "is not counted in"} {
 		if strings.Contains(found[0], claim) {
 			t.Errorf("the warning %q claims %q, which budget.get cannot know", found[0], claim)
 		}
+	}
+	if !strings.Contains(found[0], "not covered by") {
+		t.Errorf("the warning %q does not say that only the part of the reservation not covered by reported costs is charged", found[0])
 	}
 }
 

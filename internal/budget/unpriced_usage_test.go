@@ -75,6 +75,9 @@ func TestStatusWarnsOnlyAboutUsageWithoutACost(t *testing.T) {
 			if got != c.want {
 				t.Errorf("warnings = %v, want %d about usage with no cost reported", st.Warnings, c.want)
 			}
+			if c.want == 1 {
+				unpricedWarning(t, st)
+			}
 		})
 	}
 }

@@ -61,8 +61,9 @@ func ReadStatus(ctx context.Context, src dispatcher.ConfirmationSource, ledger L
 		// Only what holds for every such record: whether a run's close
 		// charged anything for it is not known here.
 		st.Warnings = append(st.Warnings, "some usage had no cost reported by its provider: such usage counts against "+
-			"the budget only through the amount reserved for its run, which is charged when the run closes, and does not "+
-			"count when nothing was reserved, as with an unlimited budget and a run estimate of 0")
+			"the budget only through the amount reserved for its run, of which only the part not covered by the costs "+
+			"reported for that run can be charged when the run closes, possibly nothing, and does not count when nothing was "+
+			"reserved, as with an unlimited budget and a run estimate of 0")
 	}
 	if !settings.ProviderHardCap {
 		st.Warnings = append(st.Warnings, "the provider has no hard cap: the factory limits what it starts, but the provider may still charge beyond it")
