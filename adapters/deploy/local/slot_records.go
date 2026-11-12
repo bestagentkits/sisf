@@ -247,10 +247,12 @@ func (p *recordedProcess) CriticalSince(time.Time) int64 { return 0 }
 // sameProcess reports whether rec's pid still names the process recorded:
 // a live process that started at the recorded time, read the way the
 // record was written. A process that has exited but not been reaped is
-// taken as gone.
+// taken as gone. The spaces of a recorded start are not part of it: an
+// earlier build kept ps's start as ps prints it, with the day of the month
+// padded to two places, which processstart reads with single spaces.
 func sameProcess(rec slotRecord) bool {
 	start, err := processstart.ReadLike(rec.Start, rec.PID)
-	return err == nil && start != "" && start == rec.Start
+	return err == nil && start != "" && start == strings.Join(strings.Fields(rec.Start), " ")
 }
 
 // stopRecorded sends SIGTERM to the recorded process, waits for it to

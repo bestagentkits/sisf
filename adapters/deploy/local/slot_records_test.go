@@ -359,7 +359,15 @@ func TestARecordOfAnEarlierBuildIsCheckedTheWayItWasWritten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec["start"] = strings.Join(strings.Fields(string(out)), " ")
+	// An earlier build kept ps's start as ps prints it, with the day of the
+	// month padded to two places ("Thu Nov  5 ..."). The padding is put in
+	// whatever day the test runs on: the spaces of a recorded start are not
+	// part of it.
+	fields := strings.Fields(string(out))
+	if len(fields) != 5 {
+		t.Fatalf("ps printed %q, not a start", out)
+	}
+	rec["start"] = fields[0] + " " + fields[1] + "  " + strings.Join(fields[2:], " ")
 	if raw, err = json.Marshal(rec); err != nil {
 		t.Fatal(err)
 	}
