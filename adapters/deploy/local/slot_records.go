@@ -167,7 +167,11 @@ func (b *Backend) reattachSlot(ctx context.Context, s *slot) error {
 		b.cfg.Logger.Warn("a slot record that does not hold together is dropped without a signal", "slot", s.name)
 		return os.Remove(path)
 	}
-	if !sameProcess(rec) {
+	// A process that cannot be asked about keeps its record: dropping it
+	// would leave a live process nothing stops.
+	if same, err := sameProcess(rec); err != nil {
+		return err
+	} else if !same {
 		b.cfg.Logger.Info("a recorded process is gone; its record is dropped", "slot", s.name, "pid", rec.PID)
 		return os.Remove(path)
 	}
@@ -231,12 +235,17 @@ type recordedProcess struct {
 
 func (p *recordedProcess) PID() int { return p.rec.PID }
 
-func (p *recordedProcess) Alive() bool { return sameProcess(p.rec) }
+// Alive reports whether the recorded process still runs. One that cannot
+// be asked about is taken for running: nothing showed that it left.
+func (p *recordedProcess) Alive() bool {
+	same, err := sameProcess(p.rec)
+	return same || err != nil
+}
 
 // Stop ends the recorded process, if its pid still names it.
 func (p *recordedProcess) Stop(ctx context.Context) error {
-	if !sameProcess(p.rec) {
-		return nil
+	if same, err := sameProcess(p.rec); err != nil || !same {
+		return err
 	}
 	return stopRecorded(ctx, p.rec, p.clock)
 }
@@ -250,9 +259,14 @@ func (p *recordedProcess) CriticalSince(time.Time) int64 { return 0 }
 // taken as gone. The spaces of a recorded start are not part of it: an
 // earlier build kept ps's start as ps prints it, with the day of the month
 // padded to two places, which processstart reads with single spaces.
-func sameProcess(rec slotRecord) bool {
+//
+// An error says the process could not be asked about, not that it is gone.
+func sameProcess(rec slotRecord) (bool, error) {
 	start, err := processstart.ReadLike(rec.Start, rec.PID)
-	return err == nil && start != "" && start == strings.Join(strings.Fields(rec.Start), " ")
+	if err != nil {
+		return false, err
+	}
+	return start != "" && start == strings.Join(strings.Fields(rec.Start), " "), nil
 }
 
 // stopRecorded sends SIGTERM to the recorded process, waits for it to
@@ -268,8 +282,17 @@ func stopRecorded(ctx context.Context, rec slotRecord, clock core.Clock) error {
 		return fmt.Errorf("signal process %d: %w", rec.PID, err)
 	}
 	deadline, killed := clock.Now().Add(staleStopGrace), false
-	for sameProcess(rec) {
+	for {
+		same, err := sameProcess(rec)
+		if err == nil && !same {
+			return nil
+		}
 		if !clock.Now().Before(deadline) {
+			if err != nil {
+				// No signal is sent to a pid not shown to name the process,
+				// and the stop is not reported done.
+				return fmt.Errorf("process %d could not be shown to have left: %w", rec.PID, err)
+			}
 			if killed {
 				return fmt.Errorf("process %d did not leave after it was killed", rec.PID)
 			}
@@ -284,5 +307,4 @@ func stopRecorded(ctx context.Context, rec slotRecord, clock core.Clock) error {
 		case <-clock.After(stalePoll):
 		}
 	}
-	return nil
 }
