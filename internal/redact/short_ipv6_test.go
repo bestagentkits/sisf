@@ -99,3 +99,17 @@ func TestColonTextWithTrailingLabelsIsLeftAlone(t *testing.T) {
 		}
 	}
 }
+
+// A run of letters, digits and colons can hold more than one address, for
+// example two endpoints joined by labels. Each of them is replaced.
+func TestEveryShortenedIPv6AddressOfARunIsRedacted(t *testing.T) {
+	for in, want := range map[string]string{
+		"src:fe80::1:dst:fe80::2":       "src:" + MarkerIP + ":dst:" + MarkerIP,
+		"2001:db8::1:to:2001:db8::2":    MarkerIP + ":to:" + MarkerIP,
+		"x:fe80::1:y:fe80::2:z:fe80::3": "x:" + MarkerIP + ":y:" + MarkerIP + ":z:" + MarkerIP,
+	} {
+		if got := personalData(in); got != want {
+			t.Errorf("personalData(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

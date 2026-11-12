@@ -43,11 +43,7 @@ func personalData(text string) string {
 	for _, rule := range personalRules {
 		text = rule.re.ReplaceAllStringFunc(text, func(m string) string {
 			if rule.within != nil {
-				start, end, ok := rule.within(m)
-				if !ok {
-					return m
-				}
-				return m[:start] + rule.marker + m[end:]
+				return replaceWithin(m, rule.marker, rule.within)
 			}
 			if rule.valid != nil && !rule.valid(m) {
 				return m
@@ -56,6 +52,27 @@ func personalData(text string) string {
 		})
 	}
 	return text
+}
+
+// maxWithinPerMatch bounds how many pieces of personal data are replaced
+// inside one match, so the work on a long match stays bounded.
+const maxWithinPerMatch = 16
+
+// replaceWithin replaces the personal data within finds inside m, then what
+// it finds in the text before each piece it replaced, so that a match that
+// holds several pieces, such as two addresses joined by labels, loses all
+// of them. Text after a piece that was replaced is not searched again.
+func replaceWithin(m, marker string, within func(string) (start, end int, ok bool)) string {
+	rest, tail := m, ""
+	for range maxWithinPerMatch {
+		start, end, ok := within(rest)
+		if !ok {
+			break
+		}
+		tail = marker + rest[end:] + tail
+		rest = rest[:start]
+	}
+	return rest + tail
 }
 
 func digitsOf(s string) string {
