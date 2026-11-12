@@ -15,7 +15,7 @@ The Owner asked for `unlimited` as the default budget. That must not be read as 
 - Crossing the alert threshold notifies and does not stop unless the Owner chose `capped`.
 - Timeouts, max attempts, concurrency, rate limits and quotas always apply. Roles and scopes never escalate on their own.
 - In `capped` mode a reservation is made before a run starts. Unmeasured usage is shown as `unverified`; a provider without a hard limit is flagged.
-- Usage whose provider reports tokens but no cost is not free. In every mode it is charged, as `unverified`, at the amount reserved for its run, less what the run's priced usage already reported; the reservation is the factory's own estimate of the run's worst case. The record as reported is kept beside the charge. With nothing reserved it cannot be charged, and `budget.get` says its cost is not counted. Either way `budget.get` warns that some usage had no cost reported.
+- Usage whose provider reports tokens but no cost is recorded as reported, with no cost. When the reservation of a run with such usage is closed, the part of the reservation that the run's reported costs did not cover is charged as `unverified`; the reservation is the factory's own estimate of the run's worst case. Usage of a run that reserved nothing, as with an unlimited budget and a run estimate of 0, is not counted. `budget.get` warns when some usage had no cost reported.
 
 ## Consequences
 
@@ -24,4 +24,4 @@ The Owner asked for `unlimited` as the default budget. That must not be read as 
 
 ## Acceptance test
 
-- SISF-14 (unlimited is explicit and confirmed at install, alerts fire, capped reserves and stops): `internal/budget/budget_modes_test.go`; unsupported hard caps are flagged: `internal/budget/budget_status_test.go` (`TestUnverifiedUsageAndAMissingHardCapAreShown`); usage without a reported cost is charged, warned about and alerted on: `internal/budget/unpriced_usage_test.go`, `internal/budget/unpriced_usage_store_test.go`.
+- SISF-14 (unlimited is explicit and confirmed at install, alerts fire, capped reserves and stops): `internal/budget/budget_modes_test.go`; unsupported hard caps are flagged: `internal/budget/budget_status_test.go` (`TestUnverifiedUsageAndAMissingHardCapAreShown`); usage without a reported cost is recorded as reported, charged when its run closes and warned about: `internal/budget/unpriced_usage_test.go`, `internal/budget/unpriced_usage_store_test.go`.
