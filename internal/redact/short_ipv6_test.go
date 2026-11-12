@@ -113,3 +113,29 @@ func TestEveryShortenedIPv6AddressOfARunIsRedacted(t *testing.T) {
 		}
 	}
 }
+
+// An address is found whatever follows it in the run: a scoped name or other
+// text with "::" in it that is no address hides none of the addresses before
+// it.
+func TestShortenedIPv6AddressBeforeColonTextThatIsNoAddressIsRedacted(t *testing.T) {
+	for in, want := range map[string]string{
+		"fe80::1:std::string":          MarkerIP + ":std::string",
+		"peer:fe80::1:net::connect":    "peer:" + MarkerIP + ":net::connect",
+		"fe80::1:x:fe80::zz":           MarkerIP + ":x:fe80::zz",
+		"fe80::1:dst:fe80::2:foo::bar": MarkerIP + ":dst:" + MarkerIP + ":foo::bar",
+		"fe80::1:eth0::up":             MarkerIP + ":eth0::up",
+	} {
+		if got := personalData(in); got != want {
+			t.Errorf("personalData(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// However many addresses a run holds, none is left.
+func TestALongRunOfShortenedIPv6AddressesLosesAllOfThem(t *testing.T) {
+	in := strings.Repeat("fe80::1:l:", 500) + "fe80::1"
+	want := strings.Repeat(MarkerIP+":l:", 500) + MarkerIP
+	if got := personalData(in); got != want {
+		t.Errorf("personalData of 501 addresses in one run left %d of them", strings.Count(got, "fe80::1"))
+	}
+}

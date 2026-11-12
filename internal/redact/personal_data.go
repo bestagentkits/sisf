@@ -7,14 +7,14 @@ import (
 )
 
 // personalRule finds one kind of personal data. valid, when set, confirms a
-// candidate match, so numbers that merely look alike are left alone. within,
-// when set instead, gives the part of a candidate match that is personal
-// data, or ok false when none is; only that part is replaced.
+// candidate match, so numbers that merely look alike are left alone.
+// rewrite, when set instead, returns the candidate match with the personal
+// data in it replaced by marker and the rest as it was.
 type personalRule struct {
-	marker string
-	re     *regexp.Regexp
-	valid  func(match string) bool
-	within func(match string) (start, end int, ok bool)
+	marker  string
+	re      *regexp.Regexp
+	valid   func(match string) bool
+	rewrite func(match, marker string) string
 }
 
 // personalRules run in order: payment cards before phone numbers, so a card
@@ -26,11 +26,11 @@ var personalRules = []personalRule{
 	{marker: MarkerIP, re: regexp.MustCompile(`(?i)\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b`), valid: ipv6},
 	// Shortened IPv6 addresses ("2001:db8::1", "::1"): every unbroken run
 	// of letters, digits and colons is a candidate, and only the address in
-	// it is replaced (see shortIPv6Within), so "std::string" and "12:30:45"
+	// it is replaced (see withoutShortIPv6), so "std::string" and "12:30:45"
 	// stay. Text that happens to be a valid address ("a::b", or "abc::def"
 	// in "sha256:abc::def") is replaced as well: hiding too much is the
 	// safer mistake.
-	{marker: MarkerIP, re: regexp.MustCompile(`[0-9A-Za-z:]+`), within: shortIPv6Within},
+	{marker: MarkerIP, re: regexp.MustCompile(`[0-9A-Za-z:]+`), rewrite: withoutShortIPv6},
 	// International numbers, then common national formats.
 	{marker: MarkerPhone, re: regexp.MustCompile(`\+\d[\d ().\-]{6,18}\d`), valid: phoneDigits},
 	{marker: MarkerPhone, re: regexp.MustCompile(`\(\d{3}\) ?\d{3}[ .\-]\d{4}\b`)},
@@ -42,8 +42,8 @@ var personalRules = []personalRule{
 func personalData(text string) string {
 	for _, rule := range personalRules {
 		text = rule.re.ReplaceAllStringFunc(text, func(m string) string {
-			if rule.within != nil {
-				return replaceWithin(m, rule.marker, rule.within)
+			if rule.rewrite != nil {
+				return rule.rewrite(m, rule.marker)
 			}
 			if rule.valid != nil && !rule.valid(m) {
 				return m
@@ -52,27 +52,6 @@ func personalData(text string) string {
 		})
 	}
 	return text
-}
-
-// maxWithinPerMatch bounds how many pieces of personal data are replaced
-// inside one match, so the work on a long match stays bounded.
-const maxWithinPerMatch = 16
-
-// replaceWithin replaces the personal data within finds inside m, then what
-// it finds in the text before each piece it replaced, so that a match that
-// holds several pieces, such as two addresses joined by labels, loses all
-// of them. Text after a piece that was replaced is not searched again.
-func replaceWithin(m, marker string, within func(string) (start, end int, ok bool)) string {
-	rest, tail := m, ""
-	for range maxWithinPerMatch {
-		start, end, ok := within(rest)
-		if !ok {
-			break
-		}
-		tail = marker + rest[end:] + tail
-		rest = rest[:start]
-	}
-	return rest + tail
 }
 
 func digitsOf(s string) string {
@@ -124,44 +103,59 @@ func shortIPv6(s string) bool {
 // eight groups of four hex digits and seven colons.
 const maxIPv6Text = 39
 
-// shortIPv6Within finds an IPv6 address written with "::" in run, an
-// unbroken run of letters, digits and colons: the whole run, or else what is
-// left after the colons that end the run, a "label:" in front, labels at
-// the end, or a combination are cut, as "2001:db8::5" in "2001:db8::5:" or
-// "2001:db8::1::", "::1" in "ip:::1" and "fe80::1" in "fe80::1:eth0:up". A
-// label ends at a colon not preceded by another, and a label at the end
-// starts after one, so the "::" of an address is never split. The ends
-// tried are the end of the run, the colons that end it, and each single
-// colon within maxIPv6Text characters after the last "::"; each is tried
-// with the last maxIPv6Text characters before it, so the work per run is
-// bounded however long it is.
-func shortIPv6Within(run string) (start, end int, ok bool) {
-	ends := []int{len(run)}
-	body := strings.TrimRight(run, ":")
-	if len(body) < len(run) {
-		ends = append(ends, len(run)-1)
-		if len(body) < len(run)-1 {
-			ends = append(ends, len(body))
+// withoutShortIPv6 returns run, an unbroken run of letters, digits and
+// colons, with every IPv6 address written with "::" replaced by marker:
+// the whole run, or an address between labels, as "2001:db8::5" in
+// "2001:db8::5:" or "2001:db8::1::", "::1" in "ip:::1", "fe80::1" in
+// "fe80::1:eth0:up" and both addresses in "src:fe80::1:dst:fe80::2". An
+// address starts at the start of the run or after a "label:", whose colon
+// is not preceded by another. It ends at the end of the run, before the
+// colons that end the run, or before a ":label", whose colon is not
+// followed by another. So the "::" of an address is never split, and
+// "std::string" or "1::2::3" hold no address. The run is read from the
+// left, and from each start the longest address is taken. Each start is
+// tried with at most maxIPv6Text characters, so the work grows with the
+// length of the run and no more.
+func withoutShortIPv6(run, marker string) string {
+	if !strings.Contains(run, "::") {
+		return run
+	}
+	body := len(strings.TrimRight(run, ":"))
+	var out strings.Builder
+	written := 0
+	for start := 0; start < len(run); start++ {
+		afterLabel := start == 0 || run[start-1] == ':' && (start == 1 || run[start-2] != ':')
+		if !afterLabel {
+			continue
+		}
+		end := shortIPv6End(run, start, body)
+		if end < 0 {
+			continue
+		}
+		out.WriteString(run[written:start])
+		out.WriteString(marker)
+		written = end
+		start = end - 1
+	}
+	out.WriteString(run[written:])
+	return out.String()
+}
+
+// shortIPv6End gives where the longest IPv6 address written with "::" that
+// starts at start ends in run, or -1 when none starts there. body is the
+// length of run without the colons that end it.
+func shortIPv6End(run string, start, body int) int {
+	limit := min(len(run), start+maxIPv6Text)
+	if !strings.Contains(run[start:limit], "::") {
+		return -1
+	}
+	for end := limit; end > start; end-- {
+		beforeLabel := end == len(run) || run[end] == ':' && (end >= body || run[end+1] != ':')
+		if beforeLabel && shortIPv6(run[start:end]) {
+			return end
 		}
 	}
-	if last := strings.LastIndex(body, "::"); last >= 0 {
-		// Longest first: the last single colon before a label first.
-		for cut := min(len(body)-1, last+1+maxIPv6Text); cut > last+1; cut-- {
-			if body[cut] == ':' && body[cut-1] != ':' {
-				ends = append(ends, cut)
-			}
-		}
-	}
-	for _, end := range ends {
-		// Longest first: the run up to end, then after each label.
-		for start := max(end-maxIPv6Text, 0); start < end; start++ {
-			afterLabel := start == 0 || run[start-1] == ':' && (start == 1 || run[start-2] != ':')
-			if afterLabel && shortIPv6(run[start:end]) {
-				return start, end, true
-			}
-		}
-	}
-	return 0, 0, false
+	return -1
 }
 
 func phoneDigits(s string) bool {
