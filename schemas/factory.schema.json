@@ -1,0 +1,872 @@
+{
+  "$defs": {
+    "AdapterRef": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "name": {
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Adapters": {
+      "additionalProperties": false,
+      "properties": {
+        "coder": {
+          "$ref": "#/$defs/AdapterRef"
+        },
+        "deploy": {
+          "$ref": "#/$defs/AdapterRef"
+        },
+        "execution": {
+          "$ref": "#/$defs/AdapterRef"
+        },
+        "qa": {
+          "$ref": "#/$defs/AdapterRef"
+        }
+      },
+      "required": [
+        "coder",
+        "qa",
+        "execution",
+        "deploy"
+      ],
+      "type": "object"
+    },
+    "ArtifactStore": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "volume",
+            "object_store"
+          ],
+          "type": "string"
+        },
+        "location": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "location"
+      ],
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "capped"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "cap_micros"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "alert_off": {
+          "type": "boolean"
+        },
+        "alert_threshold_micros": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cap_micros": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mode": {
+          "enum": [
+            "unlimited",
+            "capped"
+          ],
+          "type": "string"
+        },
+        "period": {
+          "enum": [
+            "one_time",
+            "monthly"
+          ],
+          "type": "string"
+        },
+        "rollback_reserve_micros": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
+    "Component": {
+      "additionalProperties": false,
+      "properties": {
+        "credentials_ref": {
+          "description": "Reference to the credential set only this zone may use, written env:NAME or local:path/name; no two zones share one.",
+          "pattern": "^(env:[A-Z_][A-Z0-9_]*|local:[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$",
+          "type": "string"
+        },
+        "health_check": {
+          "type": "string"
+        },
+        "source": {
+          "description": "Directory of the zone's code in the repository.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "store_role": {
+          "description": "Role this zone opens the state store with; no two zones share one.",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "credentials_ref",
+        "store_role"
+      ],
+      "type": "object"
+    },
+    "Components": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/Component"
+        },
+        "application": {
+          "$ref": "#/$defs/Component"
+        },
+        "control": {
+          "$ref": "#/$defs/Component"
+        }
+      },
+      "required": [
+        "application",
+        "agent",
+        "control"
+      ],
+      "type": "object"
+    },
+    "EgressPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "items": {
+            "pattern": "^(\\*\\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "enum": [
+            "allowlist",
+            "unrestricted"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
+    "Limits": {
+      "additionalProperties": false,
+      "properties": {
+        "clarify_timeout": {
+          "pattern": "^(0|([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$",
+          "type": "string"
+        },
+        "concurrency": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_attempts": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "run_timeout": {
+          "pattern": "^(0|([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_timeout",
+        "max_attempts",
+        "concurrency",
+        "clarify_timeout"
+      ],
+      "type": "object"
+    },
+    "LowTraffic": {
+      "additionalProperties": false,
+      "properties": {
+        "min_hold": {
+          "pattern": "^(0|([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$",
+          "type": "string"
+        },
+        "synthetic_suite": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "min_hold"
+      ],
+      "type": "object"
+    },
+    "ModelRoute": {
+      "additionalProperties": false,
+      "properties": {
+        "effort": {
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "provider": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ],
+      "type": "object"
+    },
+    "ModelRoutes": {
+      "additionalProperties": false,
+      "properties": {
+        "escalation": {
+          "additionalProperties": false,
+          "properties": {
+            "coding": {
+              "items": {
+                "$ref": "#/$defs/ModelRoute"
+              },
+              "type": "array"
+            },
+            "intake": {
+              "items": {
+                "$ref": "#/$defs/ModelRoute"
+              },
+              "type": "array"
+            },
+            "planning": {
+              "items": {
+                "$ref": "#/$defs/ModelRoute"
+              },
+              "type": "array"
+            },
+            "qa": {
+              "items": {
+                "$ref": "#/$defs/ModelRoute"
+              },
+              "type": "array"
+            },
+            "read_only": {
+              "items": {
+                "$ref": "#/$defs/ModelRoute"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "max_escalations": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "routes": {
+          "additionalProperties": false,
+          "properties": {
+            "coding": {
+              "$ref": "#/$defs/ModelRoute"
+            },
+            "intake": {
+              "$ref": "#/$defs/ModelRoute"
+            },
+            "planning": {
+              "$ref": "#/$defs/ModelRoute"
+            },
+            "qa": {
+              "$ref": "#/$defs/ModelRoute"
+            },
+            "read_only": {
+              "$ref": "#/$defs/ModelRoute"
+            }
+          },
+          "type": "object"
+        },
+        "same_model_route": {
+          "description": "Owner's acknowledgement that QA runs on the coding agent's provider and model. Without it such a route table is refused; with it every QA receipt records same_model_route.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "routes"
+      ],
+      "type": "object"
+    },
+    "Mount": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "read_only": {
+          "type": "boolean"
+        },
+        "volume": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "volume",
+        "path"
+      ],
+      "type": "object"
+    },
+    "Network": {
+      "additionalProperties": false,
+      "properties": {
+        "egress_via": {
+          "type": "string"
+        },
+        "internal": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Release": {
+      "additionalProperties": false,
+      "properties": {
+        "canary_steps": {
+          "items": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "low_traffic": {
+          "$ref": "#/$defs/LowTraffic"
+        },
+        "policy": {
+          "enum": [
+            "A",
+            "B",
+            "C"
+          ],
+          "type": "string"
+        },
+        "rollback": {
+          "$ref": "#/$defs/Rollback"
+        },
+        "strategy": {
+          "enum": [
+            "blue_green",
+            "canary"
+          ],
+          "type": "string"
+        },
+        "units": {
+          "description": "Units the factory may publish by itself. The supervisor is never one of them.",
+          "items": {
+            "enum": [
+              "app",
+              "control",
+              "supervisor",
+              "dispatcher",
+              "runner",
+              "qa-runner",
+              "state",
+              "artifacts",
+              "edge"
+            ],
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "policy",
+        "strategy",
+        "units",
+        "rollback",
+        "low_traffic"
+      ],
+      "type": "object"
+    },
+    "Repository": {
+      "additionalProperties": false,
+      "properties": {
+        "owner": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*$",
+          "type": "string"
+        },
+        "repo": {
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner",
+        "repo"
+      ],
+      "type": "object"
+    },
+    "Rollback": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_delta": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "consecutive_windows": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "error_rate": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "min_samples": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "window": {
+          "pattern": "^(0|([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_rate",
+        "baseline_delta",
+        "min_samples",
+        "window",
+        "consecutive_windows"
+      ],
+      "type": "object"
+    },
+    "StateStore": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "driver": {
+                "const": "sqlite"
+              }
+            },
+            "required": [
+              "driver"
+            ]
+          },
+          "then": {
+            "required": [
+              "path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "driver": {
+                "const": "postgres"
+              }
+            },
+            "required": [
+              "driver"
+            ]
+          },
+          "then": {
+            "required": [
+              "dsn_ref"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "driver": {
+          "enum": [
+            "sqlite",
+            "postgres"
+          ],
+          "type": "string"
+        },
+        "dsn_ref": {
+          "description": "Reference to the connection secret, written env:NAME or local:path/name. The connection string itself never goes in this file.",
+          "pattern": "^(env:[A-Z_][A-Z0-9_]*|local:[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$",
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "driver"
+      ],
+      "type": "object"
+    },
+    "Storage": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "$ref": "#/$defs/ArtifactStore"
+        },
+        "state": {
+          "$ref": "#/$defs/StateStore"
+        }
+      },
+      "required": [
+        "state",
+        "artifacts"
+      ],
+      "type": "object"
+    },
+    "Supervisor": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "description": "Pins the supervisor's artifact.",
+          "pattern": "^(sha256:[a-f0-9]{64}|sha512:[a-f0-9]{128})$",
+          "type": "string"
+        },
+        "digest_change": {
+          "description": "Who may change the pinned digest. Only \"governance\", a cycle approved by a person, keeps the supervisor out of a candidate's reach.",
+          "enum": [
+            "governance",
+            "pipeline"
+          ],
+          "type": "string"
+        },
+        "image": {
+          "description": "The supervisor's own artifact; never the artifact of a candidate.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "root_key_ref": {
+          "description": "Reference to the root public key that verifies the signed manifest, written env:NAME or local:path/name.",
+          "pattern": "^(env:[A-Z_][A-Z0-9_]*|local:[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$",
+          "type": "string"
+        },
+        "startup_self_check": {
+          "description": "Makes the supervisor refuse to run when its digest deviates from the signed manifest.",
+          "type": "boolean"
+        },
+        "trust_volume": {
+          "description": "Volume holding the last known good release, the signing keys and the rollback configuration. Only the supervisor writes it.",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "image",
+        "digest",
+        "trust_volume",
+        "root_key_ref",
+        "digest_change",
+        "startup_self_check"
+      ],
+      "type": "object"
+    },
+    "Unit": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "credentials_ref": {
+          "description": "Reference to a credential set of the unit's own, written env:NAME or local:path/name. The qa-runner names one that differs from the runner's.",
+          "pattern": "^(env:[A-Z_][A-Z0-9_]*|local:[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^(sha256:[a-f0-9]{64}|sha512:[a-f0-9]{128})$",
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "lifecycle": {
+          "enum": [
+            "long_running",
+            "ephemeral",
+            "durable"
+          ],
+          "type": "string"
+        },
+        "mounts": {
+          "items": {
+            "$ref": "#/$defs/Mount"
+          },
+          "type": "array"
+        },
+        "networks": {
+          "items": {
+            "enum": [
+              "app",
+              "factory",
+              "control",
+              "sandbox"
+            ],
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "public": {
+          "type": "boolean"
+        },
+        "public_routes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "lifecycle"
+      ],
+      "type": "object"
+    },
+    "Volume": {
+      "additionalProperties": false,
+      "properties": {
+        "holder": {
+          "description": "Unit that keeps a shared volume. Left out, artifacts holds the volume storage.artifacts names and state holds any other.",
+          "enum": [
+            "state",
+            "artifacts",
+            "edge"
+          ],
+          "type": "string"
+        },
+        "zone": {
+          "enum": [
+            "application",
+            "agent",
+            "control",
+            "shared"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "zone"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/bestagentkits/sisf/main/schemas/factory.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Desired state of one factory deployment: one factory_id, three zones, nine runtime units and the trusted release supervisor, sharing one release manifest and one lifecycle.",
+  "properties": {
+    "adapters": {
+      "$ref": "#/$defs/Adapters"
+    },
+    "api_version": {
+      "const": "sisf/v1",
+      "description": "Manifest version; always sisf/v1.",
+      "type": "string"
+    },
+    "budget": {
+      "$ref": "#/$defs/Budget",
+      "description": "Spending policy set by the Owner. Measured costs live in the ledger, never here."
+    },
+    "components": {
+      "$ref": "#/$defs/Components",
+      "description": "The three zone components. A deployment missing one is not a factory deployment."
+    },
+    "deployment_id": {
+      "description": "Name of this installation of the factory. It differs from factory_id and from any run identifier.",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$",
+      "type": "string"
+    },
+    "egress": {
+      "$ref": "#/$defs/EgressPolicy",
+      "description": "Outbound network policy of agent sandboxes."
+    },
+    "extensions": {
+      "additionalProperties": {},
+      "description": "Settings these types do not model yet. Nothing here can grant a permission or relax a check.",
+      "type": "object"
+    },
+    "factory_id": {
+      "description": "Identity of the deployment for its whole life. All three zones share it.",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$",
+      "type": "string"
+    },
+    "limits": {
+      "$ref": "#/$defs/Limits",
+      "description": "Bounds on every task, whatever the budget mode."
+    },
+    "mode": {
+      "description": "How the units are realized: supervised processes on one machine, or one compose project.",
+      "enum": [
+        "standalone",
+        "docker"
+      ],
+      "type": "string"
+    },
+    "model_routes": {
+      "$ref": "#/$defs/ModelRoutes",
+      "description": "Model per kind of step. Code reads this table; a model never picks its own route."
+    },
+    "networks": {
+      "additionalProperties": false,
+      "description": "The four network segments. All must be declared.",
+      "properties": {
+        "app": {
+          "$ref": "#/$defs/Network"
+        },
+        "control": {
+          "$ref": "#/$defs/Network"
+        },
+        "factory": {
+          "$ref": "#/$defs/Network"
+        },
+        "sandbox": {
+          "$ref": "#/$defs/Network"
+        }
+      },
+      "required": [
+        "app",
+        "factory",
+        "control",
+        "sandbox"
+      ],
+      "type": "object"
+    },
+    "release": {
+      "$ref": "#/$defs/Release",
+      "description": "Release policy: delegation mode, switching strategy and automatic rollback thresholds."
+    },
+    "repository": {
+      "$ref": "#/$defs/Repository"
+    },
+    "storage": {
+      "$ref": "#/$defs/Storage"
+    },
+    "supervisor": {
+      "$ref": "#/$defs/Supervisor",
+      "description": "The trusted release supervisor. Leaving it out disables self-update."
+    },
+    "trusted_code_only": {
+      "description": "Owner's acknowledgement that the execution backend can neither isolate agent runs nor enforce the egress policy, so the deployment runs only code the Owner trusts. Without it such a backend is refused.",
+      "type": "boolean"
+    },
+    "units": {
+      "additionalProperties": false,
+      "description": "The nine runtime units, by name. All must be declared.",
+      "properties": {
+        "app": {
+          "$ref": "#/$defs/Unit"
+        },
+        "artifacts": {
+          "$ref": "#/$defs/Unit"
+        },
+        "control": {
+          "$ref": "#/$defs/Unit"
+        },
+        "dispatcher": {
+          "$ref": "#/$defs/Unit"
+        },
+        "edge": {
+          "$ref": "#/$defs/Unit"
+        },
+        "qa-runner": {
+          "$ref": "#/$defs/Unit"
+        },
+        "runner": {
+          "$ref": "#/$defs/Unit"
+        },
+        "state": {
+          "$ref": "#/$defs/Unit"
+        },
+        "supervisor": {
+          "$ref": "#/$defs/Unit"
+        }
+      },
+      "required": [
+        "app",
+        "control",
+        "supervisor",
+        "dispatcher",
+        "runner",
+        "qa-runner",
+        "state",
+        "artifacts",
+        "edge"
+      ],
+      "type": "object"
+    },
+    "volumes": {
+      "additionalProperties": false,
+      "description": "Named places for files; each states the only zone allowed to write to it.",
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9._-]*$": {
+          "$ref": "#/$defs/Volume"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "api_version",
+    "factory_id",
+    "deployment_id",
+    "mode",
+    "repository",
+    "components",
+    "units",
+    "networks",
+    "storage",
+    "adapters",
+    "release",
+    "budget",
+    "limits",
+    "egress",
+    "model_routes"
+  ],
+  "title": "SISF factory manifest",
+  "type": "object"
+}
