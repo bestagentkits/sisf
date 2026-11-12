@@ -158,14 +158,10 @@ func (t *tx) BudgetTotals(ctx context.Context, since time.Time) (core.BudgetTota
 	if err != nil {
 		return core.BudgetTotals{}, err
 	}
-	// Usage whose provider reported tokens and no cost (core.Usage.CostUnreported),
-	// and of it what belongs to a run that reserved nothing to stand for its cost.
-	if err := t.q.row(ctx, `SELECT CAST(COUNT(*) AS BIGINT),
-		CAST(COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM reservations r
-			WHERE r.factory_id = u.factory_id AND r.run_id = u.run_id AND r.amount > 0) THEN 1 ELSE 0 END), 0) AS BIGINT)
-		FROM usage_ledger u
-		WHERE u.factory_id = ? AND u.recorded_at >= ? AND u.verified = ? AND u.cost = 0 AND u.input_tokens + u.output_tokens > 0`,
-		string(t.store.factory), toNanos(since), false).Scan(&totals.Unpriced, &totals.UnpricedUncharged); err != nil {
+	// Usage whose provider reported tokens and no cost (core.Usage.CostUnreported).
+	if err := t.q.row(ctx, `SELECT CAST(COUNT(*) AS BIGINT) FROM usage_ledger
+		WHERE factory_id = ? AND recorded_at >= ? AND verified = ? AND cost = 0 AND input_tokens + output_tokens > 0`,
+		string(t.store.factory), toNanos(since), false).Scan(&totals.Unpriced); err != nil {
 		return core.BudgetTotals{}, t.store.dialect.failure("count usage without a cost", err)
 	}
 	return totals, nil

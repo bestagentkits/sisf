@@ -154,9 +154,9 @@ func TestBudgetTotalsCountHeldReservationsAndUsageSinceTheInstant(t *testing.T) 
 	})
 }
 
-// Unverified usage with tokens and no cost is counted apart, and so is the
-// part of it whose run reserved nothing that could stand for its cost.
-// Usage with a cost, verified usage and usage without tokens are not.
+// Unverified usage with tokens and no cost is counted apart, whatever its
+// run reserved. Usage with a cost, verified usage and usage without tokens
+// are not.
 func TestBudgetTotalsCountUsageWithoutACost(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
@@ -191,7 +191,7 @@ func TestBudgetTotalsCountUsageWithoutACost(t *testing.T) {
 			}
 			return nil
 		})
-		want := core.BudgetTotals{Reserved: 5_000_000, SpentUnverified: 60, Unpriced: 3, UnpricedUncharged: 2}
+		want := core.BudgetTotals{Reserved: 5_000_000, SpentUnverified: 60, Unpriced: 3}
 		if got := totals(t, s, periodStart); got != want {
 			t.Fatalf("totals since the period start = %+v, want %+v", got, want)
 		}

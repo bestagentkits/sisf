@@ -57,11 +57,12 @@ func ReadStatus(ctx context.Context, src dispatcher.ConfirmationSource, ledger L
 	if totals.SpentUnverified > 0 {
 		st.Warnings = append(st.Warnings, "some usage is unverified: the provider could not confirm the amount")
 	}
-	if charged := totals.Unpriced - totals.UnpricedUncharged; charged > 0 {
-		st.Warnings = append(st.Warnings, "some usage had no cost reported by its provider: it is charged at the amount reserved for its run, as unverified spending")
-	}
-	if totals.UnpricedUncharged > 0 {
-		st.Warnings = append(st.Warnings, "some usage had no cost reported by its provider and its run reserved nothing: its cost is not counted in the spending shown")
+	if totals.Unpriced > 0 {
+		// Only what holds for every such record: whether a run's close
+		// charged anything for it is not known here.
+		st.Warnings = append(st.Warnings, "some usage had no cost reported by its provider: such usage counts against "+
+			"the budget only through the amount reserved for its run, which is charged when the run closes, and does not "+
+			"count when nothing was reserved, as with an unlimited budget and a run estimate of 0")
 	}
 	if !settings.ProviderHardCap {
 		st.Warnings = append(st.Warnings, "the provider has no hard cap: the factory limits what it starts, but the provider may still charge beyond it")

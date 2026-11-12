@@ -121,12 +121,8 @@ type BudgetTotals struct {
 	SpentVerified   Micros `json:"spent_verified"`
 	SpentUnverified Micros `json:"spent_unverified"`
 	// Unpriced counts the usage records whose provider reported no cost
-	// (see Usage.CostUnreported). What their runs reserved stands for their
-	// cost in the spending above.
+	// (see Usage.CostUnreported). Their cost is not in the spending above.
 	Unpriced int64 `json:"unpriced"`
-	// UnpricedUncharged counts the Unpriced records of a run that reserved
-	// nothing, so no amount stands for their cost and they are not counted.
-	UnpricedUncharged int64 `json:"unpriced_uncharged"`
 }
 
 // BudgetLedger is the durable record a gate works against. A state-store
