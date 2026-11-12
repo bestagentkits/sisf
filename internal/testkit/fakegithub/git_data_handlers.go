@@ -228,7 +228,37 @@ func (g *GitData) compare(w http.ResponseWriter, r *http.Request) {
 	for n := len(files); beyond && n < compareFileLimit; n++ {
 		files = append(files, jFile{Filename: fmt.Sprintf("listed-beyond/%03d.txt", n), Status: "added"})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": files[:min(len(files), compareFileLimit)]})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total_commits": g.commitsAhead(repoName(r), baseSHA, headSHA),
+		"files":         files[:min(len(files), compareFileLimit)],
+	})
+}
+
+// commitsAhead counts the commits head has that base does not, GitHub's
+// total_commits of a comparison.
+func (g *GitData) commitsAhead(repoName, base, head string) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	key := strings.ToLower(repoName) + "@"
+	reach := func(from string) map[string]bool {
+		seen := map[string]bool{from: true}
+		for queue := []string{from}; len(queue) > 0; queue = queue[1:] {
+			for _, p := range g.parents[key+queue[0]] {
+				if !seen[p] {
+					seen[p] = true
+					queue = append(queue, p)
+				}
+			}
+		}
+		return seen
+	}
+	ofBase, ahead := reach(base), 0
+	for c := range reach(head) {
+		if !ofBase[c] {
+			ahead++
+		}
+	}
+	return ahead
 }
 
 // compareFileLimit is how many files GitHub lists in a comparison at most.

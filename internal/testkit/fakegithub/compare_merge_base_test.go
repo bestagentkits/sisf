@@ -57,6 +57,16 @@ func TestCompareListsWhatHeadChangedSinceTheMergeBase(t *testing.T) {
 	if files := listed(later, change); len(files) != 0 {
 		t.Fatalf("a base that contains head lists %v", files)
 	}
+	// total_commits counts what head has and base lacks, as GitHub does, so
+	// a client can tell commits that list no file from no commits at all.
+	for _, tc := range []struct {
+		base, head string
+		want       float64
+	}{{later, change, 0}, {root, change, 1}, {root, later, 2}} {
+		if got := call(http.MethodGet, "/compare/"+tc.base+"..."+tc.head, nil)["total_commits"]; got != tc.want {
+			t.Fatalf("total_commits of %s...%s = %v, want %v", tc.base, tc.head, got, tc.want)
+		}
+	}
 	if files := listed(root, change); len(files) != 1 {
 		t.Fatalf("a base without head lists %v, want b.txt", files)
 	}
