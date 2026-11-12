@@ -108,13 +108,15 @@ func fenced(text string) string {
 }
 
 // reportIssueTitle is the title of the issue for r: a fixed prefix and the
-// report's title on one line, its character references decoded, defused,
-// redacted once more by redact and bounded. A title is not fenced, so
+// report's title on one line, its character references decoded, redacted
+// by redact, defused, redacted once more and bounded: defusing breaks an @
+// or a # before a digit, so an address or a secret holding one is redacted
+// before, and what defusing joined after. A title is not fenced, so
 // GitHub may show a reference such as &#8203; as the character it names;
 // decoded first, an invisible character it names is dropped like any
 // other and cannot rebuild a secret split by it.
 func reportIssueTitle(r report.Report, redact func(string) string) string {
-	title := strings.Join(strings.Fields(redact(defuse(decodeReferences(r.Title), false))), " ")
+	title := strings.Join(strings.Fields(redact(defuse(redact(decodeReferences(r.Title)), false))), " ")
 	if title == "" {
 		title = "(no title)"
 	}
@@ -125,12 +127,12 @@ func reportIssueTitle(r report.Report, redact func(string) string) string {
 // that names the report, says under a fixed header where the text came from
 // and that nothing checked it, and gives the text defused in fenced blocks,
 // with only when it was received and the report's ID: nothing about who
-// sent it. The text is redacted by redact once more after it was defused,
-// before it is cut, so no secret is shown whole or in part that defusing
-// joined.
+// sent it. The text is redacted by redact before it is defused, which
+// breaks an @ or a # before a digit, and once more after, before it is
+// cut, so no secret is shown whole or in part that defusing joined.
 func reportIssueBody(r report.Report, redact func(string) string) string {
-	title := redact(defuse(r.Title, false))
-	body := cut(redact(defuse(r.Body, true)), maxReportIssueBodyRunes, "\n[cut to "+fmt.Sprint(maxReportIssueBodyRunes)+" characters]")
+	title := redact(defuse(redact(r.Title), false))
+	body := cut(redact(defuse(redact(r.Body), true)), maxReportIssueBodyRunes, "\n[cut to "+fmt.Sprint(maxReportIssueBodyRunes)+" characters]")
 	var b strings.Builder
 	b.WriteString(report.IssueMarker(r.ID) + "\n")
 	b.WriteString("### Unverified report from the public report endpoint\n\n")
