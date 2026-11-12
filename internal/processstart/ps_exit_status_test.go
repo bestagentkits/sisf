@@ -19,18 +19,20 @@ func fakePS(t *testing.T, script string) {
 	t.Setenv("PATH", bin)
 }
 
-// Only a ps that exits with 1 and prints nothing says the process is gone,
-// which is how ps answers for a pid no process has. A ps killed by a signal
-// or exiting with another status said nothing about the process, so the
-// start is unavailable rather than taken for gone.
+// Only a ps that exits with 1 and prints nothing, not even an error, says the
+// process is gone, which is how ps answers for a pid no process has. A ps
+// killed by a signal, exiting with another status or complaining about its
+// arguments said nothing about the process, so the start is unavailable
+// rather than taken for gone.
 func TestOnlyAPSThatExitsWithOneSaysTheProcessIsGone(t *testing.T) {
 	for name, c := range map[string]struct {
 		script string
 		gone   bool
 	}{
-		"exits with 1":       {"exit 1", true},
-		"killed by a signal": {"kill -9 $$", false},
-		"exits with 2":       {"exit 2", false},
+		"exits with 1":                 {"exit 1", true},
+		"killed by a signal":           {"kill -9 $$", false},
+		"exits with 2":                 {"exit 2", false},
+		"rejects its arguments with 1": {"echo 'ps: illegal option' >&2; exit 1", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fakePS(t, c.script)
