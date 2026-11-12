@@ -168,18 +168,17 @@ func TestAnAttemptAnsweredWithAClientErrorIsNotCharged(t *testing.T) {
 	})
 }
 
-// A clock stepped back leaves charges dated in its future. Beyond a minute's
-// skew they are dropped, so publishing is not paused for longer than a day
-// by issues the clock dates ahead of now; within it they are kept.
-func TestChargesDatedAheadOfASteppedBackClockAreDropped(t *testing.T) {
+// A clock stepped back leaves charges dated in its future. They still
+// count, so the step back opens no room for a second budget, and they lapse
+// a day after their own dates.
+func TestChargesDatedAheadOfASteppedBackClockStillCount(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name   string
-		back   time.Duration
-		paused bool
+		name string
+		back time.Duration
 	}{
-		{"beyond the skew", 2 * time.Hour, false},
-		{"within the skew", 30 * time.Second, true},
+		{"beyond the skew", 2 * time.Hour},
+		{"within the skew", 30 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -196,8 +195,12 @@ func TestChargesDatedAheadOfASteppedBackClockAreDropped(t *testing.T) {
 				}
 				db.Clock.Advance(-tc.back)
 				res := publish(t, p)
-				if paused := !res.PausedUntil.IsZero(); paused != tc.paused || (res.Published == 1) == tc.paused {
-					t.Fatalf("a call after the clock stepped back %s: %+v, want paused %v", tc.back, res, tc.paused)
+				if res.Published != 0 || res.PausedUntil.IsZero() {
+					t.Fatalf("a call after the clock stepped back %s: %+v, want nothing published and the budget still spent", tc.back, res)
+				}
+				db.Clock.Advance(tc.back + 24*time.Hour + time.Minute)
+				if res := publish(t, p); res.Published != 1 {
+					t.Fatalf("a day after the charges' own dates: %+v, want the waiting report published", res)
 				}
 			})
 		})
