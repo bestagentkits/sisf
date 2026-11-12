@@ -115,11 +115,12 @@ func stagedWithRecord(t *testing.T, app *sleeper) (*world, string) {
 	return w, dir
 }
 
-// restarted is a new backend over the same state directory, as after a
-// restart of the supervisor: it has started nothing itself.
-func restarted(t *testing.T, dir string) *world {
+// restarted is a new backend over the same state directory and ports as
+// earlier, as after a restart of the supervisor: it has started nothing
+// itself.
+func restarted(t *testing.T, earlier *world, dir string) *world {
 	t.Helper()
-	return newWorld(t, worldOptions{cfg: func(c *local.Config) { c.StateDir = dir }})
+	return newWorld(t, worldOptions{over: earlier, cfg: func(c *local.Config) { c.StateDir = dir }})
 }
 
 // A backend with a state directory records the process of each slot it
@@ -141,7 +142,7 @@ func TestTheProcessOfASlotIsRecordedWhileItRuns(t *testing.T) {
 			t.Fatalf("slot %s is not recorded: %+v", slot, rec)
 		}
 	}
-	restarted(t, dir)
+	restarted(t, w, dir)
 	if app.gone(100 * time.Millisecond) {
 		t.Fatal("a backend built over the records signalled a process it found again")
 	}
@@ -164,8 +165,8 @@ func TestTheProcessOfASlotIsRecordedWhileItRuns(t *testing.T) {
 func TestARestartedBackendStopsTheProcessAnEarlierOneLeftWhenItStagesOverIt(t *testing.T) {
 	t.Parallel()
 	app := startSleeper(t)
-	_, dir := stagedWithRecord(t, app)
-	w := restarted(t, dir)
+	earlier, dir := stagedWithRecord(t, app)
+	w := restarted(t, earlier, dir)
 	if app.gone(100 * time.Millisecond) {
 		t.Fatal("the process found again was signalled before its slot was used")
 	}
@@ -185,7 +186,7 @@ func TestARestartedBackendStopsTheProcessAnEarlierOneLeftWhenItStagesOverIt(t *t
 func TestARecordWhosePidNamesAnotherProcessIsDroppedWithoutASignal(t *testing.T) {
 	t.Parallel()
 	app := startSleeper(t)
-	_, dir := stagedWithRecord(t, app)
+	earlier, dir := stagedWithRecord(t, app)
 	path := filepath.Join(dir, "blue.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -202,7 +203,7 @@ func TestARecordWhosePidNamesAnotherProcessIsDroppedWithoutASignal(t *testing.T)
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	w := restarted(t, dir)
+	w := restarted(t, earlier, dir)
 	if _, ok := readSlotRecord(t, path); ok {
 		t.Fatal("the record of a process that is gone is still there")
 	}
@@ -289,7 +290,7 @@ func TestARestartedBackendStopsAProcessItsLauncherExecedInto(t *testing.T) {
 	})
 	// Let the launcher become the program before the restart.
 	time.Sleep(200 * time.Millisecond)
-	restarted(t, dir).stage(digestB)
+	restarted(t, w, dir).stage(digestB)
 	deadline := time.Now().Add(10 * time.Second)
 	for alive(rec.PID) {
 		if time.Now().After(deadline) {
@@ -306,8 +307,8 @@ func TestARestartedBackendStopsAProcessItsLauncherExecedInto(t *testing.T) {
 func TestClosingABackendStopsOnlyTheProcessesItFoundAgain(t *testing.T) {
 	t.Parallel()
 	app := startSleeper(t)
-	_, dir := stagedWithRecord(t, app)
-	w := restarted(t, dir)
+	earlier, dir := stagedWithRecord(t, app)
+	w := restarted(t, earlier, dir)
 	// The edge serves the release found again on blue, so green is staged.
 	if err := w.splitter.SetSplit(context.Background(), edge.Split{Stable: edge.Target{Revision: string(digestA), URL: "http://" + w.addr(0)}}); err != nil {
 		t.Fatal(err)
@@ -339,7 +340,7 @@ func TestARecordOfAnEarlierBuildIsCheckedTheWayItWasWritten(t *testing.T) {
 		t.Skip("ps is not installed")
 	}
 	app := startSleeper(t)
-	_, dir := stagedWithRecord(t, app)
+	earlier, dir := stagedWithRecord(t, app)
 	path := filepath.Join(dir, "blue.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -362,8 +363,44 @@ func TestARecordOfAnEarlierBuildIsCheckedTheWayItWasWritten(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	restarted(t, dir)
+	restarted(t, earlier, dir)
 	if again, ok := readSlotRecord(t, path); !ok || again.Start != rec["start"] {
 		t.Fatalf("a restarted backend dropped the record of an earlier build: %+v", again)
+	}
+}
+
+// A recorded process that listens on another port than its slot's, as
+// after the configuration moved the slot, is not the slot's process: a
+// restarted backend stops it, as a process left on no slot, and drops its
+// record, so the slot is free and nothing holds a port no slot uses.
+func TestARecordOfAnotherPortIsStoppedAndDropped(t *testing.T) {
+	t.Parallel()
+	app := startSleeper(t)
+	earlier, dir := stagedWithRecord(t, app)
+	path := filepath.Join(dir, "blue.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	rec["port"] = rec["port"].(float64) + 1000
+	if raw, err = json.Marshal(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w := restarted(t, earlier, dir)
+	if !app.gone(10 * time.Second) {
+		t.Fatal("the process recorded on another port still runs")
+	}
+	if _, ok := readSlotRecord(t, path); ok {
+		t.Fatal("the record of another port is still there")
+	}
+	if obs, err := w.backend.Measure(context.Background(), deploy.Revision{Unit: "app", Digest: digestA}, time.Minute); err == nil && obs.Healthy {
+		t.Fatal("a slot whose record names another port is taken as running")
 	}
 }

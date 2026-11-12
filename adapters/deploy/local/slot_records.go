@@ -133,7 +133,8 @@ func (b *Backend) forgetSlot(s *slot) {
 // started before, rather than taking the release that serves for gone. The
 // slot keeps the port the configuration gives it. A record whose process is
 // gone, or whose pid now names another process, is dropped without a
-// signal. A process found again is stopped, like any other, when its slot
+// signal; one whose process runs on another port than its slot's is
+// stopped, once its pid is shown to name it, and dropped. A process found again is stopped, like any other, when its slot
 // is staged over or rolled back from.
 func (b *Backend) reattach(ctx context.Context) error {
 	if b.cfg.StateDir == "" {
@@ -166,6 +167,16 @@ func (b *Backend) reattachSlot(ctx context.Context, s *slot) error {
 	}
 	if !sameProcess(rec) {
 		b.cfg.Logger.Info("a recorded process is gone; its record is dropped", "slot", s.name, "pid", rec.PID)
+		return os.Remove(path)
+	}
+	if rec.Port != s.port {
+		// The process is the one recorded, but on a port the slot no longer
+		// has: no slot serves from it, so it is stopped as stale.
+		b.cfg.Logger.Warn("a recorded process listens on another port than its slot's; it is stopped and its record dropped",
+			"slot", s.name, "pid", rec.PID, "recorded_port", rec.Port, "port", s.port)
+		if err := stopRecorded(ctx, rec, b.cfg.Clock); err != nil {
+			return err
+		}
 		return os.Remove(path)
 	}
 	b.cfg.Logger.Info("found again a process an earlier supervisor started", "slot", s.name, "pid", rec.PID,

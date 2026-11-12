@@ -166,11 +166,20 @@ type worldOptions struct {
 	edge    func(edge.Controller) edge.Controller
 	cfg     func(*local.Config)
 	timeout time.Duration
+	// over, when set, is the world whose ports and application processes
+	// this one shares, as a backend built after a restart of its owner.
+	over *world
 }
 
 func newWorld(t *testing.T, o worldOptions) *world {
 	t.Helper()
-	starter, ports := newFakeStarter(t)
+	var starter *fakeStarter
+	var ports [2]int
+	if o.over != nil {
+		starter, ports = o.over.starter, o.over.ports
+	} else {
+		starter, ports = newFakeStarter(t)
+	}
 	w := &world{t: t, clock: &stepClock{now: epoch}, ports: ports, starter: starter}
 	var err error
 	if w.splitter, err = edge.NewSplitter(w.clock, nil, edge.Target{Revision: "bootstrap", URL: "http://127.0.0.1:1"}); err != nil {

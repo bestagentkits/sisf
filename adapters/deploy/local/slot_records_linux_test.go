@@ -15,12 +15,12 @@ import (
 func TestOnLinuxASlotProcessIsRecordedByItsStartInProc(t *testing.T) {
 	t.Parallel()
 	app := startSleeper(t)
-	_, dir := stagedWithRecord(t, app)
+	earlier, dir := stagedWithRecord(t, app)
 	rec, _ := readSlotRecord(t, filepath.Join(dir, "blue.json"))
 	if !strings.HasPrefix(rec.Start, processstart.ProcMethod) {
 		t.Fatalf("the slot's process is recorded as started at %q, want a start read from /proc", rec.Start)
 	}
-	restarted(t, dir)
+	restarted(t, earlier, dir)
 	if again, ok := readSlotRecord(t, filepath.Join(dir, "blue.json")); !ok || again != rec {
 		t.Fatalf("a restarted backend dropped or changed the record %+v: %+v", rec, again)
 	}
