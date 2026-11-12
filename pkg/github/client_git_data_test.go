@@ -2,6 +2,7 @@ package github_test
 
 import (
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"slices"
 	"testing"
@@ -146,5 +147,43 @@ func TestAComparisonAtGitHubsFileLimitIsReportedAsPossiblyIncomplete(t *testing.
 		if limited := core.HasCode(err, core.CodeLimitExceeded); limited != (n >= github.CompareFileLimit) || len(paths) != n {
 			t.Fatalf("%d changed files: %d listed, %v", n, len(paths), err)
 		}
+	}
+}
+
+// GitHub's comparison reports a renamed or copied file as one entry: its
+// new path as filename and its old one as previous_filename. Both are
+// changed paths, so a file moved out of a protected directory is listed
+// under the path it left as well as the one it reached. Only the entries
+// GitHub lists count toward its limit, not the paths they name.
+func TestChangedPathsNamesTheOldPathOfARenameOrCopy(t *testing.T) {
+	t.Parallel()
+	const (
+		base = core.CommitSHA("1111111111111111111111111111111111111111")
+		head = core.CommitSHA("2222222222222222222222222222222222222222")
+	)
+	files := `[
+		{"sha":"bbcd538c8e72b8c175046e27cc8f907076331401","filename":"examples/hello-app/approval.html","previous_filename":"ui/templates/approval.html","status":"renamed","additions":0,"deletions":0,"changes":0},
+		{"sha":"bbcd538c8e72b8c175046e27cc8f907076331401","filename":"examples/hello-app/copy.html","previous_filename":"internal/qa/thresholds.txt","status":"copied","additions":0,"deletions":0,"changes":0},
+		{"sha":"bbcd538c8e72b8c175046e27cc8f907076331401","filename":"examples/hello-app/main.go","status":"modified","additions":1,"deletions":1,"changes":2}
+	]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/app/compare/"+string(base)+"..."+string(head) {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"status":"ahead","ahead_by":1,"behind_by":0,"total_commits":1,"files":%s}`, files)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := github.NewRESTClient(github.ClientConfig{BaseURL: srv.URL,
+		Token: github.StaticToken(core.NewSecretValue([]byte(testToken))), Clock: newFakeClock()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := client.ChangedPaths(bg, repoRef, base, head)
+	want := []string{"examples/hello-app/approval.html", "examples/hello-app/copy.html", "examples/hello-app/main.go",
+		"internal/qa/thresholds.txt", "ui/templates/approval.html"}
+	if err != nil || !slices.Equal(paths, want) {
+		t.Fatalf("ChangedPaths = %v, %v; want %v", paths, err, want)
 	}
 }

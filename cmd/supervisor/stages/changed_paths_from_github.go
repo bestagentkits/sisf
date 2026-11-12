@@ -12,9 +12,9 @@ import (
 // commit the receipt names, as the supervisor asks it now. The stored
 // candidate is a document of the control zone, which the supervisor shares
 // with factoryd, so its list of paths never decides what is released or
-// merged: its paths are only added to GitHub's, so that a path a rename
-// left behind, which GitHub's listing does not name, is judged too, and a
-// stored list can only make the decision stricter, never leave a path out.
+// merged: its paths are only added to GitHub's, which names both paths of
+// a renamed or copied file, so a stored list can only make the decision
+// stricter, never leave a path out.
 //
 // The candidate returned is c with those paths. It is marked as listed in
 // part, which release governance and the merge refuse for the Owner, when
