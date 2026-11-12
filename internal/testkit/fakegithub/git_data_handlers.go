@@ -119,7 +119,7 @@ func (g *GitData) createCommit(w http.ResponseWriter, r *http.Request) {
 	for path, content := range files {
 		text[path] = string(content)
 	}
-	sha, err := g.s.Commit(repoName(r), text)
+	sha, err := g.s.commitOn(repoName(r), text, in.Parents)
 	if err != nil {
 		fail(w, err)
 		return

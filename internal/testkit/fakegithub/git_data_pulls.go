@@ -142,7 +142,7 @@ func (g *GitData) mergePull(w http.ResponseWriter, r *http.Request) {
 	for path, content := range files {
 		text[path] = string(content)
 	}
-	sha, err := g.s.Commit(name, text)
+	sha, err := g.s.commitOn(name, text, []string{base, head})
 	if err != nil {
 		fail(w, err)
 		return

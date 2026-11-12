@@ -25,6 +25,14 @@ const (
 // make the same commit. Files of earlier commits are not carried over: a
 // commit holds exactly the files given.
 func (s *Server) Commit(repoName string, files map[string]string) (string, error) {
+	return s.commitOn(repoName, files, nil)
+}
+
+// commitOn records files as a commit made on parents. Like a git commit,
+// its SHA depends on its parents too, so a commit on a parent never takes
+// the SHA of the parentless commit of the same files; with no parents it
+// is the SHA Commit gives.
+func (s *Server) commitOn(repoName string, files map[string]string, parents []string) (string, error) {
 	if len(files) == 0 || len(files) > maxCommitFiles {
 		return "", fmt.Errorf("a commit holds between 1 and %d files", maxCommitFiles)
 	}
@@ -40,6 +48,9 @@ func (s *Server) Commit(repoName string, files map[string]string) (string, error
 		}
 		_, _ = fmt.Fprintf(h, "%q %d\n%s\n", path, len(content), content) // a hash never fails to write
 		stored[path] = []byte(content)
+	}
+	for _, parent := range parents {
+		_, _ = fmt.Fprintf(h, "parent %s\n", parent) // a hash never fails to write
 	}
 	sha := hex.EncodeToString(h.Sum(nil))
 	s.mu.Lock()
