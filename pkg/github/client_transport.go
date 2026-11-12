@@ -54,7 +54,7 @@ func (c *RESTClient) callURL(ctx context.Context, method, rawURL string, body an
 			continue
 		}
 		if limited, wait := c.rateLimited(resp); limited {
-			if last || wait > c.cfg.MaxWait {
+			if last || wait > c.cfg.MaxWait || outlastsDeadline(ctx, wait) {
 				return apiResponse{}, rateLimitError(method, target.Path, wait, last && wait <= c.cfg.MaxWait)
 			}
 			if err := c.sleep(ctx, wait); err != nil {
@@ -78,6 +78,15 @@ func (c *RESTClient) callURL(ctx context.Context, method, rawURL string, body an
 		}
 		return resp, nil
 	}
+}
+
+// outlastsDeadline reports whether waiting wait would run past ctx's
+// deadline: the caller then learns of the rate limit GitHub answered with,
+// not of a timeout that hides it. A context's deadline is wall-clock time,
+// so it is compared with the wall clock, not the client's clock.
+func outlastsDeadline(ctx context.Context, wait time.Duration) bool {
+	deadline, ok := ctx.Deadline()
+	return ok && time.Until(deadline) < wait
 }
 
 type retryableError struct{ error }

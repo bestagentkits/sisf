@@ -60,6 +60,37 @@ func TestLimitLongerThanTheWaitCeilingIsReportedNotSlept(t *testing.T) {
 	}
 }
 
+// A limit whose wait would outlast the caller's deadline is reported as
+// the rate limit it is, at once, not slept through until the deadline turns
+// it into a timeout; a deadline the wait fits within is waited out.
+func TestLimitOutlastingTheDeadlineIsReportedNotSlept(t *testing.T) {
+	t.Parallel()
+	f := newFactory(t)
+	f.fake.LimitNext(1, time.Minute)
+	ctx, cancel := context.WithTimeout(bg, 30*time.Second)
+	defer cancel()
+	_, err := f.client.ListIssues(ctx, repoRef, github.ListIssuesOptions{})
+	if !core.HasCode(err, core.CodeRateLimited) {
+		t.Fatalf("err = %v, want RATE_LIMITED", err)
+	}
+	var typed *core.Error
+	if !asCore(err, &typed) || typed.Details["retry_after_seconds"] != "60" {
+		t.Fatalf("the error must tell the caller when to come back: %+v", typed)
+	}
+	if len(f.clock.recorded()) != 0 || len(f.fake.Requests()) != 1 {
+		t.Fatalf("waits %v, requests %d: a wait past the deadline must return at once", f.clock.recorded(), len(f.fake.Requests()))
+	}
+	f.fake.LimitNext(1, 7*time.Second)
+	ctx, cancel = context.WithTimeout(bg, 10*time.Minute)
+	defer cancel()
+	if _, err := f.client.ListIssues(ctx, repoRef, github.ListIssuesOptions{}); err != nil {
+		t.Fatalf("a limit that clears before the deadline must be waited out: %v", err)
+	}
+	if got := f.clock.recorded(); !slices.Equal(got, []time.Duration{7 * time.Second}) {
+		t.Fatalf("waits = %v, want the Retry-After once", got)
+	}
+}
+
 func TestPersistentRateLimitFailsAfterTheAttemptsAreUsed(t *testing.T) {
 	t.Parallel()
 	f := newFactory(t, func(c *github.ClientConfig) { c.MaxAttempts = 3 })
