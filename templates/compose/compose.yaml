@@ -1,0 +1,239 @@
+# Compose project of ONE SISF factory deployment in Docker mode.
+#
+# `sisf up --mode docker` renders this template into the install directory,
+# with the digests of the images it just built, and runs it. Do not edit the
+# rendered file: the next `sisf up` replaces it, and `sisf doctor` rejects a
+# file that breaks the isolation rules checked in internal/install.
+#
+# One project, one service per runtime unit that exists today. The runner
+# units do not exist yet, and nothing here can create a container: no service
+# has Docker API access. Every container, network and volume is named
+# "{{ .Project }}-..." so it can be told apart from anything else on the host.
+#
+# Isolation, in short:
+#   - four networks: app, factory, control, sandbox. The sandbox is internal
+#     and only the edge is attached to it (its way out).
+#   - each zone reads only its own secrets (an env file of its own area);
+#     nothing mounts the secrets directory.
+#   - no service mounts the host's Docker socket or is pointed at a Docker
+#     API, and there is no socket proxy.
+#   - the state database is on the factory network only, which the edge is
+#     not on.
+#   - every published port is bound to 127.0.0.1, in the 7460-7469 range.
+#
+# Runtime contract with factoryd: it reads its manifest from SISF_CONFIG,
+# listens on SISF_LISTEN, opens the state store with SISF_STATE_DSN, and
+# takes SISF_OWNER_TOKEN, SISF_WEBHOOK_SECRET, SISF_GITHUB_TOKEN and
+# SISF_APPROVAL_KEY from its environment. Secrets arrive only through the env file of the zone.
+name: "{{ .Project }}"
+
+x-hardened: &hardened
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  read_only: true
+  tmpfs: ["/tmp"]
+
+services:
+  # ---- shared: state -------------------------------------------------------
+  state:
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    container_name: "{{ .Project }}-state"
+    image: "{{ .PostgresImage }}"
+    env_file: ["{{ .SecretsDir }}/state/runtime.env"]
+    environment:
+      POSTGRES_USER: sisf_owner
+      POSTGRES_DB: sisf
+    networks: [factory]
+{{- if .Debug }}
+    ports: ["127.0.0.1:{{ .PortPostgres }}:5432"]
+{{- end }}
+    volumes: ["state-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sisf_owner -d sisf"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  # One-shot install step: migrates the schema, creates one role per zone and
+  # grants each role what its zone may reach. Run by `sisf up`, never started
+  # with the project.
+  state-bootstrap:
+    <<: *hardened
+    restart: "no"
+    profiles: ["bootstrap"]
+    container_name: "{{ .Project }}-state-bootstrap"
+    image: "{{ .Images.Sisf }}"
+    command: {{ .BootstrapCommand }}
+    env_file: ["{{ .SecretsDir }}/state/bootstrap.env"]
+    networks: [factory]
+    depends_on:
+      state: {condition: service_healthy}
+
+  # ---- Zone 3: control plane -----------------------------------------------
+  supervisor:
+    <<: *hardened
+    container_name: "{{ .Project }}-supervisor"
+    image: "{{ .Images.Supervisor }}"
+    command:
+      - supervisor
+      - run
+      - --factory-id={{ .FactoryID }}
+      - --manifest=/etc/sisf/release/release-manifest.json
+      - --root-key-ref=env:SISF_ROOT_PUBLIC_KEY
+      - --trust-dir=/var/lib/sisf/trust
+      - --admin=127.0.0.1:{{ .PortSupervisor }}
+    env_file: ["{{ .SecretsDir }}/control/supervisor.env"]
+    networks: [control]
+    volumes:
+      - "trust:/var/lib/sisf/trust"
+      - "{{ .ReleaseFile }}:/etc/sisf/release/release-manifest.json:ro"
+    healthcheck:
+      test: ["CMD", "supervisor", "status", "--admin=127.0.0.1:{{ .PortSupervisor }}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  control:
+    <<: *hardened
+    container_name: "{{ .Project }}-control"
+    image: "{{ .Images.Factoryd }}"
+    command: ["factoryd", "control"]
+    env_file: ["{{ .SecretsDir }}/control/runtime.env"]
+    environment:
+      SISF_FACTORY_ID: "{{ .FactoryID }}"
+      SISF_CONFIG: /etc/sisf/factory.yaml
+      SISF_LISTEN: "0.0.0.0:{{ .PortControl }}"
+      SISF_LISTEN_ALLOW_NON_LOOPBACK: "true"
+      SISF_GITHUB_API_URL: "{{ .GitHubAPIURL }}"
+      # /healthz of Zone 1 through the edge, and of Zone 2, for the zone report.
+      SISF_APP_HEALTH_URL: "http://edge:{{ .PortEdge }}/healthz"
+      SISF_DISPATCHER_HEALTH_URL: "http://dispatcher:{{ .PortDispatcher }}/healthz"
+    networks: [control, factory]
+    ports:
+      - "127.0.0.1:{{ .PortControl }}:{{ .PortControl }}"
+{{- if .Sim }}
+      - "127.0.0.1:{{ .PortFakeGitHub }}:{{ .PortFakeGitHub }}"
+{{- end }}
+    volumes:
+      - "control-data:/var/lib/sisf/control"
+      - "{{ .ConfigFile }}:/etc/sisf/factory.yaml:ro"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:{{ .PortControl }}/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      state: {condition: service_healthy}
+
+  # ---- Zone 2: agent factory -----------------------------------------------
+  dispatcher:
+    <<: *hardened
+    container_name: "{{ .Project }}-dispatcher"
+    image: "{{ .Images.Factoryd }}"
+    command: ["factoryd", "dispatcher"]
+    env_file: ["{{ .SecretsDir }}/agent/runtime.env"]
+    environment:
+      SISF_FACTORY_ID: "{{ .FactoryID }}"
+      SISF_CONFIG: /etc/sisf/factory.yaml
+      SISF_LISTEN: "0.0.0.0:{{ .PortDispatcher }}"
+      SISF_LISTEN_ALLOW_NON_LOOPBACK: "true"
+    networks: [factory]
+    volumes:
+      - "{{ .ConfigFile }}:/etc/sisf/factory.yaml:ro"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:{{ .PortDispatcher }}/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      state: {condition: service_healthy}
+
+  # ---- Zone 1: application -------------------------------------------------
+  app:
+    <<: *hardened
+    container_name: "{{ .Project }}-app"
+    image: "{{ .Images.App }}"
+    env_file: ["{{ .SecretsDir }}/application/runtime.env"]
+    environment:
+      HELLO_ADDR: "0.0.0.0:{{ .PortApp }}"
+      HELLO_DATA_DIR: /data
+    networks: [app]
+    volumes: ["app-data:/data"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:{{ .PortApp }}/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---- shared: edge --------------------------------------------------------
+  edge:
+    <<: *hardened
+    container_name: "{{ .Project }}-edge"
+    image: "{{ .Images.Edge }}"
+    command:
+      - edge
+      - --listen=0.0.0.0:{{ .PortEdge }}
+      - --allow-non-loopback
+      - --upstream=http://app:{{ .PortApp }}
+      - --route=/webhooks/github=http://control:{{ .PortControl }}
+    networks: [app, control, sandbox]
+    ports: ["127.0.0.1:{{ .PortEdge }}:{{ .PortEdge }}"]
+    depends_on:
+      app: {condition: service_healthy}
+
+  # ---- simulation profile: the fake GitHub ---------------------------------
+  # Runs in the network namespace of control, so the factory reaches it at
+  # 127.0.0.1 (the GitHub client sends a token over plain http only to a
+  # loopback address). It listens on every interface of that namespace so that
+  # the port published by control reaches it; the host side stays on 127.0.0.1.
+{{- if .Sim }}
+  sim-github:
+    <<: *hardened
+    profiles: ["sim"]
+    container_name: "{{ .Project }}-sim-github"
+    image: "{{ .Images.Sisf }}"
+    network_mode: "service:control"
+    command:
+      - sisf
+      - sim
+      - github
+      - --addr=0.0.0.0:{{ .PortFakeGitHub }}
+      - --allow-non-loopback
+      - --repo={{ .Repository }}
+      - --webhook-url=http://127.0.0.1:{{ .PortControl }}/webhooks/github
+    env_file: ["{{ .SecretsDir }}/sim/runtime.env"]
+    depends_on:
+      control: {condition: service_started}
+{{- end }}
+
+networks:
+  app:
+    name: "{{ .Project }}-app"
+  factory:
+    name: "{{ .Project }}-factory"
+    internal: true
+  control:
+    name: "{{ .Project }}-control"
+  sandbox:
+    name: "{{ .Project }}-sandbox"
+    internal: true
+
+volumes:
+  state-data:
+    name: "{{ .Project }}-state-data"
+  app-data:
+    name: "{{ .Project }}-app-data"
+  control-data:
+    name: "{{ .Project }}-control-data"
+  trust:
+    name: "{{ .Project }}-trust"
+  workspaces:
+    name: "{{ .Project }}-workspaces"
+  qa-workspaces:
+    name: "{{ .Project }}-qa-workspaces"
+  artifacts:
+    name: "{{ .Project }}-artifacts"

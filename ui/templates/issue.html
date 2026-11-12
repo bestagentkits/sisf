@@ -1,0 +1,28 @@
+{{define "title"}}Issue{{end}}
+{{define "content"}}
+{{with .Issue}}
+<h1 class="title" data-field="title">{{if .Title}}{{.Title}}{{else}}{{.ID}}{{end}}</h1>
+<dl class="fields" data-issue-id="{{.ID}}">
+  <dt>Issue</dt><dd data-field="id">{{.ID}}</dd>
+  <dt>State</dt><dd data-field="state">{{.State}}</dd>
+  <dt>Version</dt><dd data-field="version">{{.Version}}</dd>
+  <dt>Attempt</dt><dd data-field="attempt">{{.Attempt}}</dd>
+  {{if .RunID}}<dt>Run</dt><dd data-field="run-id">{{.RunID}}</dd>{{end}}
+  {{if .LeaseOwner}}<dt>Lease owner</dt><dd data-field="lease-owner">{{.LeaseOwner}}</dd>{{end}}
+  {{if .Author}}<dt>Opened by</dt><dd data-field="author">{{.Author}}</dd>{{end}}
+  {{if .GitHubState}}<dt>On GitHub</dt><dd data-field="github-state">{{.GitHubState}}</dd>{{end}}
+  {{if .Labels}}<dt>Labels</dt><dd data-field="labels">{{range .Labels}}<span class="label">{{.}}</span> {{end}}</dd>{{end}}
+  <dt>Updated</dt><dd><time datetime="{{iso .UpdatedAt}}">{{utc .UpdatedAt}}</time></dd>
+</dl>
+<h2>Recent comments</h2>
+{{range .Comments}}
+<article class="comment" data-comment-id="{{.ID}}">
+  <p class="meta">{{.Author}} at <time datetime="{{iso .CreatedAt}}">{{utc .CreatedAt}}</time></p>
+  <p class="body">{{.Body}}</p>
+</article>
+{{else}}
+<p>No comments recorded.</p>
+{{end}}
+{{end}}
+<p><a href="/workboard">Back to the workboard</a></p>
+{{end}}
