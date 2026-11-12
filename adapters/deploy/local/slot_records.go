@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -190,23 +191,30 @@ func (b *Backend) reattachSlot(ctx context.Context, s *slot) error {
 // started itself is a child of its owner, in its owner's process group, and
 // ends with it; one an earlier supervisor started is in that supervisor's
 // group, which no signal to its owner's group reaches, so it is stopped
-// here, only while its pid still names the process recorded. The
-// processes the backend started itself are left alone.
+// here, only while its pid still names the process recorded. The slots are
+// stopped together, so closing waits one grace period, not one per slot.
+// The processes the backend started itself are left alone.
 func (b *Backend) Close(ctx context.Context) error {
 	b.ops.Lock()
 	defer b.ops.Unlock()
-	var failed []error
-	for _, s := range b.slot {
+	failed := make([]error, len(b.slot))
+	var wg sync.WaitGroup
+	for i, s := range b.slot {
 		b.mu.Lock()
 		_, found := s.proc.(*recordedProcess)
 		b.mu.Unlock()
 		if !found {
 			continue
 		}
-		if err := b.stopSlot(ctx, s); err != nil {
-			failed = append(failed, fmt.Errorf("slot %s: %w", s.name, err))
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := b.stopSlot(ctx, s); err != nil {
+				failed[i] = fmt.Errorf("slot %s: %w", s.name, err)
+			}
+		}()
 	}
+	wg.Wait()
 	return errors.Join(failed...)
 }
 

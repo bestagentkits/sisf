@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/bestagentkits/sisf/adapters/deploy/local"
 	"github.com/bestagentkits/sisf/internal/edge"
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/deploy"
 )
 
@@ -402,5 +404,76 @@ func TestARecordOfAnotherPortIsStoppedAndDropped(t *testing.T) {
 	}
 	if obs, err := w.backend.Measure(context.Background(), deploy.Revision{Unit: "app", Digest: digestA}, time.Minute); err == nil && obs.Healthy {
 		t.Fatal("a slot whose record names another port is taken as running")
+	}
+}
+
+// startStubborn starts a real process that ignores SIGTERM, so stopping it
+// takes the whole grace period before it is killed.
+func startStubborn(t *testing.T) *sleeper {
+	t.Helper()
+	cmd := exec.Command("/bin/sh", "-c", "trap '' TERM; while :; do sleep 1; done")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	s := &sleeper{cmd: cmd, exited: make(chan struct{})}
+	go func() {
+		_ = cmd.Wait()
+		close(s.exited)
+	}()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		<-s.exited
+	})
+	// Let the shell set its trap before anything signals it.
+	time.Sleep(100 * time.Millisecond)
+	return s
+}
+
+// slotPIDStarter says the process it starts on each slot is the real
+// process of that slot, by the slot's address.
+type slotPIDStarter struct {
+	local.Starter
+	pids map[string]int
+}
+
+func (s slotPIDStarter) Start(ctx context.Context, spec local.StartSpec) (local.Process, error) {
+	p, err := s.Starter.Start(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	return pidProcess{Process: p, pid: s.pids[spec.Addr]}, nil
+}
+
+// The processes found again on both slots are stopped together when the
+// backend closes, so closing takes one grace period, not one per slot: two
+// processes that ignore SIGTERM are both stopped within less than two.
+func TestClosingABackendStopsTheProcessesOfBothSlotsTogether(t *testing.T) {
+	t.Parallel()
+	blue, green := startStubborn(t), startStubborn(t)
+	dir := filepath.Join(t.TempDir(), "slots")
+	earlier := newWorld(t, worldOptions{cfg: func(c *local.Config) {
+		c.StateDir = dir
+		c.Starter = slotPIDStarter{Starter: c.Starter, pids: map[string]int{
+			fmt.Sprintf("127.0.0.1:%d", c.Ports[0]): blue.cmd.Process.Pid,
+			fmt.Sprintf("127.0.0.1:%d", c.Ports[1]): green.cmd.Process.Pid,
+		}}
+	}})
+	earlier.release(digestA)
+	earlier.stage(digestB)
+	for _, slot := range []string{"blue", "green"} {
+		if _, ok := readSlotRecord(t, filepath.Join(dir, slot+".json")); !ok {
+			t.Fatalf("slot %s is not recorded", slot)
+		}
+	}
+	w := newWorld(t, worldOptions{over: earlier, cfg: func(c *local.Config) {
+		c.StateDir, c.Clock = dir, core.SystemClock{}
+	}})
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	if err := w.backend.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !blue.gone(time.Second) || !green.gone(time.Second) {
+		t.Fatal("a process found again still runs after the backend closed")
 	}
 }
