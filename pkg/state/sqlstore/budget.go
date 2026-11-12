@@ -159,8 +159,10 @@ func (t *tx) BudgetTotals(ctx context.Context, since time.Time) (core.BudgetTota
 		return core.BudgetTotals{}, err
 	}
 	// Usage whose provider reported tokens and no cost (core.Usage.CostUnreported).
+	// The token counts are compared one by one: their sum may not fit in a
+	// BIGINT, which PostgreSQL refuses to compute.
 	if err := t.q.row(ctx, `SELECT CAST(COUNT(*) AS BIGINT) FROM usage_ledger
-		WHERE factory_id = ? AND recorded_at >= ? AND verified = ? AND cost = 0 AND input_tokens + output_tokens > 0`,
+		WHERE factory_id = ? AND recorded_at >= ? AND verified = ? AND cost = 0 AND (input_tokens > 0 OR output_tokens > 0)`,
 		string(t.store.factory), toNanos(since), false).Scan(&totals.Unpriced); err != nil {
 		return core.BudgetTotals{}, t.store.dialect.failure("count usage without a cost", err)
 	}

@@ -198,6 +198,30 @@ func TestBudgetTotalsCountUsageWithoutACost(t *testing.T) {
 	})
 }
 
+// Token counts whose sum would not fit in a BIGINT are counted like any
+// other, and reading the totals does not fail on them.
+func TestBudgetTotalsCountUsageWithHugeTokenCounts(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		s := db.Open(t, core.ZoneControl)
+		huge := spend(0, false, db.Clock.Now())
+		huge.InputTokens, huge.OutputTokens = 1<<62, 1<<62
+		priced := huge
+		priced.Cost = 7
+		mustUpdate(t, s, func(tx state.Tx) error {
+			for _, u := range []core.Usage{huge, priced} {
+				if err := tx.AppendUsage(ctx, u); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if got, want := totals(t, s, time.Time{}), (core.BudgetTotals{SpentUnverified: 7, Unpriced: 1}); got != want {
+			t.Fatalf("totals = %+v, want %+v", got, want)
+		}
+	})
+}
+
 func TestUsageThatWouldLowerSpendingIsRefused(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {

@@ -45,7 +45,8 @@ type Usage struct {
 // no cost for them, as a CLI that prints tokens only does. Such usage is
 // not free; its cost is unknown.
 func (u Usage) CostUnreported() bool {
-	return !u.Verified && u.Cost == 0 && u.InputTokens+u.OutputTokens > 0
+	// The counts are compared one by one: their sum may not fit in an int64.
+	return !u.Verified && u.Cost == 0 && (u.InputTokens > 0 || u.OutputTokens > 0)
 }
 
 // ReservationStatus is the life stage of a reservation.
