@@ -18,7 +18,9 @@ import (
 // after its Verified step, so a release whose step could not be written is
 // still undone to the LKG before it. Releases of a unit are ordered by the
 // order the store wrote their Verified steps in (nextVerifiedSequence),
-// never by a clock or by when an LKG entry was written. A release a
+// never by when an LKG entry was written, and by a clock only between two
+// releases an earlier build verified before steps were numbered
+// (verifiedLater). A release a
 // later one superseded does not take the LKG back; one that is neither
 // serving, healthy, nor superseded cannot be finished and blocks its issue.
 
