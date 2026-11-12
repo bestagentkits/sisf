@@ -135,8 +135,9 @@ func (b *Backend) forgetSlot(s *slot) {
 // slot keeps the port the configuration gives it. A record whose process is
 // gone, or whose pid now names another process, is dropped without a
 // signal; one whose process runs on another port than its slot's is
-// stopped, once its pid is shown to name it, and dropped. A process found again is stopped, like any other, when its slot
-// is staged over or rolled back from.
+// stopped, once its pid is shown to name it, and dropped. A process found
+// again is stopped, like any other, when its slot is staged over or rolled
+// back from.
 func (b *Backend) reattach(ctx context.Context) error {
 	if b.cfg.StateDir == "" {
 		return nil
