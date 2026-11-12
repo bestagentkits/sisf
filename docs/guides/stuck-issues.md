@@ -81,7 +81,7 @@ A Blocked issue moves again only through the Owner's retry, which sends it back 
 factoryd issue retry --issue owner/repo#12
 ```
 
-Expected output: `owner/repo#12 is Ready`. An issue the factory never took in answers `NOT_FOUND: issue owner/repo#12 has no record` (observed). A second retry of the same block answers `INVALID_TRANSITION`, and a retry by anyone but the Owner is refused. An issue that was closed on GitHub, or whose repository is no longer this factory's, answers `CONFLICT: intake does not take this issue any more: the issue is not open` (or `the issue is not in this factory's repository`) where its scope would be judged; reopen it first. Undo: none; the retried issue is claimed again like any Ready issue.
+Expected output: `owner/repo#12 is Ready`. An issue the factory never took in answers `NOT_FOUND: issue owner/repo#12 has no record` (observed). A second retry of the same block answers `INVALID_TRANSITION`, and a retry by anyone but the Owner is refused. An issue that was closed on GitHub, or whose repository is no longer this factory's, answers `CONFLICT: intake does not take this issue any more: the issue is not open` (or `the issue is not in this factory's repository`) where its scope would be judged; reopen a closed issue first, and an issue of another repository is retried only under a policy whose manifest names that repository. Undo: none; the retried issue is claimed again like any Ready issue.
 
 ## Candidate pull requests and merges
 
