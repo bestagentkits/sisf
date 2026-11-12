@@ -50,6 +50,13 @@ func writeManifest(path string, m *manifest.Manifest) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return unavailablef(err, "cannot create the install directory")
 	}
+	// A manifest that is a symbolic link is written to the file it names,
+	// so renaming a new file into place does not replace the link itself.
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return unavailablef(err, "cannot resolve %s", path)
+	}
 	// The manifest holds no secret, so a new one is readable by the
 	// containers that mount it, which run as another user; one the Owner
 	// restricted keeps its mode.

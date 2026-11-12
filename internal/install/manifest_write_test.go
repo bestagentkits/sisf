@@ -108,3 +108,35 @@ func TestADockerManifestIsWrittenIntoTheFileItsContainersMount(t *testing.T) {
 		t.Fatalf("the mounted file reads back as %v, %v; want the changed manifest", back, err)
 	}
 }
+
+// A factory.yaml that is a symbolic link stays one: the manifest is written
+// to the file the link names, in either mode, so the link and what it names
+// keep matching.
+func TestAManifestBehindASymbolicLinkIsWrittenThroughIt(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []manifest.Mode{manifest.ModeStandalone, manifest.ModeDocker} {
+		o, err := testOptions(mode).normalize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(t.TempDir(), "kept.yaml")
+		if err := writeManifest(target, buildManifest(o)); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "factory.yaml")
+		if err := os.Symlink(target, path); err != nil {
+			t.Skipf("no symbolic links here: %v", err)
+		}
+		changed := buildManifest(o)
+		changed.FactoryID = "changed"
+		if err := writeManifest(path, changed); err != nil {
+			t.Fatal(err)
+		}
+		if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("%s: factory.yaml after a write: %v, %v; want the link kept", mode, info, err)
+		}
+		if back, err := manifest.ParseFile(target); err != nil || back.FactoryID != "changed" {
+			t.Fatalf("%s: the file the link names reads back as %v, %v; want the new manifest", mode, back, err)
+		}
+	}
+}
