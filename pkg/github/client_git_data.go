@@ -195,7 +195,8 @@ func (c *RESTClient) ChangedPaths(ctx context.Context, repo RepoRef, base, head 
 		return nil, err
 	}
 	var cmp struct {
-		Files []struct {
+		TotalCommits int `json:"total_commits"`
+		Files        []struct {
 			Filename         string `json:"filename"`
 			PreviousFilename string `json:"previous_filename"`
 		} `json:"files"`
@@ -212,6 +213,11 @@ func (c *RESTClient) ChangedPaths(ctx context.Context, repo RepoRef, base, head 
 	}
 	slices.Sort(paths)
 	paths = slices.Compact(paths)
+	if len(cmp.Files) == 0 && cmp.TotalCommits > 0 {
+		// GitHub leaves the files out when it cannot compute the diff in
+		// time; commits that list no file are not shown to change none.
+		return paths, core.NewError(core.CodeLimitExceeded, fmt.Sprintf("GitHub's comparison counts %d commits up to %s and lists no file, so the listing may be incomplete", cmp.TotalCommits, head))
+	}
 	if len(cmp.Files) >= CompareFileLimit {
 		return paths, core.NewError(core.CodeLimitExceeded, fmt.Sprintf("GitHub's comparison lists at most %d files, so the listing of %s may be incomplete", CompareFileLimit, head))
 	}

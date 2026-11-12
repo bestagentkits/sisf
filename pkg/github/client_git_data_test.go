@@ -306,3 +306,33 @@ func treeOf(t *testing.T, base string, commit core.CommitSHA) string {
 	}
 	return c.Tree.SHA
 }
+
+// GitHub leaves the files out of a comparison whose diff it cannot compute
+// in time. Commits that list no file are not taken to change none.
+func TestAComparisonWithCommitsAndNoFilesIsNotAnEmptyListing(t *testing.T) {
+	t.Parallel()
+	const (
+		base = core.CommitSHA("1111111111111111111111111111111111111111")
+		head = core.CommitSHA("2222222222222222222222222222222222222222")
+	)
+	for body, incomplete := range map[string]bool{
+		`{"status":"ahead","ahead_by":3,"behind_by":0,"total_commits":3,"files":[]}`:     true,
+		`{"status":"ahead","ahead_by":3,"behind_by":0,"total_commits":3}`:                true,
+		`{"status":"identical","ahead_by":0,"behind_by":0,"total_commits":0,"files":[]}`: false,
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, body)
+		}))
+		t.Cleanup(srv.Close)
+		client, err := github.NewRESTClient(github.ClientConfig{BaseURL: srv.URL,
+			Token: github.StaticToken(core.NewSecretValue([]byte(testToken))), Clock: newFakeClock()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths, err := client.ChangedPaths(bg, repoRef, base, head)
+		if len(paths) != 0 || core.HasCode(err, core.CodeLimitExceeded) != incomplete || (err != nil) != incomplete {
+			t.Errorf("%s: ChangedPaths = %v, %v; want incomplete %v", body, paths, err, incomplete)
+		}
+	}
+}
