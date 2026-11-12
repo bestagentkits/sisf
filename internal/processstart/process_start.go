@@ -108,8 +108,11 @@ func psStartWithin(ctx context.Context, pid int) (string, error) {
 	case ctx.Err() != nil:
 		// ps was cut off: it did not say the process is gone.
 		return "", unavailablef(ctx.Err(), "ps did not say in time when process %d started", pid)
-	case err != nil && errors.As(err, &exit) && len(fields) == 0:
-		return "", nil // ps found no such process
+	case err != nil && errors.As(err, &exit) && exit.Exited() && exit.ExitCode() == 1 && len(fields) == 0:
+		// ps found no such process: it says so by exiting with 1 and
+		// printing nothing, on macOS and with Linux procps alike. A ps ended
+		// by a signal, or exiting otherwise, said nothing about the process.
+		return "", nil
 	case err != nil:
 		return "", unavailablef(err, "cannot ask ps when process %d started", pid)
 	case len(fields) < 6:

@@ -105,4 +105,10 @@ func TestAGoneProcessHasNoStart(t *testing.T) {
 	if got, err := Read(cmd.Process.Pid); err != nil || got != "" {
 		t.Fatalf("Read of a reaped process = %q, %v; want gone", got, err)
 	}
+	// ps, which reads records written by ps on every system, says so too.
+	if _, err := exec.LookPath("ps"); err == nil {
+		if got, err := psStart(cmd.Process.Pid); err != nil || got != "" {
+			t.Fatalf("ps of a reaped process = %q, %v; want gone", got, err)
+		}
+	}
 }
