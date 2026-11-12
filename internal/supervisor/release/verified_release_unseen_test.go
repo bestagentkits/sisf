@@ -123,3 +123,70 @@ func TestAVerifiedReleaseNotSeenForTheObservationWindowsIsRestoredThenBlocked(t 
 		t.Fatalf("%+v serves, want the LKG", serving)
 	}
 }
+
+// setDegraded makes the verified release answer its health check as down,
+// or healthy again.
+func (w *world) setDegraded(release core.ReleaseDigest, down bool) {
+	w.backend.mu.Lock()
+	defer w.backend.mu.Unlock()
+	w.backend.degraded[release] = down
+}
+
+// A pass that sees the verified release serving, healthy, clears its wait
+// even when a later step of that pass fails, here the write of the LKG: a
+// release not seen again afterwards waits the whole wait from then, rather
+// than being blocked for the time before it was seen.
+func TestAHealthyObservationClearsTheWaitEvenWhenALaterStepFails(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := newWorld(t)
+	w.cfg.Lander = &countingLander{}
+	req := w.verifiedOnLockedLKG(252, "run-252")
+	release := core.ReleaseDigest(firstBuild)
+	p := w.pipeline()
+	w.setDegraded(release, true)
+	if _, err := p.FinishVerified(ctx, req); !core.HasCode(err, core.CodeUnavailable) {
+		t.Fatalf("first pass = %v, want UNAVAILABLE", err)
+	}
+	w.clock.Advance(p.unseenWait() / 2)
+	w.setDegraded(release, false)
+	unlock := w.lockTrustVolume()
+	if out, err := p.FinishVerified(ctx, req); err == nil || out.Result == ResultBlocked {
+		t.Fatalf("a pass that sees the release but cannot record it = %+v, %v; want held", out, err)
+	}
+	unlock()
+	w.setDegraded(release, true)
+	w.clock.Advance(p.unseenWait() / 2)
+	out, err := p.FinishVerified(ctx, req)
+	if !core.HasCode(err, core.CodeUnavailable) || out.Result != ResultHeld {
+		t.Fatalf("a pass a whole wait after the first but less after it was seen = %+v, %v; want held", out, err)
+	}
+	w.requireState(req.IssueID, core.StateVerified)
+}
+
+// Time under an emergency stop does not count toward the wait: a pass
+// skipped for the stop starts the wait again, so a release is not blocked
+// as soon as the stop is lifted for the time it was frozen.
+func TestTheWaitOfAnUnseenReleaseDoesNotRunWhileFrozen(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := newWorld(t)
+	w.cfg.Lander = &countingLander{}
+	req := w.verifiedOnLockedLKG(253, "run-253")
+	p := w.pipeline()
+	w.setDegraded(core.ReleaseDigest(firstBuild), true)
+	if _, err := p.FinishVerified(ctx, req); !core.HasCode(err, core.CodeUnavailable) {
+		t.Fatalf("first pass = %v, want UNAVAILABLE", err)
+	}
+	w.freeze.frozen.Store(true)
+	w.clock.Advance(p.unseenWait())
+	if _, err := p.FinishVerified(ctx, req); !core.HasCode(err, core.CodeFrozen) {
+		t.Fatalf("a pass under the stop = %v, want FROZEN", err)
+	}
+	w.freeze.frozen.Store(false)
+	out, err := p.FinishVerified(ctx, req)
+	if !core.HasCode(err, core.CodeUnavailable) || out.Result != ResultHeld {
+		t.Fatalf("the first pass after the stop = %+v, %v; want held, the wait started again", out, err)
+	}
+	w.requireState(req.IssueID, core.StateVerified)
+}

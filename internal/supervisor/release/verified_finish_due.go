@@ -187,6 +187,9 @@ func (p *Pipeline) FinishVerified(ctx context.Context, req Request) (Outcome, er
 	}
 	defer done()
 	if p.frozen(ctx) {
+		// Time under the stop does not count toward the wait of a release
+		// that is not seen: the pass is skipped, and the wait starts again.
+		p.seen(req.RunID)
 		out.State = core.StateVerified
 		return stop(ResultHeld, core.NewError(core.CodeFrozen, "an emergency stop froze publishing"), waitsEmergencyStop)
 	}

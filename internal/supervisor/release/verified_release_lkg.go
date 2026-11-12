@@ -100,6 +100,9 @@ func (p *Pipeline) settleLKG(ctx context.Context, record core.StateRecord, req R
 		d.verdict, d.reason = lkgUnseen, "the verified release is not observed serving its unit, healthy"
 		return d, nil
 	}
+	// Seen serving, healthy: the wait of an unseen release starts again,
+	// whatever a later step of this pass gives.
+	p.seen(record.RunID)
 	v, err := p.verifyAsOf(ctx, req, record, record.UpdatedAt)
 	if err != nil {
 		if ctx.Err() == nil && evidenceJudged(err) {

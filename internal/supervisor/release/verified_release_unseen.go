@@ -30,8 +30,11 @@ func (p *Pipeline) unseenWait() time.Duration {
 // check as down for a moment, does not block a healthy release. Once it was
 // not seen for unseenWait since this process first found it so, it is
 // blocked as not judged, the LKG restored first (blockVerified). The wait
-// is kept by this process only: it starts again when the supervisor does,
-// and no document of the control zone can shorten or end it.
+// starts again whenever the release is seen serving, healthy, even by a
+// pass that fails later (settleLKG), and on every pass an emergency stop
+// skips (FinishVerified). It is kept by this process only: it starts again
+// when the supervisor does, and no document of the control zone can
+// shorten or end it.
 func (p *Pipeline) waitUnseen(ctx context.Context, h *holding, unit string, d lkgDecision) (Outcome, error) {
 	wait := p.unseenWait()
 	if p.unseenFor(h.record.RunID) < wait {
