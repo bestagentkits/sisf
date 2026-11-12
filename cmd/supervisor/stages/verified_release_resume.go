@@ -13,7 +13,7 @@ import (
 // records its LKG before the LKG is adopted; *release.Pipeline is one.
 type VerifiedFinisher interface {
 	FinishVerified(ctx context.Context, req release.Request) (release.Outcome, error)
-	RecordVerifiedLKG(ctx context.Context, req release.Request) error
+	RecordVerifiedLKGs(ctx context.Context, reqs []release.Request) []error
 }
 
 // FinishWaits records what finishing a verified release waits on where the
@@ -147,15 +147,21 @@ func (s *ReleaseStage) forgetWait(issue core.IssueRef) {
 // the restart, so it observes the release it started. A release that is not
 // seen is observed again for as long as a later pass would wait for it;
 // one still not seen then is blocked by a later pass, the LKG restored.
+// The releases are observed together, so startup waits as long as for one.
 func (s *ReleaseStage) RecordVerifiedLKGs(ctx context.Context) ReleasePassResult {
 	res := ReleasePassResult{Outcomes: map[core.IssueRef]release.Outcome{}}
 	finisher, ok := s.Pipeline.(VerifiedFinisher)
 	if !ok {
 		return res
 	}
-	for _, j := range s.verifiedJobs(ctx, nil, &res) {
-		if err := finisher.RecordVerifiedLKG(ctx, j.req); err != nil {
-			res.Errors = append(res.Errors, fmt.Errorf("%s: record its verified release as the last known good release: %w", j.record.IssueID, err))
+	jobs := s.verifiedJobs(ctx, nil, &res)
+	reqs := make([]release.Request, len(jobs))
+	for i, j := range jobs {
+		reqs[i] = j.req
+	}
+	for i, err := range finisher.RecordVerifiedLKGs(ctx, reqs) {
+		if err != nil {
+			res.Errors = append(res.Errors, fmt.Errorf("%s: record its verified release as the last known good release: %w", jobs[i].record.IssueID, err))
 		}
 	}
 	return res

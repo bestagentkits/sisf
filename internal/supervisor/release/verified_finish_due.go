@@ -211,41 +211,99 @@ func (p *Pipeline) FinishVerified(ctx context.Context, req Request) (Outcome, er
 }
 
 // RecordVerifiedLKG makes the release of an issue left Verified the LKG of
-// its unit when settleLKG may: it is observed serving, healthy, now and no
-// later release superseded it. It runs before the LKG is adopted at
+// its unit when settleLKG may; it is RecordVerifiedLKGs of that one
+// release.
+func (p *Pipeline) RecordVerifiedLKG(ctx context.Context, req Request) error {
+	return p.RecordVerifiedLKGs(ctx, []Request{req})[0]
+}
+
+// RecordVerifiedLKGs makes the release of each issue left Verified the LKG
+// of its unit when settleLKG may: it is observed serving, healthy, now and
+// no later release superseded it. It runs before the LKG is adopted at
 // startup, so a supervisor that stopped between a Verified step and its LKG
 // serves what the record says when the running system still serves it. A
 // release the running system does not show serving, healthy, nor another
-// in its place, is observed again until it is, for as long as
-// FinishVerified would wait for it (observeUnseen): adoption would
-// otherwise start the LKG over a release that was only slow to answer. It
-// writes no lifecycle step: a release it cannot record is judged, and
-// blocked when it must be, by FinishVerified on a later pass.
-func (p *Pipeline) RecordVerifiedLKG(ctx context.Context, req Request) error {
+// in its place, is observed again every unseenPoll until it is, for as long
+// as FinishVerified would wait for it: adoption would otherwise start the
+// LKG over a release that was only slow to answer. The wait of every
+// release starts in the first pass over them all, and they are observed
+// again together, so startup waits one unseenWait however many there are.
+// It writes no lifecycle step: a release it cannot record is judged, and
+// blocked when it must be, by FinishVerified on a later pass. The error of
+// each request is at its index.
+func (p *Pipeline) RecordVerifiedLKGs(ctx context.Context, reqs []Request) []error {
+	errs := make([]error, len(reqs))
+	type unseen struct {
+		i      int
+		record core.StateRecord
+		due    FinishDue
+	}
+	var waiting []unseen
+	for i, req := range reqs {
+		record, due, done, err := p.verifiedToRecord(ctx, req)
+		if err != nil {
+			errs[i] = err
+			continue
+		}
+		defer done()
+		waiting = append(waiting, unseen{i: i, record: record, due: due})
+	}
+	for {
+		still := waiting[:0]
+		for _, u := range waiting {
+			d, err := p.settleLKG(ctx, u.record, reqs[u.i], u.due)
+			switch {
+			case err != nil:
+				errs[u.i] = err
+			case d.verdict != lkgUnseen:
+				p.seen(u.record.RunID)
+			case p.unseenFor(u.record.RunID) < p.unseenWait():
+				still = append(still, u)
+			}
+		}
+		if waiting = still; len(waiting) == 0 {
+			return errs
+		}
+		select {
+		case <-ctx.Done():
+			for _, u := range waiting {
+				errs[u.i] = ctx.Err()
+			}
+			return errs
+		case <-p.cfg.Clock.After(unseenPoll):
+		}
+	}
+}
+
+// verifiedToRecord takes the release of req for RecordVerifiedLKGs: it
+// drives the issue until done is called, and reads its Verified record and
+// what it owes.
+func (p *Pipeline) verifiedToRecord(ctx context.Context, req Request) (core.StateRecord, FinishDue, func(), error) {
 	if err := req.validate(); err != nil {
-		return err
+		return core.StateRecord{}, FinishDue{}, nil, err
 	}
 	done, ok := p.drive(req.IssueID)
 	if !ok {
-		return core.NewError(core.CodeLeaseHeld, "the issue is being released or recovered already")
+		return core.StateRecord{}, FinishDue{}, nil, core.NewError(core.CodeLeaseHeld, "the issue is being released or recovered already")
 	}
-	defer done()
 	var record core.StateRecord
-	if err := p.cfg.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
+	err := p.cfg.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
 		var err error
 		record, err = tx.GetRecord(ctx, req.IssueID)
 		return err
-	}); err != nil {
-		return err
+	})
+	if err == nil && (record.State != core.StateVerified || record.RunID != req.RunID || record.ReleaseDigest != req.Artifact.Digest) {
+		err = core.NewError(core.CodeConflict, "the issue is not verified with this run's release")
 	}
-	if record.State != core.StateVerified || record.RunID != req.RunID || record.ReleaseDigest != req.Artifact.Digest {
-		return core.NewError(core.CodeConflict, "the issue is not verified with this run's release")
+	var due FinishDue
+	if err == nil {
+		due, err = p.readDue(ctx, record, req.Artifact.Unit)
 	}
-	due, err := p.readDue(ctx, record, req.Artifact.Unit)
 	if err != nil {
-		return err
+		done()
+		return core.StateRecord{}, FinishDue{}, nil, err
 	}
-	return p.observeUnseen(ctx, record, req, due)
+	return record, due, done, nil
 }
 
 // readDue reads what the verified release of record still owes. A record

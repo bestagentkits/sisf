@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -189,4 +190,38 @@ func TestTheWaitOfAnUnseenReleaseDoesNotRunWhileFrozen(t *testing.T) {
 		t.Fatalf("the first pass after the stop = %+v, %v; want held, the wait started again", out, err)
 	}
 	w.requireState(req.IssueID, core.StateVerified)
+}
+
+// At startup every verified release that is not seen is waited for at
+// once: the wait of each starts in the first pass over them all, so the
+// supervisor waits one unseenWait before it adopts the LKG, however many
+// there are, and each is left Verified for a later pass to judge.
+func TestStartupWaitsForUnseenVerifiedReleasesTogether(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := newWorld(t)
+	var reqs []Request
+	for i, build := range []core.Digest{firstBuild, secondBuild, otherBuild} {
+		issue, run := issueRef(254+i), core.RunID(fmt.Sprintf("run-%d", 254+i))
+		w.seedVerified(issue, run, build)
+		reqs = append(reqs, w.request(issue, run, build))
+	}
+	// The probe finds nothing: no release is seen, nor another in its place.
+	w.backend.mu.Lock()
+	w.backend.unhealthy[w.backend.stable] = true
+	w.backend.mu.Unlock()
+
+	p := w.pipeline()
+	before := w.clock.Now()
+	for i, err := range p.RecordVerifiedLKGs(ctx, reqs) {
+		if err != nil {
+			t.Fatalf("RecordVerifiedLKGs of %s = %v", reqs[i].RunID, err)
+		}
+	}
+	if waited := w.clock.Now().Sub(before); waited < p.unseenWait() || waited > p.unseenWait()+unseenPoll {
+		t.Fatalf("startup waited %v for %d unseen releases, want one wait of %v", waited, len(reqs), p.unseenWait())
+	}
+	for _, req := range reqs {
+		w.requireState(req.IssueID, core.StateVerified)
+	}
 }

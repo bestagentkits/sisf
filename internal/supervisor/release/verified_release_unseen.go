@@ -13,7 +13,7 @@ const waitsUnseen = "the running system does not show the verified release servi
 	"it is observed again on every pass, for as long as a release is watched before it is verified"
 
 // unseenPoll is how often a release that is not seen is observed again
-// while the supervisor starts.
+// while the supervisor starts (RecordVerifiedLKGs).
 const unseenPoll = 5 * time.Second
 
 // unseenWait is how long a verified release that is not observed serving,
@@ -70,29 +70,4 @@ func (p *Pipeline) seen(run core.RunID) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.unseenSince, run)
-}
-
-// observeUnseen settles the LKG of a verified release at startup, and
-// observes a release that is not seen (lkgUnseen) again every unseenPoll
-// until it is settled otherwise or unseenWait has passed since this
-// process first did not see it. The wait it spends is the one
-// FinishVerified continues.
-func (p *Pipeline) observeUnseen(ctx context.Context, record core.StateRecord, req Request, due FinishDue) error {
-	for {
-		d, err := p.settleLKG(ctx, record, req, due)
-		if err != nil || d.verdict != lkgUnseen {
-			if err == nil {
-				p.seen(record.RunID)
-			}
-			return err
-		}
-		if p.unseenFor(record.RunID) >= p.unseenWait() {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-p.cfg.Clock.After(unseenPoll):
-		}
-	}
 }
