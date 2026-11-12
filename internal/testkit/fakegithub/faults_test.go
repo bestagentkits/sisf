@@ -109,8 +109,8 @@ func TestRedeliveryThroughTheAppHookAPI(t *testing.T) {
 	if status != 200 || len(body) == 0 {
 		t.Fatalf("list deliveries: %d", status)
 	}
-	if s, _, _ := e.call(t, "POST", "/app/hook/deliveries/1/attempts", nil); s != http.StatusAccepted {
-		t.Fatalf("redeliver: %d", s)
+	if s, body, _ := e.call(t, "POST", "/app/hook/deliveries/1/attempts", nil); s != http.StatusAccepted {
+		t.Fatalf("redeliver: %d %s", s, body)
 	}
 	if s, _, _ := e.call(t, "POST", "/app/hook/deliveries/99/attempts", nil); s != http.StatusNotFound {
 		t.Fatalf("redeliver unknown: %d, want 404", s)
