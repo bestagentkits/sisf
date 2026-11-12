@@ -62,6 +62,17 @@ func (l *memLedger) AppendUsage(_ context.Context, u core.Usage) error {
 	return nil
 }
 
+func (l *memLedger) RunCostUnreported(_ context.Context, run core.RunID) (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, u := range l.usage {
+		if u.RunID == run && u.CostUnreported() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (l *memLedger) BudgetTotals(_ context.Context, since time.Time) (core.BudgetTotals, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

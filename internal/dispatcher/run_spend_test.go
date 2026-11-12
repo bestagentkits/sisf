@@ -87,7 +87,9 @@ func TestAnAttemptThatReportsNoCostLeavesTheRunUnpriced(t *testing.T) {
 // the reported cost does not cover is booked as an unverified estimate and
 // the reservation is settled. A capped reservation is never pushed over its
 // amount, so closing never suspends it. A reservation already closed is
-// left as it is.
+// left as it is. Usage of the run in the ledger with tokens and no cost makes
+// the run unpriced whatever the spend passed in says, since that spend comes
+// from the agent zone's record; such usage of another run does not.
 func TestClosingARunsReservation(t *testing.T) {
 	t.Parallel()
 	const amount = core.Micros(1_000_000)
@@ -95,14 +97,17 @@ func TestClosingARunsReservation(t *testing.T) {
 		status     core.ReservationStatus
 		reported   core.Micros
 		unpriced   bool
+		booked     core.RunID
 		wantStatus core.ReservationStatus
 		wantBooked core.Micros
 	}{
-		"every attempt priced":           {core.ReservationHeld, 300_000, false, core.ReservationReleased, 0},
-		"some work unpriced":             {core.ReservationHeld, 300_000, true, core.ReservationSettled, 700_000},
-		"unpriced but reported in full":  {core.ReservationHeld, 1_200_000, true, core.ReservationReleased, 0},
-		"already settled":                {core.ReservationSettled, 0, true, core.ReservationSettled, 0},
-		"already released, still priced": {core.ReservationReleased, 0, false, core.ReservationReleased, 0},
+		"every attempt priced":                       {core.ReservationHeld, 300_000, false, "", core.ReservationReleased, 0},
+		"some work unpriced":                         {core.ReservationHeld, 300_000, true, "", core.ReservationSettled, 700_000},
+		"unpriced but reported in full":              {core.ReservationHeld, 1_200_000, true, "", core.ReservationReleased, 0},
+		"already settled":                            {core.ReservationSettled, 0, true, "", core.ReservationSettled, 0},
+		"already released, still priced":             {core.ReservationReleased, 0, false, "", core.ReservationReleased, 0},
+		"no spend passed, ledger shows no cost":      {core.ReservationHeld, 0, false, "run-1", core.ReservationSettled, amount},
+		"no spend passed, another run shows no cost": {core.ReservationHeld, 0, false, "run-2", core.ReservationReleased, 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -115,6 +120,12 @@ func TestClosingARunsReservation(t *testing.T) {
 					if err := tx.PutReservation(ctx, core.Reservation{ID: "res-1", FactoryID: sqlstoretest.Factory, IssueID: issue, RunID: "run-1",
 						Mode: core.BudgetCapped, Amount: amount, Status: c.status, IdempotencyKey: "claim/run-1", CreatedAt: f.clock.Now()}); err != nil {
 						return err
+					}
+					if c.booked != "" {
+						if err := tx.AppendUsage(ctx, core.Usage{FactoryID: sqlstoretest.Factory, IssueID: issue, RunID: c.booked,
+							Step: core.StepCoding, InputTokens: 100, OutputTokens: 20}); err != nil {
+							return err
+						}
 					}
 					return dispatcher.CloseReservationOfRun(ctx, gate, tx, "run-1", "res-1", dispatcher.RunSpend{ReportedCost: c.reported, Unpriced: c.unpriced})
 				})

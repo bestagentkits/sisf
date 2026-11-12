@@ -137,6 +137,9 @@ type BudgetLedger interface {
 	AppendUsage(ctx context.Context, u Usage) error
 	// BudgetTotals sums reservations still held and usage recorded since the instant.
 	BudgetTotals(ctx context.Context, since time.Time) (BudgetTotals, error)
+	// RunCostUnreported reports whether usage of run was recorded for which
+	// Usage.CostUnreported holds, whenever it was recorded.
+	RunCostUnreported(ctx context.Context, run RunID) (bool, error)
 }
 
 // BudgetGate decides whether a run may spend. It is consulted before a claim

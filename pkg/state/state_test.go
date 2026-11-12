@@ -115,6 +115,9 @@ func (txStub) GetReservation(context.Context, string) (core.Reservation, error) 
 	return core.Reservation{}, core.NewError(core.CodeNotFound, "no reservation")
 }
 func (txStub) AppendUsage(context.Context, core.Usage) error { return nil }
+func (txStub) RunCostUnreported(context.Context, core.RunID) (bool, error) {
+	return false, nil
+}
 func (txStub) BudgetTotals(context.Context, time.Time) (core.BudgetTotals, error) {
 	return core.BudgetTotals{}, nil
 }
