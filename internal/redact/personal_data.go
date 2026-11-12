@@ -21,6 +21,12 @@ var personalRules = []personalRule{
 	{MarkerEmail, regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}`), nil},
 	{MarkerIP, regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`), ipv4},
 	{MarkerIP, regexp.MustCompile(`(?i)\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b`), ipv6},
+	// Shortened IPv6 addresses ("2001:db8::1", "::1"): every unbroken run
+	// of letters, digits and colons is a candidate, and only one that is an
+	// address as a whole is replaced, so "std::string" and "12:30:45" stay.
+	// Text that happens to be a valid address ("a::b") is replaced as well:
+	// hiding too much is the safer mistake.
+	{MarkerIP, regexp.MustCompile(`[0-9A-Za-z:]+`), shortIPv6},
 	// International numbers, then common national formats.
 	{MarkerPhone, regexp.MustCompile(`\+\d[\d ().\-]{6,18}\d`), phoneDigits},
 	{MarkerPhone, regexp.MustCompile(`\(\d{3}\) ?\d{3}[ .\-]\d{4}\b`), nil},
@@ -77,6 +83,13 @@ func ipv4(s string) bool {
 func ipv6(s string) bool {
 	addr, err := netip.ParseAddr(s)
 	return err == nil && addr.Is6()
+}
+
+// shortIPv6 reports whether s is an IPv6 address written with "::" that
+// names at least one group; a bare "::" is punctuation far more often than
+// the unspecified address.
+func shortIPv6(s string) bool {
+	return strings.Contains(s, "::") && strings.Trim(s, ":") != "" && ipv6(s)
 }
 
 func phoneDigits(s string) bool {
