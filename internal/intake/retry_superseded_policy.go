@@ -35,7 +35,8 @@ import (
 // spends the approval it used.
 //
 // An issue that is not Blocked with an approved scope and no denial is
-// NOT_FOUND.
+// NOT_FOUND; one intake does not take any more, as when it was closed, is
+// CONFLICT with the reason.
 func (s *Service) RetryUnderPolicyInForce(ctx context.Context, req RetryRequest, blockedAt time.Time) (Result, error) {
 	result := Result{Issue: req.Issue}
 	if err := req.Issue.Validate(); err != nil {
@@ -50,9 +51,11 @@ func (s *Service) RetryUnderPolicyInForce(ctx context.Context, req RetryRequest,
 		return result, core.NewError(core.CodeNotFound, "the issue is not blocked with a scope that was approved under an earlier policy")
 	}
 	in, skipped, err := s.gather(ctx, req.Issue, true)
-	if err != nil || skipped != "" {
-		result.Skipped = skipped
+	if err != nil {
 		return result, err
+	}
+	if skipped != "" {
+		return result, core.NewError(core.CodeConflict, "intake does not take this issue any more: "+skipped)
 	}
 	if err := in.policy.Revision.Validate(); err != nil {
 		return result, err

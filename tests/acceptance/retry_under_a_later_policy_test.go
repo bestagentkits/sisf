@@ -3,12 +3,14 @@ package acceptance
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
+	"github.com/bestagentkits/sisf/pkg/approvals"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 	"github.com/bestagentkits/sisf/pkg/github"
@@ -247,4 +249,37 @@ func TestARetryOfAStopRecordNamingAnotherIssueIsRefusedAfterAPolicyChange(t *tes
 
 	putPolicyInForce(t, f, "A rule added after the issue was blocked.")
 	wantRetryRefusedAsBefore(t, f, number, blocked, scope.PolicyRevision, reason)
+}
+
+// A retry whose scope is to be judged under the policy in force fails with
+// the reason when intake does not take the issue any more, as when it was
+// closed on GitHub: the issue stays Blocked, the Owner is not asked for an
+// approval, and the retry never reads as done.
+func TestARetryAfterAPolicyChangeOfAClosedIssueFailsWithTheReason(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := harness.New(t, harness.Options{})
+	number := f.OpenIssue("visitor", "NONE", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
+	f.Pass()
+	approvePending(t, f, number)
+	failedAttempts(t, f, number)
+	f.Cycle(6)
+	wantSurfaces(t, f, number, core.StateBlocked)
+	blocked := f.Record(number)
+	putPolicyInForce(t, f, "A rule added after the issue was blocked.")
+	if err := f.GitHub.SetIssueState(f.Repo, number, f.GitHub.Person("visitor", "NONE"), "closed"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := f.Control.Retry(ctx, f.Issue(number), ownerActor(f))
+	if !core.HasCode(err, core.CodeConflict) || !strings.Contains(err.Error(), "the issue is not open") {
+		t.Fatalf("the retry of the closed issue: %v, want CONFLICT naming why", err)
+	}
+	if got := f.Record(number); got.State != core.StateBlocked || got.Version != blocked.Version {
+		t.Fatalf("the refused retry moved the issue: %+v", got)
+	}
+	pending, err := f.Control.Approvals.List(ctx, approvals.Filter{IssueID: f.Issue(number), Statuses: []approvals.Status{approvals.StatusPending}})
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("the refused retry left %d approval requests pending, want none: %v", len(pending), err)
+	}
 }
