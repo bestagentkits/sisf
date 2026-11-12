@@ -158,6 +158,9 @@ func TestShortenedIPv6AddressAfterNumbersIsRedactedWhole(t *testing.T) {
 		"std::fe80::1":                               "std::" + MarkerIP,
 		"fe80::1::2001:db8::1":                       MarkerIP,
 		"run-1::2::3":                                "run-" + MarkerIP,
+		"x:1111:2222:3333:4444:5555:6666:7777::":     "x:" + MarkerIP,
+		"x:::1111:2222:3333:4444:5555:6666:7777":     "x:" + MarkerIP,
+		"12:30:1111:2222:3333:4444:5555:6666:7777::": MarkerIP + ":" + MarkerIP,
 	} {
 		if got := personalData(in); got != want {
 			t.Errorf("personalData(%q) = %q, want %q", in, got, want)
@@ -172,10 +175,10 @@ func TestShortenedIPv6AddressAfterNumbersIsRedactedWhole(t *testing.T) {
 func TestExactlyThePiecesOfARunThatAreShortenedIPv6AddressesAreHidden(t *testing.T) {
 	const marker = "#"
 	rng := rand.New(rand.NewSource(1))
-	alphabets := []string{"::::::01fa", ":::01fax", ":0123456789abcdef", "::1f"}
+	alphabets := []string{"::::::01fa", ":::01fax", ":0123456789abcdef", "::1f", ":::::::::x", ":1111aF"}
 	for i := range 20000 {
 		alphabet := alphabets[i%len(alphabets)]
-		b := make([]byte, 1+rng.Intn(60))
+		b := make([]byte, 1+rng.Intn(90))
 		for j := range b {
 			b[j] = alphabet[rng.Intn(len(alphabet))]
 		}

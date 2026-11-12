@@ -154,7 +154,18 @@ func withoutShortIPv6(run, marker string) string {
 // starts at start ends in run, at the end of run or before a colon, or -1
 // when none starts there.
 func shortIPv6End(run string, start int) int {
+	// An address starts with a hex digit or with "::" and a hex digit, and
+	// holds nothing but hex digits and colons.
+	if run[start] == ':' && (start+2 >= len(run) || run[start+1] != ':' || run[start+2] == ':') {
+		return -1
+	}
 	limit := min(len(run), start+maxIPv6Text)
+	for i := start; i < limit; i++ {
+		if !hexOrColon(run[i]) {
+			limit = i
+			break
+		}
+	}
 	first := strings.Index(run[start:limit], "::")
 	if first < 0 {
 		return -1
@@ -165,6 +176,10 @@ func shortIPv6End(run string, start int) int {
 		}
 	}
 	return -1
+}
+
+func hexOrColon(c byte) bool {
+	return c == ':' || '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
 }
 
 func phoneDigits(s string) bool {
