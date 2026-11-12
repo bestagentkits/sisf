@@ -25,11 +25,11 @@ var personalRules = []personalRule{
 	{marker: MarkerIP, re: regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`), valid: ipv4},
 	{marker: MarkerIP, re: regexp.MustCompile(`(?i)\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b`), valid: ipv6},
 	// Shortened IPv6 addresses ("2001:db8::1", "::1"): every unbroken run
-	// of letters, digits and colons is a candidate, and only the address in
-	// it is replaced (see withoutShortIPv6), so "std::string" and "12:30:45"
-	// stay. Text that happens to be a valid address ("a::b", or "abc::def"
-	// in "sha256:abc::def") is replaced as well: hiding too much is the
-	// safer mistake.
+	// of letters, digits and colons is a candidate, and only the addresses
+	// in it are replaced (see withoutShortIPv6), so "std::string" and
+	// "12:30:45" stay. Text that happens to be a valid address ("a::b", or
+	// "abc::def" in "sha256:abc::def") is replaced as well: hiding too much
+	// is the safer mistake.
 	{marker: MarkerIP, re: regexp.MustCompile(`[0-9A-Za-z:]+`), rewrite: withoutShortIPv6},
 	// International numbers, then common national formats.
 	{marker: MarkerPhone, re: regexp.MustCompile(`\+\d[\d ().\-]{6,18}\d`), valid: phoneDigits},
@@ -104,54 +104,63 @@ func shortIPv6(s string) bool {
 const maxIPv6Text = 39
 
 // withoutShortIPv6 returns run, an unbroken run of letters, digits and
-// colons, with every IPv6 address written with "::" replaced by marker:
-// the whole run, or an address between labels, as "2001:db8::5" in
-// "2001:db8::5:" or "2001:db8::1::", "::1" in "ip:::1", "fe80::1" in
-// "fe80::1:eth0:up" and both addresses in "src:fe80::1:dst:fe80::2". An
-// address starts at the start of the run or after a "label:", whose colon
-// is not preceded by another. It ends at the end of the run, before the
-// colons that end the run, or before a ":label", whose colon is not
-// followed by another. So the "::" of an address is never split, and
-// "std::string" or "1::2::3" hold no address. The run is read from the
-// left, and from each start the longest address is taken. Each start is
-// tried with at most maxIPv6Text characters, so the work grows with the
-// length of the run and no more.
+// colons, without the IPv6 addresses written with "::" in it. Every piece
+// of the run that starts at the start of the run or after a colon, ends at
+// the end of the run or before a colon, and is such an address is hidden;
+// pieces that overlap or touch are hidden together, under one marker. So are the
+// whole run "2001:db8::1", "2001:db8::5" in "2001:db8::5:", "::1" in
+// "ip:::1", "fe80::1" in "fe80::1:eth0:up", both addresses in
+// "src:fe80::1:dst:fe80::2", and all of "12:30:45:fe80::1:2:3:4:5", where
+// the address and the numbers before it cannot be told apart. "std::string"
+// and "12:30:45" hold no such piece. An address is at most maxIPv6Text
+// characters, so each start is tried with no more, and the work grows with
+// the length of the run and no faster.
 func withoutShortIPv6(run, marker string) string {
 	if !strings.Contains(run, "::") {
 		return run
 	}
-	body := len(strings.TrimRight(run, ":"))
 	var out strings.Builder
-	written := 0
+	written := 0       // run[:written] is in out
+	from, to := -1, -1 // the piece being hidden, not yet in out
 	for start := 0; start < len(run); start++ {
-		afterLabel := start == 0 || run[start-1] == ':' && (start == 1 || run[start-2] != ':')
-		if !afterLabel {
+		if start > 0 && run[start-1] != ':' {
 			continue
 		}
-		end := shortIPv6End(run, start, body)
+		end := shortIPv6End(run, start)
 		if end < 0 {
 			continue
 		}
-		out.WriteString(run[written:start])
+		if start <= to {
+			to = max(to, end)
+			continue
+		}
+		if from >= 0 {
+			out.WriteString(run[written:from])
+			out.WriteString(marker)
+			written = to
+		}
+		from, to = start, end
+	}
+	if from >= 0 {
+		out.WriteString(run[written:from])
 		out.WriteString(marker)
-		written = end
-		start = end - 1
+		written = to
 	}
 	out.WriteString(run[written:])
 	return out.String()
 }
 
 // shortIPv6End gives where the longest IPv6 address written with "::" that
-// starts at start ends in run, or -1 when none starts there. body is the
-// length of run without the colons that end it.
-func shortIPv6End(run string, start, body int) int {
+// starts at start ends in run, at the end of run or before a colon, or -1
+// when none starts there.
+func shortIPv6End(run string, start int) int {
 	limit := min(len(run), start+maxIPv6Text)
-	if !strings.Contains(run[start:limit], "::") {
+	first := strings.Index(run[start:limit], "::")
+	if first < 0 {
 		return -1
 	}
-	for end := limit; end > start; end-- {
-		beforeLabel := end == len(run) || run[end] == ':' && (end >= body || run[end+1] != ':')
-		if beforeLabel && shortIPv6(run[start:end]) {
+	for end := limit; end >= start+first+2; end-- {
+		if (end == len(run) || run[end] == ':') && shortIPv6(run[start:end]) {
 			return end
 		}
 	}

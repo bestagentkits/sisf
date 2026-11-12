@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"math/rand"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,7 @@ func TestShortenedIPv6AddressesAreRedacted(t *testing.T) {
 func TestTextWithColonsThatIsNoAddressIsLeftAlone(t *testing.T) {
 	for _, text := range []string{
 		"std::string", "::", "x :: y", "12:30:45", "at 09:15", "pkg::mod::Fn()", "key::", "::main",
-		"sha256:0123456789abcdef", "dead::beefcafe1", "run-1::2::3",
+		"sha256:0123456789abcdef", "dead::beefcafe1", "run-g::2::h",
 	} {
 		if got := personalData(text); got != text {
 			t.Errorf("personalData(%q) = %q; want it unchanged", text, got)
@@ -66,7 +67,8 @@ func TestColonTextAroundWhichNoAddressStandsIsLeftAlone(t *testing.T) {
 
 // An address written with "::" may be followed by a colon and a label, as
 // in "fe80::1:established", or by two colons that end the run. Only the
-// address is replaced. "2001:db8::1:eth0" is no address as a whole, since
+// address is replaced, and with it colons after it that read as the end of
+// an address ("1::"). "2001:db8::1:eth0" is no address as a whole, since
 // "eth0" is no group of hex digits; "2001:db8::1:beef" is one, and is
 // replaced whole.
 func TestShortenedIPv6AddressBeforeATrailingLabelIsRedacted(t *testing.T) {
@@ -74,7 +76,7 @@ func TestShortenedIPv6AddressBeforeATrailingLabelIsRedacted(t *testing.T) {
 	for text, want := range map[string]string{
 		"peer fe80::1:established":  "peer " + MarkerIP + ":established",
 		"x:2001:db8::1:y":           "x:" + MarkerIP + ":y",
-		"host 2001:db8::1:: done":   "host " + MarkerIP + ":: done",
+		"host 2001:db8::1:: done":   "host " + MarkerIP + " done",
 		"2001:db8::1:eth0":          MarkerIP + ":eth0",
 		"2001:db8::1:beef":          MarkerIP,
 		"ip:2001:db8::1:eth0: down": "ip:" + MarkerIP + ":eth0: down",
@@ -137,5 +139,72 @@ func TestALongRunOfShortenedIPv6AddressesLosesAllOfThem(t *testing.T) {
 	want := strings.Repeat(MarkerIP+":l:", 500) + MarkerIP
 	if got := personalData(in); got != want {
 		t.Errorf("personalData of 501 addresses in one run left %d of them", strings.Count(got, "fe80::1"))
+	}
+}
+
+// Numbers, a MAC address or a timestamp glued in front of an address by a
+// colon read as groups of it. No group of the address is left: what cannot
+// be told apart is hidden together.
+func TestShortenedIPv6AddressAfterNumbersIsRedactedWhole(t *testing.T) {
+	for in, want := range map[string]string{
+		"00:1a:2b:3c:4d:5e:fe80::21a:2bff:fe3c:4d5e": "00:" + MarkerIP,
+		"12:30:45:fe80::21a:2bff:fe3c:4d5e":          MarkerIP,
+		"1:2:2001:0db8:85a3::8a2e:0370:7334":         MarkerIP,
+		"port:443:2001:db8:1:2:3::4:5":               "port:" + MarkerIP,
+		"ab:2001:db8:1:2:3::4:5":                     MarkerIP,
+		"2001:db8:1:2:3::4:5:443":                    MarkerIP,
+		"2001::f:::a:02001":                          MarkerIP + ":02001",
+		"fe80::1::up":                                MarkerIP + "::up",
+		"std::fe80::1":                               "std::" + MarkerIP,
+		"fe80::1::2001:db8::1":                       MarkerIP,
+		"run-1::2::3":                                "run-" + MarkerIP,
+	} {
+		if got := personalData(in); got != want {
+			t.Errorf("personalData(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The rule in full: a character of a run is hidden exactly when it lies in
+// a piece between colons, or the ends of the run, that is an address
+// written with "::". It is checked on random runs against a search of
+// every such piece.
+func TestExactlyThePiecesOfARunThatAreShortenedIPv6AddressesAreHidden(t *testing.T) {
+	const marker = "#"
+	rng := rand.New(rand.NewSource(1))
+	alphabets := []string{"::::::01fa", ":::01fax", ":0123456789abcdef", "::1f"}
+	for i := range 20000 {
+		alphabet := alphabets[i%len(alphabets)]
+		b := make([]byte, 1+rng.Intn(60))
+		for j := range b {
+			b[j] = alphabet[rng.Intn(len(alphabet))]
+		}
+		run := string(b)
+
+		hidden := make([]bool, len(run))
+		for start := 0; start < len(run); start++ {
+			if start > 0 && run[start-1] != ':' {
+				continue
+			}
+			for end := start + 1; end <= len(run); end++ {
+				if (end == len(run) || run[end] == ':') && shortIPv6(run[start:end]) {
+					for k := start; k < end; k++ {
+						hidden[k] = true
+					}
+				}
+			}
+		}
+		var want strings.Builder
+		for k := 0; k < len(run); k++ {
+			switch {
+			case !hidden[k]:
+				want.WriteByte(run[k])
+			case k == 0 || !hidden[k-1]:
+				want.WriteString(marker)
+			}
+		}
+		if got := withoutShortIPv6(run, marker); got != want.String() {
+			t.Fatalf("withoutShortIPv6(%q) = %q, want %q", run, got, want.String())
+		}
 	}
 }
