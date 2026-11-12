@@ -80,3 +80,34 @@ func TestARetryAfterTheOwnerChangedThePolicyNeedsAnApprovedScopeApprovedAgain(t 
 		t.Fatalf("the retried issue is %s, want Ready", got)
 	}
 }
+
+// While the policy the scope was approved under is still in force, the
+// retry of a stopped run needs nothing but the Owner asking: the approval
+// stands, and the scope is neither judged nor written again.
+func TestARetryUnderTheSamePolicyKeepsTheApprovedScope(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := harness.New(t, harness.Options{})
+	number := f.OpenIssue("visitor", "NONE", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
+	f.Pass()
+	approvePending(t, f, number)
+	failedAttempts(t, f, number)
+	f.Cycle(6)
+	wantSurfaces(t, f, number, core.StateBlocked)
+	before, err := f.Control.Intake.ApprovedScope(ctx, f.Issue(number))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := f.Control.Retry(ctx, f.Issue(number), ownerActor(f)); err != nil {
+		t.Fatalf("the Owner's retry under the policy the scope was approved under: %v", err)
+	}
+	if got := f.Record(number).State; got != core.StateReady {
+		t.Fatalf("the retried issue is %s, want Ready", got)
+	}
+	after, err := f.Control.Intake.ApprovedScope(ctx, f.Issue(number))
+	if err != nil || after.Version != before.Version || after.PolicyRevision != before.PolicyRevision {
+		t.Fatalf("the retry wrote the scope again: version %d under %s, was %d under %s: %v",
+			after.Version, after.PolicyRevision, before.Version, before.PolicyRevision, err)
+	}
+}

@@ -55,4 +55,7 @@ func releaseAgainAfterTheOwnerMovesTheBaseline(t *testing.T, d *standaloneDeploy
 		state := gh.issueState(t, number)
 		return state == "closed", "it is " + state
 	})
+	// The supervisor merged the retried candidate, so the next baseline the
+	// Owner puts in force can contain this release as well.
+	requireLanded(t, gh, number, "examples/hello-app/main.go")
 }

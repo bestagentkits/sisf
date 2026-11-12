@@ -83,8 +83,13 @@ func (c *Control) Retry(ctx context.Context, issue core.IssueRef, actor core.Act
 	}
 	var result intake.Result
 	if rejudge {
-		ask = c.Intake.RequestSupersededScopeApproval
 		result, err = c.Intake.RetryUnderPolicyInForce(ctx, retry, blockedAt)
+		// A block that was not over a superseded policy and that intake
+		// does not take as a scope to judge again is retried as before.
+		rejudge = superseded || !core.HasCode(err, core.CodeNotFound)
+	}
+	if rejudge {
+		ask = c.Intake.RequestSupersededScopeApproval
 	} else {
 		result, err = c.Intake.Retry(ctx, retry)
 	}
@@ -210,7 +215,8 @@ func (c *Control) stoppedUnderEarlierPolicy(ctx context.Context, issue core.Issu
 		return false, time.Time{}, nil
 	case err != nil:
 		return false, time.Time{}, err
-	case stop.IssueID != issue:
+	case stop.IssueID != issue || !stop.Cause.Valid():
+		// Not a block the retry guard would accept; it is left to refuse it.
 		return false, time.Time{}, nil
 	}
 	inForce, err := c.Baselines.Current(ctx)
