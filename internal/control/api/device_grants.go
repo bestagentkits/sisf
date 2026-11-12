@@ -25,9 +25,9 @@ const (
 	userCodeLen      = 8
 	// maxOpenGrants bounds the open login requests. When every slot is
 	// held by a source with one, a new start drops one chosen at random,
-	// so the table is sized for a person's request to outlast a flood: at
-	// 1.7 starts a second, one approved within a minute survives about
-	// nine times in ten.
+	// at most report.FloodSafeRate(maxOpenGrants, report.StartSurvival)
+	// times a minute, 83: a person's request approved within a minute of
+	// its start survives a flood at least 85% of the time.
 	maxOpenGrants = 1024
 )
 
