@@ -13,9 +13,12 @@ import (
 
 // RetryUnderPolicyInForce sends an issue back to Ready that was blocked
 // because the policy its scope was written under was superseded while its
-// run was under way. blockedAt is when it was blocked; the caller reads it
-// from the record written with the block and vouches that this is why the
-// issue is Blocked.
+// run was under way, or whose run stopped for another reason before the
+// Owner put another policy in force. blockedAt is when it was blocked; the
+// caller reads it from the record written with the block and vouches that
+// the issue is Blocked for a run that stopped. The retry is judged as one
+// after a superseded policy in both cases, the rule that asks for the most:
+// the scope must be proved again.
 //
 // A scope is permitted or approved under one policy, and a run is coded
 // under the policy its scope names. So the retry does not carry the old

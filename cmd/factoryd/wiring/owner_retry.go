@@ -45,8 +45,12 @@ import (
 // under the policy in force first, by intake: it is pinned to that policy
 // when it lies inside the delegation or the Owner approved it under that
 // policy since, and otherwise the Owner is asked, as for a scope that was
-// not approved. A run that stopped and is not blocked yet is blocked first,
-// so the retry need not wait for the next pass.
+// not approved. The same holds when the Owner put another policy in force
+// after the run stopped, whatever stopped it: a run claimed with a scope of
+// the earlier policy would be coded and then stopped as superseded, so the
+// retry has the scope judged under the policy in force instead of carrying
+// the earlier permission over. A run that stopped and is not blocked yet is
+// blocked first, so the retry need not wait for the next pass.
 //
 // Any other block is judged by the lifecycle's retry guard, with intake's
 // rule in front of it; a block whose cause has no retry rule is refused.
@@ -70,8 +74,15 @@ func (c *Control) Retry(ctx context.Context, issue core.IssueRef, actor core.Act
 	if err != nil {
 		return intake.Result{Issue: issue}, err
 	}
+	// rejudge is whether the scope goes before the policy in force first.
+	rejudge := superseded
+	if !superseded {
+		if rejudge, blockedAt, err = c.stoppedUnderEarlierPolicy(ctx, issue); err != nil {
+			return intake.Result{Issue: issue}, err
+		}
+	}
 	var result intake.Result
-	if superseded {
+	if rejudge {
 		ask = c.Intake.RequestSupersededScopeApproval
 		result, err = c.Intake.RetryUnderPolicyInForce(ctx, retry, blockedAt)
 	} else {
@@ -162,6 +173,51 @@ func (c *Control) supersededAt(ctx context.Context, issue core.IssueRef) (bool, 
 	}
 	superseded := err == nil && stop.IssueID == issue && stop.Cause == statemachine.BlockPolicySuperseded
 	return superseded, stop.BlockedAt, err
+}
+
+// stoppedUnderEarlierPolicy reports whether issue is blocked for a run that
+// stopped, with a scope that names another policy than the one in force,
+// and when it was blocked. The block is read as the retry guard reads it:
+// from the record written with it, or from the recovery report of a
+// rollback. An issue that is not blocked this way, has no approved scope,
+// or whose scope names the policy in force, is not one.
+func (c *Control) stoppedUnderEarlierPolicy(ctx context.Context, issue core.IssueRef) (bool, time.Time, error) {
+	var stop handoff.RunStop
+	var scope intake.SoW
+	err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		record, err := tx.GetRecord(ctx, issue)
+		if err != nil {
+			return err
+		}
+		if record.State != core.StateBlocked || record.RunID == "" {
+			return core.NewError(core.CodeNotFound, "the issue is not blocked for a run")
+		}
+		stop, err = handoff.ReadRunStop(ctx, tx, record.RunID)
+		if core.HasCode(err, core.CodeNotFound) {
+			stop, err = rolledBackBefore(ctx, tx, core.Transition{RunID: record.RunID})
+		}
+		if err != nil {
+			return err
+		}
+		scope, err = intake.ReadApprovedScope(ctx, tx, issue)
+		if core.HasCode(err, core.CodeApprovalRequired) {
+			return core.NewError(core.CodeNotFound, "the issue has no approved scope")
+		}
+		return err
+	})
+	switch {
+	case core.HasCode(err, core.CodeNotFound):
+		return false, time.Time{}, nil
+	case err != nil:
+		return false, time.Time{}, err
+	case stop.IssueID != issue:
+		return false, time.Time{}, nil
+	}
+	inForce, err := c.Baselines.Current(ctx)
+	if err != nil {
+		return false, time.Time{}, err
+	}
+	return scope.PolicyRevision != inForce.Revision, stop.BlockedAt, nil
 }
 
 // stoppedRunRetry is the retry guard of an issue the control zone blocked

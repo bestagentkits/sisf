@@ -75,7 +75,7 @@ Only a held release waits in ReleaseCandidate: `sisf runs explain` answers `rele
 
 ## Retrying a Blocked issue
 
-A Blocked issue moves again only through the Owner's retry, which sends it back to Ready (`cmd/factoryd/roles.go`). A block over a refused, rolled-back, interrupted or unjudged release, or over a run that used its attempts, is retried on the Owner's authorization alone; a block over an approval that was not given, or over a superseded policy, needs the scope approved or permitted again (`pkg/core/statemachine/retry_guard.go`). Run it on the host with the control zone's environment, as for the policy commands ([how, per mode](policy-and-approvals.md#running-owner-commands-on-the-host)):
+A Blocked issue moves again only through the Owner's retry, which sends it back to Ready (`cmd/factoryd/roles.go`). A block over a refused, rolled-back, interrupted or unjudged release, or over a run that used its attempts, is retried on the Owner's authorization alone; a block over an approval that was not given, or over a superseded policy, needs the scope approved or permitted again (`pkg/core/statemachine/retry_guard.go`). When the Owner put another policy in force after the issue was blocked, whatever stopped its run, the retry is judged like one over a superseded policy: the scope is judged under the policy in force and pinned to it, and a scope that policy does not permit by itself answers `APPROVAL_REQUIRED` naming the request to decide before retrying again (`cmd/factoryd/wiring/owner_retry.go`). Run it on the host with the control zone's environment, as for the policy commands ([how, per mode](policy-and-approvals.md#running-owner-commands-on-the-host)):
 
 ```sh
 factoryd issue retry --issue owner/repo#12
