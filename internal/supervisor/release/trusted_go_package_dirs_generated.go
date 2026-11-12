@@ -53,6 +53,7 @@ var trustedGoPackageDirs = []string{
 	"internal/mcp/",
 	"internal/oauthas/",
 	"internal/policy/",
+	"internal/processstart/",
 	"internal/qa/",
 	"internal/qa/agentjudge/",
 	"internal/rbac/",

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bestagentkits/sisf/internal/processstart"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
@@ -33,9 +34,13 @@ type identifiedProcess interface {
 }
 
 // slotRecord is what the backend keeps on disk about the process of one
-// slot. Start, the time the process started, identifies it beyond its pid,
-// which the system may give to another process once this one has gone; it
-// survives the exec by which a launcher becomes the release's program.
+// slot. Start, when the process started as internal/processstart reads it,
+// identifies it beyond its pid, which the system may give to another
+// process once this one has gone; it survives the exec by which a launcher
+// becomes the release's program. On Linux it is read from /proc, the boot
+// and the clock ticks from boot, which a step of the clock does not
+// change; elsewhere, and in a record an earlier build wrote, it is ps's
+// start to the second, and each record is checked the way it was written.
 // Command is the command line when the record was written, kept for the
 // log only: a launcher that execs changes it.
 type slotRecord struct {
@@ -48,26 +53,20 @@ type slotRecord struct {
 	Command string             `json:"command"`
 }
 
-// processIdentity reads when pid started and the command line it runs, as
-// ps prints them in the C locale. It fails when there is no such process.
+// processIdentity reads when pid started (processstart.Read) and, for the
+// log only, the command line it runs as ps prints it, "" when ps cannot
+// say. It fails when there is no such process.
 func processIdentity(ctx context.Context, pid int) (start, command string, err error) {
-	read := func(field string) (string, error) {
-		cmd := exec.CommandContext(ctx, "ps", "-o", field+"=", "-p", strconv.Itoa(pid))
-		cmd.Env = []string{"LC_ALL=C", "PATH=/usr/bin:/bin"}
-		out, err := cmd.Output()
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSpace(string(out)), nil
-	}
-	if start, err = read("lstart"); err != nil {
+	if start, err = processstart.Read(pid); err != nil {
 		return "", "", err
 	}
-	if command, err = read("args"); err != nil {
-		return "", "", err
+	if start == "" {
+		return "", "", fmt.Errorf("process %d is gone", pid)
 	}
-	if start == "" || command == "" {
-		return "", "", fmt.Errorf("process %d has no identity", pid)
+	cmd := exec.CommandContext(ctx, "ps", "-o", "args=", "-p", strconv.Itoa(pid))
+	cmd.Env = []string{"LC_ALL=C", "PATH=/usr/bin:/bin"}
+	if out, err := cmd.Output(); err == nil {
+		command = strings.TrimSpace(string(out))
 	}
 	return start, command, nil
 }
@@ -165,7 +164,7 @@ func (b *Backend) reattachSlot(ctx context.Context, s *slot) error {
 		b.cfg.Logger.Warn("a slot record that does not hold together is dropped without a signal", "slot", s.name)
 		return os.Remove(path)
 	}
-	if !sameProcess(ctx, rec) {
+	if !sameProcess(rec) {
 		b.cfg.Logger.Info("a recorded process is gone; its record is dropped", "slot", s.name, "pid", rec.PID)
 		return os.Remove(path)
 	}
@@ -212,11 +211,11 @@ type recordedProcess struct {
 
 func (p *recordedProcess) PID() int { return p.rec.PID }
 
-func (p *recordedProcess) Alive() bool { return sameProcess(context.Background(), p.rec) }
+func (p *recordedProcess) Alive() bool { return sameProcess(p.rec) }
 
 // Stop ends the recorded process, if its pid still names it.
 func (p *recordedProcess) Stop(ctx context.Context) error {
-	if !sameProcess(ctx, p.rec) {
+	if !sameProcess(p.rec) {
 		return nil
 	}
 	return stopRecorded(ctx, p.rec, p.clock)
@@ -226,12 +225,12 @@ func (p *recordedProcess) Stop(ctx context.Context) error {
 func (p *recordedProcess) CriticalSince(time.Time) int64 { return 0 }
 
 // sameProcess reports whether rec's pid still names the process recorded:
-// a live process that started at the recorded time. A process that has
-// exited but not been reaped is reported by ps as defunct and is taken as
-// gone.
-func sameProcess(ctx context.Context, rec slotRecord) bool {
-	start, command, err := processIdentity(ctx, rec.PID)
-	return err == nil && start == rec.Start && !strings.Contains(command, "<defunct>")
+// a live process that started at the recorded time, read the way the
+// record was written. A process that has exited but not been reaped is
+// taken as gone.
+func sameProcess(rec slotRecord) bool {
+	start, err := processstart.ReadLike(rec.Start, rec.PID)
+	return err == nil && start != "" && start == rec.Start
 }
 
 // stopRecorded sends SIGTERM to the recorded process, waits for it to
@@ -247,7 +246,7 @@ func stopRecorded(ctx context.Context, rec slotRecord, clock core.Clock) error {
 		return fmt.Errorf("signal process %d: %w", rec.PID, err)
 	}
 	deadline, killed := clock.Now().Add(staleStopGrace), false
-	for sameProcess(ctx, rec) {
+	for sameProcess(rec) {
 		if !clock.Now().Before(deadline) {
 			if killed {
 				return fmt.Errorf("process %d did not leave after it was killed", rec.PID)

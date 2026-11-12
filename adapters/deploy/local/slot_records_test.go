@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -325,5 +327,43 @@ func TestClosingABackendStopsOnlyTheProcessesItFoundAgain(t *testing.T) {
 	}
 	if !w.alive(1) {
 		t.Fatal("closing the backend stopped a process it started itself")
+	}
+}
+
+// A record an earlier build wrote with ps's start, before Linux read the
+// start from /proc, still names its process: it is checked the way it was
+// written, so the upgrade does not lose the process that serves.
+func TestARecordOfAnEarlierBuildIsCheckedTheWayItWasWritten(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("ps"); err != nil {
+		t.Skip("ps is not installed")
+	}
+	app := startSleeper(t)
+	_, dir := stagedWithRecord(t, app)
+	path := filepath.Join(dir, "blue.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(app.cmd.Process.Pid))
+	cmd.Env = []string{"LC_ALL=C", "PATH=/usr/bin:/bin"}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec["start"] = strings.Join(strings.Fields(string(out)), " ")
+	if raw, err = json.Marshal(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restarted(t, dir)
+	if again, ok := readSlotRecord(t, path); !ok || again.Start != rec["start"] {
+		t.Fatalf("a restarted backend dropped the record of an earlier build: %+v", again)
 	}
 }

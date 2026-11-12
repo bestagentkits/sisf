@@ -1,6 +1,6 @@
 //go:build !linux
 
-package install
+package processstart
 
 // systemStart returns when pid started, as ps prints it.
 func systemStart(pid int) (string, error) { return psStart(pid) }
