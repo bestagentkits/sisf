@@ -132,7 +132,7 @@ Undo: `sisf down -v --dir /srv/sisf/factory` stops it if it runs and removes its
 
 ## Declare the inputs of the application
 
-The factory publishes a candidate by itself only when every path it changes is an input of the one unit it releases; any other path is refused for the Owner's approval, and its pull request stays open for you ([threat model](../threat-model.md#merging-a-verified-candidate-tm-02-tm-08), `internal/supervisor/release/unit_inputs.go`). Built in, the inputs of `app` are the packages of `examples/hello-app/` and `build/hello-app.Dockerfile`. An application not laid out like `examples/hello-app/` must declare its inputs, otherwise every one of its candidates is refused for approval. Add `release.unit_inputs` to the install's `<dir>/factory.yaml`, the manifest the supervisor reads, and restart the factory, since the supervisor reads it when it starts:
+The factory publishes a candidate by itself only when every path it changes is an input of the one unit it releases; any other path is refused for the Owner's approval, and its pull request stays open for you ([threat model](../threat-model.md#merging-a-verified-candidate-tm-02-tm-08), `internal/supervisor/release/unit_inputs.go`). Built in, the inputs of `app` are the packages of `examples/hello-app/`, without any `go.mod`, `go.sum` or `go.work*` file; its Dockerfile is not an input. `control` has no built-in inputs: the dashboard's templates and scripts show the Owner what an approval is for, so they are part of the trusted surface, and a change to the dashboard is published only by a person. An application not laid out like `examples/hello-app/` must declare its inputs, otherwise every one of its candidates is refused for approval. Add `release.unit_inputs` to the install's `<dir>/factory.yaml`, the manifest the supervisor reads, and restart the factory, since the supervisor reads it when it starts:
 
 ```yaml
 release:
@@ -143,7 +143,8 @@ release:
 
 - A pattern is a path relative to the repository root, matched against the whole path without regard to letter case; `*` stays within one directory, so `*.go` is the Go files at the root and `web/*.html` the pages directly in `web/`. A name without a wildcard is that one file. An entry replaces the built-in inputs of that unit. A unit needs an entry in `release.units` to have one.
 - `**`, an absolute path, `..` and a pattern made only of wildcards are refused (`pkg/manifest/unit_inputs.go`).
-- `sisf conformance check <dir>/factory.yaml` and `sisf up` refuse a pattern that can match a protected path (`release.unit_inputs_protected`), a `control` pattern that can match a file the Go toolchain reads (`release.unit_inputs_control_go_code`), and a pattern that can match a path another unit consumes (`release.unit_inputs_overlap`).
+- `sisf conformance check <dir>/factory.yaml` and `sisf up` refuse a pattern that can match a protected path (`release.unit_inputs_protected`), which includes `ui/templates/` and `ui/static/`, a pattern of any unit but `app` that can match a file the Go toolchain reads, `go.mod`, `go.sum` and `go.work*` included (`release.unit_inputs_go_code`), and a pattern that can match a path another unit consumes (`release.unit_inputs_overlap`).
+- A dashboard pattern, if you declare one for `control`, must stay outside `ui/`. Never declare a template or script that shows an approval or a step-up sign-in: a candidate could then change what you are asked to approve.
 - The supervisor never reads inputs from the repository, so a candidate cannot widen its own. The installed file is Owner-declared and protected by the install directory's permissions (a read-only mount in Docker mode); it is not signed.
 
 ## Running Standalone as a service
