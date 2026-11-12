@@ -214,7 +214,8 @@ func (s *Service) completeFlow(ctx context.Context, providerName, state, code, b
 // pushes out the oldest protected flow, and is not charged against the
 // eviction rate. An unprotected flow is refused when the eviction rate is
 // spent, with RATE_LIMITED and the seconds until it may be tried again, or
-// when every flow left is protected.
+// when every flow left is protected, with RATE_LIMITED and the seconds
+// until the first open flow lapses, without spending an eviction.
 func (s *Service) pruneFlowsLocked(now time.Time, source, stepUpKey string, protected bool) error {
 	// The newcomer's source is counted as if its new flow were in the
 	// table already, so a source that holds a flow loses its own oldest
@@ -249,42 +250,67 @@ func (s *Service) pruneFlowsLocked(now time.Time, source, stepUpKey string, prot
 		case busiest > 1:
 			dropped = s.dropOldestFlowLocked(perSource, func(f *flow) bool { return !f.protected && perSource[f.source] == busiest })
 		case busiest == 1:
+			// The flows that may be pushed out are found before the
+			// eviction is charged, so a start that finds none spends
+			// nothing.
+			candidates := s.unprotectedFlowsLocked()
+			if len(candidates) == 0 {
+				break
+			}
 			if !protected {
 				if ok, wait := s.startsLocked().Evict(now); !ok {
 					return startRefused(wait)
 				}
 			}
-			dropped = s.dropRandomFlowLocked(perSource)
+			dropped = s.dropRandomFlowLocked(candidates, perSource)
 		case protected:
 			dropped = s.dropOldestFlowLocked(perSource, func(*flow) bool { return true })
 		}
 		if !dropped {
-			return core.NewError(core.CodeRateLimited, "too many sign-ins are open; try again in a few minutes")
+			return s.flowsFullLocked(now)
 		}
 	}
 	return nil
 }
 
-// dropRandomFlowLocked drops an unprotected flow chosen at random, keeping
-// perSource current, and reports whether one was dropped; without
-// randomness it drops none.
-func (s *Service) dropRandomFlowLocked(perSource map[string]int) bool {
-	type candidate struct {
-		key string
-		f   *flow
-	}
-	candidates := make([]candidate, 0, len(s.flows))
-	for k, f := range s.flows {
-		if !f.protected {
-			candidates = append(candidates, candidate{k, f})
+// flowsFullLocked refuses a start while no open flow can be pushed out,
+// with RATE_LIMITED and the seconds until the first of them lapses.
+func (s *Service) flowsFullLocked(now time.Time) error {
+	soonest := now.Add(flowTTL)
+	for _, f := range s.flows {
+		if f.expires.Before(soonest) {
+			soonest = f.expires
 		}
 	}
-	if len(candidates) == 0 {
-		return false
+	err := core.NewError(core.CodeRateLimited, "too many sign-ins are open; try again in a few minutes")
+	err.Details = map[string]string{"retry_after_seconds": report.RetryAfter(soonest.Sub(now))}
+	return err
+}
+
+// flowCandidate is a flow a start may push out, under its key.
+type flowCandidate struct {
+	key string
+	f   *flow
+}
+
+// unprotectedFlowsLocked returns the unprotected flows, the ones a start
+// may push out, in the order they started: map order is neither uniform
+// nor repeatable, so a choice among them is the pick's alone.
+func (s *Service) unprotectedFlowsLocked() []flowCandidate {
+	candidates := make([]flowCandidate, 0, len(s.flows))
+	for k, f := range s.flows {
+		if !f.protected {
+			candidates = append(candidates, flowCandidate{k, f})
+		}
 	}
-	// Map order is neither uniform nor repeatable: the candidates are put
-	// in the order they started, so the choice is pick's alone.
-	slices.SortFunc(candidates, func(a, b candidate) int { return cmp.Compare(a.f.seq, b.f.seq) })
+	slices.SortFunc(candidates, func(a, b flowCandidate) int { return cmp.Compare(a.f.seq, b.f.seq) })
+	return candidates
+}
+
+// dropRandomFlowLocked drops one of candidates chosen at random, keeping
+// perSource current, and reports whether one was dropped; without
+// randomness it drops none.
+func (s *Service) dropRandomFlowLocked(candidates []flowCandidate, perSource map[string]int) bool {
 	pick := s.pick
 	if pick == nil {
 		pick = randomIndex
@@ -293,9 +319,8 @@ func (s *Service) dropRandomFlowLocked(perSource map[string]int) bool {
 	if err != nil || i < 0 || i >= len(candidates) {
 		return false
 	}
-	victim := candidates[i]
-	delete(s.flows, victim.key)
-	perSource[victim.f.source]--
+	delete(s.flows, candidates[i].key)
+	perSource[candidates[i].f.source]--
 	return true
 }
 

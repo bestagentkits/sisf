@@ -82,8 +82,9 @@ func (s *Server) registrationLimitsLocked() *report.StartLimiter {
 }
 
 // addDynamicClient stores c, registered from source, and reports whether
-// it found room and, when it did not because the eviction rate is spent,
-// how long until it may be tried again (retryAfter, zero otherwise). It
+// it found room and, when it did not, how long until it may be tried again
+// (retryAfter): until the eviction rate allows another eviction, or, when
+// no client may be dropped, until the first pending consent or code lapses. It
 // first drops expired clients and then, while MaxClients are registered,
 // counting the newcomer's source as if its new client were registered
 // already, so a source that holds an unused client loses its own oldest
@@ -107,8 +108,9 @@ func (s *Server) registrationLimitsLocked() *report.StartLimiter {
 // several unused clients each, however busy, never hold up a newcomer. A
 // client a consent or code is pending for is never dropped; c is refused
 // when the eviction rate is spent, or when every registered client is one
-// of those. Only a person who holds a scope reaches consent, so an account
-// without a role cannot pin a client this way.
+// of those, without spending an eviction. Only a person who holds a scope
+// reaches consent, so an account without a role cannot pin a client this
+// way.
 func (s *Server) addDynamicClient(c Client, source string) (added bool, retryAfter time.Duration) {
 	now := s.cfg.Clock.Now()
 	s.mu.Lock()
@@ -134,14 +136,22 @@ func (s *Server) addDynamicClient(c Client, source string) (added bool, retryAft
 			})
 			continue
 		}
+		// The clients that may be dropped are found before the eviction
+		// is charged, so a registration that finds none spends nothing.
+		// Only the newcomer's own source may be counted at one with no
+		// unused client registered; then a consented one goes.
+		candidates := s.dynamicClientsLocked(func(id string, u *clientUse) bool { return u.unused() && !inFlight[id] })
+		if len(candidates) == 0 {
+			candidates = s.dynamicClientsLocked(func(id string, _ *clientUse) bool { return !inFlight[id] })
+		}
+		if len(candidates) == 0 {
+			return false, s.untilInFlightLapseLocked(now)
+		}
 		if ok, wait := s.registrationLimitsLocked().Evict(now); !ok {
 			return false, wait
 		}
-		// Only the newcomer's own source may be counted at one with no
-		// unused client registered; then a consented one goes.
-		if !s.dropRandomClientLocked(unusedBySource, func(id string, u *clientUse) bool { return u.unused() && !inFlight[id] }) &&
-			!s.dropRandomClientLocked(unusedBySource, func(id string, _ *clientUse) bool { return !inFlight[id] }) {
-			return false, 0
+		if !s.dropRandomClientLocked(candidates, unusedBySource) {
+			return false, s.untilInFlightLapseLocked(now)
 		}
 	}
 	s.clientSeq++
@@ -150,26 +160,30 @@ func (s *Server) addDynamicClient(c Client, source string) (added bool, retryAft
 	return true, 0
 }
 
-// dropRandomClientLocked drops a registration among those eligible picks,
-// chosen at random, keeping unusedBySource current, and reports whether
-// one was dropped; without randomness it drops none.
-func (s *Server) dropRandomClientLocked(unusedBySource map[string]int, eligible func(string, *clientUse) bool) bool {
-	type candidate struct {
-		id string
-		u  *clientUse
-	}
-	var candidates []candidate
+// clientCandidate is a registration a newcomer may push out, under its ID.
+type clientCandidate struct {
+	id string
+	u  *clientUse
+}
+
+// dynamicClientsLocked returns the registrations eligible picks, in the
+// order they registered: map order is neither uniform nor repeatable, so a
+// choice among them is the pick's alone.
+func (s *Server) dynamicClientsLocked(eligible func(string, *clientUse) bool) []clientCandidate {
+	var candidates []clientCandidate
 	for id, u := range s.dynamic {
 		if eligible(id, u) {
-			candidates = append(candidates, candidate{id, u})
+			candidates = append(candidates, clientCandidate{id, u})
 		}
 	}
-	if len(candidates) == 0 {
-		return false
-	}
-	// Map order is neither uniform nor repeatable: the candidates are put
-	// in the order they registered, so the choice is pick's alone.
-	slices.SortFunc(candidates, func(a, b candidate) int { return cmp.Compare(a.u.seq, b.u.seq) })
+	slices.SortFunc(candidates, func(a, b clientCandidate) int { return cmp.Compare(a.u.seq, b.u.seq) })
+	return candidates
+}
+
+// dropRandomClientLocked drops one of candidates chosen at random, keeping
+// unusedBySource current, and reports whether one was dropped; without
+// randomness it drops none.
+func (s *Server) dropRandomClientLocked(candidates []clientCandidate, unusedBySource map[string]int) bool {
 	pick := s.pick
 	if pick == nil {
 		pick = randomIndex
@@ -184,6 +198,24 @@ func (s *Server) dropRandomClientLocked(unusedBySource map[string]int, eligible 
 		unusedBySource[victim.u.source]--
 	}
 	return true
+}
+
+// untilInFlightLapseLocked is how long from now until the first pending
+// consent or unredeemed code lapses, and with it the hold on its client:
+// at most consentTTL.
+func (s *Server) untilInFlightLapseLocked(now time.Time) time.Duration {
+	soonest := now.Add(consentTTL)
+	for _, p := range s.pending {
+		if now.Before(p.expires) && p.expires.Before(soonest) {
+			soonest = p.expires
+		}
+	}
+	for _, g := range s.codes {
+		if !g.used && now.Before(g.expires) && g.expires.Before(soonest) {
+			soonest = g.expires
+		}
+	}
+	return soonest.Sub(now)
 }
 
 // randomIndex returns a uniformly random index below n from crypto/rand.

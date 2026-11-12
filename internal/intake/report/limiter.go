@@ -165,8 +165,9 @@ func (l *StartLimiter) Admit(source string, now time.Time) (bool, time.Duration)
 
 // Evict takes one random eviction at now off the eviction limit and
 // reports whether it is allowed, and if not, how long until it may be
-// tried again. It is asked just before the eviction, so a refused start
-// leaves the table as it was.
+// tried again. It is asked once an entry to push out was found, just
+// before it is dropped, so a start that finds none spends nothing and a
+// refused start leaves the table as it was.
 func (l *StartLimiter) Evict(now time.Time) (bool, time.Duration) {
 	return l.evictions.Take("", now)
 }

@@ -150,7 +150,7 @@ func TestAFloodOfOneRegistrationPerAddressIsAdmitted(t *testing.T) {
 	for s := range 30 {
 		switch status, _ := registerFrom(t, e, fmt.Sprintf("203.0.113.%d", s)); status {
 		case http.StatusCreated:
-		case http.StatusServiceUnavailable:
+		case http.StatusTooManyRequests:
 			refused++
 		default:
 			t.Fatalf("a registration from source %d: %d", s, status)
@@ -197,5 +197,40 @@ func TestARegistrationFloodSharingThePersonsAddressTakesEverySlotToDropTheirClie
 	}
 	if !registered(t, e, id) {
 		t.Fatal("a client was dropped after fewer registrations than slots from its own address")
+	}
+}
+
+// A registration while every registered client has a code waiting to be
+// redeemed, so none may be dropped, is refused as a registration over the
+// limits is: 429 with a Retry-After and the protocol's error body.
+func TestARegistrationWithEveryClientInFlightIsAskedToComeBack(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, registrationLimits(2))
+	for _, source := range []string{"192.0.2.10", "192.0.2.11"} {
+		status, id := registerFrom(t, e, source)
+		if status != http.StatusCreated {
+			t.Fatalf("a registration from %s: %d", source, status)
+		}
+		approveFor(t, e, id)
+	}
+	req, err := http.NewRequest(http.MethodPost, e.Base+oauthas.RegisterPath,
+		bytes.NewBufferString(`{"client_name":"agent","redirect_uris":["`+e.RedirectURI+`"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(sourceHeader, "192.0.2.12")
+	resp, err := e.HTTP.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		Error string `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != http.StatusTooManyRequests || resp.Header.Get("Retry-After") == "" || out.Error != "temporarily_unavailable" {
+		t.Fatalf("a registration with every client in flight: %d, Retry-After %q, error %q; want 429 with a Retry-After and temporarily_unavailable",
+			resp.StatusCode, resp.Header.Get("Retry-After"), out.Error)
 	}
 }

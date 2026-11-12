@@ -225,45 +225,65 @@ func (s *deviceStore) makeRoomLocked(now time.Time, source string) error {
 		case busiest > 1:
 			s.dropOldestWaitingLocked(perSource, func(g *grant) bool { return perSource[g.source] == busiest })
 		case busiest == 1:
+			// The requests that may be dropped are found before the
+			// eviction is charged, so a start that finds none spends
+			// nothing.
+			candidates := s.waitingGrantsLocked()
+			if len(candidates) == 0 {
+				return s.loginRequestsFullLocked(now)
+			}
 			if ok, wait := s.starts.Evict(now); !ok {
 				return loginStartRefused(wait)
 			}
-			if !s.dropRandomWaitingLocked(perSource) {
-				return loginRequestsFull()
+			if !s.dropRandomWaitingLocked(candidates, perSource) {
+				return s.loginRequestsFullLocked(now)
 			}
 		default:
-			return loginRequestsFull()
+			return s.loginRequestsFullLocked(now)
 		}
 	}
 	return nil
 }
 
-// loginRequestsFull refuses a start while every open request is being
-// approved or waits to be collected.
-func loginRequestsFull() error {
-	return core.NewError(core.CodeRateLimited, "too many login requests are open; try again shortly")
-}
-
-// dropRandomWaitingLocked drops a waiting request chosen at random,
-// keeping perSource current, and reports whether one was dropped; without
-// randomness it drops none.
-func (s *deviceStore) dropRandomWaitingLocked(perSource map[string]int) bool {
-	type candidate struct {
-		key string
-		g   *grant
-	}
-	candidates := make([]candidate, 0, len(s.grants))
-	for k, g := range s.grants {
-		if g.waiting() {
-			candidates = append(candidates, candidate{k, g})
+// loginRequestsFullLocked refuses a start while every open request is
+// being approved or waits to be collected, with RATE_LIMITED and the
+// seconds until the first of them lapses.
+func (s *deviceStore) loginRequestsFullLocked(now time.Time) error {
+	soonest := now.Add(s.ttl)
+	for _, g := range s.grants {
+		if g.expires.Before(soonest) {
+			soonest = g.expires
 		}
 	}
-	if len(candidates) == 0 {
-		return false
+	err := core.NewError(core.CodeRateLimited, "too many login requests are open; try again shortly")
+	err.Details = map[string]string{"retry_after_seconds": report.RetryAfter(soonest.Sub(now))}
+	return err
+}
+
+// grantCandidate is a waiting request a start may drop, under its key.
+type grantCandidate struct {
+	key string
+	g   *grant
+}
+
+// waitingGrantsLocked returns the waiting requests, the ones a start may
+// drop, in the order they started: map order is neither uniform nor
+// repeatable, so a choice among them is the pick's alone.
+func (s *deviceStore) waitingGrantsLocked() []grantCandidate {
+	candidates := make([]grantCandidate, 0, len(s.grants))
+	for k, g := range s.grants {
+		if g.waiting() {
+			candidates = append(candidates, grantCandidate{k, g})
+		}
 	}
-	// Map order is neither uniform nor repeatable: the candidates are put
-	// in the order they started, so the choice is pick's alone.
-	slices.SortFunc(candidates, func(a, b candidate) int { return cmp.Compare(a.g.seq, b.g.seq) })
+	slices.SortFunc(candidates, func(a, b grantCandidate) int { return cmp.Compare(a.g.seq, b.g.seq) })
+	return candidates
+}
+
+// dropRandomWaitingLocked drops one of candidates chosen at random,
+// keeping perSource current, and reports whether one was dropped; without
+// randomness it drops none.
+func (s *deviceStore) dropRandomWaitingLocked(candidates []grantCandidate, perSource map[string]int) bool {
 	pick := s.pick
 	if pick == nil {
 		pick = randomIndex

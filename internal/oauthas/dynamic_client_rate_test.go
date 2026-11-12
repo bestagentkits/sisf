@@ -31,7 +31,7 @@ func (s *Server) topUpClients() {
 // registerThroughLimits registers a client from source as the route does:
 // the source's start limit first, then the table, which charges a random
 // eviction against the eviction rate. It returns the client's ID, or ""
-// and the wait the limits name, zero when the table had no room at all.
+// and the wait it was given.
 func (s *Server) registerThroughLimits(source string) (string, time.Duration) {
 	if ok, wait := s.admitRegistration(source); !ok {
 		return "", wait

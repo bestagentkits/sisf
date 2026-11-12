@@ -133,12 +133,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if added, wait := s.addDynamicClient(c, s.clientKey(r)); !added {
-		if wait > 0 {
-			w.Header().Set("Retry-After", report.RetryAfter(wait))
-			writeOAuthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "too many clients are being registered; try again shortly")
-			return
-		}
-		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "no more clients can be registered")
+		w.Header().Set("Retry-After", report.RetryAfter(wait))
+		writeOAuthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "too many clients are registered or being registered; try again shortly")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

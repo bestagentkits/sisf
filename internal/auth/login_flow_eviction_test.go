@@ -1,12 +1,14 @@
 package auth
 
 import (
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"testing"
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/intake/report"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // flowTable is a service holding sign-in flows only, choosing which to push
@@ -113,5 +115,27 @@ func TestTheBusiestSourceLosesItsOldestFlowFirst(t *testing.T) {
 	}
 	if _, ok := s.flows[person]; !ok {
 		t.Fatal("a busy source pushed out the person's single sign-in")
+	}
+}
+
+// A start into a table with nothing it may push out, every flow protected,
+// is refused without spending a random eviction, and says when to come
+// back: when the first open flow lapses.
+func TestAStartWithNothingToPushOutSpendsNoEviction(t *testing.T) {
+	t.Parallel()
+	s := flowTable(rand.New(rand.NewPCG(5, 6)))
+	s.starts = report.NewStartLimits(1<<30, 1, time.Minute, 1<<20)
+	now := time.Date(2026, 11, 12, 8, 0, 0, 0, time.UTC)
+	for i := range maxFlows {
+		s.admit(now.Add(time.Duration(i)*time.Millisecond), fmt.Sprintf("owner-%d", i), true)
+	}
+	later := now.Add(4 * time.Minute)
+	err := s.pruneFlowsLocked(later, "newcomer", "", false)
+	var typed *core.Error
+	if !errors.As(err, &typed) || typed.Code != core.CodeRateLimited || typed.Details["retry_after_seconds"] != "360" {
+		t.Fatalf("a start with every flow protected: %v, want RATE_LIMITED until the first flow lapses in 360 seconds", err)
+	}
+	if ok, _ := s.starts.Evict(later); !ok {
+		t.Fatal("a refused start spent the random eviction it never made")
 	}
 }

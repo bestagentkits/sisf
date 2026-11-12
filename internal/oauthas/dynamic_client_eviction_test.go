@@ -132,3 +132,25 @@ func TestConsentedClientsMakeRoomOnlyWhenNoUnusedOneIsLeft(t *testing.T) {
 		t.Fatal("a registration was admitted though every client has a code pending")
 	}
 }
+
+// A registration while every registered client has a consent or a code
+// pending, so none may be dropped, is refused without spending a random
+// eviction, and says when to come back: when the first of those lapses.
+func TestARegistrationWithNothingToDropSpendsNoEviction(t *testing.T) {
+	t.Parallel()
+	clock := &stillClock{now: time.Date(2026, 11, 12, 8, 0, 0, 0, time.UTC)}
+	s := clientTable(clock, 3, rand.New(rand.NewPCG(7, 8)))
+	s.registrations = report.NewStartLimits(1<<30, 1, time.Minute, 1<<20)
+	for n := range 3 {
+		id := s.register(fmt.Sprintf("source-%d", n))
+		s.pending[id] = &pendingConsent{req: authRequest{client: Client{ID: id}}, expires: clock.now.Add(consentTTL + time.Duration(n)*time.Minute)}
+	}
+	clock.now = clock.now.Add(4 * time.Minute)
+	added, wait := s.addDynamicClient(Client{ID: "newcomer", Dynamic: true}, "newcomer")
+	if added || wait != consentTTL-4*time.Minute {
+		t.Fatalf("a registration with every client in flight: added %v, wait %s; want it refused until the first consent lapses in %s", added, wait, consentTTL-4*time.Minute)
+	}
+	if ok, _ := s.registrations.Evict(clock.now); !ok {
+		t.Fatal("a refused registration spent the random eviction it never made")
+	}
+}

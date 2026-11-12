@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"testing"
@@ -82,5 +83,31 @@ func TestAOnePerSourceFloodRarelyDropsAPersonsLoginRequest(t *testing.T) {
 	t.Logf("%d of %d people's login requests survived a minute of the flood", survived, people)
 	if rate := float64(survived) / people; rate < 0.85 {
 		t.Fatalf("%d of %d people's login requests survived a minute of the flood (%.0f%%), want at least 85%%", survived, people, rate*100)
+	}
+}
+
+// A start while every open request is being approved or waits to be
+// collected, so none may be dropped, is refused without spending a random
+// eviction, and says when to come back: when the first request lapses.
+func TestALoginRequestWithNothingToDropSpendsNoEviction(t *testing.T) {
+	t.Parallel()
+	clock := &fixedClock{now: time.Date(2026, 11, 12, 8, 0, 0, 0, time.UTC)}
+	s := newDeviceStore(clock, 10*time.Minute, 5*time.Second)
+	s.starts = report.NewStartLimits(1<<30, 1, time.Minute, 1<<20)
+	for n := range maxOpenGrants {
+		code, _, err := s.start("cli", nil, fmt.Sprintf("approved-%d", n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.grants[digestOf(code)].approved = true
+	}
+	clock.now = clock.now.Add(4 * time.Minute)
+	_, _, err := s.start("cli", nil, "newcomer")
+	var typed *core.Error
+	if !errors.As(err, &typed) || typed.Code != core.CodeRateLimited || typed.Details["retry_after_seconds"] != "360" {
+		t.Fatalf("a start with every request approved: %v, want RATE_LIMITED until the first request lapses in 360 seconds", err)
+	}
+	if ok, _ := s.starts.Evict(clock.now); !ok {
+		t.Fatal("a refused start spent the random eviction it never made")
 	}
 }
