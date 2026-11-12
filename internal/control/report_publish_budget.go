@@ -135,8 +135,7 @@ func (b publishBudget) put(ctx context.Context, tx state.Tx, times []time.Time) 
 // the factory's status shows it.
 type ReportPublication struct {
 	// Waiting counts the stored reports not published yet, Failed those
-	// given up after GitHub refused them or never answered for them, which
-	// will never be published.
+	// given up after GitHub refused them, which will never be published.
 	Waiting int
 	Failed  int
 	// Dropped counts the waiting reports pushed out of a full store to

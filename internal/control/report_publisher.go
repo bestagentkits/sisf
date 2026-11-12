@@ -27,11 +27,6 @@ const (
 	// issue as invalid before the report is given up: one refusal may be
 	// GitHub's passing state, a repeated one is about the report.
 	maxReportRejections = 3
-	// maxReportUnanswered is how many attempts to open a report's issue
-	// may go unanswered, an outage or a lost connection, and open nothing
-	// before the report is given up, so one report GitHub keeps failing on
-	// does not hold up the reports behind it.
-	maxReportUnanswered = 3
 	// reportLookupSlack is how long before an unanswered attempt the
 	// lookup of the issue it may have opened starts, for clock skew.
 	reportLookupSlack = time.Minute
@@ -42,6 +37,15 @@ const (
 	// publisher sharing the store, and one that found no issue opened
 	// nothing.
 	reportAttemptTimeout = 2 * time.Minute
+	// reportAttemptOver is how long after it started an attempt is surely
+	// over at every publisher sharing the store.
+	reportAttemptOver = reportAttemptTimeout + reportLookupSlack
+	// reportMaxRetryWait bounds the wait between two attempts of one
+	// report whose attempts go unanswered, as the publication pass bounds
+	// its own wait after a failure: the wait doubles from
+	// reportAttemptOver up to it, so a long outage is not met with an
+	// attempt of each report every few minutes.
+	reportMaxRetryWait = 5 * time.Minute
 )
 
 // reportIDForm is the form the report endpoint gives report IDs.
@@ -92,33 +96,38 @@ type ReportPublishResult struct {
 	// be added.
 	labelFailure error
 	// held counts the reports held back because their last attempt may
-	// still be answered (errAttemptInFlight).
+	// still be answered (errAttemptInFlight) or, after attempts that went
+	// unanswered, their next one is not due yet (errRetryNotDue).
 	held int
 }
 
 // Publish publishes the reports waiting in the order they were received,
-// at most Batch of them and no more than the daily budget has left
-// (ReportDailyPublishBudget); with the budget spent it opens nothing and
-// says until when publishing pauses, keeping every report. A report whose
-// last attempt got no answer is first looked for among the issues the
+// asking GitHub about at most Batch of them, and no more than the daily
+// budget has left (ReportDailyPublishBudget); with the budget spent it
+// opens nothing and says until when publishing pauses, keeping every
+// report. A report whose last attempt got no answer is looked for among the issues the
 // factory's account opened since, by the marker its body opens with and
 // with or without the label, so an issue opened just before a crash is
 // recorded instead of opened again; only when GitHub lists more than 1,000
 // issues changed since may one such report be published twice. An issue
 // GitHub shows without the label is given it; when that fails, the
-// factory's status says the token may not label issues. GitHub refusing the issue of a report, a client error that is not
-// about the token, the repository or the rate limit, is counted against
-// that report and the next one is tried; after maxReportRejections it is
-// kept apart and not tried again. Any other failure, an outage or a refused
-// token, holds for every report: it ends the call with that error and
-// leaves the report waiting, for the caller to try again after a pause.
+// factory's status says the token may not label issues. GitHub refusing
+// the issue of a report, a client error that is not about the token, the
+// repository or the rate limit, is counted against that report and the
+// next one is tried; after maxReportRejections it is kept apart and not
+// tried again. Any other failure, an outage or a refused token, holds for
+// every report: it ends the call with that error and leaves the report
+// waiting, for the caller to try again after a pause.
+//
 // An attempt left without an answer stays charged against the budget until
-// a call looks for its issue once the attempt is surely over
-// (reportAttemptTimeout), the report waiting behind the others until then;
-// when none was opened, its charge is taken back as the next attempt is
-// charged, and once maxReportUnanswered
-// attempts of a report went unanswered it is kept apart like a refused
-// one, so the reports behind it are tried.
+// it is surely over and a lookup found no issue it opened; its charge is
+// then taken back, as the next attempt is charged or, when that is not
+// due yet, at once. Until then the report
+// waits behind the others, and a report whose attempts keep going
+// unanswered is tried again after a wait that doubles up to
+// reportMaxRetryWait. Such a report is never given up for that: it leaves
+// the queue once published, refused by GitHub, past the reports' retention
+// or pushed out of a full store.
 func (p ReportPublisher) Publish(ctx context.Context) (ReportPublishResult, error) {
 	var result ReportPublishResult
 	if p.Store == nil || p.Issues == nil || p.Redactor == nil || p.Self.Login == "" {
@@ -141,13 +150,17 @@ func (p ReportPublisher) Publish(ctx context.Context) (ReportPublishResult, erro
 			result.PausedUntil = budget.pausedUntil()
 			return nil
 		}
-		waiting, err = tx.ListKV(ctx, ReportsNamespace, reportPrefix, min(batch, budget.remaining()))
+		batch = min(batch, budget.remaining())
+		// Every waiting report is read, so reports held back while their
+		// attempts go unanswered cannot keep those behind them from being
+		// tried; the store's capacity bounds them.
+		waiting, err = tx.ListKV(ctx, ReportsNamespace, reportPrefix, 0)
 		return err
 	})
 	if err != nil || !result.PausedUntil.IsZero() {
 		return result, err
 	}
-	err = p.publishBatch(ctx, waiting, &result)
+	err = p.publishBatch(ctx, waiting, batch, &result)
 	failure := err
 	if failure == nil && result.Unlabelled > 0 {
 		failure = missingLabelPermission(result.labelFailure)
@@ -169,18 +182,36 @@ func (p ReportPublisher) Publish(ctx context.Context) (ReportPublishResult, erro
 	return result, err
 }
 
-// publishBatch publishes the reports stored at waiting, oldest first, and
-// stops at the first failure that is not about one report.
-func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEntry, result *ReportPublishResult) error {
+// publishBatch publishes the reports stored at waiting, oldest first,
+// asking GitHub about at most batch of them, and stops at the first
+// failure that is not about one report. A report held back asks GitHub
+// nothing and is not counted against batch.
+func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEntry, batch int, result *ReportPublishResult) error {
+	asked := 0
 	for _, entry := range waiting {
-		published, labelFailure, refused, err := p.publishOne(ctx, entry)
+		if asked >= batch {
+			return nil
+		}
+		var stored storedReport
+		if err := json.Unmarshal(entry.Value, &stored); err != nil || !reportIDForm.MatchString(stored.ID) || stored.Fingerprint == "" {
+			if err := p.reject(ctx, entry.Key, core.CodeTampered); err != nil && !core.HasCode(err, core.CodeConflict) {
+				return err
+			}
+			continue
+		}
+		if heldBack(stored.Publish, p.Clock.Now()) {
+			result.held++
+			continue
+		}
+		asked++
+		published, labelFailure, refused, err := p.publishOne(ctx, entry, stored)
 		switch {
 		case refused != nil:
 			result.Rejected++
 			if err := p.reject(ctx, entry.Key, core.CodeOf(refused)); err != nil && !core.HasCode(err, core.CodeConflict) {
 				return err
 			}
-		case errors.Is(err, errAttemptInFlight):
+		case errors.Is(err, errAttemptInFlight), errors.Is(err, errRetryNotDue):
 			result.held++
 		case errors.Is(err, errBudgetSpent):
 			// Another publisher spent what was left of the budget.
@@ -202,6 +233,36 @@ func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEnt
 	return nil
 }
 
+// attemptOver reports whether an attempt started at attempted is surely
+// over at now (reportAttemptOver).
+func attemptOver(attempted, now time.Time) bool {
+	return !now.Before(attempted.Add(reportAttemptOver))
+}
+
+// retryWait is how long after the last of unanswered attempts that went
+// unanswered and opened nothing the report is tried again:
+// reportAttemptOver after the first, doubling up to reportMaxRetryWait.
+func retryWait(unanswered int) time.Duration {
+	wait := reportAttemptOver
+	for i := 1; i < unanswered && wait < reportMaxRetryWait; i++ {
+		wait *= 2
+	}
+	return min(wait, reportMaxRetryWait)
+}
+
+// retryDue reports whether a report whose publication stands at st may be
+// asked for again at now, as far as its unanswered attempts go.
+func retryDue(st reportPublishState, now time.Time) bool {
+	return st.Unanswered == 0 || !now.Before(st.UnansweredAt.Add(retryWait(st.Unanswered)))
+}
+
+// heldBack reports whether a report whose publication stands at st waits
+// at now without GitHub being asked anything about it: no attempt of it is
+// in flight, whose issue is looked for, and its next one is not due.
+func heldBack(st reportPublishState, now time.Time) bool {
+	return st.AttemptedAt.IsZero() && !retryDue(st, now)
+}
+
 // errBudgetSpent ends a batch whose next attempt found the daily budget
 // spent, as by another publisher sharing the store.
 var errBudgetSpent = errors.New("the daily budget of report issues is spent")
@@ -210,6 +271,11 @@ var errBudgetSpent = errors.New("the daily budget of report issues is spent")
 // over (reportAttemptTimeout): another publisher may still be waiting for
 // GitHub's answer to it. The batch goes on with the reports behind it.
 var errAttemptInFlight = errors.New("the report's last attempt may still be waiting for GitHub's answer")
+
+// errRetryNotDue holds back a report whose attempts went unanswered until
+// its next attempt is due (retryWait). The batch goes on with the reports
+// behind it.
+var errRetryNotDue = errors.New("the report's next attempt is not due yet")
 
 // missingLabelPermissionMessage opens what the status says while report
 // issues are opened without their label.
@@ -260,16 +326,14 @@ func (p ReportPublisher) noteError(ctx context.Context, failure error, labelled 
 	})
 }
 
-// publishOne publishes the report stored at entry and reports whether it
-// is now shown as an issue, and, when that issue does not carry the label
-// and it could not be added, why (labelFailure). GitHub's refusal of the
-// report's issue is returned as refused, apart from the failures that hold
-// for every report.
-func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (published bool, labelFailure, refused, err error) {
-	var stored storedReport
-	if err := json.Unmarshal(entry.Value, &stored); err != nil || !reportIDForm.MatchString(stored.ID) || stored.Fingerprint == "" {
-		return false, nil, nil, p.reject(ctx, entry.Key, core.CodeTampered)
-	}
+// publishOne publishes the report stored at entry, read as stored, and
+// reports whether it is now shown as an issue, and, when that issue does
+// not carry the label and it could not be added, why (labelFailure).
+// GitHub's refusal of the report's issue is returned as refused, apart
+// from the failures that hold for every report. A report whose last
+// attempt is over and opened nothing, but whose next one is not due yet,
+// has that attempt's charge taken back and is held back (errRetryNotDue).
+func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry, stored storedReport) (published bool, labelFailure, refused, err error) {
 	attempt := stored
 	previous := stored.Publish.AttemptedAt
 	if !previous.IsZero() {
@@ -284,12 +348,18 @@ func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (p
 		// An earlier attempt that is not surely over may still be waiting
 		// for GitHub's answer at another publisher; trying again now could
 		// open a second issue that only one charge pays for.
-		if p.Clock.Now().Before(previous.Add(reportAttemptTimeout + reportLookupSlack)) {
+		if !attemptOver(previous, p.Clock.Now()) {
 			return false, nil, nil, errAttemptInFlight
 		}
 		// The earlier attempt went unanswered and opened no issue.
-		if attempt.Publish.Unanswered++; attempt.Publish.Unanswered >= maxReportUnanswered {
-			return false, nil, nil, p.giveUp(ctx, entry.Key, core.CodeUnavailable, previous)
+		attempt.Publish.AttemptedAt = time.Time{}
+		attempt.Publish.Unanswered++
+		attempt.Publish.UnansweredAt = previous
+		if !retryDue(attempt.Publish, p.Clock.Now()) {
+			if err := p.settle(ctx, entry, previous, attempt); err != nil {
+				return false, nil, nil, err
+			}
+			return false, nil, nil, errRetryNotDue
 		}
 	}
 	attempt.Publish.AttemptedAt = p.Clock.Now().UTC()
@@ -333,6 +403,19 @@ func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry) (p
 	}
 	labelFailure, err = p.recordIssue(ctx, entry.Key, stored, issue)
 	return true, labelFailure, nil, err
+}
+
+// settle records that the attempt made at previous for the report stored
+// at entry is over and opened nothing, as a lookup showed: its charge is
+// taken back and the report stored as attempt says, in one write, unless
+// the report changed meanwhile, which is a conflict.
+func (p ReportPublisher) settle(ctx context.Context, entry state.KVEntry, previous time.Time, attempt storedReport) error {
+	return p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		if err := releaseAttempt(ctx, tx, previous, p.Clock.Now()); err != nil {
+			return err
+		}
+		return putStored(ctx, tx, entry.Key, entry.Version, attempt)
+	})
 }
 
 // recordIssue records the report stored at key as shown by issue and then,
@@ -421,7 +504,9 @@ func (p ReportPublisher) markPublished(ctx context.Context, key string, r stored
 
 // answered records that GitHub answered the attempt made at attempted for
 // the report stored at key without opening an issue: the attempt's charge
-// is taken back and the report no longer waits for its answer.
+// is taken back, the report no longer waits for its answer, and, GitHub
+// answering again, its next attempt is not put off for those that went
+// unanswered before.
 func (p ReportPublisher) answered(ctx context.Context, key string, attempted time.Time) error {
 	return p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		if err := releaseAttempt(ctx, tx, attempted, p.Clock.Now()); err != nil {
@@ -439,26 +524,17 @@ func (p ReportPublisher) answered(ctx context.Context, key string, attempted tim
 			return nil
 		}
 		stored.Publish.AttemptedAt = time.Time{}
+		stored.Publish.Unanswered, stored.Publish.UnansweredAt = 0, time.Time{}
 		return putStored(ctx, tx, key, entry.Version, stored)
 	})
 }
 
-// reject counts GitHub's refusal of the report stored at key, with code.
-// Once it was refused maxReportRejections times, or at once when it cannot
-// be read, it is moved under f/, still counted and pruned with the others,
-// and not tried again.
+// reject counts GitHub's refusal of the report stored at key, with code,
+// and takes back the charge of the attempt it refused. Once it was refused
+// maxReportRejections times, or at once when it cannot be read, it is
+// moved under f/, still counted and pruned with the others, and not tried
+// again.
 func (p ReportPublisher) reject(ctx context.Context, key string, code core.ErrorCode) error {
-	return p.giveUp(ctx, key, code, time.Time{})
-}
-
-// giveUp settles the report stored at key. With unanswered zero it counts
-// GitHub's refusal of it, with code, as reject says. Otherwise unanswered
-// is the report's last attempt, which went unanswered and, as a lookup
-// showed, opened no issue, the last of maxReportUnanswered: the report is
-// moved under f/ with code at once, unless another publisher recorded a
-// newer attempt meanwhile, which is a conflict. Either way the last
-// attempt opened no issue, so its charge is taken back.
-func (p ReportPublisher) giveUp(ctx context.Context, key string, code core.ErrorCode, unanswered time.Time) error {
 	return p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		entry, err := tx.GetKV(ctx, ReportsNamespace, key)
 		if core.HasCode(err, core.CodeNotFound) {
@@ -470,19 +546,12 @@ func (p ReportPublisher) giveUp(ctx context.Context, key string, code core.Error
 		var stored storedReport
 		readable := json.Unmarshal(entry.Value, &stored) == nil
 		unreadable := !readable || code == core.CodeTampered
-		if !unanswered.IsZero() && !stored.Publish.AttemptedAt.Equal(unanswered) {
-			return core.NewError(core.CodeConflict, "another publisher tried the report meanwhile")
-		}
 		if err := releaseAttempt(ctx, tx, stored.Publish.AttemptedAt, p.Clock.Now()); err != nil {
 			return err
 		}
 		stored.Publish.AttemptedAt = time.Time{}
-		if unanswered.IsZero() {
-			stored.Publish.Rejections++
-		} else {
-			stored.Publish.Unanswered = maxReportUnanswered
-		}
-		if !unreadable && unanswered.IsZero() && stored.Publish.Rejections < maxReportRejections {
+		stored.Publish.Rejections++
+		if !unreadable && stored.Publish.Rejections < maxReportRejections {
 			return putStored(ctx, tx, key, entry.Version, stored)
 		}
 		if err := tx.DeleteKV(ctx, ReportsNamespace, key, entry.Version); err != nil {

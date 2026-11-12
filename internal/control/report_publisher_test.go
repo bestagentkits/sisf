@@ -24,14 +24,18 @@ import (
 var factoryAccount = github.Identity{ID: 7, Login: "sisf-factory[bot]"}
 
 // reportGitHub is a fake GitHub that opens issues for the publisher. fail,
-// when set, answers the next CreateIssue calls; lose opens the issue and
-// then answers as if the connection broke.
+// when set, answers the next CreateIssue calls; down answers every issue
+// asked for with one of its titles with an outage; lose opens the issue and
+// then answers as if the connection broke. asked holds the title of every
+// issue asked for.
 type reportGitHub struct {
 	mu      sync.Mutex
 	issues  []github.Issue
 	creates int
+	asked   []string
 	polls   int
 	fail    []error
+	down    map[string]bool
 	lose    bool
 	// unlabelled drops the labels, as GitHub does for a token that may
 	// open issues but not label them; labelRefused refuses to add a label
@@ -63,6 +67,10 @@ func (g *reportGitHub) CreateIssue(_ context.Context, repo github.RepoRef, n git
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.creates++
+	g.asked = append(g.asked, n.Title)
+	if g.down[n.Title] {
+		return github.Issue{}, rejected(http.StatusBadGateway)
+	}
 	if len(g.fail) > 0 {
 		err := g.fail[0]
 		g.fail = g.fail[1:]
@@ -286,7 +294,9 @@ func TestAnOutageLeavesTheReportToALaterCall(t *testing.T) {
 			!strings.Contains(st.LastError, string(core.CodeUnauthenticated)) {
 			t.Fatalf("the status after failures: %+v, %v", st, err)
 		}
-		db.Clock.Advance(time.Minute)
+		// The second attempt went unanswered too, so the next one waits
+		// longer: the most a report waits between attempts.
+		db.Clock.Advance(2 * time.Minute)
 		if res := publish(t, p); res.Published != 1 {
 			t.Fatalf("publish once GitHub is back: %+v", res)
 		}

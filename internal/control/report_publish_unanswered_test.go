@@ -50,14 +50,25 @@ func publishCharges(t *testing.T, e *env) (charged, live int) {
 	return charged, live
 }
 
-// GitHub listing issues but answering every new one with an outage opens
-// nothing: each report's unanswered attempt is looked for, found missing,
-// and its charge taken back as the next is made, so the budget holds at
-// most one charge per report still waiting for an answer. After three
-// unanswered attempts a report is given up, counted as failed, so the
-// reports behind it are tried in turn, and publishing is never paused for
-// the day.
-func TestReportsWhoseIssuesGitHubNeverAnswersAreGivenUpWithoutSpendingTheBudget(t *testing.T) {
+// askedFor counts the issues asked for by title.
+func askedFor(gh *reportGitHub) map[string]int {
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+	n := map[string]int{}
+	for _, title := range gh.asked {
+		n[title]++
+	}
+	return n
+}
+
+// GitHub listing issues but answering every new one with an outage for an
+// hour opens nothing and gives no report up: each report's unanswered
+// attempt is looked for, found missing, and its charge taken back, so the
+// budget holds at most one charge per report waiting for an answer and
+// publishing is never paused for the day. A report is tried again after a
+// wait that grows to five minutes, not on every pass, and once GitHub
+// answers again every report is published once.
+func TestReportsWhoseIssuesGitHubNeverAnswersKeepWaitingWithOneChargeEach(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		e, gh, p := reportEnv(t, db)
@@ -75,23 +86,74 @@ func TestReportsWhoseIssuesGitHubNeverAnswersAreGivenUpWithoutSpendingTheBudget(
 			if !res.PausedUntil.IsZero() {
 				t.Fatalf("pass %d: publishing paused until %s by attempts that opened nothing", pass, res.PausedUntil)
 			}
-			if charged, live := publishCharges(t, e); charged > live {
+			if charged, live := publishCharges(t, e); charged > live || charged > reports {
 				t.Fatalf("pass %d: %d attempts charged with %d reports waiting for an answer", pass, charged, live)
 			}
 			db.Clock.Advance(time.Minute)
 		}
-		if gh.creates != 3*reports {
-			t.Fatalf("%d issues asked for, want 3 for each of the %d reports", gh.creates, reports)
+		// Tried at once, three minutes later and then every five minutes
+		// at most: 13 attempts of one report in an hour.
+		for title, n := range askedFor(gh) {
+			if n < 2 || n > 13 {
+				t.Errorf("%q asked for %d times in an hour of outage, want it tried again but at most every five minutes", title, n)
+			}
 		}
-		if waiting, failed := countKeys(t, e, "r/"), countKeys(t, e, "f/"); waiting != 0 || failed != reports {
-			t.Fatalf("%d reports waiting and %d given up, want every report given up", waiting, failed)
+		if waiting, failed := countKeys(t, e, "r/"), countKeys(t, e, "f/"); waiting != reports || failed != 0 {
+			t.Fatalf("%d reports waiting and %d given up, want every report still waiting", waiting, failed)
 		}
-		st := readPublication(t, e, db.Clock.Now())
-		if st.Failed != reports || st.Waiting != 0 || !st.PausedUntil.IsZero() {
-			t.Fatalf("the status: %+v, want %d failed, none waiting and no pause", st, reports)
+		if st := readPublication(t, e, db.Clock.Now()); st.Failed != 0 || st.Waiting != reports || !st.PausedUntil.IsZero() {
+			t.Fatalf("the status: %+v, want %d waiting, none failed and no pause", st, reports)
 		}
-		if charged, _ := publishCharges(t, e); charged != 0 {
-			t.Fatalf("%d attempts still charged after every report was given up", charged)
+		gh.mu.Lock()
+		gh.fail = nil
+		gh.mu.Unlock()
+		for range 3 {
+			db.Clock.Advance(5 * time.Minute)
+			publish(t, p)
+		}
+		if titles := gh.created(); len(titles) != reports {
+			t.Fatalf("%d issues opened once GitHub answered again, want one for each of the %d reports", len(titles), reports)
+		}
+		if waiting := countKeys(t, e, "r/"); waiting != 0 {
+			t.Fatalf("%d reports still waiting once GitHub answered again", waiting)
+		}
+		if charged, live := publishCharges(t, e); charged != reports || live != 0 {
+			t.Fatalf("%d charges and %d reports waiting for an answer, want one charge for each issue opened", charged, live)
+		}
+	})
+}
+
+// Reports GitHub keeps failing on, as many as a call asks GitHub about,
+// do not keep the report behind them from being published: a report held
+// back while its next attempt is not due asks GitHub nothing and leaves
+// room for the next. Each of them is tried again after a wait that grows
+// to five minutes.
+func TestReportsGitHubKeepsFailingOnDoNotHoldUpTheReportsBehind(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e, gh, p := reportEnv(t, db)
+		p.Batch = 2
+		for n, title := range []string{"First", "Second", "Third"} {
+			sendReportText(t, e, title, "Body.", n)
+			db.Clock.Advance(time.Second)
+		}
+		gh.down = map[string]bool{"Report: First": true, "Report: Second": true}
+		for range 20 {
+			_, _ = p.Publish(context.Background())
+			db.Clock.Advance(time.Minute)
+		}
+		if titles := gh.created(); len(titles) != 1 || titles[0].Title != "Report: Third" {
+			t.Fatalf("opened %+v, want the report behind those GitHub keeps failing on", titles)
+		}
+		if waiting := countKeys(t, e, "r/"); waiting != 2 {
+			t.Fatalf("%d reports waiting, want the two GitHub keeps failing on", waiting)
+		}
+		// Tried at once, three minutes later and then every five minutes
+		// at most: 5 attempts of one report in 20 minutes.
+		for _, title := range []string{"Report: First", "Report: Second"} {
+			if n := askedFor(gh)[title]; n < 2 || n > 5 {
+				t.Errorf("%q asked for %d times in 20 minutes, want it tried again but at most every five minutes", title, n)
+			}
 		}
 	})
 }
