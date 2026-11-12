@@ -16,11 +16,13 @@ import (
 // A Standalone factory, every unit a local process on SQLite, takes one issue
 // the whole way: built and judged as local processes, released by canary to
 // local application processes behind the edge, verified, published and
-// closed.
+// closed. A second issue of the same unit is released as well, once the
+// Owner put a policy that contains the first release in force.
 func TestStandaloneReleasesAnIssueTheWholeWay(t *testing.T) {
 	d := newStandaloneDeployment(t)
 	runFullLifecycle(t, d)
 	d.restartSupervisor(t)
+	releaseAgainAfterTheOwnerMovesTheBaseline(t, d)
 	d.down(t)
 	if left := d.installProcesses(t); len(left) > 0 {
 		t.Fatalf("processes of this install outlived sisf down: %v", left)
