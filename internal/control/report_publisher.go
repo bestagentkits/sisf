@@ -244,9 +244,19 @@ func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEnt
 }
 
 // attemptOver reports whether an attempt started at attempted is surely
-// over at now (reportAttemptOver).
+// over at now (reportAttemptOver). One dated further ahead of now than
+// clock skew explains (aheadOf) was made before the clock was stepped
+// back and is taken for over, so its report is not held back until the
+// clock catches up.
 func attemptOver(attempted, now time.Time) bool {
-	return !now.Before(attempted.Add(reportAttemptOver))
+	return !now.Before(attempted.Add(reportAttemptOver)) || aheadOf(attempted, now)
+}
+
+// aheadOf reports whether t lies further ahead of now than clock skew
+// explains (reportLookupSlack), as a time recorded before the clock was
+// stepped back does.
+func aheadOf(t, now time.Time) bool {
+	return t.After(now.Add(reportLookupSlack))
 }
 
 // retryWait is how long after the last of unanswered attempts that went
@@ -263,7 +273,7 @@ func retryWait(unanswered int) time.Duration {
 // retryDue reports whether a report whose publication stands at st may be
 // asked for again at now, as far as its unanswered attempts go.
 func retryDue(st reportPublishState, now time.Time) bool {
-	return st.Unanswered == 0 || !now.Before(st.UnansweredAt.Add(retryWait(st.Unanswered)))
+	return st.Unanswered == 0 || !now.Before(st.UnansweredAt.Add(retryWait(st.Unanswered))) || aheadOf(st.UnansweredAt, now)
 }
 
 // heldBack reports whether a report whose publication stands at st waits
@@ -461,11 +471,18 @@ func (p ReportPublisher) recordIssue(ctx context.Context, key string, stored sto
 // which may name any ID, cannot pass for it. The report issues changed
 // since the attempt are looked at first; a token that may open issues but
 // not label them opens them without the label, so then every issue
-// changed since is. Each listing reads at most reportLookupPages pages of
-// 100 issues: only when more than 1,000 issues changed since the attempt
-// may the issue be missed and opened again.
+// changed since is; for an attempt the clock, stepped back, dates ahead
+// of now, those changed within the budget's period are. Each listing reads
+// at most reportLookupPages pages of 100 issues: only when more than 1,000
+// issues changed since the attempt may the issue be missed and opened
+// again.
 func (p ReportPublisher) findIssue(ctx context.Context, r storedReport) (github.Issue, bool, error) {
 	since := r.Publish.AttemptedAt.Add(-reportLookupSlack)
+	if now := p.Clock.Now(); r.Publish.AttemptedAt.After(now) {
+		// The clock was stepped back since the attempt, which may have
+		// been made at any time its charge still counts.
+		since = now.Add(-reportBudgetPeriod)
+	}
 	marker := report.IssueMarker(r.ID) + "\n"
 	for _, labels := range [][]string{{report.IssueLabel}, nil} {
 		page, err := p.Issues.PollIssues(ctx, p.Repo, github.ListIssuesOptions{Labels: labels, Since: since, MaxPages: reportLookupPages}, "")

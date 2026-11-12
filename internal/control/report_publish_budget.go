@@ -36,7 +36,10 @@ type publishBudget struct {
 }
 
 // readPublishBudget reads the publications counted against the budget at
-// now: those opened less than reportBudgetPeriod before it.
+// now: those opened less than reportBudgetPeriod before it. One dated
+// further ahead of now than clock skew explains (aheadOf) was charged
+// before the clock was stepped back; it is dropped, so it does not pause
+// publishing for longer than a day.
 func readPublishBudget(ctx context.Context, tx state.Tx, now time.Time) (publishBudget, error) {
 	entry, err := tx.GetKV(ctx, ReportsNamespace, reportBudgetKey)
 	switch {
@@ -50,7 +53,7 @@ func readPublishBudget(ctx context.Context, tx state.Tx, now time.Time) (publish
 		return publishBudget{}, core.NewError(core.CodeTampered, "the stored budget of report publications cannot be read").WithCause(err)
 	}
 	slices.SortFunc(times, func(a, b time.Time) int { return a.Compare(b) })
-	recent := slices.DeleteFunc(times, func(t time.Time) bool { return !now.Before(t.Add(reportBudgetPeriod)) })
+	recent := slices.DeleteFunc(times, func(t time.Time) bool { return !now.Before(t.Add(reportBudgetPeriod)) || aheadOf(t, now) })
 	return publishBudget{entry: entry, times: recent}, nil
 }
 

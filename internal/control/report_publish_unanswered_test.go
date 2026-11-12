@@ -307,3 +307,66 @@ func TestASpentBudgetStillSettlesAnUnansweredAttempt(t *testing.T) {
 		}
 	})
 }
+
+// An attempt the clock, stepped back, dates more than a minute ahead of now
+// is taken for over, so its report is not held back until the clock
+// catches up; one dated within that minute is still in flight.
+func TestAnAttemptDatedAheadOfASteppedBackClockIsOver(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		back      time.Duration
+		published int
+	}{
+		{"beyond the skew", time.Hour, 1},
+		{"within the skew", 30 * time.Second, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+				e, gh, p := reportEnv(t, db)
+				sendReportText(t, e, "Only", "Body.", 1)
+				gh.fail = []error{rejected(http.StatusBadGateway)}
+				if _, err := p.Publish(context.Background()); err == nil {
+					t.Fatal("a pass GitHub answered 502 reported no error")
+				}
+				db.Clock.Advance(-tc.back)
+				if res := publish(t, p); res.Published != tc.published {
+					t.Fatalf("a pass after the clock stepped back %s: %+v, want %d published", tc.back, res, tc.published)
+				}
+				if charged, _ := publishCharges(t, e); charged != 1 {
+					t.Fatalf("%d attempts charged, want the one attempt's", charged)
+				}
+			})
+		})
+	}
+}
+
+// The issue an attempt dated ahead of a stepped-back clock may have opened
+// is looked for among the issues changed before now, where GitHub, whose
+// clock was right, dates it: it is recorded, not opened again.
+func TestTheIssueOfAnAttemptDatedAheadOfASteppedBackClockIsFound(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e, gh, p := reportEnv(t, db)
+		sendReportText(t, e, "Only", "Body.", 1)
+		gh.lose = true
+		if _, err := p.Publish(context.Background()); err == nil {
+			t.Fatal("a pass whose answer was lost reported no error")
+		}
+		gh.lose = false
+		db.Clock.Advance(-time.Hour)
+		if res := publish(t, p); res.Published != 1 {
+			t.Fatalf("a pass after the clock stepped back: %+v, want the issue opened before recorded", res)
+		}
+		gh.mu.Lock()
+		since := gh.since[len(gh.since)-1]
+		gh.mu.Unlock()
+		if !since.Before(db.Clock.Now()) {
+			t.Fatalf("the issue was looked for among those changed since %s, not before now, %s, while GitHub dates it before now", since, db.Clock.Now())
+		}
+		if n := len(gh.created()); n != 1 {
+			t.Fatalf("%d issues opened, want the one", n)
+		}
+	})
+}

@@ -167,3 +167,39 @@ func TestAnAttemptAnsweredWithAClientErrorIsNotCharged(t *testing.T) {
 		}
 	})
 }
+
+// A clock stepped back leaves charges dated in its future. Beyond a minute's
+// skew they are dropped, so publishing is not paused for longer than a day
+// by issues the clock dates ahead of now; within it they are kept.
+func TestChargesDatedAheadOfASteppedBackClockAreDropped(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		back   time.Duration
+		paused bool
+	}{
+		{"beyond the skew", 2 * time.Hour, false},
+		{"within the skew", 30 * time.Second, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+				e, _, p := reportEnv(t, db)
+				p.Batch = control.ReportDailyPublishBudget
+				for n := range control.ReportDailyPublishBudget + 1 {
+					if code, _ := sendReportText(t, e, fmt.Sprintf("Report %d", n), "Body.", n); code != http.StatusAccepted {
+						t.Fatalf("report %d: %d", n, code)
+					}
+				}
+				if res := publish(t, p); res.Published != control.ReportDailyPublishBudget || res.PausedUntil.IsZero() {
+					t.Fatalf("the first call: %+v, want the budget spent", res)
+				}
+				db.Clock.Advance(-tc.back)
+				res := publish(t, p)
+				if paused := !res.PausedUntil.IsZero(); paused != tc.paused || (res.Published == 1) == tc.paused {
+					t.Fatalf("a call after the clock stepped back %s: %+v, want paused %v", tc.back, res, tc.paused)
+				}
+			})
+		})
+	}
+}

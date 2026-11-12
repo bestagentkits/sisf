@@ -34,9 +34,11 @@ type reportGitHub struct {
 	creates int
 	asked   []string
 	polls   int
-	fail    []error
-	down    map[string]bool
-	lose    bool
+	// since holds the time each listing asked for issues changed since.
+	since []time.Time
+	fail  []error
+	down  map[string]bool
+	lose  bool
 	// unlabelled drops the labels, as GitHub does for a token that may
 	// open issues but not label them; labelRefused refuses to add a label
 	// afterwards, as GitHub does for such a token.
@@ -94,6 +96,7 @@ func (g *reportGitHub) PollIssues(_ context.Context, _ github.RepoRef, opts gith
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.polls++
+	g.since = append(g.since, opts.Since)
 	var page github.IssuePage
 	for _, issue := range g.issues {
 		if len(opts.Labels) == 0 || issue.HasLabel(opts.Labels[0]) {
