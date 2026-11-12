@@ -221,3 +221,89 @@ func TestAPassThatOnlyHeldBackAReportKeepsTheLastError(t *testing.T) {
 		}
 	})
 }
+
+// A spent budget does not keep the charge of an attempt that went
+// unanswered and opened nothing until the report's next attempt is due:
+// the lookup gives it back at once, and the report waiting behind is
+// published on it.
+func TestASpentBudgetGivesBackTheChargeOfAnAttemptThatOpenedNothing(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e, gh, p := reportEnv(t, db)
+		p.Batch = control.ReportDailyPublishBudget + 10
+		sendReportText(t, e, "Unanswered", "Body.", 0)
+		for n := range control.ReportDailyPublishBudget {
+			db.Clock.Advance(time.Millisecond)
+			if code, _ := sendReportText(t, e, fmt.Sprint("Report ", n), "Body.", n+1); code != http.StatusAccepted {
+				t.Fatalf("report %d: %d", n, code)
+			}
+		}
+		gh.fail = []error{rejected(http.StatusBadGateway)}
+		if _, err := p.Publish(context.Background()); err == nil {
+			t.Fatal("a pass GitHub answered 502 reported no error")
+		}
+		db.Clock.Advance(time.Minute)
+		publish(t, p)
+		db.Clock.Advance(3 * time.Minute)
+		gh.fail = []error{rejected(http.StatusBadGateway)}
+		if _, err := p.Publish(context.Background()); err == nil {
+			t.Fatal("a pass whose retry GitHub answered 502 reported no error")
+		}
+		// The retry is over three minutes later, but the next one is due
+		// only five minutes after it.
+		db.Clock.Advance(3 * time.Minute)
+		res := publish(t, p)
+		if charged, live := publishCharges(t, e); charged != control.ReportDailyPublishBudget-1 || live != 0 || !res.PausedUntil.IsZero() {
+			t.Fatalf("%d charges, %d reports waiting for an answer, %+v; want the unanswered attempt's charge given back and no pause", charged, live, res)
+		}
+		db.Clock.Advance(time.Minute)
+		if res := publish(t, p); res.Published != 1 {
+			t.Fatalf("the next pass: %+v, want the report behind published on the charge given back", res)
+		}
+		if titles := gh.created(); titles[len(titles)-1].Title != "Report: Report 49" {
+			t.Fatalf("opened last %q, want the report the budget had left waiting", titles[len(titles)-1].Title)
+		}
+	})
+}
+
+// A spent budget still lets a call look for the issue of an unanswered
+// attempt that is surely over: when none was opened, the report is tried
+// again on the charge its attempt holds, instead of that charge being kept
+// for a day. A report with no attempt is not tried while the budget is
+// spent.
+func TestASpentBudgetStillSettlesAnUnansweredAttempt(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e, gh, p := reportEnv(t, db)
+		p.Batch = control.ReportDailyPublishBudget + 10
+		sendReportText(t, e, "Unanswered", "Body.", 0)
+		for n := range control.ReportDailyPublishBudget {
+			db.Clock.Advance(time.Millisecond)
+			if code, _ := sendReportText(t, e, fmt.Sprint("Report ", n), "Body.", n+1); code != http.StatusAccepted {
+				t.Fatalf("report %d: %d", n, code)
+			}
+		}
+		gh.fail = []error{rejected(http.StatusBadGateway)}
+		if _, err := p.Publish(context.Background()); err == nil {
+			t.Fatal("a pass GitHub answered 502 reported no error")
+		}
+		db.Clock.Advance(time.Minute)
+		if res := publish(t, p); res.Published != control.ReportDailyPublishBudget-1 || res.PausedUntil.IsZero() {
+			t.Fatalf("the second pass: %+v, want the budget spent beside the unanswered attempt", res)
+		}
+		db.Clock.Advance(3 * time.Minute)
+		res := publish(t, p)
+		if res.Published != 1 || res.PausedUntil.IsZero() {
+			t.Fatalf("a pass with the budget spent once the attempt is over: %+v, want the unanswered report published on its own charge", res)
+		}
+		if n := askedFor(gh)["Report: Report 49"]; n != 0 {
+			t.Fatalf("a report with no attempt was asked for %d times while the budget was spent", n)
+		}
+		if charged, live := publishCharges(t, e); charged != control.ReportDailyPublishBudget || live != 0 {
+			t.Fatalf("%d charges and %d reports waiting for an answer, want one charge for each issue opened", charged, live)
+		}
+		if waiting := countKeys(t, e, "r/"); waiting != 1 {
+			t.Fatalf("%d reports waiting, want the one the budget left", waiting)
+		}
+	})
+}

@@ -104,8 +104,9 @@ type ReportPublishResult struct {
 // Publish publishes the reports waiting in the order they were received,
 // asking GitHub about at most Batch of them, and no more than the daily
 // budget has left (ReportDailyPublishBudget); with the budget spent it
-// opens nothing and says until when publishing pauses, keeping every
-// report. A report whose last attempt got no answer is looked for among the issues the
+// asks for no report's first issue and says until when publishing pauses,
+// keeping every report, but still settles the attempts that went
+// unanswered (publishBatch). A report whose last attempt got no answer is looked for among the issues the
 // factory's account opened since, by the marker its body opens with and
 // with or without the label, so an issue opened just before a crash is
 // recorded instead of opened again; only when GitHub lists more than 1,000
@@ -141,33 +142,31 @@ func (p ReportPublisher) Publish(ctx context.Context) (ReportPublishResult, erro
 		batch = DefaultReportPublishBatch
 	}
 	var waiting []state.KVEntry
+	var fresh int
 	err := p.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
 		budget, err := readPublishBudget(ctx, tx, p.Clock.Now())
 		if err != nil {
 			return err
 		}
-		if budget.remaining() == 0 {
-			result.PausedUntil = budget.pausedUntil()
-			return nil
-		}
-		batch = min(batch, budget.remaining())
+		fresh = budget.remaining()
 		// Every waiting report is read, so reports held back while their
 		// attempts go unanswered cannot keep those behind them from being
 		// tried; the store's capacity bounds them.
 		waiting, err = tx.ListKV(ctx, ReportsNamespace, reportPrefix, 0)
 		return err
 	})
-	if err != nil || !result.PausedUntil.IsZero() {
+	if err != nil {
 		return result, err
 	}
-	err = p.publishBatch(ctx, waiting, batch, &result)
+	err = p.publishBatch(ctx, waiting, batch, fresh, &result)
 	failure := err
 	if failure == nil && result.Unlabelled > 0 {
 		failure = missingLabelPermission(result.labelFailure)
 	}
-	// A pass that only held reports back learned nothing of GitHub, so
-	// the last failure stays shown.
-	if failure != nil || result.held == 0 || result.Published > 0 {
+	// A pass that only held reports back, or that the spent budget kept
+	// from asking for any, learned nothing of GitHub, so the last failure
+	// stays shown.
+	if failure != nil || result.Published > 0 || (result.held == 0 && fresh > 0) {
 		if noted := p.noteError(ctx, failure, result.Published > result.Unlabelled); err == nil {
 			err = noted
 		}
@@ -185,8 +184,12 @@ func (p ReportPublisher) Publish(ctx context.Context) (ReportPublishResult, erro
 // publishBatch publishes the reports stored at waiting, oldest first,
 // asking GitHub about at most batch of them, and stops at the first
 // failure that is not about one report. A report held back asks GitHub
-// nothing and is not counted against batch.
-func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEntry, batch int, result *ReportPublishResult) error {
+// nothing and is not counted against batch. At most fresh of them are
+// reports without an attempt in flight, each of which needs a charge of
+// its own; with fresh at zero, as with the budget spent, a report whose
+// attempt went unanswered is still looked for, and tried again on the
+// charge that attempt holds, so that charge is not kept for a day.
+func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEntry, batch, fresh int, result *ReportPublishResult) error {
 	asked := 0
 	for _, entry := range waiting {
 		if asked >= batch {
@@ -203,6 +206,12 @@ func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEnt
 			result.held++
 			continue
 		}
+		if stored.Publish.AttemptedAt.IsZero() {
+			if fresh <= 0 {
+				continue
+			}
+			fresh--
+		}
 		asked++
 		published, labelFailure, refused, err := p.publishOne(ctx, entry, stored)
 		switch {
@@ -214,8 +223,9 @@ func (p ReportPublisher) publishBatch(ctx context.Context, waiting []state.KVEnt
 		case errors.Is(err, errAttemptInFlight), errors.Is(err, errRetryNotDue):
 			result.held++
 		case errors.Is(err, errBudgetSpent):
-			// Another publisher spent what was left of the budget.
-			return nil
+			// Another publisher spent what was left of the budget; the
+			// reports whose attempts are in flight are still looked for.
+			fresh = 0
 		case core.HasCode(err, core.CodeConflict):
 			// The report or the budget changed meanwhile, a duplicate
 			// counted or another publisher's attempt recorded; the next
@@ -362,12 +372,22 @@ func (p ReportPublisher) publishOne(ctx context.Context, entry state.KVEntry, st
 			return false, nil, nil, errRetryNotDue
 		}
 	}
+	settled := attempt
 	attempt.Publish.AttemptedAt = p.Clock.Now().UTC()
 	spent := false
 	if err := p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		room, err := reserveAttempt(ctx, tx, previous, attempt.Publish.AttemptedAt)
-		if spent = !room; err != nil || spent {
+		switch {
+		case err != nil:
 			return err
+		case !room && !previous.IsZero():
+			// The earlier attempt holds no charge any more, so nothing
+			// made room; it is over all the same.
+			spent = true
+			return putStored(ctx, tx, entry.Key, entry.Version, settled)
+		case !room:
+			spent = true
+			return nil
 		}
 		return putStored(ctx, tx, entry.Key, entry.Version, attempt)
 	}); err != nil {
