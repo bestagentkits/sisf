@@ -58,7 +58,7 @@ func (l *lifecycleFlags) deployBackend(factory core.FactoryID, ctl edge.Controll
 		var slots string
 		if trustDir != "" {
 			var err error
-			if slots, err = supervisor.TrustPath(trustDir, localSlotsRecord); err != nil {
+			if slots, err = supervisor.TrustDirectory(trustDir, localSlotsRecord); err != nil {
 				return nil, err
 			}
 		}
