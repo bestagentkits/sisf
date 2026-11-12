@@ -51,8 +51,8 @@ Checks the manifest (default ` + defaultManifest + `) and exits 0 only when it i
     reached, a canary ends at 100, and an unlimited budget states its
     alert threshold or that none is wanted;
   - release.unit_inputs, when set, names only released units, and none of
-    its patterns can match a protected path, Go code of the control unit
-    or an input of another unit.
+    its patterns can match a protected path, a file the Go toolchain
+    reads (for any unit but app) or an input of another unit.
 
 Each finding names the rule that failed, the place in the manifest and the
 change that fixes it, and never repeats a value that may be a secret. Any
