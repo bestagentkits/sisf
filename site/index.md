@@ -2,9 +2,9 @@
 
 **Software is solved. Here is the drawing.**
 
-SISF is a free, open-source software factory, specified as one deployment. A GitHub issue goes in; agents write the fix, an independent QA gate signs it off, and a trusted supervisor ships it by canary and rolls it back on its own. The drawing is finished. The build has started.
+SISF is a free, open-source software factory, specified as one deployment. A GitHub issue goes in; agents write the fix, an independent QA gate signs it off, and a trusted supervisor ships it by canary and rolls it back on its own. The drawing is finished, and the factory it describes now runs.
 
-> **Status:** Design complete. Go implementation of P0–P3 in progress. Nothing released yet.
+> **Status:** Core built and tested. Runs on your machine in simulation. No release yet.
 > Free and open source under Apache-2.0. From the creator of [AgentKit.best](https://agentkit.best).
 
 - Repository: <https://github.com/bestagentkits/sisf>
@@ -131,7 +131,7 @@ One service layer, five ports: Dashboard, API, CLI, MCP and WebMCP. They call th
 6. **The factory may improve itself, never its own judge.** The supervisor, signing keys, QA baseline and rollback rules change only through a human-approved governance cycle. (SISF-10, SISF-11)
 7. **When evidence is thin, do nothing.** The Decision Layer chooses `ignore` or `collect_more_evidence`. (SISF-17)
 
-Status of every rule: designed, not yet built. Each has an acceptance test in the decision brief.
+Every rule is built and proven by the acceptance test named after it (see the [acceptance matrix](https://github.com/bestagentkits/sisf/blob/main/docs/acceptance-matrix.md)). The tests run against a simulated GitHub and scripted agents; a paid run with real agents is not yet proven.
 
 Every factory carries its own written philosophy, signed by its Owner: `AGENTS.md`, `REVIEW.md`, `DECISIONS.md`, `FEATURES.md`, `docs/adr/` and `.sisf/factory.yaml`. Markdown guides the models; deterministic checks enforce the rules.
 
@@ -139,29 +139,37 @@ Every factory carries its own written philosophy, signed by its Owner: `AGENTS.m
 
 | Phase | Outcome | Status |
 |---|---|---|
-| P0 | ADRs, three-zone conformance checker, interface contracts | In progress |
-| P1 | Local and Compose three-zone deployment, GitHub issue lifecycle, durable state | In progress |
-| P2 | Two built-in agents, independent QA, publish with automatic rollback, factory self-update | In progress |
-| P3 | GitHub and Google SSO, five control surfaces, Decision Layer, budgets | In progress |
+| P0 | ADRs, three-zone conformance checker, interface contracts | Built, tested |
+| P1 | Local and Compose three-zone deployment, GitHub issue lifecycle, durable state | Built, tested |
+| P2 | Two built-in agents, independent QA, publish with automatic rollback, factory self-update | Built; a paid run with real agents is still to prove |
+| P3 | GitHub and Google SSO, five control surfaces, Decision Layer, budgets | Built; tested against fake identity providers, real SSO still to prove |
 | P4 | Remote agent adapters, Kubernetes, TOSE and serverless profiles, public conformance matrix | Planned |
 
-Standalone and Docker come first. Kubernetes, Vercel, Cloudflare, TOSE and Railway are planned; each is marked supported only after it passes end-to-end tests.
+Supported today: Standalone (trusted code only) and Docker Compose (no container sandbox for untrusted code yet). Kubernetes, Vercel, Cloudflare, TOSE and Railway are experimental or unsupported; each is marked supported only after it passes end-to-end tests. Nothing is released yet.
 
 ## Get started
 
-There is nothing to install yet. Three things you can do today:
-
-1. **Read the design.** Start with the [decision brief](https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-decision-brief.en.md).
-2. **Star and watch the repository** to follow the build: <https://github.com/bestagentkits/sisf>.
-3. **Review the design.** Report weaknesses privately through the [Security tab](https://github.com/bestagentkits/sisf/security/advisories/new); they are cheapest to fix now.
-
-The only command that works today:
+Run a whole factory on your machine against a simulated GitHub, a fake sign-in and a scripted agent: no token, no paid model. You need Linux or macOS, Go 1.25, git, GNU Make, and ports 7460-7469 on 127.0.0.1 free. Windows is not supported yet.
 
 ```sh
-git clone https://github.com/bestagentkits/sisf
+git clone https://github.com/bestagentkits/sisf.git && cd sisf
+make install                               # sisf on your PATH via $(go env GOPATH)/bin
+export SISF_HOME=$HOME/.sisf/sim           # an empty install directory outside the checkout
+sisf init --repo acme/hello --profile sim --confirm-unlimited --no-alert
+sisf up                                    # builds and starts all three zones; stays in the foreground
 ```
 
-Not available yet: `sisf doctor` and the rest of the CLI (planned with P1), and one-click **Deploy on TOSE** (coming soon).
+In a second terminal, `sisf doctor` checks the install, and `http://127.0.0.1:7463` is the dashboard, signed in as the Owner. The [quickstart](https://github.com/bestagentkits/sisf/blob/main/docs/guides/quickstart.md) puts a policy in force, sends a first issue through the loop, and covers the Docker Compose variant and clean-up. For a real repository, see [installing a factory](https://github.com/bestagentkits/sisf/blob/main/docs/guides/install.md).
+
+Not proven yet:
+
+- A paid end-to-end run with real Claude and Codex agents. Two release rehearsals passed with a scripted coder and a fake QA judge: a good candidate shipped, a bad one rolled back.
+- A real GitHub App, real Google sign-in and real MCP clients; all three are tested against fakes.
+- Container sandboxing for untrusted code in Docker mode, and the Standalone program export on platforms other than macOS on Apple silicon.
+
+Not available yet: one-click **Deploy on TOSE**. TOSE is not a supported SISF backend today, and SISF never requires it.
+
+Found something wrong? [Open an issue](https://github.com/bestagentkits/sisf/issues), or report a vulnerability privately through the [Security tab](https://github.com/bestagentkits/sisf/security/advisories/new).
 
 ## Docs
 
@@ -169,6 +177,9 @@ Not available yet: `sisf doctor` and the rest of the CLI (planned with P1), and 
 - [Decision brief (Vietnamese, authoritative)](https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-decision-brief.md)
 - [Architecture page](https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-architecture.html)
 - [Architecture review](https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-architecture-review.html)
+- [Quickstart](https://github.com/bestagentkits/sisf/blob/main/docs/guides/quickstart.md)
+- [Documentation index](https://github.com/bestagentkits/sisf/blob/main/docs/README.md)
+- [Acceptance matrix](https://github.com/bestagentkits/sisf/blob/main/docs/acceptance-matrix.md)
 - [Security policy](https://github.com/bestagentkits/sisf/blob/main/docs/SECURITY.md)
 - [License: Apache-2.0](https://github.com/bestagentkits/sisf/blob/main/LICENSE)
 

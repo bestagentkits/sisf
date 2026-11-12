@@ -931,6 +931,8 @@ html:not([data-how="3d"]) .loop-lbl[data-actor="users"] { left: 89.25%; top: 86.
 .rev td:last-child { white-space: nowrap; }
 .chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 9px; font: 600 11.5px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; border: 1.5px solid var(--ink); }
 .chip--prog::before { content: ""; width: 10px; height: 10px; border: 1.5px solid var(--signal); background: linear-gradient(90deg, var(--signal) 50%, transparent 50%); }
+.chip--done::before { content: ""; width: 10px; height: 10px; background: var(--signal); }
+.status-dd--built { color: var(--ink); border-style: solid; border-color: var(--ink); }
 .chip--plan { border-style: dotted; border-color: var(--soft); color: var(--soft); }
 .modes { margin-top: 32px; display: grid; gap: 14px; }
 .plates { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; }
