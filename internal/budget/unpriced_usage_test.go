@@ -2,6 +2,7 @@ package budget_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -36,5 +37,44 @@ func TestSettlingUsageWithoutACostRecordsItAsReported(t *testing.T) {
 	}
 	if e.status(r.ID) != core.ReservationSettled {
 		t.Errorf("reservation is %s, want settled", e.status(r.ID))
+	}
+}
+
+// budget.get warns once about usage whose provider reported no cost, and
+// not about usage with a cost, verified usage or usage without tokens.
+func TestStatusWarnsOnlyAboutUsageWithoutACost(t *testing.T) {
+	t.Parallel()
+	priced := tokensOnly(1)
+	priced.Cost = million / 2
+	verified := tokensOnly(1)
+	verified.Verified = true
+	for name, c := range map[string]struct {
+		u    core.Usage
+		want int
+	}{
+		"tokens, no cost": {tokensOnly(1), 1},
+		"priced":          {priced, 0},
+		"verified":        {verified, 0},
+		"no tokens":       {usage(1, 0, false), 0},
+		"verified, empty": {usage(1, 0, true), 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t)
+			e.confirmUnlimited(0)
+			if err := e.ledger.AppendUsage(context.Background(), c.u); err != nil {
+				t.Fatal(err)
+			}
+			st := e.readStatus()
+			got := 0
+			for _, w := range st.Warnings {
+				if strings.Contains(w, "no cost reported") {
+					got++
+				}
+			}
+			if got != c.want {
+				t.Errorf("warnings = %v, want %d about usage with no cost reported", st.Warnings, c.want)
+			}
+		})
 	}
 }
