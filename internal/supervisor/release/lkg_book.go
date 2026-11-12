@@ -63,7 +63,8 @@ type LKG struct {
 	// older than any release verified since.
 	VerifiedSequence int64 `json:"verified_sequence,omitempty"`
 	// VerifiedStepAt is read from entries an earlier build wrote and never
-	// written: a clock does not order releases.
+	// written: a clock orders a release only against another an earlier
+	// build verified, neither numbered (verifiedLater).
 	VerifiedStepAt time.Time `json:"verified_step_at,omitzero"`
 	RecordedAt     time.Time `json:"recorded_at"`
 }

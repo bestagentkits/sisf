@@ -124,15 +124,15 @@ func (p *Pipeline) settleLKG(ctx context.Context, record core.StateRecord, req R
 // another release verified after it, when an install other than the one in
 // force at its Verified step pins the LKG, or when another release of the
 // unit was verified after it and still waits to be finished. Releases are
-// ordered by the sequence of their Verified steps; equal numbers, which
-// only releases an earlier build verified share, supersede nothing. The unit of another release is the one its
-// build record names (unitOfRelease), never what a document of what it
-// still owes says: that document is written by the control zone, which
-// factoryd shares.
+// ordered by the sequence of their Verified steps (verifiedLater). The
+// unit of another release is the one its build record names
+// (unitOfRelease), never what a document of what it still owes says: that
+// document is written by the control zone, which factoryd shares.
 func (p *Pipeline) supersededBy(ctx context.Context, record core.StateRecord, due FinishDue, unit string, lkg LKG, found bool) (string, error) {
 	if found {
 		switch {
-		case lkg.Source == SourcePromoted && lkg.RunID != record.RunID && lkg.VerifiedSequence > due.Sequence:
+		case lkg.Source == SourcePromoted && lkg.RunID != record.RunID &&
+			verifiedLater(lkg.VerifiedSequence, lkg.VerifiedStepAt, due.Sequence, record.UpdatedAt):
 			return "the release of " + string(lkg.RunID) + " (" + string(lkg.Digest) + "), verified later, is the last known good release", nil
 		case lkg.Source == SourceReleaseManifest && installedSince(due, lkg):
 			return "a later install pins " + string(lkg.Digest) + " as the last known good release", nil
@@ -155,7 +155,7 @@ func (p *Pipeline) supersededBy(ctx context.Context, record core.StateRecord, du
 			if err != nil {
 				return err
 			}
-			if other.Sequence <= due.Sequence {
+			if !verifiedLater(other.Sequence, r.UpdatedAt, due.Sequence, record.UpdatedAt) {
 				continue
 			}
 			built, found, err := unitOfRelease(ctx, tx, r)
@@ -170,6 +170,19 @@ func (p *Pipeline) supersededBy(ctx context.Context, record core.StateRecord, du
 		return nil
 	})
 	return later, err
+}
+
+// verifiedLater reports whether the release whose Verified step has the
+// sequence seq, written at at, was verified after the one whose step has
+// thanSeq, written at thanAt. The sequence orders them. Only when both
+// have none, as releases an earlier build verified before steps were
+// numbered, are they ordered by when their steps were written, as that
+// build ordered them; a step with no instant orders nothing.
+func verifiedLater(seq int64, at time.Time, thanSeq int64, thanAt time.Time) bool {
+	if seq == 0 && thanSeq == 0 {
+		return !at.IsZero() && !thanAt.IsZero() && at.After(thanAt)
+	}
+	return seq > thanSeq
 }
 
 // verifyAsOf verifies the release request of an already verified record:
