@@ -59,9 +59,11 @@ func (s *Service) Retry(ctx context.Context, req RetryRequest) (Result, error) {
 		return result, core.NewError(core.CodeInternal, "the issue was blocked for want of an approval but has no stored scope")
 	}
 	in, skipped, err := s.gather(ctx, req.Issue, true)
-	if err != nil || skipped != "" {
-		result.Skipped = skipped
+	if err != nil {
 		return result, err
+	}
+	if skipped != "" {
+		return result, core.NewError(core.CodeConflict, "intake does not take this issue any more: "+skipped)
 	}
 	p, err := s.planRetry(ctx, in, snap, req)
 	if err != nil {
