@@ -94,12 +94,20 @@ func parseProcStat(content, boot string, pid int) (string, error) {
 func psStart(pid int) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), psTimeout)
 	defer cancel()
+	return psStartWithin(ctx, pid)
+}
+
+// psStartWithin is psStart bounded by ctx.
+func psStartWithin(ctx context.Context, pid int) (string, error) {
 	cmd := exec.CommandContext(ctx, "ps", "-o", "lstart=", "-o", "stat=", "-p", strconv.Itoa(pid))
 	cmd.Env = []string{"LC_ALL=C", "PATH=/usr/bin:/bin"}
 	out, err := cmd.Output()
 	fields := strings.Fields(string(out))
 	var exit *exec.ExitError
 	switch {
+	case ctx.Err() != nil:
+		// ps was cut off: it did not say the process is gone.
+		return "", unavailablef(ctx.Err(), "ps did not say in time when process %d started", pid)
 	case err != nil && errors.As(err, &exit) && len(fields) == 0:
 		return "", nil // ps found no such process
 	case err != nil:
