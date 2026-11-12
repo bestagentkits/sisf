@@ -175,7 +175,7 @@ func TestShortenedIPv6AddressAfterNumbersIsRedactedWhole(t *testing.T) {
 func TestExactlyThePiecesOfARunThatAreShortenedIPv6AddressesAreHidden(t *testing.T) {
 	const marker = "#"
 	rng := rand.New(rand.NewSource(1))
-	alphabets := []string{"::::::01fa", ":::01fax", ":0123456789abcdef", "::1f", ":::::::::x", ":1111aF"}
+	alphabets := []string{"::::::01fa", ":::01fax", ":0123456789abcdef", "::1f", ":::::::::x", ":1111aF", ":19ABCDEF"}
 	for i := range 20000 {
 		alphabet := alphabets[i%len(alphabets)]
 		b := make([]byte, 1+rng.Intn(90))
