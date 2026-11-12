@@ -148,6 +148,11 @@ func (p *Pipeline) Release(ctx context.Context, req Request) (Outcome, error) {
 	switch {
 	case err != nil && judgedRefusal(ctx, err):
 		return p.refuse(ctx, h, out, err)
+	case core.HasCode(err, core.CodeReleaseHold):
+		// Only the base check holds here, on an LKG entry the supervisor
+		// did not write: held for the Owner, as the preflight holds it.
+		_ = p.audit(ctx, h, "release.preflight", core.OutcomeDenied, map[string]string{"code": string(core.CodeOf(err))})
+		return stop(ResultHeld, err)
 	case err != nil:
 		// Nothing was judged: the release did not begin and is tried again.
 		return out, fmt.Errorf("the release could not be judged yet, so it is tried again: %w", err)

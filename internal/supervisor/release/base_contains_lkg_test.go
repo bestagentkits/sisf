@@ -2,6 +2,8 @@ package release
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -152,5 +154,71 @@ func TestABaseThatCannotBeComparedWithTheLKGCommit(t *testing.T) {
 				t.Fatalf("%v was deployed", staged)
 			}
 		})
+	}
+}
+
+// unreadable makes the file at path one its owner may not read. Root reads
+// it all the same, so a test that needs it is skipped as root.
+func unreadable(t *testing.T, path string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every file")
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An LKG that cannot be read now cannot show the base contains its commit:
+// the check makes the release wait, UNAVAILABLE, and it is tried again. An
+// entry that is not one the supervisor wrote holds the release for the
+// Owner, as the preflight holds it. Neither lets the release through.
+func TestABaseCheckWhoseLKGCannotBeReadDoesNotPass(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		entry func(t *testing.T, path string)
+		code  core.ErrorCode
+	}{
+		{"the entry cannot be read now", unreadable, core.CodeUnavailable},
+		{"the entry was tampered with", func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte(`{"unit":"`+testUnit+`"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, core.CodeReleaseHold},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := newWorld(t)
+			w.promoteLKGAt(lkgCommit)
+			tc.entry(t, filepath.Join(w.trustDir, "lkg-unit-"+testUnit+".json"))
+			v := verifiedRelease{artifact: w.keys.artifactFor(t, firstBuild), receipt: core.QAReceipt{PolicySHA: commitSHA}}
+			err := w.pipeline().checkBaseHasLKG(context.Background(), v)
+			if !core.HasCode(err, tc.code) || judgedRefusal(context.Background(), err) {
+				t.Fatalf("checkBaseHasLKG = %v; want %s, a hold", err, tc.code)
+			}
+			if w.commits.asked != 0 {
+				t.Fatalf("GitHub was asked %d times without an LKG to compare with", w.commits.asked)
+			}
+		})
+	}
+}
+
+// A release whose LKG cannot be read now waits in ReleaseCandidate and is
+// tried again; nothing is deployed.
+func TestAReleaseWhoseLKGCannotBeReadNowWaits(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.promoteLKGAt(lkgCommit)
+	unreadable(t, filepath.Join(w.trustDir, "lkg-unit-"+testUnit+".json"))
+	issue, run := issueRef(273), core.RunID("run-273")
+	w.seedReleaseCandidate(issue, run, firstBuild)
+	out, err := w.pipeline().Release(context.Background(), w.request(issue, run, firstBuild))
+	if !core.HasCode(err, core.CodeUnavailable) || out.Result == ResultRefused {
+		t.Fatalf("Release = %+v, %v; want it to wait", out, err)
+	}
+	w.requireState(issue, core.StateReleaseCandidate)
+	if _, _, staged, _ := w.backend.snapshot(); len(staged) != 0 {
+		t.Fatalf("%v was deployed", staged)
 	}
 }

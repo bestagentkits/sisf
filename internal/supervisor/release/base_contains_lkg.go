@@ -26,13 +26,19 @@ type CommitComparer interface {
 // a commit it does not know, cannot show the base holds the commit, and
 // refuses the candidate for the Owner as well. One GitHub could not answer
 // now decides nothing: the error is returned as is and the release waits.
+// An LKG that cannot be read is never passed over: one that cannot be read
+// now (UNAVAILABLE) makes the release wait as well, and one that can be
+// read but is not an entry the supervisor wrote holds it with RELEASE_HOLD
+// for the Owner, as the preflight holds it.
 func (p *Pipeline) checkBaseHasLKG(ctx context.Context, v verifiedRelease) error {
 	unit := v.artifact.Unit
 	lkg, found, err := p.cfg.LKG.Get(ctx, unit)
-	if err != nil {
-		// The preflight, the next step and the first to act, reads the LKG
-		// again and holds a release whose LKG cannot be read.
-		return nil
+	switch {
+	case core.HasCode(err, core.CodeUnavailable):
+		return core.NewError(core.CodeUnavailable, "the last known good release of "+unit+
+			" cannot be read now, so the candidate's base cannot be shown to contain its commit").WithCause(err)
+	case err != nil:
+		return holdf("the last known good release of %s cannot be read", unit).WithCause(err)
 	}
 	base := v.receipt.PolicySHA
 	if !found || lkg.Source != SourcePromoted || lkg.Commit == "" || lkg.Commit == base {
