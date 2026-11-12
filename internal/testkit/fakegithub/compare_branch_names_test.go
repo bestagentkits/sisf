@@ -32,7 +32,7 @@ func TestCompareTakesABranchNameOnEitherSide(t *testing.T) {
 	for _, basehead := range []string{base + "...main", "main..." + head, base + "..." + head} {
 		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/repos/acme/app/compare/"+basehead, nil)
 		req.Header.Set("Authorization", "Bearer token")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := srv.Client().Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -164,7 +164,7 @@ func TestControlEndpointsConfigureTheFakeOverHTTP(t *testing.T) {
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
 	post := func(path, body string) int {
-		resp, err := http.Post(srv.URL+path, "application/json", stringsReader(body))
+		resp, err := testClient.Post(srv.URL+path, "application/json", stringsReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}

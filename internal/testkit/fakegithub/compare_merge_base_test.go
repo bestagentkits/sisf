@@ -25,7 +25,7 @@ func TestCompareListsWhatHeadChangedSinceTheMergeBase(t *testing.T) {
 		raw, _ := json.Marshal(body)
 		req, _ := http.NewRequest(method, srv.URL+"/repos/acme/app"+path, bytes.NewReader(raw))
 		req.Header.Set("Authorization", "Bearer token")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := srv.Client().Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,7 +103,7 @@ func TestACommitOnAParentIsNotTheParentlessCommitOfTheSameFiles(t *testing.T) {
 		raw, _ := json.Marshal(body)
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/repos/acme/app"+path, bytes.NewReader(raw))
 		req.Header.Set("Authorization", "Bearer token")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := srv.Client().Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
