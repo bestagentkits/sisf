@@ -74,13 +74,30 @@ func (l *memLedger) BudgetTotals(_ context.Context, since time.Time) (core.Budge
 	for _, u := range l.usage {
 		switch {
 		case u.At.Before(since):
+			continue
 		case u.Verified:
 			t.SpentVerified += u.Cost
 		default:
 			t.SpentUnverified += u.Cost
 		}
+		if u.CostUnreported() {
+			t.Unpriced++
+			if !l.reservedFor(u.RunID) {
+				t.UnpricedUncharged++
+			}
+		}
 	}
 	return t, nil
+}
+
+// reservedFor reports whether some reservation of run set an amount aside.
+func (l *memLedger) reservedFor(run core.RunID) bool {
+	for _, r := range l.reservations {
+		if r.RunID == run && r.Amount > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *memLedger) GetKV(_ context.Context, ns, key string) (state.KVEntry, error) {
