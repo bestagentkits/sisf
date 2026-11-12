@@ -212,11 +212,15 @@ func TestEveryUnitIsRecordedWhileItRunsAndOneThatCannotBeIsKilled(t *testing.T) 
 	}
 	stop := runGroup(t, g)
 	nextProc(t, e)
-	mu.Lock()
-	if recorded["control"] != 1 {
-		t.Errorf("control is recorded %d times while it runs", recorded["control"])
+	// The program is recorded right after it started, so the record may
+	// lag the start by a moment.
+	count := func() int { mu.Lock(); defer mu.Unlock(); return recorded["control"] }
+	for deadline := time.Now().Add(5 * time.Second); count() != 1 && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
 	}
-	mu.Unlock()
+	if n := count(); n != 1 {
+		t.Errorf("control is recorded %d times while it runs", n)
+	}
 	if err := stop(); err != nil {
 		t.Fatal(err)
 	}
