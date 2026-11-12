@@ -52,10 +52,14 @@ func writeManifest(path string, m *manifest.Manifest) error {
 	}
 	// A manifest that is a symbolic link is written to the file it names,
 	// so renaming a new file into place does not replace the link itself.
+	// A link whose file is missing is refused: writing beside it would
+	// replace the link and leave the place it names empty.
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		path = resolved
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return unavailablef(err, "cannot resolve %s", path)
+	} else if info, lerr := os.Lstat(path); lerr == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return unavailablef(err, "%s is a symbolic link to a file that does not exist", path)
 	}
 	// The manifest holds no secret, so a new one is readable by the
 	// containers that mount it, which run as another user; one the Owner

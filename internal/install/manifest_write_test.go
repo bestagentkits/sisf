@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/bestagentkits/sisf/pkg/core"
+
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
@@ -138,5 +140,26 @@ func TestAManifestBehindASymbolicLinkIsWrittenThroughIt(t *testing.T) {
 		if back, err := manifest.ParseFile(target); err != nil || back.FactoryID != "changed" {
 			t.Fatalf("%s: the file the link names reads back as %v, %v; want the new manifest", mode, back, err)
 		}
+	}
+}
+
+// A manifest that is a link to a file that does not exist is refused: a
+// file renamed into place would replace the link and leave the place it
+// names empty.
+func TestAManifestLinkedToAMissingFileIsRefused(t *testing.T) {
+	t.Parallel()
+	o, err := testOptions(manifest.ModeStandalone).normalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "factory.yaml")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing.yaml"), path); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	if err := writeManifest(path, buildManifest(o)); !core.HasCode(err, core.CodeUnavailable) {
+		t.Fatalf("writeManifest = %v, want UNAVAILABLE", err)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was replaced: %v, %v", info, err)
 	}
 }
