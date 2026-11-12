@@ -127,6 +127,11 @@ func (s RunStop) refusal() string {
 	return "the request to release it did not hold together"
 }
 
+// readyAgain is what a retry of a block other than a superseded policy
+// leads to. A policy put in force after the block that does not permit the
+// scope by itself has the retry ask for the Owner's approval of it first.
+const readyAgain = "the issue returns to Ready, after an approval of its scope when the policy changed since and asks for one,"
+
 // WayOut says how the Owner gets the issue going again.
 func (s RunStop) WayOut() string {
 	retry := fmt.Sprintf("as the Owner on the factory's host, run `factoryd issue retry --issue %s`", s.IssueID)
@@ -139,23 +144,23 @@ func (s RunStop) WayOut() string {
 			return "A change of a path the released unit does not consume, of the trusted control surface, or of a unit outside release.units, " +
 				"is published only by a person: review the candidate's pull request and merge it by hand, or leave it unmerged. " +
 				"To have the factory code the issue again within what it may publish, " + retry +
-				": the issue returns to Ready and a new run codes, judges and releases it, which spends agent budget. Otherwise close the issue."
+				": " + readyAgain + " and a new run codes, judges and releases it, which spends agent budget. Otherwise close the issue."
 		}
 		if s.ReleaseCode == core.CodeAlreadyExists {
 			return "Review what the candidate changed in its pull request; merge it by hand only if you accept it, then close the issue. " +
 				"A retry would build the same program again; " + retry + " only if the issue needs a change the program shows."
 		}
-		return "A" + retry[1:] + ": the issue returns to Ready and a new run codes, judges and releases it afresh, which spends agent budget."
+		return "A" + retry[1:] + ": " + readyAgain + " and a new run codes, judges and releases it afresh, which spends agent budget."
 	case statemachine.BlockReleaseUnjudged:
 		if s.Verified {
 			return "Read the recovery report. The candidate's pull request stays open and unmerged: review it and merge it by hand only if you accept the change. " +
-				"To have the factory release it again, " + retry + ": the issue returns to Ready and a new run codes, judges and releases it, which spends agent budget."
+				"To have the factory release it again, " + retry + ": " + readyAgain + " and a new run codes, judges and releases it, which spends agent budget."
 		}
 		return "Read the recovery report and remove the cause, then, " + retry +
-			": the issue returns to Ready and a new run codes, judges and releases it, which spends agent budget."
+			": " + readyAgain + " and a new run codes, judges and releases it, which spends agent budget."
 	case statemachine.BlockRolledBack, statemachine.BlockReleaseInterrupted:
 		return "Read the recovery report and remove the cause, then, " + retry +
-			": the issue returns to Ready and a new run codes, judges and releases it, which spends agent budget."
+			": " + readyAgain + " and a new run codes, judges and releases it, which spends agent budget."
 	}
-	return "Remove the cause, then, " + retry + ": the issue returns to Ready and a new run claims it."
+	return "Remove the cause, then, " + retry + ": " + readyAgain + " and a new run claims it."
 }

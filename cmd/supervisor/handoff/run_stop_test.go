@@ -27,7 +27,7 @@ func TestAnUnjudgedVerifiedReleaseSaysItsPullRequestStaysOpen(t *testing.T) {
 				t.Errorf("restored %v: the summary does not say %q: %q", restored, phrase, summary)
 			}
 		}
-		for _, phrase := range []string{"stays open and unmerged", "merge it by hand", "factoryd issue retry --issue " + core.IssueRef{Owner: "acme", Repo: "app", Number: 7}.String(), "returns to Ready"} {
+		for _, phrase := range []string{"stays open and unmerged", "merge it by hand", "factoryd issue retry --issue " + core.IssueRef{Owner: "acme", Repo: "app", Number: 7}.String(), readyAgain} {
 			if !strings.Contains(wayOut, phrase) {
 				t.Errorf("restored %v: the way out does not say %q: %q", restored, phrase, wayOut)
 			}
@@ -38,5 +38,37 @@ func TestAnUnjudgedVerifiedReleaseSaysItsPullRequestStaysOpen(t *testing.T) {
 	served := handoff.RunStop{IssueID: core.IssueRef{Owner: "acme", Repo: "app", Number: 8}, RunID: "run-8", Cause: statemachine.BlockReleaseUnjudged, RestoredTo: "sha256:bb"}
 	if got := served.Summary() + served.WayOut(); strings.Contains(got, "unmerged") || !strings.Contains(got, "serves again") {
 		t.Errorf("the block of an unverified release reads %q", got)
+	}
+}
+
+// readyAgain is how a way out promises the issue back in Ready: once the
+// Owner put another policy in force, the retry asks for an approval of the
+// scope first when that policy does not permit it by itself.
+const readyAgain = "the issue returns to Ready, after an approval of its scope when the policy changed since and asks for one,"
+
+// Every way out that promises a retry returns the issue to Ready says that
+// a policy changed since the block may ask for an approval of its scope
+// first; a superseded policy says how its scope is judged in its own words.
+func TestAWayOutThatPromisesReadyAgainNamesTheApprovalAPolicyChangeMayNeed(t *testing.T) {
+	t.Parallel()
+	issue := core.IssueRef{Owner: "acme", Repo: "app", Number: 7}
+	stops := []handoff.RunStop{
+		{Cause: statemachine.BlockRunExhausted},
+		{Cause: statemachine.BlockRolledBack},
+		{Cause: statemachine.BlockReleaseInterrupted},
+		{Cause: statemachine.BlockReleaseUnjudged},
+		{Cause: statemachine.BlockReleaseUnjudged, Verified: true},
+		{Cause: statemachine.BlockReleaseRefused, ReleaseCode: core.CodeApprovalRequired},
+		{Cause: statemachine.BlockReleaseRefused, ReleaseCode: core.CodeExpired},
+	}
+	for _, stop := range stops {
+		stop.IssueID, stop.RunID = issue, "run-7"
+		if w := stop.WayOut(); !strings.Contains(w, readyAgain) {
+			t.Errorf("the way out of %s (%s) does not say %q: %q", stop.Cause, stop.ReleaseCode, readyAgain, w)
+		}
+	}
+	superseded := handoff.RunStop{IssueID: issue, RunID: "run-7", Cause: statemachine.BlockPolicySuperseded}
+	if w := superseded.WayOut(); !strings.Contains(w, "judged under the policy in force") {
+		t.Errorf("the way out of a superseded policy reads %q", w)
 	}
 }
