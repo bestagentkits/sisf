@@ -187,3 +187,35 @@ func TestChangedPathsNamesTheOldPathOfARenameOrCopy(t *testing.T) {
 		t.Fatalf("ChangedPaths = %v, %v; want %v", paths, err, want)
 	}
 }
+
+// A comparison of renames below GitHub's limit of entries is complete,
+// though it names twice as many paths.
+func TestRenamesBelowTheLimitAreNotTakenForAListingCutShort(t *testing.T) {
+	t.Parallel()
+	fake, data, client := gitDataClient(t)
+	before := map[string]string{}
+	for i := range github.CompareFileLimit / 2 {
+		before[fmt.Sprintf("ui/templates/%03d.html", i)] = fmt.Sprintf("page %d\n", i)
+	}
+	base, err := fake.Commit(testRepo, before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.SetBranch(testRepo, "main", base); err != nil {
+		t.Fatal(err)
+	}
+	moved := map[string][]byte{}
+	for path, content := range before {
+		moved[path] = nil
+		moved["examples/hello-app/"+path] = []byte(content)
+	}
+	head, err := client.CommitToBranch(bg, repoRef, github.BranchCommit{Branch: "sisf/factory-a/run-9", Base: core.CommitSHA(base),
+		Message: "move", Files: moved})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := client.ChangedPaths(bg, repoRef, core.CommitSHA(base), head)
+	if err != nil || len(paths) != 2*len(before) {
+		t.Fatalf("ChangedPaths listed %d paths, %v; want %d and no limit", len(paths), err, 2*len(before))
+	}
+}

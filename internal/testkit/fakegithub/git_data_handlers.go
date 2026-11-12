@@ -179,7 +179,10 @@ func (g *GitData) updateRef(w http.ResponseWriter, r *http.Request) {
 // commit or a branch name, and the paths are those that differ between
 // head and the merge base of the two: none when base contains head. For
 // commits whose history this fake does not know, made with Server.Commit,
-// base itself stands for the merge base.
+// base itself stands for the merge base. As GitHub does for an exact
+// rename, a removed file whose content an added file has is one entry,
+// "renamed", naming the added path and, as previous_filename, the removed
+// one.
 func (g *GitData) compare(w http.ResponseWriter, r *http.Request) {
 	base, head, ok := strings.Cut(r.PathValue("basehead"), "...")
 	baseSHA, headSHA := g.revision(repoName(r), base), g.revision(repoName(r), head)
@@ -190,29 +193,40 @@ func (g *GitData) compare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type jFile struct {
-		Filename string `json:"filename"`
-		Status   string `json:"status"`
+		Filename         string `json:"filename"`
+		PreviousFilename string `json:"previous_filename,omitempty"`
+		Status           string `json:"status"`
 	}
 	files := []jFile{}
+	var added []string
 	for _, path := range slices.Sorted(maps.Keys(headFiles)) {
 		before, existed := baseFiles[path]
 		switch {
 		case !existed:
-			files = append(files, jFile{path, "added"})
+			added = append(added, path)
 		case string(before) != string(headFiles[path]):
-			files = append(files, jFile{path, "modified"})
+			files = append(files, jFile{Filename: path, Status: "modified"})
 		}
 	}
 	for _, path := range slices.Sorted(maps.Keys(baseFiles)) {
-		if _, kept := headFiles[path]; !kept {
-			files = append(files, jFile{path, "removed"})
+		if _, kept := headFiles[path]; kept {
+			continue
 		}
+		if i := slices.IndexFunc(added, func(to string) bool { return string(headFiles[to]) == string(baseFiles[path]) }); i >= 0 {
+			files = append(files, jFile{Filename: added[i], PreviousFilename: path, Status: "renamed"})
+			added = slices.Delete(added, i, i+1)
+			continue
+		}
+		files = append(files, jFile{Filename: path, Status: "removed"})
+	}
+	for _, path := range added {
+		files = append(files, jFile{Filename: path, Status: "added"})
 	}
 	g.mu.Lock()
 	beyond := g.beyondLimit
 	g.mu.Unlock()
 	for n := len(files); beyond && n < compareFileLimit; n++ {
-		files = append(files, jFile{fmt.Sprintf("listed-beyond/%03d.txt", n), "added"})
+		files = append(files, jFile{Filename: fmt.Sprintf("listed-beyond/%03d.txt", n), Status: "added"})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"files": files[:min(len(files), compareFileLimit)]})
 }

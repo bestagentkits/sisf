@@ -36,6 +36,23 @@ type landingWorld struct {
 
 func newLandingWorld(t *testing.T, store state.Store, changed ...string) *landingWorld {
 	t.Helper()
+	if len(changed) == 0 {
+		changed = []string{"examples/hello-app/main.go"}
+	}
+	// The candidate commit changes the application and every other path
+	// the case names, so GitHub's comparison lists them.
+	files := map[string][]byte{"examples/hello-app/main.go": []byte("new\n")}
+	for _, p := range changed {
+		files[p] = []byte("new\n")
+	}
+	return newLandingWorldOf(t, store, map[string]string{"examples/hello-app/main.go": "old\n"}, files, changed)
+}
+
+// newLandingWorldOf is a landing world whose main holds baseFiles and whose
+// candidate commit writes files on top, a nil content deleting the path;
+// stored is the list of changed paths the supervisor's records keep.
+func newLandingWorldOf(t *testing.T, store state.Store, baseFiles map[string]string, files map[string][]byte, stored []string) *landingWorld {
+	t.Helper()
 	ctx := context.Background()
 	fake := fakegithub.New(fakegithub.WithToken("token"))
 	if err := fake.AddRepo(landingRepo); err != nil {
@@ -48,7 +65,7 @@ func newLandingWorld(t *testing.T, store state.Store, changed ...string) *landin
 	if err != nil {
 		t.Fatal(err)
 	}
-	base, err := fake.Commit(landingRepo, map[string]string{"examples/hello-app/main.go": "old\n"})
+	base, err := fake.Commit(landingRepo, baseFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,22 +80,13 @@ func newLandingWorld(t *testing.T, store state.Store, changed ...string) *landin
 	issue := core.IssueRef{Owner: "acme", Repo: "app", Number: number}
 	run := core.RunID("run-1")
 	branch := Branch("f", run, 1)
-	if len(changed) == 0 {
-		changed = []string{"examples/hello-app/main.go"}
-	}
-	// The candidate commit changes the application and every other path
-	// the case names, so GitHub's comparison lists them.
-	files := map[string][]byte{"examples/hello-app/main.go": []byte("new\n")}
-	for _, p := range changed {
-		files[p] = []byte("new\n")
-	}
 	commit, err := client.CommitToBranch(ctx, repo, github.BranchCommit{Branch: branch, Base: core.CommitSHA(base), Message: "candidate",
 		Author: "service:builder", Files: files})
 	if err != nil {
 		t.Fatal(err)
 	}
 	pinned := core.CommitSHA(base)
-	candidate := qa.Candidate{IssueID: issue, RunID: run, CommitSHA: commit, Digest: landingDigest, Attempt: 1, ChangedPaths: changed}
+	candidate := qa.Candidate{IssueID: issue, RunID: run, CommitSHA: commit, Digest: landingDigest, Attempt: 1, ChangedPaths: stored}
 	receipt := core.QAReceipt{Score: 92, PolicySHA: pinned, CandidateSHA: commit}
 	err = store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		if err := put(ctx, tx, QAResultKey(run, 1), QAResult{Candidate: candidate, Receipt: receipt, Verdict: VerdictPassed}); err != nil {
@@ -219,6 +227,29 @@ func TestALandingIsDecidedOnceAndAMadeMergeIsNotRepeated(t *testing.T) {
 		}
 		if again, err := w.prs.ensure(ctx, w.req.IssueID, w.req.RunID, 1); err != nil || again.Number != pr.Number {
 			t.Fatalf("a second pull request was opened: %+v, %v", again, err)
+		}
+	})
+}
+
+// A candidate that moves a protected file into the application's directory
+// is left for the Owner at the merge even when the stored list names only
+// the path the file reached: GitHub's comparison, which lists the move as
+// one renamed file, names the path it left as well.
+func TestACandidateThatRenamesAProtectedFileIntoTheApplicationIsNotMerged(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		const page = "<p>Approve?</p>\n"
+		w := newLandingWorldOf(t, db.Open(t, core.ZoneControl),
+			map[string]string{"examples/hello-app/main.go": "old\n", "ui/templates/approval.html": page},
+			map[string][]byte{"examples/hello-app/main.go": []byte("new\n"), "ui/templates/approval.html": nil,
+				"examples/hello-app/approval.html": []byte(page)},
+			[]string{"examples/hello-app/approval.html", "examples/hello-app/main.go"})
+		landing, err := w.prs.Land(context.Background(), w.req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if landing.Merged || !strings.Contains(landing.Summary, "ui/templates/approval.html") || w.mainHasTheChange() || w.data.Merges() != 0 {
+			t.Fatalf("landing %+v after %d merges, want it left for the Owner for the path the file left", landing, w.data.Merges())
 		}
 	})
 }
