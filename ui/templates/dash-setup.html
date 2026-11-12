@@ -1,0 +1,22 @@
+{{define "title"}}Setup{{end}}
+{{define "content"}}
+<h1>Setup</h1>
+<p>Each step is checked against the live factory. The sample issue runs once all checks pass.</p>
+<ol class="steps">
+{{range .Steps}}
+<li data-step="{{.Key}}" data-status="{{.Status}}">
+  <h2>{{.Title}} <span class="badge status-{{.Status}}">{{.Label}}</span></h2>
+  <p>{{.Detail}}</p>
+  {{if .Panel}}{{template "panelstate" .Panel}}{{end}}
+</li>
+{{end}}
+</ol>
+<h2>Sample issue</h2>
+{{if .SampleAvailable}}
+<form method="post" action="/actions/setup.sample_issue">
+  {{template "csrf" .}}
+  <button type="submit"{{if not .ChecksPass}} disabled{{end}}>Run a sample issue</button>
+</form>
+{{if not .ChecksPass}}<p class="empty">Fix the failing checks first.</p>{{end}}
+{{else}}<p class="notice unavailable" data-state="unavailable"><strong>Not available yet.</strong> This factory offers no sample-issue action to the control zone.</p>{{end}}
+{{end}}

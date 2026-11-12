@@ -17,6 +17,11 @@ const (
 	RuleUnitLifecycle Rule = "unit.lifecycle_mismatch"
 	// RuleUnitNotPinned: a unit that runs an artifact does not pin its digest.
 	RuleUnitNotPinned Rule = "unit.digest_not_pinned"
+	// RuleUnitThroughLauncher: a unit identified by what it starts starts
+	// through a shell or another launcher, which hides what runs, or, in
+	// Standalone mode, starts anything but a factory binary from the
+	// install's bin/ directory, such as an interpreter.
+	RuleUnitThroughLauncher Rule = "unit.command_through_launcher"
 	// RuleNetworkMissing: one of the four network segments is not declared.
 	RuleNetworkMissing Rule = "network.missing"
 
@@ -93,6 +98,9 @@ const (
 	// RuleVolumePathOverlap: on one machine, the directories of two volumes
 	// with different owners are the same directory or lie inside each other.
 	RuleVolumePathOverlap Rule = "isolation.volume_path_overlap"
+	// RuleVolumeDirectories: on one machine, one volume is mounted at two
+	// directories, so what the manifest says of the volume holds for neither.
+	RuleVolumeDirectories Rule = "isolation.volume_mounted_at_two_directories"
 	// RuleExecutableInAnotherUnitsDirectory: on one machine, a unit starts a
 	// binary from a directory another unit mounts, so that unit decides what
 	// runs.
@@ -103,8 +111,8 @@ const (
 
 	// RuleQARouteMissing: the coding step or the QA step has no model route.
 	RuleQARouteMissing Rule = "qa.model_route_missing"
-	// RuleQASameModelRoute: QA runs on the provider and model of the coding
-	// agent and the Owner has not acknowledged it.
+	// RuleQASameModelRoute: QA runs on the provider and model of a coding or
+	// planning route and the Owner has not acknowledged it.
 	RuleQASameModelRoute Rule = "qa.same_model_route"
 	// RuleQASharedWorkspace: the runner and the qa-runner mount one volume.
 	RuleQASharedWorkspace Rule = "qa.shared_workspace"
@@ -160,8 +168,20 @@ const (
 	// RuleReleaseUnit: release.units lists a unit the normal pipeline may
 	// not publish by itself.
 	RuleReleaseUnit Rule = "release.unit_not_self_publishable"
+	// RuleUnitInputsProtected: release.unit_inputs declares a pattern that
+	// can match a protected path, which the manifest may not open to a
+	// candidate the factory publishes by itself.
+	RuleUnitInputsProtected Rule = "release.unit_inputs_protected"
+	// RuleUnitInputsGoCode: release.unit_inputs declares, for a unit other
+	// than the application, a pattern that can match a file the Go
+	// toolchain reads.
+	RuleUnitInputsGoCode Rule = "release.unit_inputs_go_code"
+	// RuleUnitInputsOverlap: a declared pattern and an input of another unit
+	// can match the same path.
+	RuleUnitInputsOverlap Rule = "release.unit_inputs_overlap"
 	// RuleBudgetAlert: the budget is unlimited and the Owner has neither set
-	// an alert threshold nor chosen to have none.
+	// an alert threshold nor chosen to have none, or an alert threshold is
+	// set and declined at once.
 	RuleBudgetAlert Rule = "budget.alert_undecided"
 	// RuleModelRoutesEmpty: no kind of step has a model route.
 	RuleModelRoutesEmpty Rule = "model_routes.empty"
@@ -170,18 +190,19 @@ const (
 // Rules returns every rule the checker can report.
 func Rules() []Rule {
 	return []Rule{
-		RuleSchema, RuleZoneMissing, RuleUnitMissing, RuleUnitLifecycle, RuleUnitNotPinned, RuleNetworkMissing,
+		RuleSchema, RuleZoneMissing, RuleUnitMissing, RuleUnitLifecycle, RuleUnitNotPinned, RuleUnitThroughLauncher, RuleNetworkMissing,
 		RuleIdentityInvalid, RuleIdentityNotDistinct,
 		RuleSupervisorUndeclared, RuleSupervisorNotPinned, RuleSupervisorSharesArtifact,
 		RuleTrustVolumeUndeclared, RuleTrustVolumeExposed, RuleTrustVolumeUnmounted,
 		RuleSupervisorDigestChange, RuleSupervisorSelfCheck, RuleTrustVolumeStorage,
 		RuleSharedCredentials, RuleSharedStoreRole, RuleVolumeUndeclared, RuleCrossZoneWrite, RuleCrossZoneRead,
 		RuleSharedVolumeMount, RuleNetworkSegment, RuleNetworkUnattached, RuleSandboxNotInternal, RuleEgressProxy,
-		RulePublicExposure, RuleVolumeHolder, RuleVolumePathOverlap, RuleExecutableInAnotherUnitsDirectory, RuleRunnerInbound,
+		RulePublicExposure, RuleVolumeHolder, RuleVolumePathOverlap, RuleVolumeDirectories, RuleExecutableInAnotherUnitsDirectory, RuleRunnerInbound,
 		RuleQARouteMissing, RuleQASameModelRoute, RuleQASharedWorkspace, RuleQASharedCredentials,
 		RuleStatePlacement, RuleArtifactsPlacement, RuleSecretInline, RuleSecretRefReused,
 		RuleModeUnsupported, RuleBackendUndeclared, RuleBackendMode, RuleBackendCapability,
 		RuleLimitsUnbounded, RuleReleaseDuration, RuleCanaryStepsMissing, RuleCanarySteps, RuleCanaryIncomplete,
-		RuleReleaseBounds, RuleSyntheticSuiteMissing, RuleReleaseUnit, RuleBudgetAlert, RuleModelRoutesEmpty,
+		RuleReleaseBounds, RuleSyntheticSuiteMissing, RuleReleaseUnit,
+		RuleUnitInputsProtected, RuleUnitInputsGoCode, RuleUnitInputsOverlap, RuleBudgetAlert, RuleModelRoutesEmpty,
 	}
 }

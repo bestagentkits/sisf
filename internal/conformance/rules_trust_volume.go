@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"fmt"
+	"path"
 	"slices"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -75,8 +76,15 @@ func (c *checker) checkTrustVolumeStorage(sup manifest.Supervisor) {
 		{"storage.artifacts.location", c.m.Storage.Artifacts.Location, "artifacts, logs and snapshots"},
 		{"storage.state.path", c.m.Storage.State.Path, "the state store"},
 	}
+	// On one machine a store path spelled in other letters may name the
+	// same directory; in Docker the trust volume's name is compared too and
+	// paths are container paths, which tell case apart.
+	same := func(file string) string { return path.Clean(file) }
+	if c.m.Mode == manifest.ModeStandalone {
+		same = onDisk
+	}
 	for _, store := range stores {
-		if store.value == "" || !slices.ContainsFunc(inside, func(root string) bool { return within(store.value, root) }) {
+		if store.value == "" || !slices.ContainsFunc(inside, func(root string) bool { return within(same(store.value), same(root)) }) {
 			continue
 		}
 		c.add(RuleTrustVolumeStorage, store.path,

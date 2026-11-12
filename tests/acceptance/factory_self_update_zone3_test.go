@@ -4,29 +4,28 @@ import (
 	"context"
 	"testing"
 
-	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
-	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
-	"github.com/bestagentkits/sisf/pkg/state"
+	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
 const dashboardBody = "The status page should say when it was checked.\n\n### Definition of Done\n- the status page names the factory as its checker\n"
 
-// The factory improves its own dashboard: the supervisor builds and
-// releases a new control unit, and when a later build of it breaks, rolls
-// it back to the last known good one and reports why on the issue. The
-// application keeps serving throughout and the supervisor is never
-// replaced.
+// The factory improves a page of its own control unit that the Owner
+// declared an input of control: the supervisor builds and releases a new
+// control unit, and when a later build of it, made once the Owner put the
+// merged release in force, breaks, rolls it back to the last known good one
+// and reports why on the issue. The application keeps
+// serving throughout and the supervisor is never replaced.
 func TestTheFactoryUpdatesItsDashboardAndRollsABrokenBuildBack(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	f := harness.New(t, harness.Options{})
+	f := harness.New(t, harness.Options{ReleaseUnits: []manifest.UnitName{manifest.UnitApp, manifest.UnitControl}, UnitInputs: controlSitePage})
 	installed := f.Trust.Installed["control"]
 
 	first := f.OpenIssue("maintainer", "MEMBER", "Say who checked the status", dashboardBody, github.LabelReady, github.LabelKindBug)
-	f.ScriptPatch(first, 0, dashboardDiff)
+	f.ScriptPatch(first, 0, sitePageDiff)
 	f.Cycle(4)
 	wantSurfaces(t, f, first, core.StateClosed)
 	good, found, err := f.Trust.LKG.Get(ctx, "control")
@@ -34,8 +33,17 @@ func TestTheFactoryUpdatesItsDashboardAndRollsABrokenBuildBack(t *testing.T) {
 		t.Fatalf("the new control unit is not the last known good: %+v, %v", good, err)
 	}
 
+	// The factory merged the first release; the Owner moves the trust
+	// baseline to the default branch that now holds it, as a candidate of
+	// the control unit built on a base without it is refused.
+	head, _, ok := f.GitData.Branch(f.Repo, "main")
+	if !ok {
+		t.Fatal("the default branch is not known")
+	}
+	approveRevision(t, f, core.CommitSHA(head))
+
 	second := f.OpenIssue("maintainer", "MEMBER", "Reword the status page", dashboardBody, github.LabelReady, github.LabelKindBug)
-	f.ScriptPatch(second, 0, dashboardRewordDiff)
+	f.ScriptPatch(second, 0, sitePageRewordDiff)
 	f.Deploy.FaultNext("control")
 	f.Cycle(4)
 	wantSurfaces(t, f, second, core.StateBlocked)
@@ -67,7 +75,7 @@ func TestTheFactoryUpdatesItsDashboardAndRollsABrokenBuildBack(t *testing.T) {
 
 // A candidate that changes the trusted control surface (here the QA
 // baseline) is a governance change: the supervisor refuses to release it,
-// whatever QA said, and nothing is deployed.
+// whatever QA said, blocks the issue for it, and nothing is deployed.
 func TestACandidateThatTouchesTheQABaselineIsRefusedAsAGovernanceChange(t *testing.T) {
 	t.Parallel()
 	f := harness.New(t, harness.Options{})
@@ -75,19 +83,7 @@ func TestACandidateThatTouchesTheQABaselineIsRefusedAsAGovernanceChange(t *testi
 	f.ScriptPatch(number, 0, qaBaselineDiff)
 	f.Cycle(4)
 
-	record := f.Record(number)
-	if record.State != core.StateReleaseCandidate {
-		t.Fatalf("the governance change went on to %s", record.State)
-	}
-	var rec stages.ReleaseRecord
-	err := f.ControlStore.View(context.Background(), func(ctx context.Context, tx state.Tx) error {
-		var err error
-		rec, err = stages.ReadRelease(ctx, tx, record.RunID, record.Attempt)
-		return err
-	})
-	if err != nil || rec.Result != string(release.ResultRefused) || !containsCode(rec.Reason, core.CodeApprovalRequired) {
-		t.Fatalf("the release was not refused as a governance change: %+v, %v", rec, err)
-	}
+	wantRefusedAndBlocked(t, f, number, core.CodeApprovalRequired)
 	if staged := f.Deploy.Staged(); len(staged) != 0 {
 		t.Fatalf("a governance change was deployed: %+v", staged)
 	}

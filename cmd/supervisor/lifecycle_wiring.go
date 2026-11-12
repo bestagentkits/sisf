@@ -6,10 +6,11 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/audit"
+	"github.com/bestagentkits/sisf/internal/budget"
 	"github.com/bestagentkits/sisf/internal/intake/prgate"
+	"github.com/bestagentkits/sisf/internal/manifestsettings"
 	"github.com/bestagentkits/sisf/internal/redact"
 	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/internal/supervisor"
@@ -48,7 +49,11 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if m.FactoryID != d.cfg.FactoryID {
 		return nil, core.NewError(core.CodeInvalidArgument, "the factory manifest is not the one of --factory-id")
 	}
-	sim := wiring.SimulationProfile(m)
+	inputs, err := release.NewUnitInputs(declaredUnitInputs(m))
+	if err != nil {
+		return nil, err
+	}
+	sim := manifestsettings.SimulationProfile(m)
 	client, settings, err := gitHubClient(m, d.lookupEnv, d.clock)
 	if err != nil {
 		return nil, err
@@ -61,7 +66,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
-	keys, err := loadSupervisorKeys(ctx, d.cfg.TrustDir, m.FactoryID, rootPub, root, d.clock)
+	keys, err := loadSupervisorKeys(ctx, d.cfg.TrustDir, m.FactoryID, rootPub, root, d.clock, d.log)
 	if err != nil {
 		return nil, err
 	}
@@ -83,11 +88,17 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
+	if err := l.openLocalPrograms(ctx, d.cfg.TrustDir, sim, book); err != nil {
+		return nil, err
+	}
+	if store := l.programs.buildStore(); store != nil {
+		l.retention = newProgramRetention(store, book, d.stop.store)
+	}
 	admin, err := l.edgeAdmin(d.lookupEnv)
 	if err != nil {
 		return nil, err
 	}
-	backend, err := l.deployBackend(m.FactoryID, admin, d.clock, d.log)
+	backend, err := l.deployBackend(m.FactoryID, admin, d.cfg.TrustDir, d.clock, d.log)
 	if err != nil {
 		return nil, err
 	}
@@ -95,10 +106,24 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
+	// A release whose real traffic is too thin is judged by the
+	// application's synthetic suite; without one it holds.
+	synthetic, err := l.syntheticSuite(backend, d.log)
+	if err != nil {
+		return nil, err
+	}
+	if closer, ok := backend.(interface{ Close(context.Context) error }); ok {
+		l.closeBackend = closer.Close
+	}
 	if l.deploy == "local" {
 		l.adopter = &lkgAdopter{factory: m.FactoryID, backend: backend, lkg: book, signer: keys.Artifact, image: "local/" + string(m.FactoryID) + "/" + adoptedUnit}
 	}
-	gate, err := prgate.New(prgate.Config{Visibility: prgate.Visibility(l.visibility), AgentLogins: []string{settings.Self.Login}, Audit: log, Clock: d.clock})
+	// An install on the operator's gh login names no bot account of its own.
+	var agentLogins []string
+	if settings.Self.Login != "" {
+		agentLogins = []string{settings.Self.Login}
+	}
+	gate, err := prgate.New(prgate.Config{Visibility: prgate.Visibility(l.visibility), AgentLogins: agentLogins, Audit: log, Clock: d.clock})
 	if err != nil {
 		return nil, err
 	}
@@ -119,20 +144,31 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
+	// Only the supervisor builds a merger: it lands a candidate on the
+	// default branch after its release is verified.
+	merger, err := github.NewMerger(client)
+	if err != nil {
+		return nil, err
+	}
+	spend := budget.NewGate(budget.Config{Clock: d.clock})
 	return stages.New(stages.Config{
 		FactoryID: m.FactoryID, Repo: repo, State: d.stop.store, SameRouteAcknowledged: m.ModelRoutes.SameModelRoute,
-		GitHub: client, Judge: judge, QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
+		GitHub: client, Merger: merger, Self: settings.Self, Judge: judge, QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
 		QASigner: keys.QA, ArtifactSigner: keys.Artifact, Verifier: keys.Verifier, ApprovalVerifier: approvalVerifier,
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
-		BuildRetry: stages.BuildRetry{HoldAfter: l.buildOutageLimit},
-		Release:    release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor},
+		BuildRetry: stages.BuildRetry{HoldAfter: l.buildOutageLimit}, Budget: spend,
+		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor, Synthetic: synthetic,
+			SelfPublishable: selfPublishableUnits(m), UnitInputs: inputs, VerifierAt: keys.VerifierAt,
+			// A rollback reserves through the rollback reserve and records
+			// its spend; an exhausted budget never blocks it.
+			Budget: spend},
 	})
 }
 
 // gitHubClient connects to the factory's repository with the token in the
 // environment.
-func gitHubClient(m *manifest.Manifest, lookupEnv func(string) (string, bool), clock core.Clock) (*github.RESTClient, wiring.GitHubSettings, error) {
-	settings, err := wiring.GitHubSettingsOf(m)
+func gitHubClient(m *manifest.Manifest, lookupEnv func(string) (string, bool), clock core.Clock) (*github.RESTClient, manifestsettings.GitHubSettings, error) {
+	settings, err := manifestsettings.GitHubSettingsOf(m)
 	if err != nil {
 		return nil, settings, err
 	}
@@ -140,7 +176,7 @@ func gitHubClient(m *manifest.Manifest, lookupEnv func(string) (string, bool), c
 		settings.APIURL = url
 	}
 	token, _ := lookupEnv(envGitHubToken)
-	client, err := wiring.NewGitHubClient(settings, core.NewSecretValue([]byte(token)), clock)
+	client, err := manifestsettings.NewGitHubClient(settings, core.NewSecretValue([]byte(token)), clock)
 	return client, settings, err
 }
 

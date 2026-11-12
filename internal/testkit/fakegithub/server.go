@@ -25,11 +25,13 @@ type Server struct {
 	bot            User
 	clock          func() time.Time
 	tickAt         time.Time
-	repos          map[string]*repo
-	users          map[string]User
-	nextUserID     int64
-	nextCommentID  int64
-	nextCheckID    int64
+	// held keeps the built-in clock still (see HoldClock).
+	held          bool
+	repos         map[string]*repo
+	users         map[string]User
+	nextUserID    int64
+	nextCommentID int64
+	nextCheckID   int64
 
 	faultMu  sync.Mutex
 	faults   []apiFault
@@ -80,12 +82,24 @@ func New(opts ...Option) *Server {
 	return s
 }
 
+// HoldClock stops the built-in clock while hold is true: every change is
+// stamped with the second of the last one, as on GitHub, whose update times
+// have whole-second precision, when changes land within one second. Releasing
+// it moves on one second per change again. It has no effect with WithClock.
+func (s *Server) HoldClock(hold bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.held = hold
+}
+
 // now returns the time to stamp a change with. Callers hold s.mu.
 func (s *Server) now() time.Time {
 	if s.clock != nil {
 		return s.clock().UTC()
 	}
-	s.tickAt = s.tickAt.Add(time.Second)
+	if !s.held {
+		s.tickAt = s.tickAt.Add(time.Second)
+	}
 	return s.tickAt
 }
 

@@ -29,11 +29,16 @@ type fakePublisher struct {
 	mu      sync.Mutex
 	entries []catalog.Entry
 	err     error
+	// hook, when set, is called on every Publish, before it answers.
+	hook func()
 }
 
 func (p *fakePublisher) Publish(_ context.Context, e catalog.Entry) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.hook != nil {
+		p.hook()
+	}
 	if p.err != nil {
 		return "", p.err
 	}
@@ -52,6 +57,44 @@ func (s *fakeSynthetic) Run(context.Context, deploy.Revision) (SyntheticResult, 
 	return SyntheticResult{Passed: s.pass, EvidenceRef: "synthetic:run"}, nil
 }
 
+// storeBlocks keeps the record of each block as a document of its own
+// namespace, in the transaction that blocks the issue, as the supervisor's
+// recorder does.
+type storeBlocks struct{}
+
+const blocksNamespace = "release-blocks"
+
+func (storeBlocks) RecordBlock(ctx context.Context, kv state.KV, b Block) error {
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return err
+	}
+	_, err = kv.PutKV(ctx, state.KVEntry{Namespace: blocksNamespace, Key: string(b.RunID), Value: raw})
+	return err
+}
+
+// block reads the record of why the pipeline blocked the issue of run.
+func (w *world) block(run core.RunID) (Block, bool) {
+	w.t.Helper()
+	var b Block
+	found := false
+	err := w.store.View(context.Background(), func(ctx context.Context, tx state.Tx) error {
+		entry, err := tx.GetKV(ctx, blocksNamespace, string(run))
+		if core.HasCode(err, core.CodeNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		found = true
+		return json.Unmarshal(entry.Value, &b)
+	})
+	if err != nil {
+		w.t.Fatalf("read the block of %s: %v", run, err)
+	}
+	return b, found
+}
+
 // world is one factory as the release pipeline sees it: a real operational
 // store, a trust volume whose LKG is the root-signed release manifest, a
 // deployment backend serving the LKG, and the supervisor's keys.
@@ -65,13 +108,14 @@ type world struct {
 	book      *LKGBook
 	freeze    *fakeFreeze
 	publisher *fakePublisher
+	commits   *fakeCommits
 	cfg       Config
 }
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
 	clock := &fakeClock{now: startTime}
-	w := &world{t: t, clock: clock, keys: newKeyring(t, clock), freeze: &fakeFreeze{}, publisher: &fakePublisher{}}
+	w := &world{t: t, clock: clock, keys: newKeyring(t, clock), freeze: &fakeFreeze{}, publisher: &fakePublisher{}, commits: &fakeCommits{}}
 	w.store = openStore(t, clock)
 	w.backend = newFakeBackend(clock, lkgDigest)
 	w.trustDir = filepath.Join(t.TempDir(), "trust")
@@ -80,8 +124,8 @@ func newWorld(t *testing.T) *world {
 	}
 	w.book = w.recordInstallLKG(lkgDigest)
 	w.cfg = Config{
-		FactoryID: testFactory, State: w.store, Backend: w.backend, Verifier: w.keys.verifier, LKG: w.book,
-		Freeze: w.freeze, Publisher: w.publisher, Clock: clock,
+		FactoryID: testFactory, State: w.store, Backend: w.backend, Verifier: w.keys.verifier, VerifierAt: w.keys.verifierAt, LKG: w.book,
+		Freeze: w.freeze, Publisher: w.publisher, Blocks: storeBlocks{}, Clock: clock, Commits: w.commits,
 	}
 	return w
 }

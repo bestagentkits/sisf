@@ -22,6 +22,7 @@ func (s *Server) routes() {
 	m.HandleFunc("PATCH "+repoPath+"/issues/comments/{id}", s.patchComment)
 	m.HandleFunc("GET "+repoPath+"/pulls/{number}", s.getPull)
 	m.HandleFunc("POST "+repoPath+"/pulls", s.createPull)
+	m.HandleFunc("GET /user", s.viewer)
 	m.HandleFunc("POST "+repoPath+"/check-runs", s.createCheckRun)
 	m.HandleFunc("PATCH "+repoPath+"/check-runs/{id}", s.patchCheckRun)
 	m.HandleFunc("POST "+repoPath+"/releases", s.createRelease)

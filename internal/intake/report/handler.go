@@ -3,8 +3,8 @@
 // limits how often each client and everyone together may report, how large
 // a report may be, and stores a report seen again only once.
 //
-// A report is data. Its text is redacted, normalized for deduplication and
-// stored; nothing in it is interpreted, obeyed or echoed back, and storing
+// A report is data. Its invisible characters are dropped, then its text is
+// redacted, normalized for deduplication and stored; nothing in it is interpreted, obeyed or echoed back, and storing
 // it grants nothing to anyone.
 //
 // The handler is not mounted here: the wiring of the control zone mounts it
@@ -15,12 +15,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/telemetry"
@@ -29,15 +31,22 @@ import (
 // Path is where the handler is meant to be mounted.
 const Path = "/report"
 
-// Defaults for the limits a Config leaves at zero.
+// Defaults for the limits a Config leaves at zero. A client may report five
+// times an hour and everyone together sixty times an hour: what is accepted
+// waits in a bounded store for the publisher, which opens at most a daily
+// budget of issues, so acceptance is kept near what can be published.
 const (
 	DefaultMaxBytes       = 16 << 10
 	DefaultPerClientLimit = 5
-	DefaultGlobalLimit    = 120
-	DefaultWindow         = time.Minute
+	DefaultGlobalLimit    = 60
+	DefaultWindow         = time.Hour
 	DefaultMaxClients     = 10000
 	// MaxTitleRunes bounds the title of a report.
 	MaxTitleRunes = 200
+	// fullStoreRetry is the Retry-After of a report refused because the
+	// store is full: stored reports leave it as they are published, a few
+	// a minute while the day's budget of issues lasts.
+	fullStoreRetry = 5 * time.Minute
 )
 
 // Config configures the handler.
@@ -67,7 +76,7 @@ type Config struct {
 
 type handler struct {
 	cfg     Config
-	limiter *limiter
+	limiter *Limiter
 }
 
 // NewHandler validates cfg, fills in the defaults and returns the handler.
@@ -92,10 +101,7 @@ func NewHandler(cfg Config) (http.Handler, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	return &handler{cfg: cfg, limiter: &limiter{
-		perClient: cfg.PerClientLimit, overall: cfg.GlobalLimit, window: cfg.Window,
-		maxClients: cfg.MaxClients, clients: map[string]*counter{},
-	}}, nil
+	return &handler{cfg: cfg, limiter: NewLimiter(cfg.PerClientLimit, cfg.GlobalLimit, cfg.Window, cfg.MaxClients)}, nil
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -105,8 +111,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := h.cfg.Clock.Now()
-	if ok, wait := h.limiter.take(h.cfg.ClientKey(r), now); !ok {
-		w.Header().Set("Retry-After", retryAfter(wait))
+	client := h.cfg.ClientKey(r)
+	if ok, wait := h.limiter.Take(client, now); !ok {
+		w.Header().Set("Retry-After", RetryAfter(wait))
 		reply(w, http.StatusTooManyRequests, "error", "too many reports; try again later")
 		return
 	}
@@ -115,13 +122,29 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, status, "error", message)
 		return
 	}
-	title, body := h.cfg.Redactor.Redact(in.Title), h.cfg.Redactor.Redact(in.Body)
+	visibleTitle, visibleBody := Visible(in.Title), Visible(in.Body)
+	if strings.TrimSpace(visibleTitle) == "" || strings.TrimSpace(visibleBody) == "" {
+		reply(w, http.StatusBadRequest, "error", "a report needs a title of at most 200 characters and a body, as printable text")
+		return
+	}
+	title, body := h.cfg.Redactor.Redact(visibleTitle), h.cfg.Redactor.Redact(visibleBody)
 	fp := fingerprint(title, body)
 	stored, created, err := h.cfg.Store.Save(r.Context(), Report{
-		ID: "report-" + fp[:16], Fingerprint: fp, Title: title, Body: body, ReceivedAt: now,
+		ID: "report-" + fp[:16], Fingerprint: fp, Title: title, Body: body, ReceivedAt: now, Client: client,
 	})
+	if core.HasCode(err, core.CodeRateLimited) {
+		// The store holds as many of this client's reports as it lets one
+		// client have waiting.
+		w.Header().Set("Retry-After", storeRetryAfter(err))
+		reply(w, http.StatusTooManyRequests, "error", "too many of your reports wait to be published; try again later")
+		return
+	}
 	if err != nil {
 		h.cfg.Logger.Error("report could not be stored", "code", string(core.CodeOf(err)))
+		if core.HasCode(err, core.CodeLimitExceeded) {
+			// The store is full until reports are published or lapse.
+			w.Header().Set("Retry-After", RetryAfter(fullStoreRetry))
+		}
 		reply(w, http.StatusServiceUnavailable, "error", "the report could not be stored; try again later")
 		return
 	}
@@ -130,6 +153,62 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, http.StatusAccepted, "accepted", stored.ID)
+}
+
+// Visible drops from text the control characters other than line breaks
+// and tabs, and every character that shows nothing (Invisible). Such a
+// character could split a secret to slip it past redaction and then be
+// dropped where the text is shown, joining the secret again: the text is
+// made visible before it is redacted and fingerprinted, and so stored and
+// published as a reader sees it.
+func Visible(text string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return r
+		case unicode.IsControl(r) || Invisible(r):
+			return -1
+		}
+		return r
+	}, text)
+}
+
+// invisibleRanges are the code points that show nothing beyond the format
+// characters: Unicode's Default_Ignorable_Code_Point, such as the soft
+// hyphen, the Hangul fillers, the variation selectors and the tags, and
+// the braille blank, which shows as empty space.
+var invisibleRanges = &unicode.RangeTable{
+	R16: []unicode.Range16{
+		{Lo: 0x00AD, Hi: 0x00AD, Stride: 1},
+		{Lo: 0x034F, Hi: 0x034F, Stride: 1},
+		{Lo: 0x061C, Hi: 0x061C, Stride: 1},
+		{Lo: 0x115F, Hi: 0x1160, Stride: 1},
+		{Lo: 0x17B4, Hi: 0x17B5, Stride: 1},
+		{Lo: 0x180B, Hi: 0x180F, Stride: 1},
+		{Lo: 0x200B, Hi: 0x200F, Stride: 1},
+		{Lo: 0x202A, Hi: 0x202E, Stride: 1},
+		{Lo: 0x2060, Hi: 0x206F, Stride: 1},
+		{Lo: 0x2800, Hi: 0x2800, Stride: 1},
+		{Lo: 0x3164, Hi: 0x3164, Stride: 1},
+		{Lo: 0xFE00, Hi: 0xFE0F, Stride: 1},
+		{Lo: 0xFEFF, Hi: 0xFEFF, Stride: 1},
+		{Lo: 0xFFA0, Hi: 0xFFA0, Stride: 1},
+		{Lo: 0xFFF0, Hi: 0xFFF8, Stride: 1},
+	},
+	R32: []unicode.Range32{
+		{Lo: 0x1BCA0, Hi: 0x1BCA3, Stride: 1},
+		{Lo: 0x1D173, Hi: 0x1D17A, Stride: 1},
+		{Lo: 0xE0000, Hi: 0xE0FFF, Stride: 1},
+	},
+	LatinOffset: 1,
+}
+
+// Invisible reports whether r shows nothing where text is read: a format
+// character (Unicode category Cf, which holds the zero-width space and the
+// byte order mark) or another code point of invisibleRanges. Control
+// characters are not counted; each caller decides which of them to keep.
+func Invisible(r rune) bool {
+	return unicode.Is(unicode.Cf, r) || unicode.Is(invisibleRanges, r)
 }
 
 // fingerprint hashes the content without regard to letter case or spacing.
@@ -160,9 +239,16 @@ func remoteIP(r *http.Request) string {
 	return host
 }
 
-func retryAfter(d time.Duration) string {
-	seconds := int64((d + time.Second - 1) / time.Second)
-	return strconv.FormatInt(max(seconds, 1), 10)
+// storeRetryAfter is the Retry-After of a report the store refused as
+// too many: the seconds the store's error names, or else fullStoreRetry.
+func storeRetryAfter(err error) string {
+	var typed *core.Error
+	if errors.As(err, &typed) {
+		if seconds, convErr := strconv.Atoi(typed.Details["retry_after_seconds"]); convErr == nil && seconds > 0 {
+			return strconv.Itoa(seconds)
+		}
+	}
+	return RetryAfter(fullStoreRetry)
 }
 
 func orDefault[T int | int64 | time.Duration](v, def T) T {

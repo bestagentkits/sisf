@@ -2,7 +2,10 @@
 
 package cliagent
 
-import "os/exec"
+import (
+	"os"
+	"os/exec"
+)
 
 // isolate does nothing where process groups are not available.
 func isolate(*exec.Cmd) {}
@@ -14,3 +17,7 @@ func killGroup(cmd *exec.Cmd) error {
 	}
 	return cmd.Process.Kill()
 }
+
+// readReady cannot read a pipe without waiting here; a straggler's pipe is
+// given up on when its wait runs out.
+func readReady(*os.File, []byte) (int, bool, error) { return 0, false, nil }

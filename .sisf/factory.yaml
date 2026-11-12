@@ -177,6 +177,16 @@ release:
   policy: B
   strategy: canary
   canary_steps: [5, 25, 100]
+  # A candidate the factory publishes by itself may change only paths its
+  # unit consumes. Only app has built-in inputs: the files directly in the
+  # directories of the Go packages it links, other than module and
+  # workspace files (go.mod, go.sum, go.work, go.work.sum).
+  # No other unit, control included, has any unless declared here. For an
+  # application laid out otherwise, declare its inputs as patterns matched
+  # against whole paths (* never crosses /); they replace the built-in ones
+  # and may not reach a protected path:
+  #   unit_inputs:
+  #     app: ["*.go", "web/*.html"]
   units: [app]
   rollback:
     error_rate: 0.02
@@ -225,8 +235,9 @@ egress:
     - dl-cdn.alpinelinux.org
 
 # The model of each kind of step. The names are placeholders for the tiers a
-# deployment configures. QA runs on another provider or model than coding; a
-# deployment with a single route states same_model_route: true instead.
+# deployment configures. QA runs on another provider or model than every
+# coding and planning route; a deployment with a single route states
+# same_model_route: true instead.
 model_routes:
   routes:
     intake:

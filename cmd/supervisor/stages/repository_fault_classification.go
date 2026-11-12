@@ -21,7 +21,8 @@ const checkBase RefusalReason = "check_base"
 //
 //   - a base file the patch edits that the base lacks (404 on the file,
 //     with the base commit readable);
-//   - a tree GitHub refuses for its paths (422 on the tree);
+//   - a tree GitHub refuses for its paths (422 on the tree, with the base
+//     commit readable: a base tree that is gone is answered alike);
 //   - a tree too large for GitHub (413 on the tree).
 //
 // Everything else is the factory's: 401 and 403 are its credentials, 404

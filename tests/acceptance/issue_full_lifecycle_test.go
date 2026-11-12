@@ -45,8 +45,8 @@ func TestAnIssueIsDevelopedEvaluatedReleasedVerifiedAndClosed(t *testing.T) {
 	record := f.Record(number)
 	branch := stages.Branch(f.Manifest.FactoryID, record.RunID, 1)
 	_, files, ok := f.GitData.Branch(f.Repo, branch)
-	if !ok || files["app/main.go"] != "package main\n\nfunc main() { println(\"hello, world\") }\n" {
-		t.Fatalf("the candidate branch %s holds %v", branch, files["app/main.go"])
+	if !ok || files["examples/hello-app/main.go"] != "package main\n\nfunc main() { println(\"hello, world\") }\n" {
+		t.Fatalf("the candidate branch %s holds %v", branch, files["examples/hello-app/main.go"])
 	}
 	// The release went 5, 25 and 100 percent and the app is the new build.
 	staged := f.Deploy.Staged()
@@ -68,6 +68,65 @@ func TestAnIssueIsDevelopedEvaluatedReleasedVerifiedAndClosed(t *testing.T) {
 	if !slices.ContainsFunc(f.GitData.Branches(f.Repo), func(b string) bool { return b == "sisf/release/"+string(record.RunID) }) {
 		t.Fatalf("the Publisher wrote no changelog branch: %v", f.GitData.Branches(f.Repo))
 	}
+}
+
+// An issue that arrives without its definition of done is asked for it on
+// GitHub, the author's answer makes Scope of Work v1 with a digest, and the
+// coding agent works from exactly that version until the issue is closed.
+// GitHub and the dashboard agree on where it is at every stop.
+func TestAnIncompleteIssueIsClarifiedScopedAndThenRunToClosed(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := harness.New(t, harness.Options{})
+	number := f.OpenIssue("maintainer", "MEMBER", "Greet the world", "The greeting is too terse.",
+		github.LabelReady, github.LabelKindBug)
+
+	f.Pass()
+	wantSurfaces(t, f, number, core.StateClarifying)
+	question := commentContaining(t, f, number, "More information needed")
+	if question == "" || !strings.Contains(question, "Definition of Done") {
+		t.Fatalf("the clarification comment does not ask for the definition of done: %q", question)
+	}
+	if _, err := f.Control.Intake.ApprovedScope(ctx, f.Issue(number)); !core.HasCode(err, core.CodeApprovalRequired) {
+		t.Fatalf("an unanswered issue has a scope: %v", err)
+	}
+	// Nothing is claimed while the question is open.
+	f.Tick()
+	if runs := f.Runs(number); len(runs) != 0 {
+		t.Fatalf("an issue being clarified was claimed: %+v", runs)
+	}
+
+	f.Comment(number, "maintainer", "MEMBER", "### Definition of Done\n- the app greets the world\n")
+	f.Pass()
+	wantSurfaces(t, f, number, core.StateReady)
+	scope, err := f.Control.Intake.ApprovedScope(ctx, f.Issue(number))
+	if err != nil || scope.Version != 1 || scope.Digest.Validate() != nil || scope.PolicyRevision != f.PolicyRevision ||
+		!slices.Equal(scope.DoD, []string{"the app greets the world"}) {
+		t.Fatalf("the answer did not record Scope of Work v1: %+v, %v", scope, err)
+	}
+	sow := commentContaining(t, f, number, "### Scope of Work v1")
+	if sow == "" || !strings.Contains(sow, string(scope.Digest)) {
+		t.Fatalf("the versioned scope is not on the issue: %q", sow)
+	}
+
+	f.ScriptPatch(number, 0, greetingDiff)
+	f.Tick()
+	f.Pass()
+	wantSurfaces(t, f, number, core.StateDeveloping)
+	runs := f.Runs(number)
+	if len(runs) != 1 || runs[0].Brief.ScopeDigest != scope.Digest {
+		t.Fatalf("the run was not briefed from Scope of Work v1 (%s): %+v", scope.Digest, runs)
+	}
+	f.Cycle(3)
+	wantSurfaces(t, f, number, core.StateClosed)
+	if journey, want := f.Journey(number), append([]core.State{core.StateIntake, core.StateClarifying, core.StateScopeDraft},
+		fullLifecycle...); !slices.Equal(journey, want) {
+		t.Fatalf("issue %d went %v, want %v", number, journey, want)
+	}
+	if gh, err := f.GitHub.Issue(f.Repo, number); err != nil || gh.State != "closed" {
+		t.Fatalf("GitHub shows the issue %q: %v", gh.State, err)
+	}
+	wantLabels(t, f, number, github.LabelVerified)
 }
 
 // A candidate the evaluator fails goes back to its coding agent with the

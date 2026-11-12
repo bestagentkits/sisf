@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/bestagentkits/sisf/internal/edge"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -22,8 +23,9 @@ type slot struct {
 }
 
 // Backend is the Standalone deployment backend. It is safe for concurrent
-// use. It keeps its processes in memory, so a restart of the owner of the
-// backend loses the handles; the next Stage starts clean.
+// use. It keeps its processes in memory. With a state directory it also
+// records each slot's process there, and a backend built after a restart of
+// its owner finds those processes again (reattach).
 type Backend struct {
 	cfg  Config
 	ops  sync.Mutex // one mutation at a time
@@ -33,14 +35,25 @@ type Backend struct {
 
 var _ deploy.Backend = (*Backend)(nil)
 
-// New validates the configuration and returns the backend. It starts nothing.
+// New validates the configuration and returns the backend, its slots
+// rebuilt from the records in the state directory. It starts and stops
+// nothing. A record that cannot be read fails it.
 func New(cfg Config) (*Backend, error) {
 	cfg, err := cfg.withDefaults()
 	if err != nil {
 		return nil, err
 	}
-	return &Backend{cfg: cfg, slot: [2]*slot{{name: "blue", port: cfg.Ports[0]}, {name: "green", port: cfg.Ports[1]}}}, nil
+	b := &Backend{cfg: cfg, slot: [2]*slot{{name: "blue", port: cfg.Ports[0]}, {name: "green", port: cfg.Ports[1]}}}
+	ctx, cancel := context.WithTimeout(context.Background(), reattachTimeout)
+	defer cancel()
+	if err := b.reattach(ctx); err != nil {
+		return nil, core.NewError(core.CodeUnavailable, "the slots recorded before a restart could not be read").WithCause(err)
+	}
+	return b, nil
 }
+
+// reattachTimeout bounds how long New reads the recorded slots.
+const reattachTimeout = 30 * time.Second
 
 // Name identifies the backend.
 func (*Backend) Name() string { return "local" }
@@ -119,6 +132,7 @@ func (b *Backend) Stage(ctx context.Context, a deploy.Artifact) (deploy.Revision
 	b.mu.Lock()
 	s.digest, s.proc = a.Digest, proc
 	b.mu.Unlock()
+	b.recordSlot(ctx, s, a.Unit, a.Digest, proc)
 	rev := deploy.Revision{Unit: a.Unit, Digest: a.Digest, ID: s.name}
 	if err := b.waitReady(ctx, rev); err != nil {
 		if stopErr := b.stopSlot(context.WithoutCancel(ctx), s); stopErr != nil {
@@ -153,6 +167,7 @@ func (b *Backend) stopSlot(ctx context.Context, s *slot) error {
 	b.mu.Lock()
 	s.proc, s.digest = nil, ""
 	b.mu.Unlock()
+	b.forgetSlot(s)
 	return nil
 }
 

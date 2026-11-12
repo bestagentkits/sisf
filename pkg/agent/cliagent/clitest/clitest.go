@@ -21,10 +21,7 @@ import (
 	"time"
 )
 
-const (
-	envSpec  = "SISF_CLITEST_SPEC"
-	envChild = "SISF_CLITEST_CHILD"
-)
+const envChild = "SISF_CLITEST_CHILD"
 
 // Script is what the stand-in does when it is run.
 type Script struct {
@@ -69,7 +66,18 @@ func Main() int {
 	if os.Getenv(envChild) != "" {
 		block()
 	}
-	return runStub(os.Getenv(envSpec))
+	return runStub(specBeside(os.Args[0]))
+}
+
+// specBeside returns the script written beside the name the stand-in was
+// started by.
+func specBeside(started string) string {
+	if !strings.ContainsRune(started, filepath.Separator) {
+		if found, err := exec.LookPath(started); err == nil {
+			started = found
+		}
+	}
+	return started + ".spec.json"
 }
 
 var (
@@ -112,9 +120,13 @@ func Install(t testing.TB, name string, s Script) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := fmt.Sprintf("#!/bin/sh\n%s='%s' exec '%s' \"$@\"\n", envSpec, specPath, self)
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o700); err != nil {
-		t.Fatalf("write stand-in: %v", err)
+	// The stand-in is a link to the program built once, which finds its
+	// script beside the name it was started by. A launcher written here
+	// would be an executable this process had open for writing, and on
+	// Linux a test forking in parallel can hold that file open for a
+	// moment, so that running it fails as "text file busy".
+	if err := os.Symlink(self, filepath.Join(dir, name)); err != nil {
+		t.Fatalf("link stand-in: %v", err)
 	}
 	return dir
 }

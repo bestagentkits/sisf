@@ -3,6 +3,7 @@ package core
 import (
 	"strings"
 	"time"
+	"unicode"
 )
 
 // QACheckKind separates checks that can veto from checks that only score.
@@ -149,11 +150,27 @@ func (r QAReceipt) Validate() error {
 }
 
 // SameIdentity reports whether two identities name the same party. Letter
-// case and surrounding white space are ignored, so an identity cannot be made
+// case, surrounding white space and characters that print nothing, such as
+// zero-width spaces and joiners, direction marks, soft hyphens, byte order
+// marks and control characters, are ignored, so an identity cannot be made
 // to look like another party by respelling it. Every check that keeps two
 // roles apart, such as the coder and its evaluator, compares with it.
 func SameIdentity(a, b string) bool {
-	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+	return strings.EqualFold(visibleIdentity(a), visibleIdentity(b))
+}
+
+// visibleIdentity is id as it reads: without surrounding white space and
+// without characters that print nothing (format characters such as a
+// zero-width space or a byte order mark, variation selectors, fillers,
+// joiners and control characters).
+func visibleIdentity(id string) string {
+	return strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.In(r, unicode.Cf, unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point) ||
+			(unicode.Is(unicode.Cc, r) && !unicode.IsSpace(r)) {
+			return -1
+		}
+		return r
+	}, id))
 }
 
 // Domain and field-list version of the receipt's signing payload. Version 2

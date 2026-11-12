@@ -9,6 +9,13 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
+// CommentWriter lists, writes and edits an issue's comments; Client is one.
+type CommentWriter interface {
+	ListComments(ctx context.Context, ref core.IssueRef, since time.Time) ([]Comment, error)
+	CreateComment(ctx context.Context, ref core.IssueRef, body string) (Comment, error)
+	UpdateComment(ctx context.Context, repo RepoRef, commentID int64, body string) (Comment, error)
+}
+
 // ProgressComment keeps one status comment per issue, updated in place, so an
 // issue shows the current state and not a log of every step.
 //
@@ -17,7 +24,7 @@ import (
 // own comment. The comment is trusted as ours only when the factory's account
 // wrote it.
 type ProgressComment struct {
-	Issues Issues
+	Issues CommentWriter
 	// Self is the factory's own account.
 	Self Identity
 	// Factory is named in the marker, so two factories on the same
@@ -39,8 +46,8 @@ func (p *ProgressComment) Upsert(ctx context.Context, ref core.IssueRef, body st
 	if err := p.Factory.Validate(); err != nil {
 		return Comment{}, err
 	}
-	if p.Self.IsZero() || p.Issues == nil {
-		return Comment{}, core.NewError(core.CodeInvalidArgument, "a progress comment needs the factory's account and an issue client")
+	if p.Self.Login == "" || p.Issues == nil {
+		return Comment{}, core.NewError(core.CodeInvalidArgument, "a progress comment needs the factory's account by its login, and an issue client")
 	}
 	if strings.Contains(body, "<!-- sisf:progress") {
 		return Comment{}, core.NewError(core.CodeInvalidArgument, "progress text must not contain a progress marker")
@@ -64,11 +71,11 @@ func (p *ProgressComment) Upsert(ctx context.Context, ref core.IssueRef, body st
 }
 
 // find returns the oldest comment that carries the marker and was written by
-// the factory.
+// the factory, told by its login (Identity.Wrote).
 func (p *ProgressComment) find(comments []Comment) (Comment, bool) {
 	var found Comment
 	for _, c := range comments {
-		if !p.Self.Matches(c.Author) || !strings.HasPrefix(c.Body, p.Marker()) {
+		if !p.Self.Wrote(c.Author) || !strings.HasPrefix(c.Body, p.Marker()) {
 			continue
 		}
 		if found.ID == 0 || c.ID < found.ID {

@@ -35,6 +35,12 @@ type issueDoc struct {
 	// Denial is set when the issue was blocked because its scope did not get
 	// the approval it needed.
 	Denial *Denial `json:"denial,omitempty"`
+	// Closing lists the approval requests the issue stopped waiting on that
+	// are still to be closed, each with the request that replaced it. An
+	// entry is written with the step that replaced the request and removed
+	// once the request is closed, so a close that failed is owed until a
+	// later pass makes it.
+	Closing []replacedRequest `json:"closing,omitempty"`
 }
 
 // clarifyState tracks the questions asked on an issue.
@@ -51,6 +57,16 @@ type clarifyState struct {
 	// NeedsInfo says the issue is parked: nothing more is asked, read or
 	// spent until a person removes the sisf:needs-info label.
 	NeedsInfo bool `json:"needs_info,omitempty"`
+	// LabelPending says the sisf:needs-info label of the current parking
+	// is queued and has not reached GitHub yet.
+	LabelPending bool `json:"label_pending,omitempty"`
+	// LabelConfirmed says the sisf:needs-info label of the current parking
+	// is known to have reached GitHub. Until it is, an issue seen without
+	// the label, a removal webhook included, was not lifted by anyone: the
+	// removal may be of an earlier parking. A parking stored before this
+	// was recorded has neither mark and is confirmed when its queued label
+	// is delivered or the issue is seen carrying it.
+	LabelConfirmed bool `json:"label_confirmed,omitempty"`
 }
 
 func issueKey(issue core.IssueRef) string { return "issue/" + issue.String() }

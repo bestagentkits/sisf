@@ -28,9 +28,14 @@ func (in *Installer) checkTopology(ctx context.Context, c *collector, m *manifes
 		})
 	} else {
 		in.checkEdgeAdminStandalone(ctx, c)
-		c.ok("runner images", "Standalone builds candidates as local processes of the trusted simulation; no runner image is used")
+		if sb := buildSandboxOf(m); sb.set() {
+			c.ok("runner images", "Standalone builds candidates in the Docker build sandbox with the runner image %s", sb.RunnerImage)
+		} else {
+			c.ok("runner images", "Standalone builds candidates as local processes of the trusted simulation; no runner image is used")
+		}
 		in.checkDelegations(c, m, dirReader(in.Layout.Data("trust")))
 	}
+	in.checkSandboxNetwork(ctx, c, m)
 	in.checkStages(c, m)
 }
 

@@ -40,7 +40,7 @@ func TestTheAdminSocketCarriesTheEmergencyStopRollbackAndFreezeStatus(t *testing
 		},
 	})
 	ctx := context.Background()
-	report, err := client.EmergencyStop(ctx, EmergencyStopRequest{Actor: "user:owner", Reason: "runaway spend"})
+	report, err := client.EmergencyStop(ctx, EmergencyStopRequest{FactoryID: testFactory, Actor: "user:owner", Reason: "runaway spend"})
 	if err != nil || report.StopID != "stop-1" || stopped.Reason != "runaway spend" {
 		t.Fatalf("EmergencyStop = %+v, %v (server saw %+v)", report, err, stopped)
 	}
@@ -79,7 +79,7 @@ func TestARollbackWithoutAnApprovalNeverReachesTheSupervisor(t *testing.T) {
 		t.Fatalf("client without approval = %v, want APPROVAL_REQUIRED", err)
 	}
 	// A client that skips the check is refused by the socket itself.
-	resp, err := http.Post(url+RollbackPath, "application/json", strings.NewReader(`{"factory_id":"acme-hello","unit":"app","reason":"x"}`))
+	resp, err := testClient.Post(url+RollbackPath, "application/json", strings.NewReader(`{"factory_id":"acme-hello","unit":"app","reason":"x"}`))
 	if err != nil {
 		t.Fatalf("raw post: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestActionsAreNotServedUnlessTheSupervisorWasGivenThem(t *testing.T) {
 	t.Parallel()
 	_, url := serveActions(t, Options{})
 	for _, path := range []string{EmergencyStopPath, RollbackPath} {
-		resp, err := http.Post(url+path, "application/json", strings.NewReader(`{}`))
+		resp, err := testClient.Post(url+path, "application/json", strings.NewReader(`{}`))
 		if err != nil {
 			t.Fatalf("post %s: %v", path, err)
 		}
@@ -101,5 +101,27 @@ func TestActionsAreNotServedUnlessTheSupervisorWasGivenThem(t *testing.T) {
 		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
 			t.Errorf("POST %s answered %d on a supervisor without actions", path, resp.StatusCode)
 		}
+	}
+}
+
+// Two factories on one host share the default admin address, so a stop
+// must name the factory it stops and a supervisor of another factory, or a
+// stop that names none, never carries it out.
+func TestAnEmergencyStopForAnotherFactoryIsRefusedAndNeverRuns(t *testing.T) {
+	t.Parallel()
+	called := false
+	client, _ := serveActions(t, Options{EmergencyStop: func(context.Context, EmergencyStopRequest) (EmergencyStopReport, error) {
+		called = true
+		return EmergencyStopReport{StopID: "stop-1"}, nil
+	}})
+	ctx := context.Background()
+	for name, factory := range map[string]core.FactoryID{"another factory": "sisf-other", "no factory": ""} {
+		_, err := client.EmergencyStop(ctx, EmergencyStopRequest{FactoryID: factory, Actor: "user:owner", Reason: "runaway spend"})
+		if err == nil || called {
+			t.Fatalf("%s: EmergencyStop = %v, stop ran = %v; want a refusal and no stop", name, err, called)
+		}
+	}
+	if _, err := client.EmergencyStop(ctx, EmergencyStopRequest{FactoryID: testFactory, Actor: "user:owner", Reason: "runaway spend"}); err != nil || !called {
+		t.Fatalf("a stop of this factory = %v, ran = %v", err, called)
 	}
 }

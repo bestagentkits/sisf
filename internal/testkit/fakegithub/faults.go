@@ -62,3 +62,11 @@ func (s *Server) LimitPrimaryNext(n int, reset time.Time) {
 func (s *Server) FailNext(n, status int) {
 	s.queueFaults(n, apiFault{status: status, message: "Server Error"})
 }
+
+// ClearFaults drops the canned answers not served yet, ending a simulated
+// outage.
+func (s *Server) ClearFaults() {
+	s.faultMu.Lock()
+	defer s.faultMu.Unlock()
+	s.faults = nil
+}

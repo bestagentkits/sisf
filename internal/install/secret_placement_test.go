@@ -36,7 +36,8 @@ func TestTheSupervisorHoldsWhatReleasingNeedsAndTheAgentZoneNoneOfIt(t *testing.
 		if sup["SISF_GITHUB_TOKEN"] != control["SISF_GITHUB_TOKEN"] || sup["SISF_STATE_DSN"] != control["SISF_STATE_DSN"] {
 			t.Errorf("%s: the supervisor's GitHub token or store connection is not the control zone's", mode)
 		}
-		for _, key := range []string{"SISF_GITHUB_TOKEN", "EDGE_ADMIN_TOKEN", "SISF_APPROVAL_KEY", "SISF_OWNER_TOKEN"} {
+		for _, key := range []string{"SISF_GITHUB_TOKEN", "EDGE_ADMIN_TOKEN", "EDGE_COUNTERS_TOKEN", "SISF_APPROVAL_KEY",
+			"SISF_AUTH_OIDC_CLIENT_SECRET", "SISF_CONTROL_SECRET_X"} {
 			if _, held := agent[key]; held {
 				t.Errorf("%s: the agent zone holds %s", mode, key)
 			}
@@ -44,8 +45,19 @@ func TestTheSupervisorHoldsWhatReleasingNeedsAndTheAgentZoneNoneOfIt(t *testing.
 		if agent["SISF_DISPATCHER_ADMIN_TOKEN"] != sup["SISF_DISPATCHER_ADMIN_TOKEN"] || len(agent["SISF_DISPATCHER_ADMIN_TOKEN"]) < 32 {
 			t.Errorf("%s: the dispatcher's run control token is not the one the supervisor calls with", mode)
 		}
-		if len(edge) != 1 || edge["EDGE_ADMIN_TOKEN"] != sup["EDGE_ADMIN_TOKEN"] || len(edge["EDGE_ADMIN_TOKEN"]) < 32 {
-			t.Errorf("%s: the edge's env file is not its admin token alone", mode)
+		if len(edge) != 2 || edge["EDGE_ADMIN_TOKEN"] != sup["EDGE_ADMIN_TOKEN"] || len(edge["EDGE_ADMIN_TOKEN"]) < 32 {
+			t.Errorf("%s: the edge's env file is not its admin and counters tokens alone", mode)
+		}
+		// Control reads the edge's counters with the read-only token the edge
+		// checks, which is not the admin token; it holds no admin token.
+		if control["EDGE_COUNTERS_TOKEN"] != edge["EDGE_COUNTERS_TOKEN"] || len(control["EDGE_COUNTERS_TOKEN"]) < 32 ||
+			control["EDGE_COUNTERS_TOKEN"] == edge["EDGE_ADMIN_TOKEN"] {
+			t.Errorf("%s: control's counters token is not the edge's read-only token", mode)
+		}
+		for _, key := range []string{"EDGE_ADMIN_TOKEN", "SISF_EDGE_ADMIN_URL", "SISF_OWNER_TOKEN"} {
+			if _, held := control[key]; held {
+				t.Errorf("%s: control holds %s", mode, key)
+			}
 		}
 		if sup["EDGE_ADMIN_TOKEN"] == sup["SISF_DISPATCHER_ADMIN_TOKEN"] {
 			t.Errorf("%s: the two admin tokens are the same", mode)
@@ -85,7 +97,15 @@ func TestTheSecretRulesRefuseEveryWideningOfTheNewSecrets(t *testing.T) {
 		"the application holds the run control token": {"application/runtime.env", "SISF_DISPATCHER_ADMIN_TOKEN=x"},
 		"the edge holds the GitHub token":             {"edge/runtime.env", "SISF_GITHUB_TOKEN=x"},
 		"the edge holds the run control token":        {"edge/runtime.env", "SISF_DISPATCHER_ADMIN_TOKEN=x"},
-		"the supervisor holds the owner token":        {"control/supervisor.env", "SISF_OWNER_TOKEN=x"},
+		"control holds the edge admin token":          {"control/runtime.env", "EDGE_ADMIN_TOKEN=x"},
+		"control holds the edge admin url":            {"control/runtime.env", "SISF_EDGE_ADMIN_URL=x"},
+		"the supervisor holds the counters token":     {"control/supervisor.env", "EDGE_COUNTERS_TOKEN=x"},
+		"the supervisor holds an OIDC client secret":  {"control/supervisor.env", "SISF_AUTH_OIDC_CLIENT_SECRET=x"},
+		"the agent zone holds an OIDC client secret":  {"agent/runtime.env", "SISF_AUTH_OIDC_CLIENT_SECRET=x"},
+		"the agent zone holds a control secret":       {"agent/runtime.env", "SISF_CONTROL_SECRET_SYSTEM_ONE=x"},
+		"the supervisor holds a control secret":       {"control/supervisor.env", "SISF_CONTROL_SECRET_SYSTEM_ONE=x"},
+		"the edge holds a control secret":             {"edge/runtime.env", "SISF_CONTROL_SECRET_SYSTEM_ONE=x"},
+		"the edge holds the github login secret":      {"edge/runtime.env", "SISF_AUTH_GITHUB_CLIENT_SECRET=x"},
 		"the supervisor holds the approval seed":      {"control/supervisor.env", "SISF_APPROVAL_KEY=x"},
 		"the supervisor holds the store owner":        {"control/supervisor.env", "SISF_STATE_OWNER_DSN=x"},
 	} {

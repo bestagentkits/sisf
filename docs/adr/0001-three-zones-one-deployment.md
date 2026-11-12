@@ -25,4 +25,6 @@ Rejected: three deployments linked by APIs (no shared lifecycle); Zone 2 as a ho
 
 ## Acceptance test
 
-Planned: SISF-01 (one `factory_id`, all zones in one manifest) and SISF-16 (a backend that cannot meet the contract is marked unsupported). The manifest conformance check rejects a manifest with a missing zone.
+- SISF-01 (one `factory_id`, all zones in one manifest and one lifecycle): `internal/install/fresh_install_single_factory_test.go` (Standalone) and `internal/install/docker_lifecycle_test.go` (`TestFreshDockerInstallIsOneComposeProjectOfOneFactory`, Compose).
+- SISF-16 (a backend that cannot meet the contract is marked unsupported): `internal/conformance/backend_capability_matrix_test.go`.
+- A manifest with a missing zone is rejected: `internal/conformance/missing_zone_test.go`.

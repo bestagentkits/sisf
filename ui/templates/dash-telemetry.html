@@ -1,0 +1,13 @@
+{{define "title"}}Telemetry{{end}}
+{{define "content"}}
+<h1>Telemetry</h1>
+<form method="get" action="/telemetry" class="inline">
+  <label>Release <input type="text" name="release" value="{{.Release}}"></label>
+  <label>Issue <input type="text" name="issue" value="{{.Issue}}" placeholder="owner/repo#123"></label>
+  <label>Run <input type="text" name="run" value="{{.Run}}"></label>
+  <label>Feature <input type="text" name="feature" value="{{.Feature}}"></label>
+  <label>Search <input type="search" name="q" value="{{.Query}}"></label>
+  <button type="submit">Search</button>
+</form>
+{{if .Result.OK}}{{template "table" .Table}}{{else}}{{template "panelstate" .Result}}{{end}}
+{{end}}

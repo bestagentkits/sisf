@@ -57,21 +57,34 @@ type LifecycleChoice struct {
 	// QAJudge is fake in the simulation and agent otherwise. QAAgent and
 	// QAAgentBinary configure the agent judge.
 	QAJudge, QAAgent, QAAgentBinary string
-	// BuildCommand is the sandboxed build command of a Docker install.
+	// BuildCommand is the build command of a candidate.
 	BuildCommand string
 	// AgentWork, ReleaseWindow and ReleaseMinSamples are the simulation's
 	// short settings; empty or zero elsewhere.
 	AgentWork, ReleaseWindow string
 	ReleaseMinSamples        int
 	Interval                 string
+	// Agents are the real agents of a Standalone install.
+	Agents AgentOptions
+	// BuildSandbox is where a Standalone install builds candidates.
+	BuildSandbox BuildSandbox
+	// RunEstimateMicros is what each run sets aside from a capped budget;
+	// zero when the budget is not capped.
+	RunEstimateMicros int64
 }
 
 // lifecycleChoice decides the stages of an install.
 func lifecycleChoice(o Options, mode manifest.Mode) LifecycleChoice {
-	c := LifecycleChoice{Enabled: true, CoderAgent: "fake", Interval: lifecycleInterval}
+	c := LifecycleChoice{Enabled: true, CoderAgent: "fake", Interval: lifecycleInterval, Agents: o.Agents, BuildSandbox: o.BuildSandbox}
+	if o.Budget.Confirmed && o.Budget.Capped() {
+		c.RunEstimateMicros = int64(o.Budget.withDefaults().RunEstimateMicros)
+	}
 	if o.Sim {
 		c.QAJudge, c.AgentWork, c.ReleaseWindow, c.ReleaseMinSamples = "fake", simAgentWork, simReleaseWindow, simReleaseMinSamples
 		return c
+	}
+	if o.Agents.real() {
+		c.CoderAgent = o.Agents.Coder
 	}
 	c.QAJudge, c.QAAgent, c.QAAgentBinary, c.BuildCommand = "agent", o.QAAgent, o.QAAgentBinary, o.BuildCommand
 	if c.QAAgent == "" {
@@ -92,11 +105,13 @@ func lifecycleChoice(o Options, mode manifest.Mode) LifecycleChoice {
 }
 
 // lifecycleExtensions reads the lifecycle settings from the manifest's
-// extensions qa_agent, qa_agent_binary and build_command.
+// extensions: the QA agent, its launcher, the build command and the agents.
 func (o *Options) lifecycleExtensions(m *manifest.Manifest) {
 	o.QAAgent, _ = m.Extensions["qa_agent"].(string)
 	o.QAAgentBinary, _ = m.Extensions["qa_agent_binary"].(string)
 	o.BuildCommand, _ = m.Extensions["build_command"].(string)
+	o.Agents = agentsOf(m)
+	o.BuildSandbox = buildSandboxOf(m)
 }
 
 // lifecycleValue is what a setting written into a command line may hold.
@@ -121,6 +136,28 @@ func (c LifecycleChoice) check() error {
 	}
 	if c.BuildCommand != "" && (len(c.BuildCommand) > 512 || !buildCommandPattern.MatchString(c.BuildCommand)) {
 		return invalidf("the build command must be words of letters, digits and . _ / + = , @ %% - separated by single spaces")
+	}
+	a := c.Agents
+	if a.real() && !slices.Contains(coderAgents, a.Coder) {
+		return invalidf("the coding agent must be fake or one of %s", strings.Join(coderAgents, ", "))
+	}
+	for _, v := range []string{a.CoderModel, a.QAModel} {
+		if !lifecycleValue.MatchString(v) {
+			return invalidf("the model name %q has characters a command line here cannot carry", v)
+		}
+	}
+	for _, home := range []string{a.AgentHome, a.QAHome} {
+		if home != "" && (!filepath.IsAbs(home) || !pathPattern.MatchString(home)) {
+			return invalidf("an agent home must be an absolute path of letters, digits and . _ + - /")
+		}
+	}
+	if a.WorkspaceSource != "" {
+		if err := checkWorkspaceSource(a.WorkspaceSource); err != nil {
+			return err
+		}
+	}
+	if c.BuildSandbox.set() {
+		return c.BuildSandbox.check()
 	}
 	return nil
 }

@@ -1,0 +1,21 @@
+{{define "title"}}Workboard{{end}}
+{{define "content"}}
+<h1>Workboard</h1>
+<p class="filters"><a href="/workboard">All</a>{{range .States}} <a href="/workboard?state={{.}}"{{if eq . $.Selected}} aria-current="true"{{end}}>{{.}}</a>{{end}}</p>
+<p><label>Filter rows <input type="search" id="row-filter"></label></p>
+{{if .List.OK}}
+<p>{{.Total}} issues{{if .Shown}}, showing {{.Shown}}{{end}}.</p>
+<table class="grid">
+  <thead><tr><th>Issue</th><th>State</th><th>Attempt</th><th>Run</th><th>Age</th><th>Updated</th><th></th></tr></thead>
+  <tbody>
+  {{range .Rows}}
+  <tr class="issue" data-issue="{{.Issue}}">
+    <td><a href="/runs?issue={{.Issue}}">{{.Issue}}</a></td><td>{{.State}}</td><td>{{.Attempt}}</td><td><code>{{.RunID}}</code></td>
+    <td>{{.Age}}</td><td><time datetime="{{iso .Updated}}">{{utc .Updated}}</time></td>
+    <td>{{if .Stopped}}<a href="/blocked?issue={{.Issue}}">Why stopped?</a>{{end}}</td>
+  </tr>
+  {{else}}<tr><td colspan="7" class="empty">No issues in this view.</td></tr>{{end}}
+  </tbody>
+</table>
+{{else}}{{template "panelstate" .List}}{{end}}
+{{end}}

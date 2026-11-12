@@ -96,12 +96,16 @@ type wireBranch struct {
 }
 
 type wirePull struct {
-	Number            int        `json:"number"`
-	Title             string     `json:"title"`
-	Body              string     `json:"body"`
-	State             string     `json:"state"`
-	Draft             bool       `json:"draft"`
-	Merged            bool       `json:"merged"`
+	Number  int    `json:"number"`
+	HTMLURL string `json:"html_url"`
+	Title   string `json:"title"`
+	Body    string `json:"body"`
+	State   string `json:"state"`
+	Draft   bool   `json:"draft"`
+	Merged  bool   `json:"merged"`
+	// MergedAt is how a list of pull requests tells a merged one: its
+	// answer has no merged field.
+	MergedAt          *time.Time `json:"merged_at"`
 	Head              wireBranch `json:"head"`
 	Base              wireBranch `json:"base"`
 	User              wireUser   `json:"user"`
@@ -113,8 +117,8 @@ type wirePull struct {
 // origin is never trusted.
 func (w wirePull) pull(repo RepoRef) PullRequest {
 	pr := PullRequest{
-		Repo: repo, Number: w.Number, Title: w.Title, Body: w.Body, State: parseState(w.State),
-		Draft: w.Draft, Merged: w.Merged, HeadRef: w.Head.Ref, HeadSHA: core.CommitSHA(w.Head.SHA),
+		Repo: repo, Number: w.Number, URL: w.HTMLURL, Title: w.Title, Body: w.Body, State: parseState(w.State),
+		Draft: w.Draft, Merged: w.Merged || w.MergedAt != nil, HeadRef: w.Head.Ref, HeadSHA: core.CommitSHA(w.Head.SHA),
 		BaseRef: w.Base.Ref, BaseSHA: core.CommitSHA(w.Base.SHA), IsFork: true,
 		Author: w.User.user(), AuthorAssociation: AuthorAssociation(w.AuthorAssociation),
 	}

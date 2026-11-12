@@ -23,9 +23,19 @@ const (
 	// decision rules, review criteria, execution guidance and feature
 	// catalogue at the repository root.
 	ProtectedPolicy ProtectedKind = "policy"
-	// ProtectedMigration is a schema migration.
+	// ProtectedMigration is a schema migration: a file under a migrations/
+	// directory, or a Go source of the state store, which builds the
+	// PostgreSQL scripts of some of its migrations (their row policies and
+	// the trigger that holds a record to one lifecycle step) from its rules
+	// and lists every migration it ships.
 	ProtectedMigration ProtectedKind = "migration"
 )
+
+// goMigrationSources is the package whose Go code defines and builds the
+// state store's migrations. The whole package is covered, not the files
+// that declare them today: any file of a Go package can add a migration or
+// change a rule a migration script is built from, from an init function.
+const goMigrationSources = "pkg/state/sqlstore/"
 
 // codeOwnersLocations are where GitHub reads a CODEOWNERS file from.
 var codeOwnersLocations = []string{"codeowners", ".github/codeowners", "docs/codeowners"}
@@ -55,7 +65,8 @@ func ProtectedPath(p string) (ProtectedKind, bool) {
 		return ProtectedCI, true
 	case clean == policyDir || strings.HasPrefix(clean, policyDir+"/") || slices.Contains(policyFiles, clean):
 		return ProtectedPolicy, true
-	case strings.HasPrefix(clean, "migrations/") || strings.Contains(clean, "/migrations/"):
+	case strings.HasPrefix(clean, "migrations/") || strings.Contains(clean, "/migrations/") ||
+		strings.HasPrefix(clean, goMigrationSources):
 		return ProtectedMigration, true
 	}
 	return "", false

@@ -2,7 +2,9 @@ package install
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"slices"
 	"sort"
@@ -30,6 +32,9 @@ func (v Violation) String() string {
 // same checks run in the tests, before `sisf up` starts anything, and in the
 // doctor, so the file that runs is the file that was checked.
 func CheckCompose(l Layout, data []byte) ([]Violation, error) {
+	if err := plainYAML(data); err != nil {
+		return nil, err
+	}
 	var file composeFile
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	// Strictly: a key the deployment does not write, which could widen a
@@ -53,6 +58,46 @@ func CheckCompose(l Layout, data []byte) ([]Violation, error) {
 	return c.out, nil
 }
 
+// standardTags are the YAML tags Compose reads as the checker does: the
+// kinds of value of the core schema and the merge key the template's
+// hardening block is merged with.
+var standardTags = []string{"!!str", "!!int", "!!float", "!!bool", "!!null", "!!timestamp", "!!map", "!!seq", "!!merge"}
+
+// plainYAML refuses a file that Compose would read otherwise than the
+// checker: one with more than one document, which Compose merges over the
+// first while the decoder reads the first alone, and one with a tag outside
+// the core schema, such as !reset or !override, which Compose obeys by
+// dropping or replacing the tagged value while the decoder ignores it.
+func plainYAML(data []byte) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var document yaml.Node
+	if err := dec.Decode(&document); err != nil {
+		return invalidf("the Compose file is not one YAML document: %v", err)
+	}
+	var another yaml.Node
+	if err := dec.Decode(&another); !errors.Is(err, io.EOF) {
+		return invalidf("the Compose file holds more than one YAML document; Compose merges every document, so only a file of one is checked")
+	}
+	return standardTagsOnly(&document)
+}
+
+// standardTagsOnly walks a node tree and refuses the first tag outside
+// standardTags. An alias is checked where its anchor stands.
+func standardTagsOnly(node *yaml.Node) error {
+	if node.Kind == yaml.AliasNode {
+		return nil
+	}
+	if node.Kind != yaml.DocumentNode && !slices.Contains(standardTags, node.ShortTag()) {
+		return invalidf("line %d carries the YAML tag %q; Compose acts on tags such as !reset and !override that the checker cannot follow, so only the core schema's tags are allowed", node.Line, node.Tag)
+	}
+	for _, child := range node.Content {
+		if err := standardTagsOnly(child); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type composeChecker struct {
 	l    Layout
 	file composeFile
@@ -65,21 +110,24 @@ func (c *composeChecker) add(rule, service, format string, args ...any) {
 	c.out = append(c.out, Violation{Rule: rule, Service: service, Message: fmt.Sprintf(format, args...)})
 }
 
-// names requires the project and everything it creates to carry the
-// project's prefix, which itself starts with "sisf-".
+// names requires the project's name to start with "sisf-" and each network
+// and volume to be named <project>-<key>. A name is what Docker opens, so a
+// key named after anything else could point at another zone's network or
+// volume, or at one outside the project; with every name derived from its
+// own key, no two keys share a name either.
 func (c *composeChecker) names() {
 	prefix := c.file.Name + "-"
 	if !strings.HasPrefix(c.file.Name, "sisf-") {
 		c.add(ruleNaming, "", "project name %q must start with sisf-", c.file.Name)
 	}
 	for _, n := range sortedKeys(c.file.Networks) {
-		if !strings.HasPrefix(c.file.Networks[n].Name, prefix) {
-			c.add(ruleNaming, "", "network %s must be named %s...", n, prefix)
+		if c.file.Networks[n].Name != prefix+n {
+			c.add(ruleNaming, "", "network %s must be named %s%s, after its own key", n, prefix, n)
 		}
 	}
 	for _, n := range sortedKeys(c.file.Volumes) {
-		if !strings.HasPrefix(c.file.Volumes[n].Name, prefix) {
-			c.add(ruleNaming, "", "volume %s must be named %s...", n, prefix)
+		if c.file.Volumes[n].Name != prefix+n {
+			c.add(ruleNaming, "", "volume %s must be named %s%s, after its own key", n, prefix, n)
 		}
 	}
 }

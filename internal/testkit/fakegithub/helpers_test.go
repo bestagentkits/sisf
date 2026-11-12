@@ -15,6 +15,12 @@ import (
 	"github.com/bestagentkits/sisf/internal/testkit/fakegithub"
 )
 
+// testClient is the HTTP client of these tests. It has a transport of its
+// own: closing a test server closes the idle connections of the default
+// transport, which would break a request another parallel test is sending
+// on a connection it reuses.
+var testClient = &http.Client{Transport: &http.Transport{}}
+
 const (
 	testRepo   = "acme/app"
 	testSecret = "fake-webhook-secret"
@@ -100,7 +106,7 @@ func (e *env) call(t *testing.T, method, path string, body any, headers ...strin
 	for i := 0; i+1 < len(headers); i += 2 {
 		req.Header.Set(headers[i], headers[i+1])
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

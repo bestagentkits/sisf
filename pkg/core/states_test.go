@@ -30,10 +30,10 @@ func TestEveryLifecycleEdgeHasOneNamedEvent(t *testing.T) {
 		EventIssueReceived, EventInfoMissing, EventClarificationCompleted,
 		EventInfoSufficient, EventApprovalRequired, EventScopePermitted,
 		EventOwnerApproved, EventApprovalDenied, EventClaimed,
-		EventDevelopmentStarted, EventCandidateSubmitted, EventQAFailed,
-		EventQAPassed, EventRolloutStarted, EventRolloutHealthy,
+		EventDevelopmentStarted, EventClaimStopped, EventDevelopmentStopped,
+		EventCandidateSubmitted, EventQAFailed, EventQAPassed, EventReleaseRefused, EventRolloutStarted, EventRolloutHealthy,
 		EventErrorThresholdExceeded, EventPostDeployVerified,
-		EventRegressionDetected, EventIssueClosed, EventRecoveryReported,
+		EventRegressionDetected, EventIssueClosed, EventVerifiedReleaseUnjudged, EventRecoveryReported,
 		EventRetryAuthorized,
 	}
 	got := Events()

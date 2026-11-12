@@ -23,6 +23,9 @@ const (
 	endpointLogs
 	endpointRemove
 	endpointList
+	// endpointNetwork inspects the sandbox network, in the runner role only,
+	// so the execution backend can prove the network is internal.
+	endpointNetwork
 )
 
 // route is a request the filter recognised: the endpoint, the API version
@@ -94,6 +97,11 @@ func (f *Filter) parseRoute(r *http.Request) (route, *denial) {
 		rt.endpoint = endpointCreate
 	case rest == "/containers/json" && r.Method == http.MethodGet && f.cfg.Role == RoleDeploy:
 		rt.endpoint = endpointList
+	case strings.HasPrefix(rest, "/networks/"):
+		if r.Method != http.MethodGet || f.cfg.Role != RoleRunner || rest != "/networks/"+f.cfg.SandboxNetwork {
+			return route{}, deny(http.StatusForbidden, "only the sandbox network may be inspected")
+		}
+		rt.endpoint = endpointNetwork
 	default:
 		if d := rt.containerEndpoint(r.Method, rest); d != nil {
 			return route{}, d

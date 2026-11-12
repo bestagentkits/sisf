@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/bestagentkits/sisf/pkg/agent"
@@ -53,6 +54,9 @@ type Backend struct {
 	env      []string
 	clock    core.Clock
 	redactor *redact.Redactor
+	// drainGrace is the silence after a run's exit that closes its output
+	// pipes on a straggler; see run.drain.
+	drainGrace time.Duration
 
 	artifactMu  sync.Mutex
 	artifactDir string
@@ -86,7 +90,7 @@ func New(cfg Config) (*Backend, error) {
 	}
 	b := &Backend{
 		name: cfg.Name, proto: cfg.Protocol, binary: cfg.Binary, clock: cfg.Clock,
-		artifactDir: cfg.ArtifactDir, versions: map[string]string{},
+		artifactDir: cfg.ArtifactDir, versions: map[string]string{}, drainGrace: drainGrace,
 		runs: map[string]*run{}, byKey: map[string]string{},
 	}
 	if b.name == "" {

@@ -97,3 +97,67 @@ func TestStoreRolesThatDifferOnlyByCaseAreOneRole(t *testing.T) {
 		}
 	}
 }
+
+// An adapter's config is used by the zone that runs the adapter: the coding,
+// QA and execution adapters by Zone 2, the deployment adapter by the
+// supervisor in Zone 3. A reference there is that zone's, so it may not be
+// another zone's credential set, the state connection secret or the root
+// public key.
+func TestAnAdapterConfigReferenceIsHeldByTheZoneThatRunsTheAdapter(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		change func(m *manifest.Manifest)
+		rule   Rule
+		path   string
+	}{
+		{"the coding adapter is given Zone 3's credentials",
+			func(m *manifest.Manifest) {
+				m.Adapters.Coder.Config = map[string]any{"api_key": m.Components.Control.CredentialsRef}
+			}, RuleSharedCredentials, "adapters.coder.config.api_key"},
+		{"the execution adapter is given the application unit's credentials in a list",
+			func(m *manifest.Manifest) {
+				editUnit(m, manifest.UnitApp, func(u *manifest.Unit) { u.CredentialsRef = "env:APP_TOKEN" })
+				m.Adapters.Execution.Config = map[string]any{"env": []any{"LOG=debug", "TOKEN=env:APP_TOKEN"}}
+			}, RuleSharedCredentials, "adapters.execution.config.env[1]"},
+		{"the deployment adapter is given Zone 2's credentials",
+			func(m *manifest.Manifest) {
+				m.Adapters.Deploy.Config = map[string]any{"registry": map[string]any{"token": m.Components.Agent.CredentialsRef}}
+			}, RuleSharedCredentials, "adapters.deploy.config.registry.token"},
+		{"the QA adapter and the deployment adapter share one reference",
+			func(m *manifest.Manifest) {
+				m.Adapters.QA.Config = map[string]any{"token": "local:providers/shared"}
+				m.Adapters.Deploy.Config = map[string]any{"token": "local:providers/shared"}
+			}, RuleSharedCredentials, "adapters.deploy.config.token"},
+		{"the coding adapter is given the state connection secret",
+			func(m *manifest.Manifest) {
+				m.Adapters.Coder.Config = map[string]any{"database_url": m.Storage.State.DSNRef}
+			}, RuleSecretRefReused, "adapters.coder.config.database_url"},
+		{"the deployment adapter is given the root public key",
+			func(m *manifest.Manifest) {
+				m.Adapters.Deploy.Config = map[string]any{"verify_key_ref": m.Supervisor.RootKeyRef}
+			}, RuleSecretRefReused, "adapters.deploy.config.verify_key_ref"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := docker(t)
+			tc.change(m)
+			report := Check(m)
+			wantOnly(t, report, tc.rule, tc.path)
+			if len(report.Findings) != 1 {
+				t.Fatalf("one reused reference is one finding, got %+v", report.Findings)
+			}
+		})
+	}
+
+	// An adapter may use its own zone's credential set, and adapters of one
+	// zone may share a reference, such as one provider's API key.
+	m := docker(t)
+	m.Adapters.Coder.Config = map[string]any{"api_key": "local:providers/anthropic", "agent": m.Components.Agent.CredentialsRef}
+	m.Adapters.QA.Config = map[string]any{"api_key": "local:providers/anthropic"}
+	m.Adapters.Deploy.Config = map[string]any{"token": m.Components.Control.CredentialsRef}
+	if report := Check(m); !report.Conformant() {
+		t.Fatalf("references of the zone that runs the adapter must be allowed, got %+v", report.Findings)
+	}
+}

@@ -212,6 +212,7 @@ func TestTheDeployRoleRefusesWhatADeploymentDoesNotNeed(t *testing.T) {
 		"exec":                              {http.MethodPost, "/containers/" + revisionName + "/exec"},
 		"an image pull":                     {http.MethodPost, "/images/create?fromImage=alpine"},
 		"removing volumes with a container": {http.MethodDelete, "/containers/" + revisionName + "?force=1&v=1"},
+		"an inspect of the deploy network":  {http.MethodGet, "/networks/" + deployNetwork},
 	} {
 		before := len(e.daemon.Requests())
 		status, out := e.do(t, req.method, deployVersion+req.path, "")
@@ -228,7 +229,7 @@ func TestTheDeployRoleRefusesWhatADeploymentDoesNotNeed(t *testing.T) {
 
 func TestADeployFilterNeedsItsOwnSettings(t *testing.T) {
 	t.Parallel()
-	transport := http.DefaultTransport
+	transport := testClient.Transport
 	for name, cfg := range map[string]dockerfilter.Config{
 		"no deploy network":              {Role: dockerfilter.RoleDeploy, Upstream: transport, RunnerValue: factory, Images: []string{unitImage}},
 		"a sandbox network":              {Role: dockerfilter.RoleDeploy, Upstream: transport, RunnerValue: factory, Images: []string{unitImage}, DeployNetwork: deployNetwork, SandboxNetwork: network},

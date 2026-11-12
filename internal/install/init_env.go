@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 
+	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -29,15 +30,19 @@ func postgresDSN(user, password string) string {
 	return "postgres://" + user + ":" + password + "@state:5432/" + stateDatabase + "?sslmode=disable"
 }
 
-// controlSecrets are the generated secrets only the control zone holds,
-// and the two admin tokens it shares with the one service each guards.
+// controlSecrets are the secrets only the control zone holds, and the
+// tokens it shares with the one service each guards.
 type controlSecrets struct {
-	owner, webhook string
+	webhook string
 	// approvalKey is the seed of the key that signs approval decisions.
 	approvalKey string
 	// edgeAdmin guards the edge's traffic split; the edge and the
-	// supervisor hold it.
-	edgeAdmin string
+	// supervisor hold it. edgeCounters reads the edge's counters and
+	// nothing else; the edge and control hold it.
+	edgeAdmin, edgeCounters string
+	// oidcClientSecret and githubClientSecret are the sign-in client
+	// secrets; zero when the provider has none.
+	oidcClientSecret, githubClientSecret core.SecretValue
 	// dispatcherAdmin guards the dispatcher's run control route, which the
 	// supervisor's emergency stop calls; the dispatcher and the supervisor
 	// hold it.
@@ -62,11 +67,13 @@ func approvalPublicKey(seed string) (string, error) {
 // runtimeEnvs builds the env file of every area. A unit gets the file of its
 // own area and no other, so what a zone cannot see it cannot leak: the
 // application and the agent zone hold their own store credential and nothing
-// of the control zone's token, webhook secret, approval key, GitHub token or
-// root key. The supervisor, in the control zone, holds what releasing needs:
-// the GitHub token, the state store as the control role, the approval
-// public key and the two admin tokens. The agent zone holds only the token
-// its own run control route checks.
+// of the control zone's webhook secret, approval key, sign-in secrets,
+// GitHub token or root key. The supervisor, in the control zone, holds what
+// releasing needs: the GitHub token, the state store as the control role,
+// the approval public key and the two admin tokens. Control reads the
+// edge's counters with a token of their own and never holds the edge's
+// admin token. The agent zone holds only the token its own run control
+// route checks.
 func (in *Installer) runtimeEnvs(o Options, pw map[core.Zone]string, cs controlSecrets, statePW string, github core.SecretValue, rootPub string) (map[string][]byte, error) {
 	l := in.Layout
 	dsn := func(z core.Zone) string {
@@ -80,7 +87,13 @@ func (in *Installer) runtimeEnvs(o Options, pw map[core.Zone]string, cs controlS
 		return nil, err
 	}
 	control := []string{"SISF_ZONE", "control", "SISF_STATE_DSN", dsn(core.ZoneControl),
-		"SISF_OWNER_TOKEN", cs.owner, "SISF_WEBHOOK_SECRET", cs.webhook, "SISF_APPROVAL_KEY", cs.approvalKey}
+		"SISF_WEBHOOK_SECRET", cs.webhook, "SISF_APPROVAL_KEY", cs.approvalKey, wiring.EnvEdgeCountersToken, cs.edgeCounters}
+	if !cs.oidcClientSecret.IsZero() {
+		control = append(control, wiring.EnvOIDCClientSecret, string(cs.oidcClientSecret.Reveal()))
+	}
+	if !cs.githubClientSecret.IsZero() {
+		control = append(control, wiring.EnvGitHubLoginClientSecret, string(cs.githubClientSecret.Reveal()))
+	}
 	supervisor := []string{"SISF_ROOT_PUBLIC_KEY", rootPub, "SISF_STATE_DSN", dsn(core.ZoneControl),
 		"SISF_APPROVAL_PUBLIC_KEY", approvalPub, "EDGE_ADMIN_TOKEN", cs.edgeAdmin, "SISF_DISPATCHER_ADMIN_TOKEN", cs.dispatcherAdmin}
 	if !github.IsZero() {
@@ -93,7 +106,7 @@ func (in *Installer) runtimeEnvs(o Options, pw map[core.Zone]string, cs controlS
 			"SISF_DISPATCHER_ADMIN_TOKEN", cs.dispatcherAdmin},
 		l.RuntimeEnv(areaControl):               control,
 		l.Secret(areaControl, "supervisor.env"): supervisor,
-		l.RuntimeEnv(areaEdge):                  {"EDGE_ADMIN_TOKEN", cs.edgeAdmin},
+		l.RuntimeEnv(areaEdge):                  {"EDGE_ADMIN_TOKEN", cs.edgeAdmin, wiring.EnvEdgeCountersToken, cs.edgeCounters},
 	}
 	if o.Mode == manifest.ModeDocker {
 		sets[l.RuntimeEnv(areaState)] = []string{"POSTGRES_PASSWORD", statePW}
@@ -110,9 +123,13 @@ func (in *Installer) runtimeEnvs(o Options, pw map[core.Zone]string, cs controlS
 	if o.Sim {
 		sets[l.RuntimeEnv(areaSim)] = []string{"SISF_SIM_WEBHOOK_SECRET", cs.webhook}
 	}
+	format := formatEnv
+	if o.Mode == manifest.ModeStandalone {
+		format = formatLocalEnv // read by this installer alone, never by Compose
+	}
 	out := map[string][]byte{}
 	for path, pairs := range sets {
-		data, err := formatEnv(pairs...)
+		data, err := format(pairs...)
 		if err != nil {
 			return nil, err
 		}

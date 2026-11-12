@@ -154,6 +154,74 @@ func TestBudgetTotalsCountHeldReservationsAndUsageSinceTheInstant(t *testing.T) 
 	})
 }
 
+// Unverified usage with tokens and no cost is counted apart, whatever its
+// run reserved. Usage with a cost, verified usage and usage without tokens
+// are not.
+func TestBudgetTotalsCountUsageWithoutACost(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		s := db.Open(t, core.ZoneControl)
+		periodStart := db.Clock.Now()
+		nothingReserved := reservation("r-3", 0)
+		nothingReserved.RunID = "run-3"
+		forRun := func(run core.RunID, u core.Usage) core.Usage {
+			u.RunID, u.ReservationID = run, ""
+			return u
+		}
+		noTokens := spend(0, false, periodStart)
+		noTokens.InputTokens, noTokens.OutputTokens = 0, 0
+		mustUpdate(t, s, func(tx state.Tx) error {
+			for _, r := range []core.Reservation{reservation("r-1", 5_000_000), nothingReserved} {
+				if err := tx.PutReservation(ctx, r); err != nil {
+					return err
+				}
+			}
+			for _, u := range []core.Usage{
+				spend(0, false, periodStart.Add(-time.Hour)),  // before the period
+				spend(0, false, periodStart),                  // its run reserved 5,000,000
+				forRun("run-2", spend(0, false, periodStart)), // its run reserved nothing
+				forRun("run-3", spend(0, false, periodStart)), // its run reserved 0
+				spend(0, true, periodStart),                   // verified
+				spend(60, false, periodStart),                 // priced
+				noTokens,                                      // nothing to price
+			} {
+				if err := tx.AppendUsage(ctx, u); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		want := core.BudgetTotals{Reserved: 5_000_000, SpentUnverified: 60, Unpriced: 3}
+		if got := totals(t, s, periodStart); got != want {
+			t.Fatalf("totals since the period start = %+v, want %+v", got, want)
+		}
+	})
+}
+
+// Token counts whose sum would not fit in a BIGINT are counted like any
+// other, and reading the totals does not fail on them.
+func TestBudgetTotalsCountUsageWithHugeTokenCounts(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		s := db.Open(t, core.ZoneControl)
+		huge := spend(0, false, db.Clock.Now())
+		huge.InputTokens, huge.OutputTokens = 1<<62, 1<<62
+		priced := huge
+		priced.Cost = 7
+		mustUpdate(t, s, func(tx state.Tx) error {
+			for _, u := range []core.Usage{huge, priced} {
+				if err := tx.AppendUsage(ctx, u); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if got, want := totals(t, s, time.Time{}), (core.BudgetTotals{SpentUnverified: 7, Unpriced: 1}); got != want {
+			t.Fatalf("totals = %+v, want %+v", got, want)
+		}
+	})
+}
+
 func TestUsageThatWouldLowerSpendingIsRefused(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {

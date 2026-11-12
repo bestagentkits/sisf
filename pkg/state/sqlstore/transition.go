@@ -37,7 +37,8 @@ import (
 //     (zone_ownership.go), checked here, where the database's row policy
 //     refuses it as well;
 //   - CONFLICT when the step does not continue the run, the candidate or the
-//     release the record names;
+//     release the record names, and when a claim names a run the journal
+//     shows the issue has had before;
 //   - INVALID_ARGUMENT when the step would lower the attempt count of the run.
 //
 // Guards need proofs the store does not have and stay with the caller, who
@@ -145,12 +146,37 @@ func (t *tx) checkWriter(ctx context.Context, current core.StateRecord, tr core.
 	if err := statemachine.CheckRecordBinding(current, tr); err != nil {
 		return err
 	}
+	if tr.Event == core.EventClaimed {
+		if err := t.checkNewRun(ctx, tr); err != nil {
+			return err
+		}
+	}
 	// While the run stays the same its attempt count never goes down; only
 	// the claim starts a run, and with it a count of its own.
 	if tr.Event != core.EventClaimed && tr.Attempt < current.Attempt {
 		refusal := invalid("attempt %d would lower the attempt %d recorded for the run of issue %s",
 			tr.Attempt, current.Attempt, tr.IssueID.String())
 		refusal.Details = map[string]string{"current_attempt": strconv.Itoa(current.Attempt)}
+		return refusal
+	}
+	return nil
+}
+
+// checkNewRun reports whether the claim tr names a run the issue has never
+// had. The binding check sees only the run the record names now; the
+// journal keeps every run that ever wrote a step of the issue, so a claim
+// cannot bring back a run from before the last one either, and with it
+// receipts that run collected. Such a claim is CONFLICT.
+func (t *tx) checkNewRun(ctx context.Context, tr core.Transition) error {
+	var steps int64
+	err := t.q.row(ctx, `SELECT COUNT(*) FROM transitions WHERE factory_id = ? AND issue = ? AND run_id = ?`,
+		string(t.store.factory), tr.IssueID.String(), string(tr.RunID)).Scan(&steps)
+	if err != nil {
+		return t.store.dialect.failure("read the runs of the issue", err)
+	}
+	if steps > 0 {
+		refusal := conflict("issue %s already had run %s; a claim starts a run the issue has not had", tr.IssueID.String(), string(tr.RunID))
+		refusal.Details = map[string]string{"from": string(tr.From), "event": string(tr.Event), "to": string(tr.To)}
 		return refusal
 	}
 	return nil

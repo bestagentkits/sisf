@@ -5,9 +5,14 @@
 //	-> promote, record the LKG, publish and close, or restore the LKG
 //
 // A release is judged only by what is observed running and measured. A
-// release that cannot be observed or undone holds; missing metrics are never
-// read as success. A candidate that touches the trusted control surface is a
-// governance change and is never released by this pipeline.
+// release that cannot be observed or undone holds before anything is
+// deployed; missing metrics are never read as success. A candidate that
+// touches the trusted control surface is a governance change and is never
+// released by this pipeline: like any candidate the pipeline refuses, its
+// issue is blocked. Once a rollout started, the release either closes or is
+// undone: the LKG is restored and the issue blocked, and a release left
+// with nothing watching it, because the supervisor stopped, is undone by
+// Recover.
 //
 // Every lifecycle step is written to the operational store by the control
 // zone, under the issue lease the pipeline holds, after the lifecycle
@@ -16,6 +21,8 @@ package release
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -39,6 +46,14 @@ const (
 	// DefaultLeaseOwner is the owner the pipeline holds issue leases as.
 	DefaultLeaseOwner = "supervisor"
 )
+
+// DefaultSelfPublishable returns the units the pipeline may ever publish
+// without a person: the application and the Zone 2 and Zone 3 code the
+// factory is meant to repair by itself. The supervisor, the qa-runner that
+// judges every candidate, the edge that splits traffic and the stores whose
+// data outlives a release change only through a governance cycle a person
+// approves, whatever a manifest lists.
+func DefaultSelfPublishable() []string { return []string{"app", "control", "dispatcher", "runner"} }
 
 // DefaultCanarySteps returns the traffic shares of a canary rollout.
 func DefaultCanarySteps() []int { return []int{5, 25, 100} }
@@ -76,10 +91,26 @@ type Config struct {
 	// Verifier trusts the delegated keys that sign QA receipts and deploy
 	// artifacts.
 	Verifier core.Verifier
-	LKG      *LKGBook
-	Freeze   FreezeCheck
+	// VerifierAt is optional: it returns a verifier that judges signatures
+	// as of an earlier instant, with every delegation the supervisor has
+	// trusted. The QA evidence of a release that is already verified is
+	// judged with it as of its Verified step; without it, as of now.
+	VerifierAt func(at time.Time) (core.Verifier, error)
+	LKG        *LKGBook
+	// Commits compares commits of the factory's repository, as GitHub's
+	// comparison does. A candidate is released only when the base its QA
+	// receipt names contains the commit of its unit's LKG release; without
+	// Commits that cannot be shown, and such a candidate is refused.
+	Commits CommitComparer
+	Freeze  FreezeCheck
 	// Publisher writes the changelog and the catalog before an issue closes.
 	Publisher Publisher
+	// Blocks keeps the record of why the pipeline blocked an issue, which
+	// the Owner's retry is judged by.
+	Blocks BlockRecorder
+	// Lander is optional; with it a verified release's change is landed on
+	// the default branch before the issue closes.
+	Lander Lander
 	// Synthetic is optional; without it a low-traffic release holds.
 	Synthetic SyntheticSuite
 	// Approvals and Policy are optional; without them OwnerRollback is
@@ -88,14 +119,34 @@ type Config struct {
 	Policy    PolicyInForce
 	// Audit is optional; it records each release decision.
 	Audit core.AuditLog
-	Clock core.Clock
+	// Budget is optional; with it every rollback reserves through the
+	// rollback reserve and records its spend. A refused reservation never
+	// blocks the rollback.
+	Budget RollbackBudget
+	// RollbackCost is what a rollback is reserved and recorded at;
+	// DefaultRollbackCost when zero.
+	RollbackCost core.Micros
+	// RollbackBudgetWait bounds each budget call around a rollback;
+	// DefaultRollbackBudgetWait when zero.
+	RollbackBudgetWait time.Duration
+	Clock              core.Clock
 
 	LeaseOwner string
 	LeaseTTL   time.Duration
 	PassScore  int
 	ExtraGates []string
 	// Protected lists the paths of the trusted control surface.
-	Protected          []string
+	Protected []string
+	// UnitInputs are the paths each unit consumes; a self-published
+	// candidate may change only inputs of the unit it releases. The zero
+	// value is the built-in inputs.
+	UnitInputs UnitInputs
+	// SelfPublishable lists the units the pipeline publishes by itself, as
+	// the manifest's release.units names them; a release of any other unit
+	// is refused for want of a person. Nil means DefaultSelfPublishable and
+	// an empty list publishes nothing. Every unit listed must be one of
+	// DefaultSelfPublishable.
+	SelfPublishable    []string
 	Monitor            MonitorConfig
 	CanarySteps        []int
 	StepWindows        int
@@ -111,11 +162,17 @@ func (c Config) withDefaults() (Config, error) {
 	switch {
 	case c.State == nil || c.Backend == nil || c.Verifier == nil || c.LKG == nil:
 		return c, invalid("a release pipeline needs a state store, a deployment backend, a verifier and an LKG book")
-	case c.Freeze == nil || c.Publisher == nil:
-		return c, invalid("a release pipeline needs the emergency stop and a publisher")
+	case c.Freeze == nil || c.Publisher == nil || c.Blocks == nil:
+		return c, invalid("a release pipeline needs the emergency stop, a publisher and a record of its blocks")
 	}
 	if c.Clock == nil {
 		c.Clock = core.SystemClock{}
+	}
+	if c.RollbackCost == 0 {
+		c.RollbackCost = DefaultRollbackCost
+	}
+	if c.RollbackBudgetWait == 0 {
+		c.RollbackBudgetWait = DefaultRollbackBudgetWait
 	}
 	if c.LeaseOwner == "" {
 		c.LeaseOwner = DefaultLeaseOwner
@@ -125,6 +182,9 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.Protected == nil {
 		c.Protected = DefaultProtectedPaths()
+	}
+	if c.SelfPublishable == nil {
+		c.SelfPublishable = DefaultSelfPublishable()
 	}
 	c.Monitor = c.Monitor.withDefaults()
 	if c.LeaseTTL == 0 {
@@ -182,10 +242,20 @@ func (c Config) validate() error {
 		return invalid("the pass score must be within 1-100")
 	case c.StepWindows < 1 || c.ObservationWindows < 1:
 		return invalid("each traffic step and the observation need at least one window")
+	case c.RollbackCost < 0:
+		return invalid("the cost of a rollback cannot be negative")
+	case c.RollbackBudgetWait < 0:
+		return invalid("the wait for the budget around a rollback cannot be negative")
 	case c.LowTraffic.MinHold <= 0 || c.LowTraffic.MaxExtensions < 0:
 		return invalid("the low-traffic hold must be positive")
 	case len(c.Protected) == 0:
 		return invalid("the trusted control surface cannot be empty")
+	}
+	for _, unit := range c.SelfPublishable {
+		if !slices.Contains(DefaultSelfPublishable(), unit) {
+			return invalid("unit %q cannot be published by the pipeline itself; it may publish only %s",
+				unit, strings.Join(DefaultSelfPublishable(), ", "))
+		}
 	}
 	if len(c.CanarySteps) == 0 || c.CanarySteps[len(c.CanarySteps)-1] != 100 {
 		return invalid("the canary steps must end at 100 percent")

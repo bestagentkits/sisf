@@ -24,4 +24,8 @@ Automatic publishing is only safe if the thing judging the change is independent
 
 ## Acceptance test
 
-Planned: SISF-06, SISF-07, SISF-08, SISF-09 and SISF-20.
+- SISF-06: `internal/qa/self_scoring_rejected_test.go`.
+- SISF-07: `internal/qa/hard_gate_overrides_score_test.go`.
+- SISF-08: `internal/supervisor/release/publish_observed_revision_test.go`.
+- SISF-09: `internal/supervisor/release/auto_rollback_restores_lkg_test.go`.
+- SISF-20: `internal/supervisor/release/hold_without_metrics_or_rollback_test.go`.

@@ -23,15 +23,21 @@
 #     builds run in, the deploy filter the revisions of the units. No other
 #     service reaches a Docker API, and the agent zone reaches none.
 #   - the supervisor alone holds deploy and signing power: the trust volume
-#     with its delegated keys, the edge's admin token and the filters.
+#     with its delegated keys, the edge's admin token and the filters. Its
+#     admin socket, which carries out an emergency stop and an Owner
+#     rollback, is a Unix socket on a volume only it and control mount.
+#   - control reads the edge's counters with a read-only token of its own;
+#     it never holds the edge's admin token.
 #   - the state database is on the factory network only, which the edge is
 #     not on.
 #   - every published port is bound to 127.0.0.1, in the 7460-7469 range.
 #
 # Runtime contract with factoryd: it reads its manifest from SISF_CONFIG,
-# listens on SISF_LISTEN, opens the state store with SISF_STATE_DSN, and
-# takes SISF_OWNER_TOKEN, SISF_WEBHOOK_SECRET, SISF_GITHUB_TOKEN and
-# SISF_APPROVAL_KEY from its environment. Secrets arrive only through the env file of the zone.
+# listens on SISF_LISTEN, opens the state store with SISF_STATE_DSN, signs
+# people in as SISF_EXTERNAL_URL, SISF_OWNER_IDENTITIES and SISF_AUTH_*
+# say, and takes SISF_WEBHOOK_SECRET, SISF_GITHUB_TOKEN, SISF_APPROVAL_KEY,
+# EDGE_COUNTERS_TOKEN and the sign-in client secrets from its environment.
+# Secrets arrive only through the env file of the zone.
 name: "{{ .Project }}"
 
 x-hardened: &hardened
@@ -104,7 +110,7 @@ services:
       - --manifest=/etc/sisf/release/release-manifest.json
       - --root-key-ref=env:SISF_ROOT_PUBLIC_KEY
       - --trust-dir=/var/lib/sisf/trust
-      - --admin=127.0.0.1:{{ .PortSupervisor }}
+      - --admin=unix:{{ .SupervisorAdmin }}
       - --dispatcher-admin-url=http://dispatcher:{{ .PortDispatcherAdmin }}
 {{- if .Lifecycle.Enabled }}
       - --factory-manifest=/etc/sisf/factory.yaml
@@ -145,10 +151,11 @@ services:
     networks: [control, factory, app, docker]
     volumes:
       - "trust:/var/lib/sisf/trust"
+      - "supervisor-admin:{{ .SupervisorAdminDir }}"
       - "{{ .ReleaseFile }}:/etc/sisf/release/release-manifest.json:ro"
       - "{{ .ConfigFile }}:/etc/sisf/factory.yaml:ro"
     healthcheck:
-      test: ["CMD", "supervisor", "status", "--admin=127.0.0.1:{{ .PortSupervisor }}"]
+      test: ["CMD", "supervisor", "status", "--admin=unix:{{ .SupervisorAdmin }}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -207,10 +214,40 @@ services:
       SISF_CONFIG: /etc/sisf/factory.yaml
       SISF_LISTEN: "0.0.0.0:{{ .PortControl }}"
       SISF_LISTEN_ALLOW_NON_LOOPBACK: "true"
+      # The id of the install's root public key, named on /healthz.
+      SISF_ROOT_FINGERPRINT: "{{ .RootKeyID }}"
       SISF_GITHUB_API_URL: "{{ .GitHubAPIURL }}"
+{{- if .ReconcileInterval }}
+      SISF_GITHUB_RECONCILE_INTERVAL: "{{ .ReconcileInterval }}"
+{{- end }}
       # /healthz of Zone 1 through the edge, and of Zone 2, for the zone report.
       SISF_APP_HEALTH_URL: "http://edge:{{ .PortEdge }}/healthz"
       SISF_DISPATCHER_HEALTH_URL: "http://dispatcher:{{ .PortDispatcher }}/healthz"
+      # Sign-in: the origin people reach control at, the Owner and the
+      # providers; the client secrets are in the env file.
+      SISF_EXTERNAL_URL: "{{ .Identity.ExternalURL }}"
+      SISF_OWNER_IDENTITIES: "{{ .Owners }}"
+{{- if .Identity.OIDCIssuer }}
+      SISF_AUTH_OIDC_ISSUER: "{{ .Identity.OIDCIssuer }}"
+      SISF_AUTH_OIDC_CLIENT_ID: "{{ .Identity.OIDCClientID }}"
+{{- end }}
+{{- if .Identity.GitHubClientID }}
+      SISF_AUTH_GITHUB_CLIENT_ID: "{{ .Identity.GitHubClientID }}"
+{{- end }}
+{{- if .Identity.GitHubURL }}
+      SISF_AUTH_GITHUB_URL: "{{ .Identity.GitHubURL }}"
+{{- end }}
+{{- if .Identity.GitHubAPIURL }}
+      SISF_AUTH_GITHUB_API_URL: "{{ .Identity.GitHubAPIURL }}"
+{{- end }}
+      # The supervisor's admin socket, for an emergency stop and an Owner
+      # rollback, and the edge's counters, which control reads with its
+      # read-only token.
+      SISF_SUPERVISOR_ADMIN_ADDR: "unix:{{ .SupervisorAdmin }}"
+      SISF_EDGE_COUNTERS_URL: "http://edge-admin:{{ .PortEdgeAdmin }}"
+      # The control zone's encrypted secret store, in its own volume; the
+      # env provider serves the SISF_CONTROL_SECRET_ variables of its env file.
+      SISF_LOCAL_STORE_DIR: /var/lib/sisf/control/secrets
 {{- if .Host.TrustedProxies }}
       # The control network: the edge forwards a reporter's address from it.
       SISF_TRUSTED_PROXIES: "{{ .Host.TrustedProxies }}"
@@ -220,9 +257,11 @@ services:
       - "127.0.0.1:{{ .PortControl }}:{{ .PortControl }}"
 {{- if .Sim }}
       - "127.0.0.1:{{ .PortFakeGitHub }}:{{ .PortFakeGitHub }}"
+      - "127.0.0.1:{{ .PortFakeOIDC }}:{{ .PortFakeOIDC }}"
 {{- end }}
     volumes:
       - "control-data:/var/lib/sisf/control"
+      - "supervisor-admin:{{ .SupervisorAdminDir }}"
       - "{{ .ConfigFile }}:/etc/sisf/factory.yaml:ro"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:{{ .PortControl }}/healthz"]
@@ -246,6 +285,9 @@ services:
       - --agent=fake
       - --fake-agent-work={{ .Lifecycle.AgentWork }}
       - --fake-agent-patch=/etc/sisf/agent/patch.diff
+{{- end }}
+{{- if .Lifecycle.RunEstimateMicros }}
+      - --run-estimate-micros={{ .Lifecycle.RunEstimateMicros }}
 {{- end }}
     env_file: ["{{ .SecretsDir }}/agent/runtime.env"]
     environment:
@@ -344,6 +386,27 @@ services:
     depends_on:
       control: {condition: service_started}
 
+  # The fake identity provider people and control sign in at, in the
+  # network namespace of control for the same reason: control reaches it at
+  # its issuer, 127.0.0.1:{{ .PortFakeOIDC }}, and so does a browser on the
+  # host through the port control publishes on 127.0.0.1. Its client is
+  # public; it holds no secret.
+  sim-oidc:
+    <<: *hardened
+    profiles: ["sim"]
+    container_name: "{{ .Project }}-sim-oidc"
+    image: "{{ .Images.Sisf }}"
+    network_mode: "service:control"
+    command:
+      - sisf
+      - sim
+      - oidc
+      - --addr=0.0.0.0:{{ .PortFakeOIDC }}
+      - --allow-non-loopback
+      - --issuer={{ .Identity.OIDCIssuer }}
+    depends_on:
+      control: {condition: service_started}
+
   # The supervisor's way to the fake GitHub: a plain relay in its network
   # namespace, on its loopback, to the fake in control's namespace. The
   # GitHub client sends a token over plain http to a loopback address only.
@@ -381,15 +444,33 @@ networks:
 volumes:
   state-data:
     name: "{{ .Project }}-state-data"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   app-data:
     name: "{{ .Project }}-app-data"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   control-data:
     name: "{{ .Project }}-control-data"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
+  supervisor-admin:
+    name: "{{ .Project }}-supervisor-admin"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   trust:
     name: "{{ .Project }}-trust"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   workspaces:
     name: "{{ .Project }}-workspaces"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   qa-workspaces:
     name: "{{ .Project }}-qa-workspaces"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"
   artifacts:
     name: "{{ .Project }}-artifacts"
+    labels:
+      sisf.install-dir: "{{ .InstallDir }}"

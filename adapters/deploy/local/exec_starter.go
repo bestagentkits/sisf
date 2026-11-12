@@ -101,6 +101,10 @@ func (p *execProcess) scan(r io.Reader, onLog func(string)) {
 	_, _ = io.Copy(io.Discard, r) // an over-long line must not block the process
 }
 
+// PID is the operating-system process ID, recorded so that a restarted
+// supervisor can find the process again.
+func (p *execProcess) PID() int { return p.cmd.Process.Pid }
+
 func (p *execProcess) Alive() bool {
 	select {
 	case <-p.done:

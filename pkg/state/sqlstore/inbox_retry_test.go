@@ -127,6 +127,37 @@ func TestAFinishedDeliveryKeepsItsOutcome(t *testing.T) {
 	})
 }
 
+// A delivery waits until it is processed, whether it is due or held back,
+// and only deliveries of the source asked about count.
+func TestDeliveriesWaitUntilProcessed(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		s := db.Open(t, core.ZoneControl)
+		wantWaiting := func(want bool) {
+			t.Helper()
+			got, err := s.DeliveriesWaiting(ctx, "github")
+			if err != nil || got != want {
+				t.Fatalf("deliveries waiting = %v, %v; want %v", got, err, want)
+			}
+		}
+		wantWaiting(false)
+		for _, e := range []state.InboxEntry{{Source: "github", DeliveryID: "d-1"}, {Source: "other", DeliveryID: "o-1"}} {
+			if _, err := accept(s, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		wantWaiting(true)
+		if _, err := s.DeferDelivery(ctx, "github", "d-1", "UNAVAILABLE", fixedWait(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		wantWaiting(true)
+		if err := s.FinishDelivery(ctx, "github", "d-1", sqlstore.DeliveryParked, ""); err != nil {
+			t.Fatal(err)
+		}
+		wantWaiting(false)
+	})
+}
+
 // Only the control zone keeps the inbox.
 func TestTheAgentZoneCannotDeferOrFinishADelivery(t *testing.T) {
 	t.Parallel()
@@ -140,6 +171,8 @@ func TestTheAgentZoneCannotDeferOrFinishADelivery(t *testing.T) {
 		wantCode(t, err, core.CodePermissionDenied)
 		wantCode(t, agent.FinishDelivery(ctx, "github", "d-1", sqlstore.DeliveryGone, ""), core.CodePermissionDenied)
 		_, err = agent.Delivery(ctx, "github", "d-1")
+		wantCode(t, err, core.CodePermissionDenied)
+		_, err = agent.DeliveriesWaiting(ctx, "github")
 		wantCode(t, err, core.CodePermissionDenied)
 	})
 }

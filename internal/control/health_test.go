@@ -15,8 +15,10 @@ import (
 )
 
 type healthBody struct {
-	Status string                             `json:"status"`
-	Zones  map[core.Zone]control.HealthStatus `json:"zones"`
+	FactoryID core.FactoryID                     `json:"factory_id"`
+	RootKeyID string                             `json:"root_key_id"`
+	Status    string                             `json:"status"`
+	Zones     map[core.Zone]control.HealthStatus `json:"zones"`
 }
 
 func TestHealthzAggregatesAllThreeZones(t *testing.T) {
@@ -34,6 +36,49 @@ func TestHealthzAggregatesAllThreeZones(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestHealthzNamesTheFactoryThatAnswers lets a client on the same host tell
+// this factory from another one listening on the same fixed port.
+func TestHealthzNamesTheFactoryThatAnswers(t *testing.T) {
+	t.Parallel()
+	withServer(t, func(t *testing.T, e *env) {
+		rec := e.do(httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		var body healthBody
+		getJSON(t, rec, &body)
+		if body.FactoryID != sqlstoretest.Factory {
+			t.Fatalf("healthz factory_id = %q, want %q", body.FactoryID, sqlstoretest.Factory)
+		}
+	})
+}
+
+// TestHealthzNamesTheRootKeyOfItsInstall lets the CLI tell two installs of
+// one factory id apart: the root key's id is public, and only a well-formed
+// id is repeated. Not parallel: it sets the process environment.
+func TestHealthzNamesTheRootKeyOfItsInstall(t *testing.T) {
+	keyID := "ed25519:" + strings.Repeat("ab", 32)
+	for value, want := range map[string]string{
+		keyID:                     keyID,
+		"":                        "",
+		"ed25519:short":           "",
+		"secret-material-123":     "",
+		keyID + "\nX-Injected: 1": "",
+	} {
+		t.Run(want+"/"+value, func(t *testing.T) {
+			t.Setenv(control.EnvRootKeyID, value)
+			withServer(t, func(t *testing.T, e *env) {
+				rec := e.do(httptest.NewRequest(http.MethodGet, "/healthz", nil))
+				var body healthBody
+				getJSON(t, rec, &body)
+				if body.RootKeyID != want {
+					t.Fatalf("healthz root_key_id = %q for %q, want %q", body.RootKeyID, value, want)
+				}
+				if want == "" && strings.Contains(rec.Body.String(), "root_key_id") {
+					t.Fatalf("healthz names a root key it does not have: %s", rec.Body.String())
+				}
+			})
+		})
+	}
 }
 
 func TestHealthzReportsADownZoneWithoutItsReason(t *testing.T) {
@@ -56,12 +101,7 @@ func TestHealthzReportsADownZoneWithoutItsReason(t *testing.T) {
 		}
 
 		// The Owner sees that the zone is down, but still not the raw error.
-		var status control.FactoryStatus
-		getJSON(t, e.api(http.MethodGet, "/api/v1/factory/status"), &status)
-		if status.Healthy {
-			t.Error("the factory reports healthy with a zone down")
-		}
-		detail := zoneOf(t, status, core.ZoneAgent)
+		detail := zoneOf(t, e.server.Health(context.Background()), core.ZoneAgent)
 		if detail.Status != control.HealthDown || detail.Detail == "" || strings.Contains(detail.Detail, "hunter2") {
 			t.Errorf("agent zone = %+v, want down with a safe reason", detail)
 		}
@@ -74,9 +114,7 @@ func TestTypedProbeErrorsKeepTheirMessage(t *testing.T) {
 		e.probes.set(core.ZoneApplication, func(context.Context) error {
 			return core.NewError(core.CodeUnavailable, "the application answered 503")
 		})
-		var status control.FactoryStatus
-		getJSON(t, e.api(http.MethodGet, "/api/v1/factory/status"), &status)
-		if got := zoneOf(t, status, core.ZoneApplication).Detail; got != "UNAVAILABLE: the application answered 503" {
+		if got := zoneOf(t, e.server.Health(context.Background()), core.ZoneApplication).Detail; got != "UNAVAILABLE: the application answered 503" {
 			t.Errorf("detail = %q", got)
 		}
 	})
@@ -92,8 +130,7 @@ func TestProbeThatNeverAnswersIsDown(t *testing.T) {
 		// One probe honors cancellation, the other ignores it entirely.
 		e.probes.set(core.ZoneApplication, func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() })
 		e.probes.set(core.ZoneAgent, func(context.Context) error { <-release; return nil })
-		var status control.FactoryStatus
-		getJSON(t, e.api(http.MethodGet, "/api/v1/factory/status"), &status)
+		status := e.server.Health(context.Background())
 		for _, zone := range []core.Zone{core.ZoneApplication, core.ZoneAgent} {
 			if z := zoneOf(t, status, zone); z.Status != control.HealthDown {
 				t.Errorf("zone %s = %+v, want down after the probe timeout", zone, z)
@@ -150,13 +187,13 @@ func TestProbesForTheControlZoneAreRejected(t *testing.T) {
 	})
 }
 
-func zoneOf(t *testing.T, status control.FactoryStatus, zone core.Zone) control.ZoneHealth {
+func zoneOf(t *testing.T, zones []control.ZoneHealth, zone core.Zone) control.ZoneHealth {
 	t.Helper()
-	for _, z := range status.Zones {
+	for _, z := range zones {
 		if z.Zone == zone {
 			return z
 		}
 	}
-	t.Fatalf("zone %s missing from %+v", zone, status.Zones)
+	t.Fatalf("zone %s missing from %+v", zone, zones)
 	return control.ZoneHealth{}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,12 +51,38 @@ var compiledSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 	return compiler.Compile(SchemaID)
 })
 
-// Validate checks m against the published schema and returns every
-// violation, sorted by path. The manifest is validated in its JSON form, so a
-// manifest built in code and one read from a file are judged alike. An empty
-// result means the manifest is well formed, not that the deployment it
-// declares is conformant.
+// Validate checks m against the published schema, and against the few value
+// rules a schema cannot state, and returns every violation, sorted by path.
+// The manifest is validated in its JSON form, so a manifest built in code and
+// one read from a file are judged alike. An empty result means the manifest
+// is well formed, not that the deployment it declares is conformant.
 func Validate(m *Manifest) []Violation {
+	found := schemaViolations(m)
+	if m == nil || (len(found) == 1 && found[0].Path == "") {
+		return found
+	}
+	// A value the schema already refused is reported once, by the schema.
+	for _, extra := range slices.Concat(decisionViolations(m), unitInputViolations(m)) {
+		if !slices.ContainsFunc(found, func(v Violation) bool { return within(v.Path, extra.Path) }) {
+			found = append(found, extra)
+		}
+	}
+	sort.Slice(found, func(i, j int) bool {
+		if found[i].Path != found[j].Path {
+			return found[i].Path < found[j].Path
+		}
+		return found[i].Message < found[j].Message
+	})
+	return found
+}
+
+// within reports whether path is at or below parent.
+func within(path, parent string) bool {
+	return path == parent || strings.HasPrefix(path, parent+".") || strings.HasPrefix(path, parent+"[")
+}
+
+// schemaViolations checks m against the published schema only.
+func schemaViolations(m *Manifest) []Violation {
 	if m == nil {
 		return []Violation{{Message: "no manifest was given"}}
 	}
@@ -81,12 +108,6 @@ func Validate(m *Manifest) []Violation {
 	}
 	var found []Violation
 	collectViolations(failed, &found)
-	sort.Slice(found, func(i, j int) bool {
-		if found[i].Path != found[j].Path {
-			return found[i].Path < found[j].Path
-		}
-		return found[i].Message < found[j].Message
-	})
 	return found
 }
 

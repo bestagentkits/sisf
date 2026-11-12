@@ -163,6 +163,17 @@ func TestAnUnlimitedBudgetStatesItsAlertThresholdOrThatNoneIsWanted(t *testing.T
 			t.Fatalf("%s: an alert explicitly declined is a decision, got %+v", mode, report.Findings)
 		}
 
+		// An alert set and declined at once is no decision: one of the two
+		// settings is wrong, and the checker cannot tell which.
+		for _, budget := range []manifest.Budget{
+			{Mode: core.BudgetUnlimited, AlertThresholdMicros: 50_000_000, AlertOff: true},
+			{Mode: core.BudgetCapped, CapMicros: 100_000_000, Period: manifest.PeriodMonthly, AlertThresholdMicros: 50_000_000, AlertOff: true},
+		} {
+			m = valid(t)
+			m.Budget = budget
+			wantOnly(t, Check(m), RuleBudgetAlert, "budget.alert_off")
+		}
+
 		// A capped budget stops by itself, so the alert is optional there.
 		m = valid(t)
 		m.Budget = manifest.Budget{Mode: core.BudgetCapped, CapMicros: 100_000_000, Period: manifest.PeriodMonthly}

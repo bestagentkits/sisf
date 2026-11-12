@@ -36,7 +36,7 @@ func TestProbeReadsHealthAndRevision(t *testing.T) {
 		"200 with bad status": {200, `{"status":"degraded","revision":"r1"}`, healthprobe.Health{Revision: "r1"}},
 		"no revision":         {200, `{"status":"ok"}`, healthprobe.Health{Healthy: true}},
 	} {
-		got, err := healthprobe.Probe(context.Background(), http.DefaultClient, serve(t, tc.status, tc.body))
+		got, err := healthprobe.Probe(context.Background(), testClient, serve(t, tc.status, tc.body))
 		if err != nil || got != tc.want {
 			t.Errorf("%s: %+v, %v, want %+v", name, got, err, tc.want)
 		}
@@ -50,11 +50,11 @@ func TestProbeRefusesWhatItCannotReadOrReach(t *testing.T) {
 		"empty":       serve(t, 200, ""),
 		"unreachable": "http://127.0.0.1:1",
 	} {
-		if _, err := healthprobe.Probe(context.Background(), http.DefaultClient, url); !core.HasCode(err, core.CodeUnavailable) {
+		if _, err := healthprobe.Probe(context.Background(), testClient, url); !core.HasCode(err, core.CodeUnavailable) {
 			t.Errorf("%s: err = %v, want UNAVAILABLE", name, err)
 		}
 	}
-	if _, err := healthprobe.Probe(context.Background(), http.DefaultClient, "http://bad host"); err == nil || strings.Contains(err.Error(), "ok") {
+	if _, err := healthprobe.Probe(context.Background(), testClient, "http://bad host"); err == nil || strings.Contains(err.Error(), "ok") {
 		t.Errorf("a malformed address was probed: %v", err)
 	}
 }

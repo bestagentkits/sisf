@@ -1,0 +1,65 @@
+# Security guide
+
+What the factory enforces today and where to read the owner of each control. Why these controls exist: [threat model](../threat-model.md) and the [decision brief](../self-improvement-software-factory-decision-brief.en.md) section 7. Reporting: [security policy](../SECURITY.md). Proof for each control is in the [acceptance matrix](../acceptance-matrix.md).
+
+## Enforced
+
+| Control | Owner |
+|---|---|
+| Three isolated zones: a credential, network segment and store role per zone; checked by `sisf doctor` and `sisf conformance check` | `internal/install`, `pkg/conformance` |
+| Single-use signed Owner approvals bound to nonce, subject digest and policy revision | `pkg/approvals`, `internal/actions` |
+| Hard gates override scores; the writing agent never scores its own work | `internal/qa` |
+| Release only behind the trusted supervisor; automatic rollback; no metrics means hold | `internal/supervisor` |
+| A candidate that changes the trusted control surface needs a person: every Go package the supervisor, the command line or the control unit links (generated from `go list -deps`), identity and access code and the dashboard's templates and scripts among them, the edge and `go.mod`, `go.sum` | `internal/supervisor/release/governance.go`, [threat model](../threat-model.md#merging-a-verified-candidate-tm-02-tm-08) |
+| A candidate the factory publishes by itself may change only the inputs of the unit it releases; any other path (documentation, tests, `go.mod`, a Dockerfile, the dashboard) needs the Owner. The paths are listed from GitHub at release and again before the merge. A candidate whose base lacks the commit of its unit's last known good release is refused until the Owner moves the policy ([a second release of a unit](operations.md#a-second-release-of-a-unit)). The Owner may declare a unit's inputs in the installed `factory.yaml` (`release.unit_inputs`); the repository's copy is never read for it | `internal/supervisor/release/unit_inputs.go`, [installing](install.md#declare-the-inputs-of-the-application) |
+| Kill switch: `sisf emergency-stop` | `internal/supervisor/killswitch`, [incident runbook](incident.md) |
+| Agent egress allowlist, per-run secrets, supply-chain gate, redaction, tamper-evident audit log | `internal/egress`, `internal/secretbroker`, `internal/supplychain`, `internal/redact`, `internal/audit` |
+| Untrusted data stays data (issues, comments, webhooks, telemetry) | `internal/intake`, `internal/decision` |
+| Login and tokens: short-lived scoped tokens; a single-use step-up confirmation, a fresh sign-in at the provider bound to one action and target and spent once; as defence in depth, the calls that spend one are served only to a same-origin form submission with complete Fetch Metadata | `internal/auth` |
+| Roles from local Owner grants and GitHub repository permission, never from a claim | `internal/rbac`, `cmd/factoryd/wiring/control_identity.go` |
+| One action registry and service behind REST, the CLI, MCP, WebMCP and the dashboard; every action declares its scopes; writes limited to 60 per minute per person | `internal/actions`, `internal/control/surfaces.go` |
+| OAuth for MCP clients: PKCE, audience-bound access tokens, no step-up in any token | `internal/oauthas`, `internal/mcp` |
+| Dashboard: CSRF on every unsafe request, a Content-Security-Policy with no inline script, `Cross-Origin-Opener-Policy: same-origin` and no framing | `internal/control`, `internal/control/web`, `ui` |
+| Secrets owner-only on disk, never printed; the GitHub token only via an environment variable, or `gh auth token` in a `--dev` install; sign-in client secrets only from a file or a variable, kept in the control zone's env file | `cmd/sisf/cmd_install_flags*.go`, `internal/install` |
+| A `--dev` install on the operator's gh login runs in Standalone mode only. Control checks its token's write access again every 5 minutes; while that access is revoked, control's passes do nothing on GitHub. A rate-limited or unreachable check changes nothing. The release supervisor does not run this check and keeps using the same token; GitHub refuses whatever the token may no longer do | `cmd/factoryd/wiring/github_settings.go`, `cmd/factoryd/wiring/control_operator_token_access.go` |
+| A comment carrying any `<!-- sisf:` marker was written by the factory and never counts as an answer to a clarification, whichever account posted it | `internal/intake/effects.go` |
+| No Owner token: the Owner is an `issuer#subject` identity that signs in at the configured provider; `sisf init` and `sisf doctor` refuse an install without a provider or Owner, and the fake identity provider outside the simulation and `--dev` | `internal/install/identity*.go`, `internal/install/doctor_identity.go` |
+| The control zone reads the edge's counters with a read-only token that differs from the admin token, and never holds the admin token | `internal/edge`, `internal/install/isolation_secrets*.go` |
+| Only the control zone opens secret providers (`env:` and `local:` references) | `cmd/factoryd/wiring/control_secret_providers.go` |
+
+## Limits to know
+
+- Docker mode has no container sandboxing for untrusted code in this release (`sisf doctor` warns). Standalone is for trusted code only. Neither mode claims `safe_exec`; see the [capability matrix](../capability-matrix.md).
+- Identity is tested against a fake GitHub and fake OIDC provider. A real GitHub App and real Google SSO are not exercised yet.
+- A `--dev` install signs anyone who can reach 127.0.0.1 on its machine in as the Owner, without a password. It is refused off loopback and in Docker mode, and `init` and `doctor` warn loudly; use it only on a machine you alone use.
+- `--agent-home` and `--qa-home` give an agent your own login under `trusted_code_only`; they are refused near the factory's secrets, state and trust, and the install directory must lie outside that home. Agent-written code is not built on the host: without a Docker build sandbox candidate builds are held in Standalone mode. Once a candidate passed QA its program is released on the host, as your user ([ADR 0022](../adr/0022-standalone-deploys-the-candidates-own-program.md)).
+- Remote MCP and WebMCP are wired and tested in process against the fake identity provider; they have not been exercised against a real provider or MCP client deployment.
+- A script running in a dashboard page, such as a WebMCP agent or injected script, holds the session cookie and can read the CSRF token. The header check on step-up calls (`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`, `Sec-Fetch-Site: same-origin`, `Sec-Fetch-User: ?1`) stops its `fetch()` and any browser that sends no Fetch Metadata, but not a script that submits the form itself (`form.submit()` is a navigation too). What stops such a script from acting for the person is the step-up: a fresh sign-in at the identity provider for exactly that action and target, spent by the one call. Browsers send Fetch Metadata only to a secure origin, so serve control over https or on loopback; on a plain http origin off loopback these forms are refused.
+- Sessions, tokens, step-up confirmations and OAuth grants are held in memory: a restart of the control process signs everyone out. A personal access token or MCP access token can never decide an approval; only the dashboard's own form can, after a step-up confirming that one request, which the decision spends.
+- A step-up must be a real new sign-in, so it is confirmed only through an OpenID Connect provider, which can force one and prove when it happened. GitHub OAuth cannot, so a step-up through GitHub is refused with `NOT_SUPPORTED`, which names the OIDC providers to confirm through. The dashboard and the `sisf login` verification page offer a confirm button only for a provider that can confirm the person signed in (`step_up_providers` in `GET /auth/session`). When no provider can, they say so in one sentence. Signing in with GitHub still works, but a step-up must be made by the identity that is signed in. An Owner who decides approvals, rolls back, changes the budget or mints tokens must therefore sign in through an OIDC provider.
+- Public bug reports are stored in the control zone's store, then published as GitHub issues labelled `sisf:report` ([operations](operations.md#public-bug-reports)). Report text is unverified public input. Control characters, default-ignorable code points and U+2800 are removed and HTML character references in the title are decoded, then it is redacted, and it is published redacted again and defused, in a fenced block, under the factory's account. The store keeps a sender only as a keyed hash that protects a leaked record or export, not a leak of the whole store. A flood that spends the global hourly limit makes genuine reports get 429, and about 1,000 distinct sources can fill the store ([threat model](../threat-model.md#public-input-that-reaches-github-tm-01-tm-13)). Adding `sisf:ready` to a report issue turns that text into a request, which intake treats as coming from someone without write access, so it waits for the Owner (`internal/intake/classify.go`). Third-party bots that read raw issue text are not stopped by the fencing.
+- A candidate that passed QA but whose release was refused, rolled back, interrupted or could not be judged ends with its issue Blocked and the last known good release serving; only the Owner's retry starts a new run ([Why is my issue stuck?](stuck-issues.md#causes-of-a-block)).
+- The incident notifier in [ADR 0018](../adr/0018-people-during-an-incident.md) is a proposal, not shipped.
+
+## Trust model of each mode
+
+What each mode protects and whom it trusts. The rules are checked by `sisf doctor` and `sisf conformance check`; the reasons are in the [threat model](../threat-model.md).
+
+| | Standalone | Docker Compose |
+|---|---|---|
+| Separation of the zones | per-zone env files and store credentials; every unit is a process of the same user, so the separation holds against mistakes, not against code that runs as that user | one container per unit with its own env file, networks and store role; containers run with `no-new-privileges`, all capabilities dropped and a read-only root file system; the state database is on an internal network the edge is not on (`templates/compose/compose.yaml`) |
+| Agent code | trusted code only (`trusted_code_only: true`): agents run unconfined as your user and can read the factory's processes and environment; candidate builds are held unless the operator provides a Docker build sandbox, and a candidate that passed QA is then released as a host process of your user | no container sandboxing of untrusted code in this release |
+| Docker socket | not used, except by the runner filter of an optional build sandbox | mounted only by the two Docker request filters, which refuse every request their role does not need |
+| Network exposure | every port on 127.0.0.1; reaching the factory from elsewhere needs a reverse proxy you run | the same: every published port on 127.0.0.1 |
+
+In both modes:
+
+- **The install directory is the Owner's.** `<dir>/secrets` holds the root signing key, which signs releases (the lower-assurance local profile `init` warns about), and the control zone's env file. Whoever can read the control zone's environment can run the Owner's host commands (`factoryd policy approve`, `factoryd issue retry`), which count as the Owner with a fresh step-up (`cmd/factoryd/wiring/control_policy.go`). Keep the directory, and every backup of it, readable by the Owner alone.
+- **One factory per machine.** The ports are fixed, so a second factory cannot run beside the first. The supervisor's admin socket refuses a stop for any factory but its own, and `sisf emergency-stop` sends a stop only to a supervisor that proves it serves the factory named (`internal/supervisor/admin_emergency_stop.go`, [installing](install.md#one-factory-per-machine)).
+- **A development install** signs in whoever reads `<dir>/secrets/control/dev-sign-in` as the Owner, including an agent running as your user.
+
+## Operator habits
+
+- Keep `<dir>/secrets` private and out of version control; never paste tokens into issues or logs.
+- Treat issue, comment and PR text as data. Wider permissions, new features and budget changes need an Owner approval.
+- Run `sisf doctor` after changes and before trusting rollback.

@@ -45,7 +45,8 @@ func statusError(method, path string, resp apiResponse) error {
 		err = core.NewError(core.CodeNotFound, what)
 	case resp.status == http.StatusConflict:
 		err = core.NewError(core.CodeConflict, what)
-	case resp.status == http.StatusUnprocessableEntity && strings.Contains(string(resp.body), "already_exists"):
+	case resp.status == http.StatusUnprocessableEntity && (strings.Contains(string(resp.body), "already_exists") ||
+		strings.Contains(strings.ToLower(string(resp.body)), "a pull request already exists")):
 		err = core.NewError(core.CodeAlreadyExists, what)
 	case resp.status >= 400 && resp.status < 500:
 		err = core.NewError(core.CodeInvalidArgument, what)
@@ -59,19 +60,27 @@ func statusError(method, path string, resp apiResponse) error {
 	return err
 }
 
-// rateLimited reports whether the response is a rate limit and how long GitHub
-// asks to wait. A 403 is a limit only when it says so: Retry-After, no
-// remaining requests, or a message naming the limit; any other 403 is a real
-// permission failure and is never retried.
+// IsRateLimit reports whether GitHub's answer, its status, headers and body,
+// is a primary or secondary rate limit. A 429 always is; a 403 is a limit
+// only when it says so: Retry-After, no remaining requests, or a message
+// naming the limit. Any other 403 is a real permission failure.
+func IsRateLimit(status int, header http.Header, body []byte) bool {
+	if status == http.StatusTooManyRequests {
+		return true
+	}
+	return status == http.StatusForbidden &&
+		(header.Get("Retry-After") != "" || header.Get("X-RateLimit-Remaining") == "0" ||
+			strings.Contains(strings.ToLower(remoteMessage(body)), "rate limit"))
+}
+
+// rateLimited reports whether the response is a rate limit (IsRateLimit)
+// and how long GitHub asks to wait. Any other 403 is never retried.
 func (c *RESTClient) rateLimited(resp apiResponse) (bool, time.Duration) {
-	retryAfter := resp.header.Get("Retry-After")
-	remaining := resp.header.Get("X-RateLimit-Remaining")
-	limited := resp.status == http.StatusTooManyRequests ||
-		(resp.status == http.StatusForbidden &&
-			(retryAfter != "" || remaining == "0" || strings.Contains(strings.ToLower(remoteMessage(resp.body)), "rate limit")))
-	if !limited {
+	if !IsRateLimit(resp.status, resp.header, resp.body) {
 		return false, 0
 	}
+	retryAfter := resp.header.Get("Retry-After")
+	remaining := resp.header.Get("X-RateLimit-Remaining")
 	if secs, err := parseSeconds(retryAfter); err == nil {
 		return true, secs
 	}

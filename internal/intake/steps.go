@@ -70,7 +70,7 @@ func (p *plan) with(effects ...func() (state.OutboxMessage, error)) (*plan, erro
 // scoped writes the first scope version from a complete draft and moves the
 // issue to ScopeDraft.
 func (s *Service) scoped(in input, snap snapshot, draft Draft, event core.Event) (*plan, error) {
-	kind := Classify(draft, in.issue.AuthorAssociation, in.policy.Catalog).Kind
+	kind := Classify(draft, requester(in.issue), in.policy.Catalog).Kind
 	sow := newSoW(snap.doc.Issue, snap.doc.SoWVersion+1, kind, draft, in.policy.Revision, in.now)
 	doc := snap.doc
 	doc.SoWVersion, doc.SoWDigest = sow.Version, sow.Digest
@@ -101,7 +101,7 @@ func (s *Service) ask(in input, snap snapshot, draft Draft, fromIntake bool) (*p
 	doc.Clarify.Asked++
 	doc.Clarify.Deadline = in.now.Add(timeout)
 	doc.Clarify.SeenReply = latestReply(in.issue, in.comments)
-	doc.Clarify.NeedsInfo = false
+	doc.Clarify.NeedsInfo, doc.Clarify.LabelPending, doc.Clarify.LabelConfirmed = false, false, false
 	p := &plan{doc: doc}
 	if fromIntake {
 		var err error
@@ -118,13 +118,14 @@ func (s *Service) ask(in input, snap snapshot, draft Draft, fromIntake bool) (*p
 // and from then on intake neither asks, reads nor spends anything for it.
 func park(snap snapshot, why string) (*plan, error) {
 	doc := snap.doc
-	doc.Clarify.NeedsInfo = true
-	name := fmt.Sprintf("needs-info/%d", doc.Clarify.Asked)
+	doc.Clarify.NeedsInfo, doc.Clarify.LabelPending, doc.Clarify.LabelConfirmed = true, true, false
 	return (&plan{doc: doc}).with(
 		func() (state.OutboxMessage, error) {
-			return labelEffect(doc.Issue, name+"/label", []string{github.LabelNeedsInfo}, nil)
+			return labelEffect(doc.Issue, parkLabelName(doc.Clarify.Asked), []string{github.LabelNeedsInfo}, nil)
 		},
-		func() (state.OutboxMessage, error) { return commentEffect(doc.Issue, name, parkedComment(why)) },
+		func() (state.OutboxMessage, error) {
+			return commentEffect(doc.Issue, fmt.Sprintf("needs-info/%d", doc.Clarify.Asked), parkedComment(why))
+		},
 	)
 }
 
@@ -155,44 +156,4 @@ func (s *Service) planClarifying(in input, snap snapshot, resume bool) (*plan, e
 		return park(snap, fmt.Sprintf("The answers given in %d rounds did not complete the request.", MaxClarifyRounds))
 	}
 	return s.ask(in, snap, draft, false)
-}
-
-// ExpireClarifications parks every issue whose wait for an answer is over
-// and returns them. It is what a timer calls. It reads only the operational
-// store: an issue that nobody answers costs no GitHub call and no model
-// call, however long it stays open.
-func (s *Service) ExpireClarifications(ctx context.Context) ([]core.IssueRef, error) {
-	var waiting []core.StateRecord
-	err := s.cfg.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
-		var err error
-		waiting, err = tx.ListRecords(ctx, state.RecordFilter{States: []core.State{core.StateClarifying}})
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	now := s.cfg.Clock.Now()
-	var parked []core.IssueRef
-	for _, record := range waiting {
-		snap, err := s.load(ctx, record.IssueID)
-		if err != nil {
-			return parked, err
-		}
-		if snap.record.State != core.StateClarifying || snap.doc.Clarify.NeedsInfo || now.Before(snap.doc.Clarify.Deadline) {
-			continue
-		}
-		p, err := park(snap, "No complete answer arrived in time.")
-		if err != nil {
-			return parked, err
-		}
-		switch err := s.apply(ctx, snap, p); {
-		case core.HasCode(err, core.CodeConflict):
-			// The issue moved while it was being parked; the next tick looks again.
-		case err != nil:
-			return parked, err
-		default:
-			parked = append(parked, record.IssueID)
-		}
-	}
-	return parked, nil
 }

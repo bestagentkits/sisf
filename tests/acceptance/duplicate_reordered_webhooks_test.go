@@ -86,3 +86,34 @@ func TestDeliveriesAfterTheClaimStartNoSecondRun(t *testing.T) {
 	f.Settle(4)
 	assertOneRun(t, f, number)
 }
+
+// A delivery that never arrives is recovered by reconciliation with
+// GitHub, and when GitHub later redelivers it, or delivers it twice,
+// nothing more is started: one run, one agent start.
+func TestALostDeliveryIsRecoveredByReconciliationAndStartsOneRun(t *testing.T) {
+	t.Parallel()
+	f := harness.New(t, harness.Options{})
+	// The factory is already running, and has reconciled once.
+	f.Settle(1)
+
+	f.GitHub.DropNext(1)
+	number := f.OpenIssue("maintainer", "MEMBER", "Health check fails", completeBody, github.LabelReady, github.LabelKindBug)
+	lost := f.GitHub.Deliveries()
+	if len(lost) == 0 {
+		t.Fatal("no delivery was produced for the new issue")
+	}
+	// Until the next poll is due, nothing is known about the issue.
+	f.Pass()
+	if runs := f.Runs(number); len(runs) != 0 {
+		t.Fatalf("a run started before reconciliation: %+v", runs)
+	}
+	f.Settle(4)
+	assertOneRun(t, f, number)
+
+	f.GitHub.DuplicateNext(1)
+	if err := f.GitHub.Redeliver(lost[len(lost)-1].ID); err != nil {
+		t.Fatal(err)
+	}
+	f.Settle(4)
+	assertOneRun(t, f, number)
+}

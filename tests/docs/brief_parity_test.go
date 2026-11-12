@@ -118,9 +118,12 @@ func TestADRSetIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 20 {
-		t.Fatalf("want 20 ADR files, got %d: %v", len(files), files)
+	if len(files) != 23 {
+		t.Fatalf("want 23 ADR files, got %d: %v", len(files), files)
 	}
+	// laterProposed are the ADRs after the open points that await the
+	// Owner's acceptance.
+	laterProposed := map[int]bool{21: true, 22: true, 23: true}
 	nameRe := regexp.MustCompile(`^(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`)
 	required := []string{"## Status", "## Context", "## Decision", "## Consequences", "## Acceptance test"}
 	for i, f := range files {
@@ -148,10 +151,10 @@ func TestADRSetIsComplete(t *testing.T) {
 		if i+1 >= 10 && i+1 <= lastOpenPointADR && !proposed {
 			t.Errorf("%s: open-point ADR must contain \"Status: proposed\"", base)
 		}
-		if i+1 > lastOpenPointADR && !strings.Contains(text, "Status: accepted") {
+		if i+1 > lastOpenPointADR && !laterProposed[i+1] && !strings.Contains(text, "Status: accepted") {
 			t.Errorf("%s: ADR after the open points must contain \"Status: accepted\"", base)
 		}
-		if (i+1 < 10 || i+1 > lastOpenPointADR) && proposed {
+		if (i+1 < 10 || i+1 > lastOpenPointADR) && !laterProposed[i+1] && proposed {
 			t.Errorf("%s: invariant ADR must not be proposed", base)
 		}
 	}

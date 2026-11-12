@@ -6,6 +6,7 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 	"github.com/bestagentkits/sisf/pkg/deploy"
+	"github.com/bestagentkits/sisf/pkg/qa"
 )
 
 // rollout is one release in flight.
@@ -27,6 +28,8 @@ type rollout struct {
 	observed   deploy.Observed
 	// feature and summary go into the changelog and the catalog.
 	feature, summary string
+	// candidate is the candidate as QA judged it, which the release lands.
+	candidate qa.Candidate
 }
 
 // preflight proves there is a way back and a way to observe before anything
@@ -34,11 +37,16 @@ type rollout struct {
 //
 //   - the backend cannot say what it can do, or cannot switch with a way
 //     back, observe a revision and measure it (a broken adapter);
-//   - the unit has no LKG, or the LKG is the release itself;
+//   - the unit has no LKG;
 //   - the LKG is not observed running and healthy as itself, so the way back
 //     cannot be verified;
 //   - the LKG cannot be measured (no metrics);
-//   - real traffic is too low to judge and there is no synthetic suite.
+//   - real traffic is too low to judge and there is no synthetic suite, or
+//     the suite says it cannot be run.
+//
+// A release whose program is the LKG's itself, byte for byte, is refused
+// with ALREADY_EXISTS instead: it has nothing to deploy, and waiting would
+// not change that.
 func (p *Pipeline) preflight(ctx context.Context, h *holding, v verifiedRelease) (*rollout, error) {
 	unit := v.artifact.Unit
 	caps, err := p.cfg.Backend.Capabilities(ctx)
@@ -55,7 +63,8 @@ func (p *Pipeline) preflight(ctx context.Context, h *holding, v verifiedRelease)
 	case !found:
 		return nil, holdf("unit %s has no last known good release to roll back to", unit)
 	case lkg.Digest == v.artifact.Digest:
-		return nil, holdf("the release is already the last known good release; rolling back to it is no way back")
+		return nil, core.NewError(core.CodeAlreadyExists,
+			"the candidate builds the same program as the last known good release, so there is nothing to deploy")
 	}
 	r := &rollout{
 		h: h, v: v, unit: unit, lkg: lkg, monitor: NewMonitor(p.cfg.Monitor),
@@ -82,6 +91,11 @@ func (p *Pipeline) preflight(ctx context.Context, h *holding, v verifiedRelease)
 	}
 	if r.lowTraffic && p.cfg.Synthetic == nil {
 		return nil, holdf("real traffic is too low to judge the release and the application has no synthetic suite")
+	}
+	if ready, ok := p.cfg.Synthetic.(SyntheticReadiness); r.lowTraffic && ok {
+		if err := ready.Ready(ctx); err != nil {
+			return nil, holdf("real traffic is too low to judge the release and the synthetic suite cannot be run").WithCause(err)
+		}
 	}
 	return r, nil
 }
@@ -110,6 +124,7 @@ func (p *Pipeline) start(ctx context.Context, r *rollout) error {
 	proof := statemachine.RolloutProof{
 		IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, FactoryID: p.cfg.FactoryID,
 		Artifact: r.v.artifact, RollbackTarget: r.lkgRev, RollbackVerified: true, MetricsAvailable: true,
+		SelfPublishable: p.cfg.SelfPublishable,
 	}
 	return p.step(ctx, r.h, stepSpec{
 		event: core.EventRolloutStarted, reason: "the rollback preflight passed",

@@ -3,6 +3,7 @@ package stages
 import (
 	"context"
 	"errors"
+	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"testing"
 	"time"
 
@@ -14,32 +15,41 @@ import (
 func TestProtectedPathNamesCIOwnershipPolicyAndMigrations(t *testing.T) {
 	t.Parallel()
 	protected := map[string]ProtectedKind{
-		".github/workflows/ci.yml":          ProtectedCI,
-		".github/actions/setup/action.yml":  ProtectedCI,
-		".github/dependabot.yml":            ProtectedCI,
-		".GitHub/Workflows/Release.YML":     ProtectedCI,
-		"CODEOWNERS":                        ProtectedOwnership,
-		".github/CODEOWNERS":                ProtectedOwnership,
-		"docs/CODEOWNERS":                   ProtectedOwnership,
-		".sisf/factory.yaml":                ProtectedPolicy,
-		".sisf/anything/else":               ProtectedPolicy,
-		"AGENTS.md":                         ProtectedPolicy,
-		"agents.md":                         ProtectedPolicy,
-		"REVIEW.md":                         ProtectedPolicy,
-		"DECISIONS.md":                      ProtectedPolicy,
-		"FEATURES.md":                       ProtectedPolicy,
-		"features.yaml":                     ProtectedPolicy,
-		"./AGENTS.md":                       ProtectedPolicy,
-		"migrations/0001_init.sql":          ProtectedMigration,
-		"pkg/state/migrations/0002.sql":     ProtectedMigration,
-		"app/../.github/workflows/push.yml": ProtectedCI,
+		".github/workflows/ci.yml":                   ProtectedCI,
+		".github/actions/setup/action.yml":           ProtectedCI,
+		".github/dependabot.yml":                     ProtectedCI,
+		".GitHub/Workflows/Release.YML":              ProtectedCI,
+		"CODEOWNERS":                                 ProtectedOwnership,
+		".github/CODEOWNERS":                         ProtectedOwnership,
+		"docs/CODEOWNERS":                            ProtectedOwnership,
+		".sisf/factory.yaml":                         ProtectedPolicy,
+		".sisf/anything/else":                        ProtectedPolicy,
+		"AGENTS.md":                                  ProtectedPolicy,
+		"agents.md":                                  ProtectedPolicy,
+		"REVIEW.md":                                  ProtectedPolicy,
+		"DECISIONS.md":                               ProtectedPolicy,
+		"FEATURES.md":                                ProtectedPolicy,
+		"features.yaml":                              ProtectedPolicy,
+		"./AGENTS.md":                                ProtectedPolicy,
+		"migrations/0001_init.sql":                   ProtectedMigration,
+		"pkg/state/migrations/0002.sql":              ProtectedMigration,
+		"pkg/state/sqlstore/migrations.go":           ProtectedMigration,
+		"pkg/state/sqlstore/row_policies.go":         ProtectedMigration,
+		"pkg/state/sqlstore/row_policy_migration.go": ProtectedMigration,
+		"pkg/state/sqlstore/zone_ownership.go":       ProtectedMigration,
+		"pkg/state/sqlstore/zone_privileges.go":      ProtectedMigration,
+		"pkg/state/sqlstore/zz_init_more_steps.go":   ProtectedMigration,
+		"Pkg/State/SQLStore/Migrations.go":           ProtectedMigration,
+		"app/../pkg/state/sqlstore/migrations.go":    ProtectedMigration,
+		"app/../.github/workflows/push.yml":          ProtectedCI,
 	}
 	for p, want := range protected {
 		if got, ok := ProtectedPath(p); !ok || got != want {
 			t.Errorf("%s: got %q, %v; want %q", p, got, ok, want)
 		}
 	}
-	for _, p := range []string{"app/main.go", "docs/AGENTS.md", "ui/github/page.html", "src/codeowners_test.go", "migrationsfoo/x", ""} {
+	for _, p := range []string{"examples/hello-app/main.go", "docs/AGENTS.md", "ui/github/page.html", "src/codeowners_test.go", "migrationsfoo/x", "",
+		"pkg/state/state.go", "pkg/state/sqlstorefoo/x.go", "internal/pkg/state/sqlstore.go"} {
 		if kind, ok := ProtectedPath(p); ok {
 			t.Errorf("%s is not protected, got %q", p, kind)
 		}
@@ -55,14 +65,16 @@ func TestTheHardGatesUseTheSamePredicateAsTheBuilder(t *testing.T) {
 		}
 	}
 	for p, failing := range map[string]qa.GateName{
-		".github/actions/build/action.yml": qa.GatePermissions,
-		"docs/CODEOWNERS":                  qa.GatePermissions,
-		".sisf/factory.yaml":               qa.GatePermissions,
-		"AGENTS.md":                        qa.GatePermissions,
-		"db/migrations/0003.sql":           qa.GateMigrations,
+		".github/actions/build/action.yml":     qa.GatePermissions,
+		"docs/CODEOWNERS":                      qa.GatePermissions,
+		".sisf/factory.yaml":                   qa.GatePermissions,
+		"AGENTS.md":                            qa.GatePermissions,
+		"db/migrations/0003.sql":               qa.GateMigrations,
+		"pkg/state/sqlstore/migrations.go":     qa.GateMigrations,
+		"pkg/state/sqlstore/zone_ownership.go": qa.GateMigrations,
 	} {
 		for _, name := range []qa.GateName{qa.GatePermissions, qa.GateMigrations} {
-			passed, _, err := gates[name](context.Background(), qa.Candidate{ChangedPaths: []string{"app/main.go", p}})
+			passed, _, err := gates[name](context.Background(), qa.Candidate{ChangedPaths: []string{"examples/hello-app/main.go", p}})
 			if err != nil || passed == (name == failing) {
 				t.Errorf("%s under the %s gate: passed=%v, %v", p, name, passed, err)
 			}
@@ -113,11 +125,13 @@ func TestTheBuilderRefusesAProtectedPathBeforeReadingOrPushingAnything(t *testin
 		"code ownership":                "--- /dev/null\n+++ b/CODEOWNERS\n@@ -0,0 +1 @@\n+* @me\n",
 		"the policy":                    "--- a/AGENTS.md\n+++ b/AGENTS.md\n@@ -1 +1 @@\n-a\n+b\n",
 		"a migration":                   "--- /dev/null\n+++ b/migrations/0009.sql\n@@ -0,0 +1 @@\n+drop table x;\n",
+		"a migration built in Go":       "--- a/pkg/state/sqlstore/migrations.go\n+++ b/pkg/state/sqlstore/migrations.go\n@@ -1 +1 @@\n-a\n+b\n",
+		"the zones' lifecycle steps":    "--- /dev/null\n+++ b/pkg/state/sqlstore/zz_steps.go\n@@ -0,0 +1 @@\n+package sqlstore\n",
 		"a rename away from a workflow": "--- a/.github/workflows/ci.yml\n+++ b/app/ci.yml\n@@ -1 +1 @@\n-a\n+b\n",
-		"one of several files": "--- a/app/main.go\n+++ b/app/main.go\n@@ -1 +1 @@\n-a\n+b\n" +
+		"one of several files": "--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-a\n+b\n" +
 			"--- /dev/null\n+++ b/.github/workflows/push.yml\n@@ -0,0 +1 @@\n+on: push\n",
 	} {
-		repo := &recordingRepo{files: map[string]string{"app/main.go": "a\n"}}
+		repo := &recordingRepo{files: map[string]string{"examples/hello-app/main.go": "a\n"}}
 		_, err := newTestBuilder(repo).Build(context.Background(), BuildRequest{RunID: "run-1", Attempt: 1, Base: baseSHA, Diff: diff})
 		refusal, ok := RefusalOf(err)
 		if !ok || refusal.Reason != RefusalProtectedPath || !core.HasCode(err, core.CodePermissionDenied) {
@@ -132,26 +146,34 @@ func TestTheBuilderRefusesAProtectedPathBeforeReadingOrPushingAnything(t *testin
 func TestOnlyFaultsOfThePatchAreRefusals(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	repo := &recordingRepo{files: map[string]string{"app/main.go": "a\n"}}
+	repo := &recordingRepo{files: map[string]string{"examples/hello-app/main.go": "a\n"}}
 	for name, c := range map[string]struct {
 		diff string
 		want RefusalReason
 	}{
 		"unreadable":      {"not a diff", RefusalUnreadable},
-		"does not apply":  {"--- a/app/main.go\n+++ b/app/main.go\n@@ -1 +1 @@\n-z\n+b\n", RefusalDoesNotApply},
+		"does not apply":  {"--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-z\n+b\n", RefusalDoesNotApply},
 		"missing in base": {"--- a/app/gone.go\n+++ b/app/gone.go\n@@ -1 +1 @@\n-z\n+b\n", RefusalDoesNotApply},
-		"spans two units": {"--- a/app/main.go\n+++ b/app/main.go\n@@ -1 +1 @@\n-a\n+b\n--- /dev/null\n+++ b/ui/x.html\n@@ -0,0 +1 @@\n+x\n", RefusalUnitSpan},
+		"spans two units": {"--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-a\n+b\n--- /dev/null\n+++ b/site/x.html\n@@ -0,0 +1 @@\n+x\n", RefusalUnitSpan},
 	} {
-		_, err := newTestBuilder(repo).Build(ctx, BuildRequest{RunID: "run-1", Attempt: 1, Base: baseSHA, Diff: c.diff})
+		// The control unit consumes the pages under site/, as an Owner may
+		// declare; no unit but the application has built-in inputs.
+		inputs, err := release.NewUnitInputs(map[string][]string{"control": {"site/*.html"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		builder := newTestBuilder(repo)
+		builder.Units = UnitRouter{Inputs: inputs}
+		_, err = builder.Build(ctx, BuildRequest{RunID: "run-1", Attempt: 1, Base: baseSHA, Diff: c.diff})
 		if r, ok := RefusalOf(err); !ok || r.Reason != c.want {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	// A GitHub 404 or 409 from the commit is an outage, not the patch's fault.
 	for _, code := range []core.ErrorCode{core.CodeNotFound, core.CodeConflict, core.CodeUnavailable} {
-		repo := &recordingRepo{files: map[string]string{"app/main.go": "a\n"}, commitErr: core.NewError(code, "github said no")}
+		repo := &recordingRepo{files: map[string]string{"examples/hello-app/main.go": "a\n"}, commitErr: core.NewError(code, "github said no")}
 		_, err := newTestBuilder(repo).Build(ctx, BuildRequest{RunID: "run-1", Attempt: 1, Base: baseSHA,
-			Diff: "--- a/app/main.go\n+++ b/app/main.go\n@@ -1 +1 @@\n-a\n+b\n"})
+			Diff: "--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-a\n+b\n"})
 		if _, refused := RefusalOf(err); refused || !core.HasCode(err, code) {
 			t.Errorf("a commit failing with %s: %v", code, err)
 		}

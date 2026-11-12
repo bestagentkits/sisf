@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,60 +10,65 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strings"
+
+	"github.com/bestagentkits/sisf/internal/actions/runactions"
 )
 
 // shownState finds the state field of the dashboard's issue page.
 var shownState = regexp.MustCompile(`data-field="state">([^<]*)<`)
 
-// SurfaceStates reads the state of one issue twice, as the API reports it
-// and as the dashboard shows it, from the control plane at base with the
-// Owner token. Both surfaces render one service, so the two must agree; a
-// caller compares them.
-func SurfaceStates(ctx context.Context, base, ownerToken, issueID string) (api, dashboard string, err error) {
+// SurfaceStates reads the state of one issue twice, as the REST API reports
+// it (runs.inspect) and as the dashboard's run page shows it, from the
+// control plane at base with a signed-in person's session cookie value.
+// Both surfaces call one action service, so the two must agree; a caller
+// compares them.
+func SurfaceStates(ctx context.Context, base, session, issueID string) (api, dashboard string, err error) {
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	escaped := url.PathEscape(issueID)
+	cookie := &http.Cookie{Name: "sisf_session", Value: session}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/v1/issues/"+escaped, nil)
+	view, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/auth/session", nil)
 	if err != nil {
 		return "", "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+ownerToken)
-	body, err := fetch(client, req, http.StatusOK)
+	view.AddCookie(cookie)
+	body, err := fetch(client, view, http.StatusOK)
+	if err != nil {
+		return "", "", fmt.Errorf("session: %w", err)
+	}
+	var sess struct {
+		CSRF string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(body, &sess); err != nil {
+		return "", "", fmt.Errorf("session answer: %w", err)
+	}
+	input, _ := json.Marshal(map[string]any{"input": map[string]string{"issue": issueID}})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/v1/actions/runs.inspect", bytes.NewReader(input))
+	if err != nil {
+		return "", "", err
+	}
+	req.AddCookie(cookie)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", sess.CSRF)
+	body, err = fetch(client, req, http.StatusOK)
 	if err != nil {
 		return "", "", fmt.Errorf("API: %w", err)
 	}
-	var detail struct {
-		State string `json:"state"`
+	var result struct {
+		Output struct {
+			Record struct {
+				State string `json:"state"`
+			} `json:"record"`
+		} `json:"output"`
 	}
-	if err := json.Unmarshal(body, &detail); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return "", "", fmt.Errorf("API answer: %w", err)
 	}
 
-	login, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/login", strings.NewReader(url.Values{"token": {ownerToken}}.Encode()))
+	page, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/runs?issue="+url.QueryEscape(issueID), nil)
 	if err != nil {
 		return "", "", err
 	}
-	login.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := client.Do(login)
-	if err != nil {
-		return "", "", fmt.Errorf("dashboard login: %w", err)
-	}
-	_ = resp.Body.Close()
-	var session *http.Cookie
-	for _, c := range resp.Cookies() {
-		if c.Name == "sisf_session" {
-			session = c
-		}
-	}
-	if resp.StatusCode != http.StatusSeeOther || session == nil {
-		return "", "", fmt.Errorf("dashboard login answered %d without a session", resp.StatusCode)
-	}
-	page, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/issues/"+escaped, nil)
-	if err != nil {
-		return "", "", err
-	}
-	page.AddCookie(session)
+	page.AddCookie(cookie)
 	body, err = fetch(client, page, http.StatusOK)
 	if err != nil {
 		return "", "", fmt.Errorf("dashboard: %w", err)
@@ -71,7 +77,7 @@ func SurfaceStates(ctx context.Context, base, ownerToken, issueID string) (api, 
 	if match == nil {
 		return "", "", fmt.Errorf("the dashboard page shows no state")
 	}
-	return detail.State, html.UnescapeString(string(match[1])), nil
+	return result.Output.Record.State, html.UnescapeString(string(match[1])), nil
 }
 
 // fetch sends req and returns the body of an answer with the wanted status.
@@ -94,9 +100,41 @@ func fetch(client *http.Client, req *http.Request, want int) ([]byte, error) {
 // SurfaceStates reads the state of issue number through both surfaces.
 func (f *Factory) SurfaceStates(number int) (api, dashboard string) {
 	f.t.Helper()
-	api, dashboard, err := SurfaceStates(context.Background(), f.controlSrv.URL, f.ownerToken, f.Issue(number).String())
+	f.ownerOnce.Do(func() { f.owner = f.SignInOwner() })
+	api, dashboard, err := SurfaceStates(context.Background(), f.controlSrv.URL, f.owner.Session(), f.Issue(number).String())
 	if err != nil {
 		f.t.Fatalf("harness: %v", err)
 	}
 	return api, dashboard
+}
+
+// Explain asks runs.explain about issue number over HTTP, as the Owner.
+func (f *Factory) Explain(number int) runactions.Explanation {
+	f.t.Helper()
+	var out runactions.Explanation
+	f.readRun(runactions.ActionRunsExplain, number, &out)
+	return out
+}
+
+// Inspect asks runs.inspect about issue number over HTTP, as the Owner.
+func (f *Factory) Inspect(number int) runactions.Inspection {
+	f.t.Helper()
+	var out runactions.Inspection
+	f.readRun(runactions.ActionRunsInspect, number, &out)
+	return out
+}
+
+// readRun calls a run action about issue number and decodes its output.
+func (f *Factory) readRun(action string, number int, output any) {
+	f.t.Helper()
+	f.ownerOnce.Do(func() { f.owner = f.SignInOwner() })
+	input, _ := json.Marshal(map[string]any{"input": map[string]string{"issue": f.Issue(number).String()}})
+	resp := f.owner.Do(http.MethodPost, "/api/v1/actions/"+action, bytes.NewReader(input),
+		http.Header{"Content-Type": {"application/json"}, "X-Csrf-Token": {f.owner.CSRF()}})
+	out := struct {
+		Output any `json:"output"`
+	}{Output: output}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusOK {
+		f.t.Fatalf("harness: %s answered %d: %v", action, resp.StatusCode, err)
+	}
 }

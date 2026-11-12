@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/decision"
@@ -19,8 +20,36 @@ type LabelRules struct {
 }
 
 // reservedPrefixes are label families with a meaning of their own; none of
-// them can be turned into an intake request.
+// them can be turned into an intake request, under any casing.
 var reservedPrefixes = []string{"sisf:", "kind:", github.LabelAgentPrefix, github.LabelDeploymentPrefix}
+
+// GitHub compares label names without regard to case: one repository cannot
+// hold two labels that differ only in case, so every label name is matched
+// the same way here.
+
+// sameLabel reports whether a and b name the same label.
+func sameLabel(a, b string) bool { return strings.EqualFold(a, b) }
+
+// cutLabelPrefix returns what follows prefix in name, and whether name
+// starts with prefix under any casing. It compares rune by rune as
+// sameLabel does, so a letter whose case partner is encoded in more bytes,
+// such as the Kelvin sign for k, cannot pass for another family's name.
+func cutLabelPrefix(name, prefix string) (string, bool) {
+	rest := name
+	for _, want := range prefix {
+		got, size := utf8.DecodeRuneInString(rest)
+		if size == 0 || !strings.EqualFold(string(got), string(want)) {
+			return "", false
+		}
+		rest = rest[size:]
+	}
+	return rest, true
+}
+
+// HasLabel reports whether labels hold the label name, under any casing.
+func HasLabel(labels []github.Label, name string) bool {
+	return slices.ContainsFunc(labels, func(l github.Label) bool { return sameLabel(l.Name, name) })
+}
 
 // RulesFrom reads the label rules from the approved manifest. The alias is
 // taken from extensions.intake.ready_label_alias, for example "ai-handle".
@@ -41,7 +70,10 @@ func RulesFrom(m *manifest.Manifest) (LabelRules, error) {
 	}
 	alias, isText := raw.(string)
 	alias = strings.TrimSpace(alias)
-	reserved := slices.ContainsFunc(reservedPrefixes, func(prefix string) bool { return strings.HasPrefix(alias, prefix) })
+	reserved := slices.ContainsFunc(reservedPrefixes, func(prefix string) bool {
+		_, ok := cutLabelPrefix(alias, prefix)
+		return ok
+	})
 	if !isText || alias == "" || reserved {
 		return LabelRules{}, core.NewError(core.CodeInvalidArgument,
 			fmt.Sprintf("extensions.intake.ready_label_alias must name an ordinary label, got %v", raw))
@@ -74,21 +106,23 @@ func ReadLabels(labels []github.Label, rules LabelRules) Labels {
 	question := false
 	for _, label := range labels {
 		name := label.Name
+		agent, isAgent := cutLabelPrefix(name, github.LabelAgentPrefix)
+		deployment, isDeployment := cutLabelPrefix(name, github.LabelDeploymentPrefix)
 		switch {
-		case name == github.LabelReady || (rules.ReadyAlias != "" && name == rules.ReadyAlias):
+		case sameLabel(name, github.LabelReady) || (rules.ReadyAlias != "" && sameLabel(name, rules.ReadyAlias)):
 			out.Ready = true
-		case name == github.LabelKindFeature:
+		case sameLabel(name, github.LabelKindFeature):
 			out.Kind = moreCautious(out.Kind, decision.KindNewFeature)
-		case name == github.LabelKindImprovement:
+		case sameLabel(name, github.LabelKindImprovement):
 			out.Kind = moreCautious(out.Kind, decision.KindExistingImprovement)
-		case name == github.LabelKindBug:
+		case sameLabel(name, github.LabelKindBug):
 			out.Kind = moreCautious(out.Kind, decision.KindBug)
-		case name == github.LabelKindQuestion:
+		case sameLabel(name, github.LabelKindQuestion):
 			question = true
-		case strings.HasPrefix(name, github.LabelAgentPrefix):
-			agents = append(agents, strings.TrimPrefix(name, github.LabelAgentPrefix))
-		case strings.HasPrefix(name, github.LabelDeploymentPrefix):
-			out.Deployments = append(out.Deployments, strings.TrimPrefix(name, github.LabelDeploymentPrefix))
+		case isAgent:
+			agents = append(agents, agent)
+		case isDeployment:
+			out.Deployments = append(out.Deployments, deployment)
 		}
 	}
 	out.QuestionOnly = question && out.Kind == ""
@@ -112,13 +146,14 @@ func moreCautious(a, b decision.Kind) decision.Kind {
 
 // AddressedTo reports whether the issue is meant for deployment id. An
 // issue without a deployment label is; one that names exactly this
-// deployment is; one that names another deployment, or several, is not.
+// deployment, under any casing as the label is, is; one that names another
+// deployment, or several, is not.
 func (l Labels) AddressedTo(id core.DeploymentID) bool {
 	switch len(l.Deployments) {
 	case 0:
 		return true
 	case 1:
-		return id != "" && l.Deployments[0] == string(id)
+		return id != "" && strings.EqualFold(l.Deployments[0], string(id))
 	}
 	return false
 }

@@ -1,7 +1,7 @@
 # Self-improvement Software Factory (SISF)
 
 > **Decision brief & implementation contract**  
-> Ngày: 2026-11-10 · Trạng thái: **Product decisions fixed, implementation proposed**  
+> Ngày: 2026-11-10 · Trạng thái: **Product decisions fixed; đã triển khai trong repository này** (phần đã được chứng minh: [README](../README.md#status) và [acceptance matrix](acceptance-matrix.md))  
 > Nguồn xuất phát: `saasvn/tose-app`, HHP decision #574, kiến trúc phác thảo do Owner cung cấp.  
 > Mục đích: đưa cho coding agent trong **fresh context** để triển khai theo từng lát cắt có kiểm chứng.  
 > **Không** tự coi tài liệu này là quyền thay đổi production hay làm rộng quyền của agent.
@@ -188,15 +188,19 @@ stateDiagram-v2
   ApprovalPending --> Blocked: rejected/expired
   Ready --> Claimed: atomic lease + budget reservation
   Claimed --> Developing
+  Claimed --> Blocked: run dừng trước khi attempt bắt đầu / chờ Owner
+  Developing --> Blocked: run dừng mà không có candidate / chờ Owner
   Developing --> QAEvaluation: patch + tests + artifacts
   QAEvaluation --> Developing: not pass / retry allowed
   QAEvaluation --> ReleaseCandidate: score + hard gates pass
   ReleaseCandidate --> Canary
+  ReleaseCandidate --> Blocked: release bị từ chối trước khi deploy / chờ Owner
   Canary --> Monitoring: rollout healthy
   Canary --> RolledBack: error threshold exceeded
   Monitoring --> Verified: post-deploy DoD + observation
   Monitoring --> RolledBack: regression
   Verified --> Closed: close issue + changelog + feature catalog
+  Verified --> Blocked: release đã verified không còn được xác nhận đang chạy, không bị thay thế / khôi phục LKG / chờ Owner
   RolledBack --> Blocked: evidence + recovery report
   Blocked --> Ready: safe authorized retry
 ```
@@ -220,7 +224,7 @@ Mọi protocol có cùng `list approvals`, `get proposal + evidence + diff + aff
 
 ### 6.1 QA độc lập
 
-- Coding agent khác identity/workspace với QA agent. Khi deployment có từ hai model route trở lên, QA phải dùng model hoặc nhà cung cấp khác với coding agent để tránh chung điểm mù; nếu chỉ có một route thì receipt ghi `same_model_route: true` và policy có thể yêu cầu Owner duyệt thay vì tự publish. QA có test baseline **read-only**, được khóa với commit và policy SHA, chạy deterministic suite + threat negative tests; có thể dùng judge model cho tiêu chí ngữ nghĩa.
+- Coding agent khác identity/workspace với QA agent. Model route của QA evaluator, kể cả các route nâng cấp, phải khác nhà cung cấp hoặc model so với mọi route planning và coding để tránh chung điểm mù; quy tắc conformance trong `internal/conformance/rules_qa.go` từ chối manifest vi phạm, và deployment chỉ có một route phải khai `model_routes.same_model_route: true`, khi đó receipt ghi `same_model_route: true` và policy có thể yêu cầu Owner duyệt thay vì tự publish. QA có test baseline **read-only**, được khóa với commit và policy SHA, chạy deterministic suite + threat negative tests; có thể dùng judge model cho tiêu chí ngữ nghĩa.
 - **Rubric khởi điểm cần hiệu chỉnh:** correctness/regression 30, security + auth 25, contract + data safety 20, UX/performance/output 15, observability + rollback 10. Default proposal `score >= 85/100`, không có một hard-gate failure nào; số này là **mức khởi điểm thiết kế**, không phải ngưỡng được nghiên cứu chứng minh.
 - *Hard gates:* tests/contract, permissions, migrations, secrets, confidence of observed build, independent evaluator, resource/budget policy, rollback readiness. QA score cao không được override hard failure.
 - Ghi `qa_receipt` ký bởi trusted evaluator: candidate digest, suite digest, baseline SHA, QA agent identity, `model_route` của cả coding agent và QA agent, checks, score, timestamp, expires, evaluator attempt.
@@ -243,7 +247,9 @@ Mọi protocol có cùng `list approvals`, `get proposal + evidence + diff + aff
 - Trusted release supervisor ở Zone 3 là tiến trình/image nhỏ, riêng và pinned, giữ LKG bên ngoài vùng sửa của ứng viên, nhưng **vẫn thuộc một factory deployment**. Không cần service ngoài factory để cứu factory.
 - **Ranh giới của supervisor:** "cùng deployment" nghĩa là supervisor được khai báo trong cùng `factory.yaml`, chung `factory_id` và lifecycle cài/gỡ. "Ngoài vùng sửa của ứng viên" nghĩa là cả bốn điều sau đều đúng: (1) supervisor chạy từ image riêng ghim digest, không build từ cùng artifact với ứng viên; (2) LKG, khóa ký và cấu hình rollback nằm trên volume hoặc store mà process của Zone 1/2 và mọi agent workspace không có quyền ghi; (3) release pipeline thông thường không có quyền thay digest của supervisor, chỉ chu kỳ governance có human approval mới làm được; (4) supervisor tự kiểm tra digest của chính nó khi khởi động và từ chối chạy nếu lệch manifest đã ký. Conformance checker của P0 kiểm cả bốn điều; thiếu điều nào thì self-update bị tắt.
 - Trong một lượt tự nâng cấp bản thân, candidate không được thay đồng thời trusted supervisor, signing keys, policy enforcement, QA baseline hoặc rollback rules. Những thay đổi đó là **governance change có human approval**, đi qua một chu kỳ cập nhật riêng.
+- **Tự publish mặc định là từ chối:** candidate mà factory tự publish chỉ được thay đổi các input của unit mà nó release, tức là phần mà việc quan sát unit đó có thể bảo chứng. Mọi đường dẫn khác (tài liệu, test, tệp build, code, template và script của control unit) đều cần human approval, cả khi release lẫn ngay trước khi merge, và pull request của nó vẫn mở cho Owner. Owner có thể khai báo input của một unit trong manifest đã cài, không bao giờ trong repository, nên candidate không thể tự mở rộng input của mình.
 - DoD phải có thử nghiệm update Zone 3 không nhạy cảm (ví dụ trang read-only dashboard), self-monitor và auto-recover; chứng minh Zone 1 vẫn phục vụ khi Zone 2/3 khởi động lại.
+- Control unit không có input dựng sẵn: template và script của dashboard cho Owner thấy một approval dùng để làm gì, nên chúng thuộc trusted control surface. Vì vậy, để factory tự publish một bản update trang read-only dashboard, Owner phải khai báo trang đó là input của `control`, nằm ngoài `ui/`. **Không bao giờ khai báo template hay script hiển thị approval hoặc đăng nhập step-up:** khi đó candidate có thể thay đổi chính nội dung mà Owner được yêu cầu phê duyệt.
 
 ## 7. Authentication, authorization và secrets
 

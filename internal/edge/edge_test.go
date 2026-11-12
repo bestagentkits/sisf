@@ -194,7 +194,7 @@ func TestServeProxiesUntilItsContextEnds(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- edge.Serve(ctx, ln, h) }()
 
-	resp, err := http.Get("http://" + ln.Addr().String() + "/")
+	resp, err := testClient.Get("http://" + ln.Addr().String() + "/")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,7 +5,9 @@
   Copy it to ~/Library/LaunchAgents/{{ .Label }}.plist and run
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/{{ .Label }}.plist
   `sisf up` runs in the foreground and supervises every process of the
-  install, so launchd only has to keep this one command alive.
+  install, so launchd only has to keep this one command alive. Every start
+  builds the factory from the source checkout with Go, so the agent starts
+  in that checkout and its PATH holds the programs found when it was written.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -19,7 +21,14 @@
     <string>standalone</string>
     <string>--dir</string>
     <string>{{ .Dir }}</string>
+    <string>--source</string>
+    <string>{{ .Source }}</string>
   </array>
+  <key>WorkingDirectory</key><string>{{ .Source }}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>{{ .Path }}</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>Umask</key><integer>63</integer>

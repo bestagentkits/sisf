@@ -1,7 +1,7 @@
 # Self-improvement Software Factory (SISF)
 
 > **Decision brief & implementation contract**  
-> Date: 2026-11-10 · Status: **Product decisions fixed, implementation proposed**  
+> Date: 2026-11-10 · Status: **Product decisions fixed; implemented in this repository** (what is proven: [README](../README.md#status) and the [acceptance matrix](acceptance-matrix.md))  
 > Origin: `saasvn/tose-app`, HHP decision #574, and the architecture sketch provided by the Owner.  
 > Purpose: to be handed to a coding agent in a **fresh context** so it can implement the system slice by slice, with verification at each slice.  
 > Do **not** treat this document as authority to change production or to widen an agent's permissions.
@@ -188,15 +188,19 @@ stateDiagram-v2
   ApprovalPending --> Blocked: rejected/expired
   Ready --> Claimed: atomic lease + budget reservation
   Claimed --> Developing
+  Claimed --> Blocked: run stopped before an attempt started / waits for the Owner
+  Developing --> Blocked: run stopped without a candidate / waits for the Owner
   Developing --> QAEvaluation: patch + tests + artifacts
   QAEvaluation --> Developing: not pass / retry allowed
   QAEvaluation --> ReleaseCandidate: score + hard gates pass
   ReleaseCandidate --> Canary
+  ReleaseCandidate --> Blocked: release refused before anything deployed / waits for the Owner
   Canary --> Monitoring: rollout healthy
   Canary --> RolledBack: error threshold exceeded
   Monitoring --> Verified: post-deploy DoD + observation
   Monitoring --> RolledBack: regression
   Verified --> Closed: close issue + changelog + feature catalog
+  Verified --> Blocked: verified release no longer judged serving, not superseded / LKG restored / waits for the Owner
   RolledBack --> Blocked: evidence + recovery report
   Blocked --> Ready: safe authorized retry
 ```
@@ -220,7 +224,7 @@ Every protocol has the same `list approvals`, `get proposal + evidence + diff + 
 
 ### 6.1 Independent QA
 
-- The coding agent has a different identity/workspace from the QA agent. When the deployment has two or more model routes, QA must use a different model or provider from the coding agent to avoid shared blind spots; if there is only one route, the receipt records `same_model_route: true` and the policy may require Owner approval instead of self-publishing. QA has a **read-only** test baseline, locked to the commit and policy SHA, and runs the deterministic suite + threat negative tests; it may use a judge model for semantic criteria.
+- The coding agent has a different identity/workspace from the QA agent. The QA evaluator's model route, escalations included, must differ in provider or model from every planning and coding route, to avoid shared blind spots; the conformance rule in `internal/conformance/rules_qa.go` refuses a manifest where it does not, and a deployment with a single route states `model_routes.same_model_route: true`, so the receipt records `same_model_route: true` and the policy may require Owner approval instead of self-publishing. QA has a **read-only** test baseline, locked to the commit and policy SHA, and runs the deterministic suite + threat negative tests; it may use a judge model for semantic criteria.
 - **Starting rubric, to be calibrated:** correctness/regression 30, security + auth 25, contract + data safety 20, UX/performance/output 15, observability + rollback 10. The default proposal is `score >= 85/100` with not a single hard-gate failure; this number is a **design starting point**, not a threshold proven by research.
 - *Hard gates:* tests/contract, permissions, migrations, secrets, confidence of observed build, independent evaluator, resource/budget policy, rollback readiness. A high QA score must not override a hard failure.
 - A `qa_receipt` signed by the trusted evaluator is recorded: candidate digest, suite digest, baseline SHA, QA agent identity, the `model_route` of both the coding agent and the QA agent, checks, score, timestamp, expires, evaluator attempt.
@@ -243,7 +247,9 @@ Every protocol has the same `list approvals`, `get proposal + evidence + diff + 
 - The trusted release supervisor in Zone 3 is a small, separate and pinned process/image that keeps the LKG outside the candidate's modifiable area, but it **still belongs to one factory deployment**. No service outside the factory is needed to rescue the factory.
 - **Supervisor boundary:** "same deployment" means that the supervisor is declared in the same `factory.yaml` and shares the `factory_id` and the install/uninstall lifecycle. "Outside the candidate's modifiable area" means that all four of the following are true: (1) the supervisor runs from its own digest-pinned image and is not built from the same artifact as the candidate; (2) the LKG, signing keys and rollback configuration reside on a volume or store to which the Zone 1/2 processes and every agent workspace have no write access; (3) the normal release pipeline has no permission to change the supervisor's digest, and only a governance cycle with human approval can do so; (4) the supervisor checks its own digest at startup and refuses to run if it deviates from the signed manifest. The P0 conformance checker verifies all four; if any one is missing, self-update is disabled.
 - Within a single self-upgrade pass, the candidate must not simultaneously change the trusted supervisor, signing keys, policy enforcement, QA baseline or rollback rules. Those changes are a **governance change with human approval**, and go through a separate update cycle.
+- **Self-publishing is default-deny:** a candidate the factory publishes by itself may change only the inputs of the unit it releases, that is, what observing that unit can vouch for. Any other path (documentation, tests, build files, the code, templates and scripts of the control unit) needs human approval, at release and again before the merge, and its pull request stays open for the Owner. The Owner may declare a unit's inputs in the installed manifest, never in the repository, so a candidate cannot widen its own inputs.
 - The DoD must include a trial update of a non-sensitive part of Zone 3 (for example a read-only dashboard page), self-monitoring and auto-recovery; it must prove that Zone 1 keeps serving while Zone 2/3 restart.
+- The control unit has no built-in inputs: the dashboard's templates and scripts show the Owner what an approval is for, so they belong to the trusted control surface. A self-published update of a read-only dashboard page therefore needs the Owner to declare that page as an input of `control`, outside `ui/`. **Never declare a template or script that shows an approval or a step-up sign-in:** a candidate could then change what the Owner is asked to approve.
 
 ## 7. Authentication, authorization and secrets
 

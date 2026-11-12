@@ -1,6 +1,10 @@
 package fakegithub
 
-import "slices"
+import (
+	"slices"
+	"strconv"
+	"time"
+)
 
 func issueJSON(is *issue) jIssue {
 	out := jIssue{
@@ -24,11 +28,21 @@ func pullJSON(r *repo, is *issue) jPull {
 	head := repoJSON(is.pr.headOwner, is.pr.headName)
 	base := repoJSON(r.owner, r.name)
 	return jPull{
-		Number: is.number, Title: is.title, Body: is.body, State: is.state, Draft: is.pr.draft, Merged: is.pr.merged,
-		Head: jBranch{Ref: is.pr.headRef, SHA: is.pr.headSHA, Repo: &head},
-		Base: jBranch{Ref: is.pr.baseRef, SHA: is.pr.baseSHA, Repo: &base},
-		User: is.author.json(), AuthorAssociation: is.author.assoc(), CreatedAt: is.created, UpdatedAt: is.updated,
+		Number: is.number, Title: is.title, Body: is.body, State: is.state, Draft: is.pr.draft, Merged: &is.pr.merged,
+		HTMLURL: "https://github.com/" + r.owner + "/" + r.name + "/pull/" + strconv.Itoa(is.number),
+		Head:    jBranch{Ref: is.pr.headRef, SHA: is.pr.headSHA, Repo: &head},
+		Base:    jBranch{Ref: is.pr.baseRef, SHA: is.pr.baseSHA, Repo: &base},
+		User:    is.author.json(), AuthorAssociation: is.author.assoc(), CreatedAt: is.created, UpdatedAt: is.updated,
+		MergedAt: mergedAt(is.pr),
 	}
+}
+
+func mergedAt(p *pull) *time.Time {
+	if !p.merged {
+		return nil
+	}
+	at := p.mergedAt
+	return &at
 }
 
 // IssueView is a read-only copy of an issue for assertions.
@@ -39,6 +53,8 @@ type IssueView struct {
 	State  string
 	Labels []string
 	Author User
+	// UpdatedAt is the issue's update time, as GitHub lists it.
+	UpdatedAt time.Time
 }
 
 // Issue returns a copy of an issue or pull request.
@@ -49,7 +65,7 @@ func (s *Server) Issue(repoName string, number int) (IssueView, error) {
 	if err != nil {
 		return IssueView{}, err
 	}
-	return IssueView{Number: is.number, Title: is.title, Body: is.body, State: is.state, Labels: slices.Clone(is.labels), Author: is.author}, nil
+	return IssueView{Number: is.number, Title: is.title, Body: is.body, State: is.state, Labels: slices.Clone(is.labels), Author: is.author, UpdatedAt: is.updated}, nil
 }
 
 // CommentView is a read-only copy of a comment for assertions.

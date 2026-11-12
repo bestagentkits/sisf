@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,8 +56,13 @@ func (b *adoptionBackend) ObservedRevision(_ context.Context, unit string) (depl
 // key signed at install, pinning app at digest.
 func installedBook(t *testing.T, digest core.Digest) (*release.LKGBook, core.Signer) {
 	t.Helper()
+	return installedBookIn(t, filepath.Join(t.TempDir(), "trust"), digest)
+}
+
+// installedBookIn is installedBook on a trust volume made at dir.
+func installedBookIn(t *testing.T, dir string, digest core.Digest) (*release.LKGBook, core.Signer) {
+	t.Helper()
 	ctx := context.Background()
-	dir := filepath.Join(t.TempDir(), "trust")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -139,5 +145,22 @@ func TestReleaseTuningIsShorterOnlyInTheSimulation(t *testing.T) {
 	long := releaseTuning{window: release.DefaultWindow, minSamples: release.DefaultMinSamples}
 	if _, err := long.monitor(false); err != nil {
 		t.Fatalf("the defaults: %v", err)
+	}
+}
+
+// As the lifecycle ends, after its context was cancelled, the deploy
+// backend is still given time to stop what it found again after a restart.
+func TestTheEndOfTheLifecycleClosesTheDeployBackend(t *testing.T) {
+	t.Parallel()
+	var closedWithLiveContext bool
+	l := &lifecycleFlags{closeBackend: func(ctx context.Context) error {
+		closedWithLiveContext = ctx.Err() == nil
+		return nil
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	l.closeDeployBackend(ctx, slog.New(slog.DiscardHandler))
+	if !closedWithLiveContext {
+		t.Fatal("the deploy backend was not closed, or only with a context that had ended")
 	}
 }

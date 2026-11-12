@@ -22,9 +22,9 @@ func TestTheSecretsCheckCatchesSharedAndMisplacedSecrets(t *testing.T) {
 			data, _ := os.ReadFile(l.Secret(areaAgent, "credentials"))
 			must(t, writeSecret(l.Secret(areaAgent, "qa-credentials"), data))
 		}},
-		"zone 1 holds the owner token": {ruleZoneKeys, func(t *testing.T, l Layout) {
+		"zone 1 holds the counters token": {ruleZoneKeys, func(t *testing.T, l Layout) {
 			env, _ := readEnvFile(l.RuntimeEnv(areaApplication))
-			data, _ := formatEnv("SISF_ZONE", "application", "SISF_STATE_DSN", env["SISF_STATE_DSN"], "SISF_OWNER_TOKEN", "leaked")
+			data, _ := formatEnv("SISF_ZONE", "application", "SISF_STATE_DSN", env["SISF_STATE_DSN"], "EDGE_COUNTERS_TOKEN", "leaked")
 			must(t, writeSecret(l.RuntimeEnv(areaApplication), data))
 		}},
 		"zone 2 opens the store as the control role": {ruleCredentials, func(t *testing.T, l Layout) {
@@ -36,7 +36,7 @@ func TestTheSecretsCheckCatchesSharedAndMisplacedSecrets(t *testing.T) {
 			must(t, writeSecret(l.Secret(areaAgent, "root-key.pem"), []byte("x")))
 		}},
 		"a secret is world readable": {rulePermissions, func(t *testing.T, l Layout) {
-			must(t, os.Chmod(l.Secret(areaControl, "owner-token"), 0o644))
+			must(t, os.Chmod(l.Secret(areaControl, "webhook-secret"), 0o644))
 		}},
 	} {
 		in, _, _ := newTestInstaller(t)

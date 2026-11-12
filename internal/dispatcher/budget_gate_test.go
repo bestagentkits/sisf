@@ -195,7 +195,7 @@ func TestReservationsAreIdempotentBoundToTheirRunAndSettleOrRelease(t *testing.T
 		}
 		var settled core.Reservation
 		var totals core.BudgetTotals
-		// The totals are the control plane's to read.
+		// The agent zone may read the totals of its own factory.
 		_ = db.Open(t, core.ZoneControl).View(context.Background(), func(ctx context.Context, tx state.Tx) error {
 			settled, _ = tx.GetReservation(ctx, first.ID)
 			totals, _ = tx.BudgetTotals(ctx, time.Time{})

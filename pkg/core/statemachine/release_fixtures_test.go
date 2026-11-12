@@ -25,6 +25,7 @@ func validRollout() RolloutProof {
 		RollbackTarget:   deploy.Revision{Unit: "app", Digest: otherBuild, ID: "blue"},
 		RollbackVerified: true,
 		MetricsAvailable: true,
+		SelfPublishable:  []string{"app", "control", "dispatcher", "runner"},
 	}
 }
 
@@ -39,6 +40,7 @@ func validCanary() CanaryProof {
 		MetricsAvailable: true,
 		Healthy:          true,
 		ObservedAt:       testNow.Add(-time.Minute),
+		RolloutStartedAt: testNow.Add(-10 * time.Minute),
 	}
 }
 

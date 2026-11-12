@@ -59,9 +59,11 @@ func (s *Service) Retry(ctx context.Context, req RetryRequest) (Result, error) {
 		return result, core.NewError(core.CodeInternal, "the issue was blocked for want of an approval but has no stored scope")
 	}
 	in, skipped, err := s.gather(ctx, req.Issue, true)
-	if err != nil || skipped != "" {
-		result.Skipped = skipped
+	if err != nil {
 		return result, err
+	}
+	if skipped != "" {
+		return result, core.NewError(core.CodeConflict, "intake does not take this issue any more: "+skipped)
 	}
 	p, err := s.planRetry(ctx, in, snap, req)
 	if err != nil {
@@ -90,7 +92,7 @@ func (s *Service) planRetry(ctx context.Context, in input, snap snapshot, req Re
 	p.transition.ActorID = req.Actor.ID
 	p.transition.IdempotencyKey = fmt.Sprintf("intake/%s/%s/%d", sow.Issue, core.EventRetryAuthorized, snap.record.Version)
 	p.retry = &statemachine.RetryProof{IssueID: sow.Issue, Cause: denial.Cause(), BlockedAt: denial.At,
-		Actor: req.Actor, Decision: req.Decision}
+		DeniedScope: denial.ScopeDigest, DeniedPolicy: denial.PolicyRevision, Actor: req.Actor, Decision: req.Decision}
 
 	approval, found, err := s.approvalSince(ctx, in, sow)
 	switch {
@@ -100,7 +102,7 @@ func (s *Service) planRetry(ctx context.Context, in input, snap snapshot, req Re
 		p.doc.ApprovalID = approval.ID
 		p.spend = spend(in, sow, approval.ID)
 		p.transition.EvidenceRefs = append(p.transition.EvidenceRefs, "approval:"+approval.ID)
-	case !Classify(draftOf(sow), in.issue.AuthorAssociation, in.policy.Catalog).NeedsApproval:
+	case !Classify(draftOf(sow), requester(in.issue), in.policy.Catalog).NeedsApproval:
 		p.delegation = delegated(in, sow)
 	}
 	return p.with(func() (state.OutboxMessage, error) {

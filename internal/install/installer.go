@@ -36,8 +36,16 @@ type Installer struct {
 	Sisf string
 	// Debug publishes the state store on 127.0.0.1:7469 in Docker mode.
 	Debug bool
-	// Signal sends a signal to a process; nil means syscall.Kill.
+	// LookPath finds a program on PATH; nil means exec.LookPath.
+	LookPath func(name string) (string, error)
+	// Signal sends a signal to a process, or to a process group for a
+	// negative pid; nil means syscall.Kill.
 	Signal func(pid int, sig syscall.Signal) error
+	// ProcessStart says when a process started, or "" when no such process
+	// lives; nil reads it from /proc on Linux and from ps elsewhere. It
+	// tells a
+	// recorded process from another that was later given its pid.
+	ProcessStart func(pid int) (string, error)
 	// SupervisorStatus asks the supervisor on a loopback address for its
 	// status; nil means supervisor.FetchStatus.
 	SupervisorStatus func(ctx context.Context, addr string) (supervisor.Status, error)

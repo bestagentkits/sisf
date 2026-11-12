@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,11 +43,11 @@ func TestDelegatedKeysAreIssuedReloadedRenewedAndChecked(t *testing.T) {
 	clock := sqlstoretest.NewClock(time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC))
 	dir, pub, root := trustVolume(t)
 
-	issued, err := loadSupervisorKeys(ctx, dir, testFactory, pub, root, clock)
+	issued, err := loadSupervisorKeys(ctx, dir, testFactory, pub, root, clock, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	reloaded, err := loadSupervisorKeys(ctx, dir, testFactory, pub, nil, clock)
+	reloaded, err := loadSupervisorKeys(ctx, dir, testFactory, pub, nil, clock, slog.New(slog.DiscardHandler))
 	if err != nil || reloaded.QA.KeyID() != issued.QA.KeyID() || reloaded.Artifact.KeyID() != issued.Artifact.KeyID() {
 		t.Fatalf("the issued keys were not reloaded: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestDelegatedKeysAreIssuedReloadedRenewedAndChecked(t *testing.T) {
 	}
 
 	clock.Advance(delegation.MaxLifetime - renewBefore/2)
-	renewed, err := loadSupervisorKeys(ctx, dir, testFactory, pub, root, clock)
+	renewed, err := loadSupervisorKeys(ctx, dir, testFactory, pub, root, clock, slog.New(slog.DiscardHandler))
 	if err != nil || renewed.QA.KeyID() == issued.QA.KeyID() {
 		t.Fatalf("a key about to expire was not replaced: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestDelegatedKeysAreIssuedReloadedRenewedAndChecked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadSupervisorKeys(ctx, dir, testFactory, other, nil, clock); err == nil {
+	if _, err := loadSupervisorKeys(ctx, dir, testFactory, other, nil, clock, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("keys delegated by another root were trusted")
 	}
 	path := filepath.Join(dir, delegationFile(delegation.PurposeQAReceipt))
@@ -84,7 +85,7 @@ func TestDelegatedKeysAreIssuedReloadedRenewedAndChecked(t *testing.T) {
 	if err := os.WriteFile(path, edited, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadSupervisorKeys(ctx, dir, testFactory, pub, nil, clock); err == nil {
+	if _, err := loadSupervisorKeys(ctx, dir, testFactory, pub, nil, clock, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("an edited delegation was trusted")
 	}
 }
@@ -93,8 +94,81 @@ func TestDelegatedKeysAreIssuedReloadedRenewedAndChecked(t *testing.T) {
 func TestMissingDelegatedKeysAreNotFound(t *testing.T) {
 	t.Parallel()
 	dir, pub, _ := trustVolume(t)
-	_, err := loadSupervisorKeys(context.Background(), dir, testFactory, pub, nil, core.SystemClock{})
+	_, err := loadSupervisorKeys(context.Background(), dir, testFactory, pub, nil, core.SystemClock{}, slog.New(slog.DiscardHandler))
 	if !core.HasCode(err, core.CodeNotFound) {
 		t.Fatalf("got %v, want NOT_FOUND", err)
+	}
+}
+
+// A receipt signed with a key that expired since still verifies as of an
+// instant the key was valid, and not as of one after its end.
+func TestASignatureIsJudgedAsOfAnEarlierInstant(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	start := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	clock := sqlstoretest.NewClock(start)
+	dir, pub, root := trustVolume(t)
+	keys, err := loadSupervisorKeys(ctx, dir, testFactory, pub, root, clock, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := core.NewPayloadBuilder("sisf.qa_receipt", 1).Bytes()
+	sig, err := keys.QA.Sign(ctx, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(2 * delegation.MaxLifetime)
+	if err := keys.Verifier.Verify(ctx, payload, sig); err == nil {
+		t.Fatal("an expired key still verifies now; the test does not exercise expiry")
+	}
+	then, err := keys.VerifierAt(start.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := then.Verify(ctx, payload, sig); err != nil {
+		t.Fatalf("the signature does not verify as of when the key was valid: %v", err)
+	}
+	later, err := keys.VerifierAt(start.Add(2 * delegation.MaxLifetime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := later.Verify(ctx, payload, sig); err == nil {
+		t.Fatal("the signature verifies as of after the key's end")
+	}
+}
+
+// A key revoked since the instant a signature is judged as of is refused:
+// the pinned verifier forgives expiry, never a revocation.
+func TestARevokedKeyIsRefusedAsOfAnEarlierInstant(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	start := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	clock := sqlstoretest.NewClock(start)
+	dir, pub, root := trustVolume(t)
+	keys, err := loadSupervisorKeys(ctx, dir, testFactory, pub, root, clock, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := core.NewPayloadBuilder("sisf.qa_receipt", 1).Bytes()
+	sig, err := keys.QA.Sign(ctx, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(time.Hour)
+	list, err := delegation.SignRevocations(ctx, root, delegation.RevocationList{
+		FactoryID: testFactory, Sequence: 1, IssuedAt: clock.Now(), KeyIDs: []string{keys.QA.KeyID()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keys.Verifier.ApplyRevocations(ctx, list); err != nil {
+		t.Fatal(err)
+	}
+	then, err := keys.VerifierAt(start.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := then.Verify(ctx, payload, sig); !core.HasCode(err, core.CodeSignatureInvalid) {
+		t.Fatalf("a signature by a revoked key verifies as of before the revocation: %v", err)
 	}
 }

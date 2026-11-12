@@ -16,12 +16,12 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -37,6 +37,7 @@ import (
 	"github.com/bestagentkits/sisf/internal/qa/agentjudge"
 	"github.com/bestagentkits/sisf/internal/supervisor/killswitch"
 	"github.com/bestagentkits/sisf/internal/testkit/fakegithub"
+	"github.com/bestagentkits/sisf/internal/testkit/fakeoidc"
 	"github.com/bestagentkits/sisf/pkg/agent"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
@@ -45,6 +46,7 @@ import (
 	"github.com/bestagentkits/sisf/pkg/state"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
+	"github.com/bestagentkits/sisf/pkg/telemetry"
 )
 
 // Start is the instant the harness clock starts at.
@@ -71,10 +73,22 @@ type Options struct {
 	// FactoryID gives the factory its own ID; with it the factory serves
 	// its own repository, "<factory id>/hello-app".
 	FactoryID core.FactoryID
+	// ReleaseUnits replaces the manifest's release.units, the units the
+	// Owner lets the factory publish by itself. The sample manifest names
+	// the application alone.
+	ReleaseUnits []manifest.UnitName
+	// UnitInputs sets the installed manifest's release.unit_inputs, the
+	// paths each unit consumes in place of its built-in inputs.
+	UnitInputs map[manifest.UnitName][]string
 	// Upstream is a fake GitHub shared with other factories, where the
 	// factory's repository is a fork of the upstream one. A factory gets a
 	// fake GitHub of its own when it is nil.
 	Upstream *Upstream
+	// Decision runs the decision layer on every control pass that is due.
+	Decision *wiring.DecisionConfig
+	// Reconcile configures the control zone's polls of GitHub; zero values
+	// take the defaults, polling the fake GitHub every DefaultReconcileInterval.
+	Reconcile wiring.ReconcileConfig
 	// Coder, when set, is the coding agent the dispatcher runs in place of
 	// the scripted one, and CoderArtifacts where the agent zone's exporter
 	// reads its patches.
@@ -84,6 +98,10 @@ type Options struct {
 	// in place of the scripted one, from the materials the supervisor
 	// gathers of each candidate.
 	QAJudge func(materials agentjudge.MaterialsSource) (qa.Judge, error)
+	// OperatorToken makes the factory a development install that acts with
+	// the operator's own gh login: it names no GitHub App installation,
+	// takes no webhooks and learns of issues only by reconciliation.
+	OperatorToken bool
 }
 
 // Factory is one factory running in the test process.
@@ -118,11 +136,21 @@ type Factory struct {
 	ControlStore *sqlstore.Store
 	AgentStore   *sqlstore.Store
 
+	// Identity is the fake identity provider people sign in at; it also
+	// answers GitHub's sign-in and repository permission API.
+	Identity *fakeoidc.Server
+	// Supervisor stands for the release supervisor's admin socket.
+	Supervisor *FakeSupervisor
+	// Telemetry is what telemetry.search reads.
+	Telemetry *telemetry.MemoryStore
+
 	opts       Options
-	ownerToken string
 	dsn        string
 	controlSrv *httptest.Server
-	runs       atomic.Int64
+	// owner is the Owner's browser, signed in on first use.
+	ownerOnce sync.Once
+	owner     *Person
+	runs      atomic.Int64
 	// dispatchers counts the dispatcher processes started, for their names.
 	dispatchers atomic.Int64
 }
@@ -132,17 +160,27 @@ func New(t testing.TB, opts Options) *Factory {
 	t.Helper()
 	ctx := context.Background()
 	root := moduleRoot(t)
-	f := &Factory{t: t, opts: opts, Clock: sqlstoretest.NewClock(Start), ownerToken: token(t), dsn: filepath.Join(t.TempDir(), "factory.db")}
+	f := &Factory{t: t, opts: opts, Clock: sqlstoretest.NewClock(Start), dsn: filepath.Join(t.TempDir(), "factory.db"),
+		Supervisor: &FakeSupervisor{}, Telemetry: telemetry.NewMemoryStore(1000)}
 
 	manifestBytes := read(t, root, policy.PathFactory)
 	if opts.FactoryID != "" {
 		manifestBytes = forkManifest(manifestBytes, opts.FactoryID)
+	}
+	if len(opts.ReleaseUnits) > 0 {
+		manifestBytes = releaseUnitsManifest(t, manifestBytes, opts.ReleaseUnits)
 	}
 	m, err := manifest.Parse(manifestBytes)
 	if err != nil {
 		t.Fatalf("harness: the sample manifest cannot be read: %v", err)
 	}
 	m.Extensions = map[string]any{"profile": "sim"}
+	if opts.UnitInputs != nil {
+		m.Release.UnitInputs = opts.UnitInputs
+		if found := manifest.Validate(m); len(found) != 0 {
+			t.Fatalf("harness: the declared unit inputs are not valid: %v", found)
+		}
+	}
 	f.Manifest, f.Repo = m, m.Repository.Owner+"/"+m.Repository.Repo
 
 	host := opts.Upstream
@@ -150,6 +188,10 @@ func New(t testing.TB, opts Options) *Factory {
 		host = newHost(t)
 	}
 	f.host, f.GitHub, f.GitData = host, host.GitHub, host.GitData
+	if opts.OperatorToken {
+		m.Mode = manifest.ModeStandalone
+		m.Extensions = map[string]any{"profile": "default", "dev": true, "github_auth_via": "gh-cli", "github_api_url": host.URL}
+	}
 	if err := f.GitHub.AddRepo(f.Repo); err != nil {
 		t.Fatal(err)
 	}
@@ -195,18 +237,22 @@ func New(t testing.TB, opts Options) *Factory {
 		owner, name, _ := strings.Cut(opts.Upstream.Repo, "/")
 		upstream = github.RepoRef{Owner: owner, Name: name}
 	}
+	f.controlSrv = httptest.NewUnstartedServer(nil)
+	base := "http://" + f.controlSrv.Listener.Addr().String()
 	f.Control, err = wiring.NewControl(wiring.ControlConfig{
-		Manifest: m, Store: f.ControlStore, GitHub: client, OwnerToken: core.NewSecretValue([]byte(f.ownerToken)),
+		Manifest: m, Store: f.ControlStore, GitHub: client,
 		WebhookSecret: core.NewSecretValue([]byte(webhookSecret)), ApprovalKey: key, Clock: f.Clock, Upstream: upstream,
 		Probes: map[core.Zone]control.HealthProbe{
 			core.ZoneApplication: control.HealthProbeFunc(func(context.Context) error { return nil }),
 			core.ZoneAgent:       control.HealthProbeFunc(f.dispatcherAlive),
 		},
+		Surfaces: f.surfaceConfig(base), Decision: opts.Decision, Reconcile: opts.Reconcile,
 	})
 	if err != nil {
 		t.Fatalf("harness: build the control zone: %v", err)
 	}
-	f.controlSrv = httptest.NewServer(f.Control.Server.Handler())
+	f.controlSrv.Config.Handler = f.Control.Server.Handler()
+	f.controlSrv.Start()
 	t.Cleanup(f.controlSrv.Close)
 	host.subscribe(f.controlSrv.URL + "/webhooks/github")
 
@@ -225,9 +271,12 @@ func New(t testing.TB, opts Options) *Factory {
 
 // SeedFiles are the application and dashboard sources the fake repository
 // starts with, next to the foundation files: what a scripted patch changes.
+// site/status.html is a page of the control unit outside the dashboard's
+// own templates, which a test may declare an input of control.
 var SeedFiles = map[string]string{
-	"app/main.go":                "package main\n\nfunc main() { println(\"hello\") }\n",
+	"examples/hello-app/main.go": "package main\n\nfunc main() { println(\"hello\") }\n",
 	"ui/dashboard/status.html":   "<h1>Factory status</h1>\n<p>All systems nominal.</p>\n",
+	"site/status.html":           "<h1>Factory status</h1>\n<p>All systems nominal.</p>\n",
 	"internal/qa/thresholds.txt": "pass_score=85\n",
 }
 
@@ -312,6 +361,9 @@ func (f *Factory) dispatcherAlive(context.Context) error {
 	}
 	return nil
 }
+
+// APIURL is the address of the fake GitHub's API the factory talks to.
+func (f *Factory) APIURL() string { return f.host.URL }
 
 // Pass runs one round of the control zone's background work and fails the
 // test on an error.
@@ -409,26 +461,4 @@ func (f *Factory) Runs(number int) []dispatcher.RunRecord {
 		}
 	}
 	return out
-}
-
-// Get calls the control zone's API with the Owner token and decodes the
-// JSON answer into out. It returns the HTTP status.
-func (f *Factory) Get(path string, out any) int {
-	f.t.Helper()
-	req, err := http.NewRequest(http.MethodGet, f.controlSrv.URL+path, nil)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer "+f.ownerToken)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		f.t.Fatalf("harness: GET %s: %v", path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if out != nil {
-		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-			f.t.Fatalf("harness: decode %s: %v", path, err)
-		}
-	}
-	return resp.StatusCode
 }

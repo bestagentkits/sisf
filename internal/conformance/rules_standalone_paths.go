@@ -5,6 +5,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
@@ -15,7 +16,9 @@ type placedMount struct {
 	unit   manifest.UnitName
 	at     string // manifest path of the mount
 	volume string
-	dir    string // cleaned mount path
+	dir    string // mount path as onDisk compares it
+	// written is the mount path cleaned, in the letters it is written in.
+	written string
 	// owner tells volumes with different owners apart: the owning zone, and
 	// for a shared volume also the unit that holds it.
 	owner string
@@ -36,7 +39,7 @@ func (c *checker) placedMounts() []placedMount {
 			}
 			placed = append(placed, placedMount{
 				unit: name, at: fmt.Sprintf("units.%s.mounts[%d]", name, i),
-				volume: mount.Volume, dir: path.Clean(mount.Path), owner: owner,
+				volume: mount.Volume, dir: onDisk(mount.Path), written: path.Clean(mount.Path), owner: owner,
 			})
 		}
 	}
@@ -53,12 +56,15 @@ func (c *checker) placedMounts() []placedMount {
 //     release and the signing keys;
 //   - no two volumes with different owners share a directory, because one
 //     zone would then write the other's files;
+//   - every mount of one volume names one directory (see
+//     checkVolumeDirectories);
 //   - no mount climbs out of the factory root, because a directory above it
 //     holds every directory below it, the trust volume and the other zones'
 //     data included (see refuseClimbingMount).
 //
-// Directories are compared as written, after cleaning; in Docker mode a
-// mount path is a place inside one container and says nothing of another.
+// Directories are compared after cleaning and without regard to letter
+// case (see onDisk); in Docker mode a mount path is a place inside one
+// container and says nothing of another.
 func (c *checker) checkStandalonePaths() {
 	if c.m.Mode != manifest.ModeStandalone {
 		return
@@ -68,6 +74,7 @@ func (c *checker) checkStandalonePaths() {
 		trust = c.m.Supervisor.TrustVolume
 	}
 	placed := c.placedMounts()
+	c.checkVolumeDirectories(placed)
 	var mounts []placedMount
 	for _, mount := range placed {
 		if climbs(mount.dir) {
@@ -99,13 +106,37 @@ func (c *checker) checkStandalonePaths() {
 	}
 }
 
+// checkVolumeDirectories requires every mount of one volume to name one
+// directory. Two directories are two places on disk that the manifest calls
+// one volume, so the owner, holder and read-only mounts it declares for the
+// volume describe neither. Paths are compared as written, after cleaning:
+// two spellings that differ only by case are one directory where the file
+// system ignores case and two where it does not, so they are refused too.
+func (c *checker) checkVolumeDirectories(placed []placedMount) {
+	first := map[string]placedMount{}
+	for _, mount := range placed {
+		earlier, seen := first[mount.volume]
+		if !seen {
+			first[mount.volume] = mount
+			continue
+		}
+		if mount.written == earlier.written {
+			continue
+		}
+		c.addOnce(RuleVolumeDirectories, mount.at+".path",
+			fmt.Sprintf("mount volume %q at the directory %s names, written the same way", mount.volume, earlier.at),
+			"unit %q mounts volume %q at a directory other than the one %s names; on one machine a volume is one directory, so the two are different files and what the manifest declares of the volume holds for neither", mount.unit, mount.volume, earlier.at)
+	}
+}
+
 // refuseClimbingMount reports a mount whose directory climbs out of the
-// factory root. Such a directory holds every relative directory of the
-// deployment, so it is reported once, as an exposure of the trust volume
-// when it is or holds that volume's directory and as an overlap of owners
-// otherwise, and is not compared pair by pair.
+// factory root or is the root of the file system. Such a directory holds
+// every relative directory of the deployment, so it is reported once, as an
+// exposure of the trust volume when it is or holds that volume's directory
+// and as an overlap of owners otherwise, and is not compared pair by pair.
 func (c *checker) refuseClimbingMount(mount placedMount, trust string, placed []placedMount) {
-	const fix = "mount the volume at a directory inside the factory root, without .. climbing above it, or at an absolute directory of its own"
+	const fix = "mount the volume at a directory inside the factory root, without .. climbing above it, or at an absolute directory of its own other than the root of the file system; " +
+		"a sibling of the factory root such as ../app-data is refused only because the name of the factory root is unknown, so it may be the factory root itself"
 	holdsTrust := trust != "" && (mount.volume == trust || slices.ContainsFunc(placed, func(other placedMount) bool {
 		return other.volume == trust && within(other.dir, mount.dir)
 	}))
@@ -118,20 +149,49 @@ func (c *checker) refuseClimbingMount(mount placedMount, trust string, placed []
 		"unit %q mounts volume %q at a directory that climbs out of the factory root; on one machine that directory holds every other directory of the deployment, so its owner writes the data of the other owners", mount.unit, mount.volume)
 }
 
+// foldCase returns the spelling every case variant of s shares: each letter
+// is replaced by the least of the letters it is equal to without regard to
+// case, so "data/Trust" and "DATA/trust" fold alike, as do the Kelvin sign
+// and K. A file system that ignores case, as macOS does by default, opens
+// all of them as one name.
+func foldCase(s string) string {
+	return strings.Map(func(r rune) rune {
+		least := r
+		for other := unicode.SimpleFold(r); other != r; other = unicode.SimpleFold(other) {
+			least = min(least, other)
+		}
+		return least
+	}, s)
+}
+
+// onDisk returns the form in which a Standalone path is compared with
+// another when a match refuses the manifest: cleaned, and with letter case
+// folded, because on a file system that ignores case two spellings are one
+// directory. A comparison whose match accepts a manifest, such as a store
+// placed inside the volume that holds it, compares the paths as written, so
+// that a file system that tells case apart is not taken to hold what it
+// does not.
+func onDisk(file string) string { return foldCase(path.Clean(file)) }
+
 // overlap reports whether two cleaned directories are equal or nested.
 func overlap(a, b string) bool { return within(a, b) || within(b, a) }
 
-// climbs reports whether a relative path leads out of the directory it is
-// relative to once cleaned, such as ".." or "../elsewhere".
+// climbs reports whether a path leads out of the factory root once cleaned:
+// a relative path that climbs out of the directory it is relative to, such
+// as ".." or "../elsewhere", or the root of the file system, which holds the
+// factory root wherever it is.
 func climbs(file string) bool {
 	file = path.Clean(file)
-	return file == ".." || strings.HasPrefix(file, "../")
+	return file == ".." || strings.HasPrefix(file, "../") || file == "/"
 }
 
 // within reports whether location is root or a path below it.
 func within(location, root string) bool {
 	location, root = path.Clean(location), path.Clean(root)
 	switch {
+	case root == "/":
+		// The root of the file system holds every path, relative or not.
+		return true
 	case climbs(root):
 		// A directory above the working directory holds the working
 		// directory, so it is taken to hold every relative path; how far a

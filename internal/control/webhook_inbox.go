@@ -31,20 +31,27 @@ func newInboxSink(store state.Store, log *slog.Logger) github.Sink {
 			log.Debug("dropped an echo of the factory's own edit", "delivery", ev.DeliveryID)
 			return nil
 		}
-		payload, err := json.Marshal(ev)
-		if err != nil {
-			return core.NewError(core.CodeInternal, "the event could not be encoded").WithCause(err)
-		}
 		return store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-			accepted, err := tx.AcceptDelivery(ctx, state.InboxEntry{
-				Source: InboxSourceGitHub, DeliveryID: ev.DeliveryID, EventType: ev.Type,
-				Payload: payload, ReceivedAt: ev.ReceivedAt,
-			})
-			if err != nil || !accepted {
-				// A repeated delivery is already stored and projected.
-				return err
-			}
-			return projectEvent(ctx, tx, ev)
+			_, err := acceptEvent(ctx, tx, ev)
+			return err
 		})
 	}
+}
+
+// acceptEvent stores ev in the inbox and folds it into its issue's view,
+// unless an entry with its delivery ID is already there.
+func acceptEvent(ctx context.Context, tx state.Tx, ev github.WebhookEvent) (bool, error) {
+	payload, err := json.Marshal(ev)
+	if err != nil {
+		return false, core.NewError(core.CodeInternal, "the event could not be encoded").WithCause(err)
+	}
+	accepted, err := tx.AcceptDelivery(ctx, state.InboxEntry{
+		Source: InboxSourceGitHub, DeliveryID: ev.DeliveryID, EventType: ev.Type,
+		Payload: payload, ReceivedAt: ev.ReceivedAt,
+	})
+	if err != nil || !accepted {
+		// A repeated delivery is already stored and projected.
+		return false, err
+	}
+	return true, projectEvent(ctx, tx, ev)
 }

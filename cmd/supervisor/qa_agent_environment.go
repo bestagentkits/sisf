@@ -1,16 +1,14 @@
 package main
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"slices"
 
-	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/cmd/supervisor/runcontrol"
+	"github.com/bestagentkits/sisf/internal/manifestsettings"
 	"github.com/bestagentkits/sisf/pkg/agent/agentenv"
 	"github.com/bestagentkits/sisf/pkg/core"
-	"github.com/bestagentkits/sisf/pkg/state"
 )
 
 // paths returns the QA root, HOME and TMPDIR. The root and the private
@@ -53,7 +51,7 @@ func (q *qaFlags) paths(d judgeDeps, exec string) (root, home, tmp string, err e
 // The supervisor's own secrets are never among them.
 func (q *qaFlags) environment(d judgeDeps, home, tmp string) ([]string, error) {
 	return agentenv.Build(agentenv.Spec{
-		Agent: q.agent, Home: home, TempDir: tmp, Extra: agentenv.Names(q.env), LookupEnv: d.lookupEnv,
+		Agent: q.agent, Home: home, OperatorHome: q.home != "", TempDir: tmp, Extra: agentenv.Names(q.env), LookupEnv: d.lookupEnv,
 		Forbidden: []string{runcontrol.EnvToken, envGitHubToken, envEdgeAdminToken, d.dsnEnv, d.rootKeyEnv},
 	})
 }
@@ -70,15 +68,7 @@ func (l *lifecycleFlags) protectedDirs(trustDir, dsnEnv string, lookupEnv func(s
 		}
 	}
 	if dsn, ok := lookupEnv(dsnEnv); ok && dsnEnv != "" {
-		dirs = append(dirs, wiring.StateStoreDir(dsn))
+		dirs = append(dirs, manifestsettings.StateStoreDir(dsn))
 	}
 	return dirs
-}
-
-// storeUsage records the QA agent's usage in the budget ledger of the
-// operational store, as the control zone may.
-type storeUsage struct{ store state.Store }
-
-func (s storeUsage) AppendUsage(ctx context.Context, u core.Usage) error {
-	return s.store.Update(ctx, func(ctx context.Context, tx state.Tx) error { return tx.AppendUsage(ctx, u) })
 }

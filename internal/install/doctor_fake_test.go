@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -66,7 +68,7 @@ func (n *fakeNet) requestsTo(hostPath string) []*http.Request {
 }
 
 const (
-	healthyZones = `{"status":"ok","zones":{"application":"ok","agent":"ok","control":"ok"}}`
+	healthyZones = `{"factory_id":"sisf-hello-app","status":"ok","zones":{"application":"ok","agent":"ok","control":"ok"}}`
 	repoWritable = `{"full_name":"acme/hello-app","permissions":{"push":true,"pull":true}}`
 )
 
@@ -106,8 +108,43 @@ func supervisorWith(lkg bool) func(context.Context, string) (supervisor.Status, 
 	}
 }
 
+// asThisInstall makes a fake supervisor name the factory and the root key of
+// in, as the supervisor of this install does.
+func asThisInstall(in *Installer, status func(context.Context, string) (supervisor.Status, error)) func(context.Context, string) (supervisor.Status, error) {
+	return func(ctx context.Context, addr string) (supervisor.Status, error) {
+		s, err := status(ctx, addr)
+		m, merr := in.Layout.LoadManifest()
+		if merr != nil {
+			return s, merr
+		}
+		s.FactoryID, s.SelfCheck.ManifestKeyID = m.FactoryID, in.rootKeyID()
+		return s, err
+	}
+}
+
+// markRunning holds the run lock and writes the pid file of a foreground
+// `sisf up`, and makes every pid alive, as for an install whose factory runs.
+func markRunning(t *testing.T, in *Installer) {
+	t.Helper()
+	heldRunLocks.Store(in.Layout.Dir, holdRunLock(t, in, 4242, nil))
+	in.Signal, in.ProcessStart = func(int, syscall.Signal) error { return nil }, everyPIDStarted
+}
+
+// heldRunLocks are the run locks markRunning holds, by install directory.
+var heldRunLocks sync.Map
+
+// markStopped ends the `sisf up` markRunning stood in for: its run lock is
+// dropped, as the kernel drops it when the process ends, and no pid is alive.
+func markStopped(in *Installer) {
+	if lock, ok := heldRunLocks.LoadAndDelete(in.Layout.Dir); ok {
+		_ = lock.(*os.File).Close()
+	}
+	signals := &fakeSignals{}
+	in.Signal, in.ProcessStart = signals.send, signals.start
+}
+
 // builtStandalone returns an installer holding a Standalone install that was
-// built and signed but is not running; the fake network says what answers.
+// built, signed and is running; the fake network says what answers.
 func builtStandalone(t *testing.T, net *fakeNet, mutate func(*Options)) *Installer {
 	t.Helper()
 	in, exec, _ := newTestInstaller(t)
@@ -134,7 +171,14 @@ func builtStandalone(t *testing.T, net *fakeNet, mutate func(*Options)) *Install
 		t.Fatal(err)
 	}
 	in.HTTP = &http.Client{Transport: net, Timeout: time.Second}
-	in.SupervisorStatus = supervisorWith(true)
+	in.SupervisorStatus = asThisInstall(in, supervisorWith(true))
+	net.mu.Lock()
+	if r, ok := net.routes["127.0.0.1:7463/healthz"]; ok {
+		r.body = strings.Replace(r.body, `"sisf-hello-app"`, `"`+string(m.FactoryID)+`"`, 1)
+		net.routes["127.0.0.1:7463/healthz"] = r
+	}
+	net.mu.Unlock()
+	markRunning(t, in)
 	return in
 }
 

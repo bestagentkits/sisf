@@ -58,7 +58,8 @@ func executionIsolates(name string) bool {
 // private HOME and TMPDIR below the workspace root, the credential
 // variables of the chosen agent and the names --agent-env adds. None of
 // the dispatcher's own variables is ever among them. With --agent-home the
-// HOME is the operator's own instead; TMPDIR stays private.
+// HOME is the operator's own instead, with the operator's USER so the
+// agent finds the login kept under that account; TMPDIR stays private.
 func agentEnvironment(cfg AgentZoneConfig) ([]string, error) {
 	lookup := cfg.LookupEnv
 	if lookup == nil {
@@ -76,8 +77,8 @@ func agentEnvironment(cfg AgentZoneConfig) ([]string, error) {
 		home = cfg.Home
 	}
 	return agentenv.Build(agentenv.Spec{
-		Agent: cfg.Agent, Home: home, TempDir: tmp, Extra: cfg.AgentEnv, LookupEnv: lookup,
-		Forbidden: []string{EnvStateDSN, runcontrol.EnvToken, EnvOwnerToken, EnvWebhookSecret, EnvGitHubToken, EnvApprovalKey},
+		Agent: cfg.Agent, Home: home, OperatorHome: cfg.Home != "", TempDir: tmp, Extra: cfg.AgentEnv, LookupEnv: lookup,
+		Forbidden: []string{EnvStateDSN, runcontrol.EnvToken, EnvWebhookSecret, EnvGitHubToken, EnvApprovalKey},
 	})
 }
 

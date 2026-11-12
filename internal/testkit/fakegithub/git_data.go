@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -26,16 +27,25 @@ type GitData struct {
 	refs  map[string]map[string]string // repo key -> branch -> commit SHA
 	// commitTree maps "repo key@commit" to the tree of a commit made here.
 	commitTree map[string]string
-	// writes counts the requests that ask to write git data.
-	writes int
+	// parents maps "repo key@commit" to the parents a commit was made with.
+	parents map[string][]string
+	// writes counts the requests that ask to write git data; merges the
+	// pull requests merged.
+	writes, merges int
 	// routeFaults are canned refusals of chosen routes; see FailOn.
 	routeFaults []routeFault
+	// beyondLimit makes every comparison answer as one of more files than
+	// GitHub lists; see CompareBeyondTheLimit.
+	beyondLimit bool
+	// listingLag is how many more listings of pull requests answer none;
+	// see ListNoPullsFor.
+	listingLag int
 }
 
 // NewGitData wraps s.
 func NewGitData(s *Server) *GitData {
 	g := &GitData{s: s, mux: http.NewServeMux(), trees: map[string]map[string][]byte{},
-		refs: map[string]map[string]string{}, commitTree: map[string]string{}}
+		refs: map[string]map[string]string{}, commitTree: map[string]string{}, parents: map[string][]string{}}
 	const repoPath = "/repos/{owner}/{repo}"
 	g.mux.HandleFunc("GET "+repoPath+"/git/ref/heads/{branch...}", g.getRef)
 	g.mux.HandleFunc("GET "+repoPath+"/git/commits/{sha}", g.getCommit)
@@ -44,6 +54,9 @@ func NewGitData(s *Server) *GitData {
 	g.mux.HandleFunc("POST "+repoPath+"/git/refs", g.createRef)
 	g.mux.HandleFunc("PATCH "+repoPath+"/git/refs/heads/{branch...}", g.updateRef)
 	g.mux.HandleFunc("GET "+repoPath+"/compare/{basehead}", g.compare)
+	g.mux.HandleFunc("GET "+repoPath+"/pulls", g.listPulls)
+	g.mux.HandleFunc("GET "+repoPath+"/pulls/{number}", g.getPull)
+	g.mux.HandleFunc("PUT "+repoPath+"/pulls/{number}/merge", g.mergePull)
 	g.mux.Handle("/", s)
 	return g
 }
@@ -55,13 +68,16 @@ func (g *GitData) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.writes++
 		g.mu.Unlock()
 	}
-	if strings.Contains(r.URL.Path, "/git/") || strings.Contains(r.URL.Path, "/compare/") {
+	if strings.Contains(r.URL.Path, "/git/") || strings.Contains(r.URL.Path, "/compare/") || strings.Contains(r.URL.Path, "/pulls") {
 		if !g.s.authorized(r) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
 			return
 		}
 	}
 	if f, ok := g.takeRouteFault(r); ok {
+		if f.after {
+			g.mux.ServeHTTP(httptest.NewRecorder(), r) // done, but the answer is lost
+		}
 		writeError(w, f.status, f.message)
 		return
 	}

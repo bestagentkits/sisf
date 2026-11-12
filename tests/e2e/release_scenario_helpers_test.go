@@ -25,8 +25,6 @@ type releaseDeployment interface {
 	setAgentPatch(t *testing.T, diff string)
 	// records lists every issue's record: its state, run and attempt.
 	records(t *testing.T) []issueRecord
-	// kv reads one entry of the store's key-value table, "" when absent.
-	kv(t *testing.T, namespace, key string) string
 	// candidateDigest is the digest of the candidate the issue was built into.
 	candidateDigest(t *testing.T, issue string) string
 	// edgeURL is the base URL of the edge, where the application is served.
@@ -47,10 +45,11 @@ type releaseRecord struct {
 }
 
 // The sources the fake repository holds next to the foundation files: what
-// the scenarios' patches change. app/ is the application, ui/dashboard/ the
-// control plane's dashboard, internal/qa/ the trusted QA baseline.
+// the scenarios' patches change. examples/hello-app/ is the application,
+// ui/dashboard/ the control plane's dashboard, internal/qa/ the trusted QA
+// baseline.
 var seedFiles = map[string]string{
-	"app/main.go":                "package main\n\nfunc main() { println(\"hello\") }\n",
+	"examples/hello-app/main.go": "package main\n\nfunc main() { println(\"hello\") }\n",
 	"ui/dashboard/status.html":   "<h1>Factory status</h1>\n<p>All systems nominal.</p>\n",
 	"internal/qa/thresholds.txt": "pass_score=85\n",
 }
@@ -58,8 +57,8 @@ var seedFiles = map[string]string{
 // The patches the scripted agent leaves in the scenarios; setPatch fills
 // in their {run} marker.
 const (
-	greetingDiff = `--- a/app/main.go
-+++ b/app/main.go
+	greetingDiff = `--- a/examples/hello-app/main.go
++++ b/examples/hello-app/main.go
 @@ -1,3 +1,3 @@
  package main
 
@@ -94,8 +93,10 @@ const releaseLimit = 5 * time.Minute
 // scripted agent leave diff.
 func seedRelease(t *testing.T, d releaseDeployment, diff string) {
 	t.Helper()
-	gh := d.github()
-	d.approvePolicy(t, gh.commit(t, foundation(t, d.factoryYAML(t))))
+	// The issues of earlier tests come to rest before the policy changes,
+	// so none of their runs is cut short by a change of policy.
+	awaitQuiet(t, d)
+	seedPolicy(t, d)
 	awaitQuiet(t, d)
 	setPatch(t, d, diff)
 }
@@ -235,6 +236,8 @@ func runFullLifecycle(t *testing.T, d releaseDeployment) {
 	if gh.commentsWith(t, number, "Release rolled back") != 0 {
 		t.Fatal("a rollback was reported on a release that succeeded")
 	}
+	// The supervisor merged the candidate's pull request before the close.
+	requireLanded(t, gh, number, "examples/hello-app/main.go")
 	if !strings.HasPrefix(candidate, "sha256:") {
 		t.Fatalf("the candidate digest is %q", candidate)
 	}

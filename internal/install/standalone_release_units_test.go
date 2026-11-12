@@ -43,7 +43,7 @@ func TestStandaloneRunsTheLifecycleWithNativeProcessesAndTheLocalBackends(t *tes
 	must(t, err)
 	info, _ := os.Stat(r.in.Layout.Bin(appLauncher))
 	if info.Mode().Perm() != 0o755 || !strings.Contains(string(script), `HELLO_ADDR="$SISF_LISTEN"`) ||
-		!strings.Contains(string(script), "exec '"+r.in.Layout.Bin("hello-app")+"'") {
+		!strings.Contains(string(script), "program='"+r.in.Layout.Bin("hello-app")+"'") || !strings.Contains(string(script), `exec "$program"`) {
 		t.Errorf("the launcher (%04o):\n%s", info.Mode().Perm(), script)
 	}
 	if _, err := readDelegations(dirReader(r.in.Layout.Data("trust")), "sisf-hello-app"); err != nil {
@@ -80,5 +80,48 @@ func TestAProductionStandaloneInstallRunsTheAgentJudge(t *testing.T) {
 	}
 	if err := (LifecycleChoice{BuildCommand: "/opt/sisf/build-candidate --unit=app"}).check(); err != nil {
 		t.Errorf("a plain build command was refused: %v", err)
+	}
+}
+
+// Outside the simulation the scripted coding agent, the default when no
+// real one is chosen, leaves the install's own patch, which a test or the
+// Owner may replace, after the same short work as in the simulation.
+func TestTheScriptedCoderOfAProductionInstallLeavesTheInstallsPatch(t *testing.T) {
+	t.Parallel()
+	in, _, _ := newTestInstaller(t)
+	args := in.standaloneDispatcherArgs(lifecycleChoice(Options{}, manifest.ModeStandalone), false)
+	for _, want := range []string{"--fake-agent-patch=" + in.Layout.SimAgentDir() + "/" + simPatchFile, "--fake-agent-work=" + simAgentWork} {
+		if !slices.Contains(args, want) {
+			t.Errorf("the dispatcher lacks %s: %v", want, args)
+		}
+	}
+	real := in.standaloneDispatcherArgs(lifecycleChoice(Options{Agents: AgentOptions{Coder: "claude"}}, manifest.ModeStandalone), false)
+	if strings.Contains(strings.Join(real, " "), "--fake-agent") {
+		t.Errorf("a real coding agent is given the scripted agent's patch: %v", real)
+	}
+}
+
+// A release whose real traffic is too thin is judged by the application's
+// synthetic suite: an install whose manifest names one builds it next to
+// the application and gives it to the supervisor; one that names none
+// gives none, and such a release holds.
+func TestTheSupervisorRunsTheSyntheticSuiteTheManifestNames(t *testing.T) {
+	t.Parallel()
+	if !slices.ContainsFunc(standalonePrograms, func(p program) bool {
+		return p.file == syntheticProgram && p.pkg == "./examples/hello-app/cmd/hello-app-synthetic" && len(p.units) == 0
+	}) {
+		t.Errorf("the install does not build the synthetic suite: %+v", standalonePrograms)
+	}
+	in, _, _ := newTestInstaller(t)
+	c := lifecycleChoice(Options{}, manifest.ModeStandalone)
+	m := &manifest.Manifest{FactoryID: "sisf-shop"}
+	m.Release.LowTraffic.SyntheticSuite = "synthetic"
+	want := "--synthetic-program=" + in.Layout.Bin(syntheticProgram)
+	if args := in.standaloneSupervisorArgs(m, c); !slices.Contains(args, want) {
+		t.Errorf("the supervisor lacks %s: %v", want, args)
+	}
+	m.Release.LowTraffic.SyntheticSuite = ""
+	if args := strings.Join(in.standaloneSupervisorArgs(m, c), " "); strings.Contains(args, "--synthetic-program") {
+		t.Errorf("a manifest with no synthetic suite runs one: %s", args)
 	}
 }

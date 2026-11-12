@@ -28,7 +28,7 @@ import (
 	"github.com/bestagentkits/sisf/pkg/state"
 )
 
-// greeted is app/main.go after the coding agent's change.
+// greeted is examples/hello-app/main.go after the coding agent's change.
 const greeted = "package main\n\nfunc main() { println(\"hello, world\") }\n"
 
 // An issue goes the whole way with real agent adapters on both sides: a
@@ -107,7 +107,7 @@ func agentFactory(t *testing.T, judgments []clitest.Script) *harness.Factory {
 	t.Helper()
 	coderBin := clitest.Install(t, "claude", clitest.Script{Steps: []clitest.Step{
 		{AwaitStdin: "*EOF*"},
-		{WriteFile: map[string]string{"app/main.go": greeted}},
+		{WriteFile: map[string]string{"examples/hello-app/main.go": greeted}},
 		{Emit: `{"type":"system","subtype":"init","model":"mid"}`},
 		{Emit: `{"type":"assistant","message":{"content":[{"type":"text","text":"Changed the greeting."}]}}`},
 		{Emit: `{"type":"result","subtype":"success","is_error":false,"result":"Changed the greeting.","total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":20}}`},
@@ -119,7 +119,8 @@ func agentFactory(t *testing.T, judgments []clitest.Script) *harness.Factory {
 	}
 	judges := make([]qa.Judge, 0, len(judgments))
 	return harness.New(t, harness.Options{
-		Coder:          &lifecycle.FreshWorkspaces{Backend: finished{coder}, Root: t.TempDir(), Provision: seedRepository},
+		Coder: usageOf{Backend: &lifecycle.FreshWorkspaces{Backend: finished{coder}, Root: t.TempDir(), Provision: seedRepository},
+			usage: coder},
 		CoderArtifacts: lifecycle.FileArtifacts{Root: artifacts},
 		QAJudge: func(materials agentjudge.MaterialsSource) (qa.Judge, error) {
 			for _, script := range judgments {
@@ -129,7 +130,7 @@ func agentFactory(t *testing.T, judgments []clitest.Script) *harness.Factory {
 					return nil, err
 				}
 				judge, err := agentjudge.New(agentjudge.Config{Agent: backend, Materials: materials, WorkspaceRoot: t.TempDir(),
-					Timeout: time.Minute})
+					Timeout: time.Minute, Usage: stages.JudgeUsage{State: materials.(stages.CandidateMaterials).State}})
 				if err != nil {
 					return nil, err
 				}
@@ -176,7 +177,7 @@ func qaRun(correctness int) []clitest.Step {
 		if category == qa.CategoryCorrectness {
 			points = correctness
 		}
-		scores[string(category)] = map[string]any{"points": points, "evidence": "app/main.go: the greeting changed"}
+		scores[string(category)] = map[string]any{"points": points, "evidence": "examples/hello-app/main.go: the greeting changed"}
 	}
 	raw, _ := json.Marshal(map[string]any{"version": 1, "scores": scores, "hard_gate_observations": []any{}, "summary": "judged"})
 	return codexStream(agentjudge.OpenMarker + "\n" + string(raw) + "\n" + agentjudge.CloseMarker)
@@ -209,11 +210,28 @@ func (j *inTurn) Score(ctx context.Context, req qa.JudgeRequest) (qa.Scorecard, 
 	return judge.Score(ctx, req)
 }
 
+// usageOf is the wrapped coder that still reports its adapter's usage, as
+// the agent zone wires a real coding agent.
+type usageOf struct {
+	agent.Backend
+	usage agent.UsageReporter
+}
+
+func (u usageOf) Usage(ctx context.Context, ref agent.RunRef) ([]core.Usage, error) {
+	return u.usage.Usage(ctx, ref)
+}
+
 // finished starts a run and returns once it has ended, so the harness's
 // next dispatcher round sees it done without waiting on the wall clock.
+//
+// The fake GitHub's commit IDs are content hashes, not git objects, so
+// seedRepository cannot check the workspace out at the base the dispatcher
+// names; its seed commit, which holds the same files, stands in for it and
+// the agent's patch is taken against the workspace's HEAD.
 type finished struct{ agentjudge.Runner }
 
 func (f finished) Start(ctx context.Context, task agent.Task, ws agent.WorkspaceRef, scopes []string) (agent.RunRef, error) {
+	ws.BaseSHA = ""
 	ref, err := f.Runner.Start(ctx, task, ws, scopes)
 	if err != nil {
 		return ref, err

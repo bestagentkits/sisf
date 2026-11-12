@@ -60,21 +60,51 @@ func (c *Control) projectLifecycle(ctx context.Context) error {
 	}
 	var failed []error
 	for _, r := range records {
-		c.mu.Lock()
-		shown := c.projected[r.IssueID] == r.Version
-		c.mu.Unlock()
-		if shown {
-			continue
+		if err := c.projectIssue(ctx, r); err != nil {
+			failed = append(failed, err)
 		}
-		if err := c.show(ctx, r); err != nil {
-			failed = append(failed, fmt.Errorf("show %s on GitHub: %w", r.IssueID, err))
-			continue
-		}
-		c.mu.Lock()
-		c.projected[r.IssueID] = r.Version
-		c.mu.Unlock()
 	}
 	return errors.Join(failed...)
+}
+
+// projectIssue shows one issue's lifecycle state on GitHub. A Closed issue
+// closes only after its progress comment shows the end, or once that
+// comment was given up as refused for good; its labels do not wait for it.
+func (c *Control) projectIssue(ctx context.Context, r core.StateRecord) error {
+	c.mu.Lock()
+	shown := c.projected[r.IssueID] == r.Version
+	c.mu.Unlock()
+	if shown {
+		return nil
+	}
+	var failed []error
+	if err := c.showProgress(ctx, r); err != nil {
+		failed = append(failed, fmt.Errorf("show the progress of %s: %w", r.IssueID, err))
+		if r.State == core.StateClosed && !c.progressGivenUp(ctx, r.IssueID) {
+			return errors.Join(failed...)
+		}
+	}
+	if err := c.editIssue(ctx, r.IssueID, c.showIntent(r), func(ctx context.Context) error { return c.show(ctx, r) }); err != nil {
+		return errors.Join(append(failed, fmt.Errorf("show %s on GitHub: %w", r.IssueID, err))...)
+	}
+	c.mu.Lock()
+	c.projected[r.IssueID] = r.Version
+	c.mu.Unlock()
+	return errors.Join(failed...)
+}
+
+// showIntent is what show changes on the issue of r.
+func (c *Control) showIntent(r core.StateRecord) editIntent {
+	want := labelOf(r.State)
+	intent := editIntent{add: []string{want}}
+	for _, label := range lifecycleLabels {
+		if label != want {
+			intent.remove = append(intent.remove, label)
+		}
+	}
+	_, closer := c.cfg.GitHub.(IssueCloser)
+	intent.close = closer && r.State == core.StateClosed
+	return intent
 }
 
 // show sets the issue's lifecycle label, removes the others, and closes a

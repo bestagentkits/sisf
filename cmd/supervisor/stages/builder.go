@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
+	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 )
@@ -142,8 +142,7 @@ func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, 
 		Message: fmt.Sprintf("Candidate of %s for %s, attempt %d", req.RunID, req.Issue, req.Attempt), Files: files,
 	})
 	if err != nil {
-		_, classified := classifyRepositoryError(err, "")
-		return Built{}, classified
+		return Built{}, b.commitFault(ctx, req.Base, err)
 	}
 	image, err := b.Images.BuildImage(ctx, ImageRequest{
 		FactoryID: b.FactoryID, RunID: req.RunID, Unit: unit, Commit: commit, Branch: branch, Untrusted: true,
@@ -186,45 +185,64 @@ func (b *CandidateBuilder) readFault(ctx context.Context, base core.CommitSHA, p
 	return refuse(core.CodeConflict, RefusalDoesNotApply, path, "the run's patch changes "+path+", which the base does not have")
 }
 
-// UnitRouter decides which runtime unit a change is a build of, by the
-// longest path prefix that covers a changed path.
-type UnitRouter struct {
-	// Prefixes maps a path prefix ("ui/") to a unit ("control").
-	Prefixes map[string]string
-	// Default is the unit of every other path; "app" when empty.
-	Default string
+// commitFault decides an error committing the patch's files. GitHub
+// answers 422 on the tree both for paths it will not hold and for a base
+// tree that is no longer there, so, as for a base file, the refusal is
+// charged to the patch only once the base commit itself has been read.
+func (b *CandidateBuilder) commitFault(ctx context.Context, base core.CommitSHA, err error) error {
+	reason, classified := classifyRepositoryError(err, "")
+	if reason != RefusalPathRejected || github.ErrorStep(err) != github.StepTree || github.ErrorStatus(err) == 0 {
+		return classified
+	}
+	if baseErr := b.Git.CommitExists(ctx, b.Repo, base); baseErr != nil {
+		_, classified = classifyRepositoryError(baseErr, "")
+	}
+	return classified
 }
 
-// DefaultUnitRouter routes the dashboard and the control plane to the
-// control unit and everything else to the application.
-func DefaultUnitRouter() UnitRouter {
-	return UnitRouter{Prefixes: map[string]string{"ui/": "control", "internal/control/": "control", "cmd/factoryd/": "control"}, Default: "app"}
+// UnitRouter decides which runtime unit a change is a build of, from the
+// inputs of each unit (release.UnitInputs, the ones the release judges the
+// candidate by): a path that is the input of no unit, or of more than one,
+// decides nothing.
+type UnitRouter struct {
+	Inputs release.UnitInputs
 }
+
+// DefaultUnitRouter returns the router of the units' built-in inputs.
+func DefaultUnitRouter() UnitRouter { return UnitRouter{} }
+
+// judgedOnlyUnit is the unit a change that is the input of no unit is built
+// as. The build exists only so that QA judges the candidate and its pull
+// request is opened for the Owner: the release refuses such a candidate for
+// the Owner's approval, since none of its paths is an input of the unit it
+// would release.
+const judgedOnlyUnit = "app"
 
 // UnitOf returns the one unit a change set is a build of. A change set
-// that spans units is refused: one release replaces one unit, so the rest of
-// the change would never be deployed or observed.
-func (u UnitRouter) UnitOf(paths []string) (string, error) {
-	prefixes := slices.SortedFunc(maps.Keys(u.Prefixes), func(a, b string) int { return len(b) - len(a) })
-	unit := ""
+// that changes the inputs of two units is refused: one release replaces one
+// unit, so the rest of the change would never be deployed or observed. A
+// change set that changes the input of no unit is built as judgedOnlyUnit,
+// for the Owner to merge by hand once QA judged it.
+func (r UnitRouter) UnitOf(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", core.NewError(core.CodeInvalidArgument, "the change touches no path")
+	}
+	unit, first := "", ""
 	for _, p := range paths {
-		of := u.Default
-		if of == "" {
-			of = "app"
-		}
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(p, prefix) {
-				of = u.Prefixes[prefix]
-				break
-			}
+		of, ok := r.Inputs.UnitOf(p)
+		if !ok {
+			continue
 		}
 		if unit != "" && of != unit {
-			return "", core.NewError(core.CodeInvalidArgument, "the change spans the units "+unit+" and "+of+"; one candidate changes one unit")
+			return "", core.NewError(core.CodeInvalidArgument, "the change spans the units "+unit+" ("+first+") and "+of+" ("+p+
+				"); one candidate changes the inputs of one unit")
 		}
-		unit = of
+		if unit == "" {
+			unit, first = of, p
+		}
 	}
 	if unit == "" {
-		return "", core.NewError(core.CodeInvalidArgument, "the change touches no path")
+		return judgedOnlyUnit, nil
 	}
 	return unit, nil
 }

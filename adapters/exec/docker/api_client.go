@@ -103,6 +103,13 @@ func (c *client) runtimes(ctx context.Context) (map[string]json.RawMessage, erro
 	return info.Runtimes, err
 }
 
+// network reads the sandbox network as the filter reports it.
+func (c *client) network(ctx context.Context, name string) (dockerfilter.NetworkView, error) {
+	var view dockerfilter.NetworkView
+	err := c.decode(ctx, http.MethodGet, "/networks/"+name, nil, nil, &view, http.StatusOK)
+	return view, err
+}
+
 func (c *client) create(ctx context.Context, name string, req dockerfilter.CreateRequest) (string, error) {
 	var created struct {
 		ID string `json:"Id"`
@@ -116,7 +123,9 @@ func (c *client) create(ctx context.Context, name string, req dockerfilter.Creat
 
 // containerView is what the adapter reads back about a container.
 type containerView struct {
-	ID     string `json:"Id"`
+	ID string `json:"Id"`
+	// Image is the ID of the image the daemon created the container from.
+	Image  string `json:"Image"`
 	Config struct {
 		Labels map[string]string `json:"Labels"`
 		Image  string            `json:"Image"`

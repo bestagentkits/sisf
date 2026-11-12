@@ -33,8 +33,9 @@ func checkDelegation(t core.Transition, p DelegationProof) error {
 
 // checkApproval requires a complete, signed decision by a person that
 // belongs to a request to approve the scope of this issue in this factory,
-// was made while the request could still be decided, is approved and not yet
-// used, and authorizes the scope and the policy in force at this instant. The
+// was made while the request could still be decided, carries the identity
+// confirmation a step-up request asks for, is approved and not yet used, and
+// authorizes the scope and the policy in force at this instant. The
 // decision carries a full digest and a full commit, so a scope or policy in
 // force that is unknown or unpinned can never equal what was approved.
 func checkApproval(t core.Transition, p ApprovalProof, now time.Time) error {
@@ -68,6 +69,11 @@ func checkApproval(t core.Transition, p ApprovalProof, now time.Time) error {
 		return refuse(GuardApproval, t, "the approval is dated before its request was made")
 	case request.Expired(approval.DecidedAt):
 		return refuse(GuardApproval, t, "the approval was decided after its request had expired")
+	case !approvals.StepUpConfirmed(request, approval):
+		refusal := refuse(GuardApproval, t,
+			"the request needs the approver to confirm their identity for this decision, outside WebMCP, and the decision carries no such confirmation")
+		refusal.Details["cause"] = string(core.CodeStepUpRequired)
+		return refusal
 	}
 	if request.Status != approvals.StatusApproved {
 		message := "the approval request is %q, not approved"

@@ -35,6 +35,12 @@ type group struct {
 	grace   time.Duration
 	logf    func(format string, args ...any)
 	restart chan struct{}
+	// record, when set, records each program as it starts, so it can be
+	// found and stopped after this process ended; it returns the function
+	// that forgets the record once the program has stopped. A program that
+	// cannot be recorded is stopped again and counts as one that failed
+	// to start.
+	record func(name string, p Process) (func(), error)
 }
 
 func newGroup(exec Exec, clock core.Clock, units []unit, logf func(string, ...any)) *group {
@@ -86,6 +92,13 @@ func (g *group) supervise(ctx context.Context, u unit, fatal chan<- error) {
 	delay, failures := restartBase, 0
 	for {
 		p, err := g.exec.Start(ctx, u.cmd)
+		forget := func() {}
+		if err == nil && g.record != nil {
+			if forget, err = g.record(u.name, p); err != nil {
+				_ = p.Kill() // it could not be found again once this process ended
+				_ = p.Wait()
+			}
+		}
 		if err != nil {
 			failures++
 			g.logf("%s cannot start: %v\n", u.name, err)
@@ -101,12 +114,14 @@ func (g *group) supervise(ctx context.Context, u unit, fatal chan<- error) {
 			g.logf("started %s\n", u.name)
 			select {
 			case werr := <-exited:
+				forget()
 				g.logf("%s exited (%v); starting it again\n", u.name, werr)
 				if g.clock.Now().Sub(startedAt) >= stableAfter {
 					delay = restartBase
 				}
 			case <-ctx.Done():
 				g.stop(u, p, exited)
+				forget()
 				return
 			}
 		}

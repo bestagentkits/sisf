@@ -8,6 +8,14 @@
 // yields collect_more_evidence and quiet or healthy endpoints are ignored,
 // so nothing is opened without evidence.
 //
+// A proposal lists its options, doing nothing among them, with a draft
+// scope of work, a measurable definition of done and evidence traced to the
+// edge windows it rests on. When a System One is configured it is asked the
+// typed questions of DECISIONS.md about each new proposal; its judgment can
+// only hold or downgrade the proposal or lower its priority, never raise it,
+// and a failed or invalid
+// judgment proposes nothing.
+//
 // Counter data is untrusted: an endpoint name is quoted in what the layer
 // writes and never changes a threshold, a kind, a priority or the policy.
 // The layer recommends; it grants no permission and changes no policy.
@@ -39,6 +47,10 @@ type Config struct {
 	Rules  Rules
 	// Features maps an endpoint name to the approved feature it belongs to.
 	Features map[string]string
+	// SystemOne, when set, is consulted about each new proposal. It needs
+	// Questions read at Policy.DecisionSHA.
+	SystemOne pkgdecision.SystemOne
+	Questions TypedQuestions
 }
 
 // Outcome is the decision for one endpoint in one run.
@@ -54,6 +66,10 @@ type Outcome struct {
 	Proposal *pkgdecision.Proposal
 	// NewProposal is true only when this run handed the proposal to the sink.
 	NewProposal bool
+	// Model and Uncertainties are what System One reported when it was
+	// consulted; Uncertainties are named points of doubt.
+	Model         core.ModelRoute
+	Uncertainties []string
 }
 
 // Layer runs the decision flow. It is safe for concurrent use; runs are
@@ -74,6 +90,9 @@ func New(cfg Config) (*Layer, error) {
 		return nil, core.NewError(core.CodePolicyHold, "the decision layer needs policy pinned to approved commits").WithCause(err)
 	}
 	if err := cfg.Rules.Validate(); err != nil {
+		return nil, err
+	}
+	if err := checkSystemOne(cfg); err != nil {
 		return nil, err
 	}
 	if cfg.Store == nil {
@@ -149,8 +168,13 @@ func (l *Layer) decide(ctx context.Context, w Window) (Outcome, error) {
 	if a.verdict != pkgdecision.VerdictPropose {
 		return o, nil
 	}
-	// Scope and policy: the proposal must be complete, pinned and a bug fix.
+	// Scope and policy: the proposal must be complete, pinned and a bug fix,
+	// and its evidence sufficient; otherwise nothing is done.
 	p := l.cfg.Rules.proposal(name, a, l.cfg.Policy, l.cfg.Features[w.Endpoint])
+	if !p.Evidence.Sufficient(l.cfg.Rules.MinSamples) {
+		o.Verdict, o.Reason = pkgdecision.VerdictCollectMoreEvidence, "thin_evidence"
+		return o, nil
+	}
 	if err := p.Validate(); err != nil || p.Kind.RequiresOwnerApproval() {
 		o.Verdict, o.Reason = pkgdecision.VerdictCollectMoreEvidence, "proposal_out_of_scope"
 		return o, nil
@@ -158,6 +182,11 @@ func (l *Layer) decide(ctx context.Context, w Window) (Outcome, error) {
 	o.Proposal = &p
 	if status == StatusOpen {
 		return o, nil
+	}
+	if l.cfg.SystemOne != nil {
+		if err := l.consult(ctx, &o, &p); err != nil || o.Proposal == nil {
+			return o, err
+		}
 	}
 	if err := l.cfg.Sink.Propose(ctx, p); err != nil {
 		return o, core.NewError(core.CodeUnavailable, "proposal could not be delivered").WithCause(err)

@@ -31,7 +31,10 @@ type lkgAdopter struct {
 }
 
 // adopt stages the LKG and sends it all traffic, unless it is already
-// observed serving the unit.
+// observed serving the unit. The local backend finds again, when it is
+// built, the processes an earlier supervisor started and recorded, so a
+// release that still serves is observed as such, and one that holds the
+// port of the slot staged over is stopped first.
 func (a *lkgAdopter) adopt(ctx context.Context) error {
 	lkg, found, err := a.lkg.Get(ctx, adoptedUnit)
 	if err != nil {

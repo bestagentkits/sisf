@@ -109,8 +109,8 @@ func TestRedeliveryThroughTheAppHookAPI(t *testing.T) {
 	if status != 200 || len(body) == 0 {
 		t.Fatalf("list deliveries: %d", status)
 	}
-	if s, _, _ := e.call(t, "POST", "/app/hook/deliveries/1/attempts", nil); s != http.StatusAccepted {
-		t.Fatalf("redeliver: %d", s)
+	if s, body, _ := e.call(t, "POST", "/app/hook/deliveries/1/attempts", nil); s != http.StatusAccepted {
+		t.Fatalf("redeliver: %d %s", s, body)
 	}
 	if s, _, _ := e.call(t, "POST", "/app/hook/deliveries/99/attempts", nil); s != http.StatusNotFound {
 		t.Fatalf("redeliver unknown: %d, want 404", s)
@@ -164,7 +164,7 @@ func TestControlEndpointsConfigureTheFakeOverHTTP(t *testing.T) {
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
 	post := func(path, body string) int {
-		resp, err := http.Post(srv.URL+path, "application/json", stringsReader(body))
+		resp, err := testClient.Post(srv.URL+path, "application/json", stringsReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}

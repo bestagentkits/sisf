@@ -1,6 +1,7 @@
 package conformance
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -21,6 +22,9 @@ func TestInStandaloneModeNoMountClimbsOutOfTheFactoryRoot(t *testing.T) {
 		{"a directory that cleans to the parent", manifest.UnitApp, "data/../../"},
 		{"a sibling of the factory root", manifest.UnitApp, "../app-data"},
 		{"Zone 3's data is the parent directory", manifest.UnitControl, ".."},
+		// The root of the file system holds the factory root, wherever it is.
+		{"the application's data is the file system root", manifest.UnitApp, "/"},
+		{"a directory that cleans to the file system root", manifest.UnitApp, "//var/.."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -56,6 +60,14 @@ func TestInStandaloneModeNoMountClimbsOutOfTheFactoryRoot(t *testing.T) {
 	wantOnly(t, report, RuleVolumePathOverlap, "units.app.mounts[0].path")
 	if len(report.Findings) != 1 || !report.SelfUpdate {
 		t.Fatalf("want one isolation finding with the supervisor boundary intact, got %+v", report)
+	}
+
+	// The root of the file system also holds an absolute trust directory.
+	m = standalone(t)
+	remount(m, manifest.UnitSupervisor, "/var/lib/sisf/trust")
+	remount(m, manifest.UnitApp, "/")
+	if report := Check(m); !report.reportedAt(RuleTrustVolumeExposed, "units.app.mounts[0].path") || report.SelfUpdate {
+		t.Fatalf("a mount at the file system root holds an absolute trust directory, got %+v", report.Findings)
 	}
 
 	// The trust volume itself placed above the factory root holds the stores
@@ -155,12 +167,85 @@ func TestInStandaloneModeNoUnitStartsABinaryFromAnotherUnitsDirectory(t *testing
 		})
 	}
 
-	// A unit may start a binary from a directory only it mounts.
-	m := standalone(t)
-	editUnit(m, manifest.UnitRunner, func(u *manifest.Unit) { u.Command = []string{"data/workspaces/tool"} })
-	if report := Check(m); !report.Conformant() {
-		t.Fatalf("a unit's own directory is its own to run from, got %+v", report.Findings)
+	// An interpreter or a loader runs the file it is given, so every word
+	// of the command, and the value after "=" in one, is held to the rule.
+	arguments := []struct {
+		name    string
+		unit    manifest.UnitName
+		command []string
+		path    string
+	}{
+		{"control runs a script from the coder's workspace", manifest.UnitControl,
+			[]string{"python3", "data/workspaces/control.py"}, "units.control.command[1]"},
+		{"control preloads a module from the coder's workspace", manifest.UnitControl,
+			[]string{"node", "--require=data/workspaces/hook.js", "bin/control.js"}, "units.control.command[1]"},
+		{"the edge loads a plugin from the application's data", manifest.UnitEdge,
+			[]string{"bin/sisf-edge", "--plugin", "./data/app/plugin.so"}, "units.edge.command[2]"},
+		{"the dispatcher runs a script from the coder's workspace by an absolute path", manifest.UnitDispatcher,
+			[]string{"python3", "/home/owner/factory/data/workspaces/dispatch.py"}, "units.dispatcher.command[1]"},
+		{"control runs a script given as a file URL", manifest.UnitControl,
+			[]string{"deno", "run", "file://data/workspaces/control.ts"}, "units.control.command[2]"},
+		// Lowering these letters changes their length in bytes.
+		{"control runs a script given as a file URL with a name in dotted capitals", manifest.UnitControl,
+			[]string{"deno", "run", "FILE://data/workspaces/\u0130\u0130\u0130\u0130\u0130.ts"}, "units.control.command[2]"},
+		{"control runs a script given as a file URL with a name that grows when lowered", manifest.UnitControl,
+			[]string{"deno", "run", "file://data/workspaces/" + strings.Repeat("\u023a", 8)}, "units.control.command[2]"},
+		// The factory root's name is unknown, so ../factory/data/workspaces
+		// may be the coder's workspace.
+		{"control runs a script through a path that climbs out of the factory root", manifest.UnitControl,
+			[]string{"python3", "../factory/data/workspaces/control.py"}, "units.control.command[1]"},
+		{"control starts a binary through a path that climbs out of the factory root", manifest.UnitControl,
+			[]string{"../factory/data/workspaces/factoryd"}, "units.control.command"},
 	}
+	for _, tc := range arguments {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := standalone(t)
+			editUnit(m, tc.unit, func(u *manifest.Unit) { u.Command = tc.command })
+			report := Check(m)
+			wantOnly(t, report, RuleExecutableInAnotherUnitsDirectory, tc.path)
+			if len(report.Findings) != 1 {
+				t.Fatalf("one argument is one finding, got %+v", report.Findings)
+			}
+		})
+	}
+
+	// The supervisor's later arguments may not name a file another unit
+	// writes either; its own trust directory is its own to name.
+	m := standalone(t)
+	editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) {
+		u.Command = []string{"bin/sisf-supervisor", "--policy=data/control/policy.wasm"}
+	})
+	report := Check(m)
+	wantOnly(t, report, RuleSupervisorNotPinned, "units.supervisor.command[1]")
+	if report.SelfUpdate {
+		t.Error("a supervisor that loads a file another unit writes disables self-update")
+	}
+	m = standalone(t)
+	editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) {
+		u.Command = []string{"bin/sisf-supervisor", "--trust-dir", "data/trust"}
+	})
+	if report := Check(m); !report.Conformant() || !report.SelfUpdate {
+		t.Fatalf("the supervisor may name its own trust directory, got %+v", report.Findings)
+	}
+
+	// Words that are not files of another unit pass: subcommands, flags,
+	// addresses, URLs and the unit's own directory.
+	m = standalone(t)
+	editUnit(m, manifest.UnitControl, func(u *manifest.Unit) {
+		u.Command = []string{"bin/factoryd", "control", "--listen=127.0.0.1:7463", "--upstream", "http://127.0.0.1:7461/data/app",
+			"--data", "data/control", "--log-dir=logs/control", "--base-path=/", "/", "/healthz"}
+	})
+	if report := Check(m); !report.Conformant() {
+		t.Fatalf("arguments outside other units' directories must be allowed, got %+v", report.Findings)
+	}
+
+	// A binary from a directory only the unit mounts is no other unit's to
+	// rewrite, so the directory rules pass it; it is still not a factory
+	// binary from bin/, which is all a Standalone unit may start.
+	m = standalone(t)
+	editUnit(m, manifest.UnitRunner, func(u *manifest.Unit) { u.Command = []string{"data/workspaces/tool"} })
+	wantOnly(t, Check(m), RuleUnitThroughLauncher, "units.runner.command")
 
 	// In Docker mode a command is a path inside the unit's own container.
 	m = docker(t)
@@ -179,10 +264,17 @@ func TestNoOtherUnitNamesTheSupervisorExecutableInItsCommand(t *testing.T) {
 		{"stdbuf", "-o0", "bin/sisf-supervisor"},
 		{"python3", "bin/sisf-supervisor"},
 		{"/usr/bin/runner", "--exec=./bin/../bin/sisf-supervisor"},
-		{"bin/factoryd", "control", "/opt/elsewhere/sisf-supervisor"},
+		// Run by its name, found wherever the search path leads.
+		{"bin/factoryd", "control", "sisf-supervisor"},
+		// The pinned binary under a factory root written out in full.
+		{"python3", "/opt/factory/bin/sisf-supervisor"},
+		// One file where the file system ignores case.
+		{"python3", "BIN/SISF-Supervisor"},
+		// The first word is what runs, from whatever directory.
+		{"/opt/elsewhere/sisf-supervisor", "control"},
 	}
 	for _, command := range commands {
-		t.Run(command[0], func(t *testing.T) {
+		t.Run(strings.Join(command, " "), func(t *testing.T) {
 			t.Parallel()
 			m := standalone(t)
 			editUnit(m, manifest.UnitControl, func(u *manifest.Unit) { u.Command = command })
@@ -194,8 +286,35 @@ func TestNoOtherUnitNamesTheSupervisorExecutableInItsCommand(t *testing.T) {
 		})
 	}
 
-	// A Docker unit without an image of its own is what it starts.
+	// A later word that merely ends in the supervisor's name names another
+	// file: a log directory, or a route of a URL.
+	allowed := [][]string{
+		{"bin/factoryd", "control", "--log-dir", "logs/sisf-supervisor"},
+		{"bin/factoryd", "control", "--log-dir=logs/sisf-supervisor"},
+		{"bin/factoryd", "control", "--upstream=http://127.0.0.1:7464/sisf-supervisor"},
+		{"bin/factoryd", "control", "--upstream", "http://127.0.0.1:7464/bin/sisf-supervisor"},
+		{"bin/factoryd", "control", "/opt/elsewhere/sisf-supervisor"},
+	}
+	for _, command := range allowed {
+		m := standalone(t)
+		editUnit(m, manifest.UnitControl, func(u *manifest.Unit) { u.Command = command })
+		if report := Check(m); !report.Conformant() || !report.SelfUpdate {
+			t.Errorf("%q names no file the supervisor starts, got %+v", command, report.Findings)
+		}
+	}
+
+	// A supervisor started by its bare name is found through the search
+	// path, so its directory is unknown and any path ending in its name
+	// may be it.
 	m := docker(t)
+	editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) { u.Command = []string{"sisf-supervisor"} })
+	editUnit(m, manifest.UnitApp, func(u *manifest.Unit) {
+		u.Image, u.Command = "", []string{"tini", "--", "/usr/local/bin/sisf-supervisor"}
+	})
+	wantOnly(t, Check(m), RuleSupervisorSharesArtifact, "units.app.command")
+
+	// A Docker unit without an image of its own is what it starts.
+	m = docker(t)
 	editUnit(m, manifest.UnitSupervisor, func(u *manifest.Unit) { u.Command = []string{"sisf-supervisor"} })
 	editUnit(m, manifest.UnitApp, func(u *manifest.Unit) { u.Image, u.Command = "", []string{"tini", "--", "sisf-supervisor"} })
 	wantOnly(t, Check(m), RuleSupervisorSharesArtifact, "units.app.command")

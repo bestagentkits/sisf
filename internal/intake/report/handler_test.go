@@ -3,6 +3,7 @@ package report_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/internal/redact"
+	"github.com/bestagentkits/sisf/pkg/github"
 )
 
 type clock struct {
@@ -207,5 +209,77 @@ func TestStoreKeepsReportsForTheirRetentionPeriodOnly(t *testing.T) {
 	n, err := store.Purge(context.Background(), c.Now().Add(-24*time.Hour))
 	if err != nil || n != 1 || len(store.All()) != 1 || store.All()[0].Title != "new" {
 		t.Fatalf("purge removed %d (%v), left %+v", n, err, store.All())
+	}
+}
+
+// The defaults bound acceptance per hour: five reports from one client and
+// sixty from everyone together, counted again an hour after a window began.
+func TestDefaultLimitsArePerHour(t *testing.T) {
+	t.Parallel()
+	if report.DefaultPerClientLimit != 5 || report.DefaultGlobalLimit != 60 || report.DefaultWindow != time.Hour {
+		t.Fatalf("defaults %d per client, %d overall per %s; want 5 and 60 per hour",
+			report.DefaultPerClientLimit, report.DefaultGlobalLimit, report.DefaultWindow)
+	}
+	h, _, c := newHandler(t, func(c *report.Config) { c.PerClientLimit, c.GlobalLimit, c.Window = 0, 0, 0 })
+	body := func(i int) string { return fmt.Sprintf(`{"title":"t","body":"report %d"}`, i) }
+	for i := range 5 {
+		if rec := post(h, "198.51.100.1", jsonType, body(i)); rec.Code != http.StatusAccepted {
+			t.Fatalf("report %d: %d", i, rec.Code)
+		}
+	}
+	c.After(59 * time.Minute)
+	if rec := post(h, "198.51.100.1", jsonType, body(5)); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("a sixth report from one client within the hour: %d, want refused", rec.Code)
+	}
+	accepted := 5
+	for n := 2; n < 40; n++ {
+		for i := range 5 {
+			if rec := post(h, fmt.Sprintf("198.51.100.%d", n), jsonType, body(n*10+i)); rec.Code == http.StatusAccepted {
+				accepted++
+			}
+		}
+	}
+	if accepted != 60 {
+		t.Fatalf("%d reports accepted within the hour from all clients, want 60", accepted)
+	}
+	c.After(time.Minute)
+	if rec := post(h, "198.51.100.1", jsonType, body(999)); rec.Code != http.StatusAccepted {
+		t.Fatalf("a report an hour after the window began: %d", rec.Code)
+	}
+}
+
+// Invisible characters are dropped before the text is redacted and
+// fingerprinted: a secret split by a zero-width space, a soft hyphen or a
+// byte order mark is stored redacted, the same report with or without
+// them is one report, and a text of nothing but them is blank.
+func TestInvisibleCharactersAreDroppedBeforeRedaction(t *testing.T) {
+	t.Parallel()
+	h, store, _ := newHandler(t, nil)
+	secret := "gh" + "p_" + strings.Repeat("A1b2", 9)
+	split := strings.Join(strings.Split(secret, ""), "\u200b\u00ad\ufeff")
+	first := post(h, "198.51.100.1", jsonType, `{"title":"Login\u200b fails","body":"token `+split+`"}`)
+	again := post(h, "198.51.100.2", jsonType, `{"title":"Login fails","body":"token `+secret+`"}`)
+	if first.Code != http.StatusAccepted || again.Code != http.StatusOK {
+		t.Fatalf("first %d %s, again %d %s; want one report counted twice", first.Code, first.Body, again.Code, again.Body)
+	}
+	got := store.All()
+	if len(got) != 1 || strings.Contains(got[0].Body, secret) || strings.ContainsAny(got[0].Title+got[0].Body, "\u200b\u00ad\ufeff") {
+		t.Fatalf("stored = %+v", got)
+	}
+	if rec := post(h, "198.51.100.3", jsonType, `{"title":"\u200b\ufeff","body":"b"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a title of invisible characters only: %d, want refused", rec.Code)
+	}
+}
+
+// GitHub compares label names without regard to case, so an issue carrying
+// the report label in any casing is a report issue.
+func TestTheReportLabelIsMatchedWithoutRegardToCase(t *testing.T) {
+	t.Parallel()
+	issue := github.Issue{Labels: []github.Label{{Name: "SISF:Report"}}}
+	if !report.IsReportIssue(issue) || !report.HasIssueLabel(issue) {
+		t.Fatal("an issue labelled SISF:Report was not taken for a report issue")
+	}
+	if report.HasIssueLabel(github.Issue{Labels: []github.Label{{Name: "sisf:reports"}}}) {
+		t.Fatal("a label that only starts like the report label was taken for it")
 	}
 }

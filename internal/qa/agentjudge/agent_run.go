@@ -45,6 +45,12 @@ func (j *Judge) run(ctx context.Context, task agent.Task, workspace string) (age
 	}
 	usageErr := j.recordUsage(ctx, ref)
 	if status.Phase != agent.PhaseSucceeded {
+		// A run whose record was cut short may have failed only in the
+		// adapter's eyes, its final report among what was not kept: the
+		// cut is then the reason, whichever the adapter saw first.
+		if err := j.completeTranscript(ctx, ref); err != nil {
+			return agentRun{}, err
+		}
 		// The detail is the adapter's, already redacted.
 		return agentRun{}, core.NewError(core.CodeUnavailable, "the QA agent run "+string(status.Phase)+": "+status.Detail)
 	}
@@ -88,10 +94,7 @@ func (j *Judge) finalMessage(ctx context.Context, ref agent.RunRef) (string, err
 			return "", err
 		}
 		if !report.Complete {
-			e := core.NewError(core.CodeLimitExceeded,
-				"the QA agent's output went past what its adapter keeps, so its judgment cannot be told from an earlier message")
-			e.Details = map[string]string{"reason": ReasonTranscriptIncomplete}
-			return "", e
+			return "", transcriptIncomplete()
 		}
 		if report.HasResult {
 			return report.Result, nil
@@ -114,6 +117,33 @@ func (j *Judge) finalMessage(ctx context.Context, ref agent.RunRef) (string, err
 		}
 	}
 	return final, nil
+}
+
+// completeTranscript refuses, with the reason ReasonTranscriptIncomplete,
+// a finished run whose adapter says its record is not the whole of what
+// the agent said. An adapter that cannot say passes.
+func (j *Judge) completeTranscript(ctx context.Context, ref agent.RunRef) error {
+	reporter, ok := j.cfg.Agent.(finalReporter)
+	if !ok {
+		return nil
+	}
+	report, err := reporter.FinalReport(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if !report.Complete {
+		return transcriptIncomplete()
+	}
+	return nil
+}
+
+// transcriptIncomplete is the refusal of a judgment read from a record
+// that is not the whole of what the agent said.
+func transcriptIncomplete() *core.Error {
+	e := core.NewError(core.CodeLimitExceeded,
+		"the QA agent's output went past what its adapter keeps, so its judgment cannot be told from an earlier message")
+	e.Details = map[string]string{"reason": ReasonTranscriptIncomplete}
+	return e
 }
 
 // recordUsage passes what the adapter reports the run consumed to the

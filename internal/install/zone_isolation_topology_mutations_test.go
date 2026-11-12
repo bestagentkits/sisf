@@ -196,7 +196,7 @@ func TestTheReleaseTopologyIsWhatTheSupervisorNeeds(t *testing.T) {
 // launcher for its QA agent and a command to build candidates with.
 func TestAProductionDockerInstallRunsTheStagesOnlyWithAQALauncherAndABuildCommand(t *testing.T) {
 	t.Parallel()
-	real := func(o *Options) { o.Sim = false; o.Repo.Owner, o.Repo.Repo = "acme", "shop" }
+	real := production
 	_, plain := renderCompose(t, real)
 	if strings.Contains(string(plain), "--factory-manifest") || strings.Contains(string(plain), "--qa-judge") {
 		t.Error("the stages run without a QA launcher")

@@ -18,6 +18,15 @@ import (
 // decision rules, and returns the new revision.
 func commitPolicy(t *testing.T, f *harness.Factory, note string) core.CommitSHA {
 	t.Helper()
+	return commitPolicyWith(t, f, func(files map[string]string) {
+		files[policy.PathDecisions] = strings.TrimRight(files[policy.PathDecisions], "\n") + "\n\n" + note + "\n"
+	})
+}
+
+// commitPolicyWith commits the repository's foundation files as change
+// leaves them and returns the new revision.
+func commitPolicyWith(t *testing.T, f *harness.Factory, change func(files map[string]string)) core.CommitSHA {
+	t.Helper()
 	files := map[string]string{}
 	for _, path := range []string{policy.PathFactory, policy.PathAgents, policy.PathReview, policy.PathDecisions, policy.PathFeatures} {
 		content, err := os.ReadFile(filepath.Join("..", "..", "..", filepath.FromSlash(path)))
@@ -26,7 +35,7 @@ func commitPolicy(t *testing.T, f *harness.Factory, note string) core.CommitSHA 
 		}
 		files[path] = string(content)
 	}
-	files[policy.PathDecisions] = strings.TrimRight(files[policy.PathDecisions], "\n") + "\n\n" + note + "\n"
+	change(files)
 	sha, err := f.GitHub.Commit(f.Repo, files)
 	if err != nil {
 		t.Fatal(err)

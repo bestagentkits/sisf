@@ -164,7 +164,7 @@ func (f *factory) deliver() {
 		if err := intake.Deliver(ctx, f.github, m); err != nil {
 			f.t.Fatalf("effect %s could not be delivered: %v", m.Key, err)
 		}
-		if err := f.state.Update(ctx, func(ctx context.Context, tx state.Tx) error { return tx.MarkOutboxSent(ctx, m.ID) }); err != nil {
+		if err := f.state.Update(ctx, func(ctx context.Context, tx state.Tx) error { return intake.Delivered(ctx, tx, m) }); err != nil {
 			f.t.Fatal(err)
 		}
 	}

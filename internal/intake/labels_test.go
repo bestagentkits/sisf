@@ -32,7 +32,7 @@ func TestOnlyTheReadyLabelAsksForIntakeByDefault(t *testing.T) {
 	if err != nil || rules.ReadyAlias != "" {
 		t.Fatalf("a manifest without the setting must define no alias: %+v, %v", rules, err)
 	}
-	for _, name := range []string{"ai-handle", "ready", "sisf:approved", "sisf:running", "SISF:READY", "sisf:ready "} {
+	for _, name := range []string{"ai-handle", "ready", "sisf:approved", "sisf:running", "sisf:ready "} {
 		if intake.ReadLabels(named(name), rules).Ready {
 			t.Errorf("label %q asked for intake", name)
 		}
@@ -67,6 +67,17 @@ func TestAnAliasThatCannotBeHonoredIsRefused(t *testing.T) {
 		"a kind label":      "kind:bug",
 		"an agent label":    "agent:claude",
 		"a deployment name": "deployment:local",
+		// GitHub compares label names without regard to case, so a
+		// reserved family under any casing is the same family.
+		"a status label in capitals": "SISF:Report",
+		"a mixed-case status label":  "Sisf:approved",
+		"a kind label in capitals":   "KIND:bug",
+		"an agent label in capitals": "Agent:claude",
+		"a deployment in capitals":   "DEPLOYMENT:local",
+		// Letters whose case partner is another rune: the long s folds to
+		// s and the Kelvin sign to k.
+		"a status label with a long s": "\u017fisf:report",
+		"a kind label with a Kelvin k": "\u212aind:bug",
 	} {
 		_, err := intake.RulesFrom(withAlias(value))
 		wantCode(t, err, core.CodeInvalidArgument, name)
@@ -122,7 +133,7 @@ func TestADeploymentLabelMustNameThisDeployment(t *testing.T) {
 		{nil, "local", true},
 		{[]string{"deployment:local"}, "local", true},
 		{[]string{"deployment:staging"}, "local", false},
-		{[]string{"deployment:Local"}, "local", false},
+		{[]string{"deployment:Local"}, "local", true},
 		{[]string{"deployment:"}, "local", false},
 		{[]string{"deployment:local", "deployment:staging"}, "local", false},
 		{[]string{"deployment:"}, "", false},
@@ -187,5 +198,29 @@ func TestAnUnusableAliasStopsIntakeInsteadOfBeingIgnored(t *testing.T) {
 	wantCode(t, err, core.CodeInvalidArgument, "a reserved alias")
 	if f.stateOf() != "" {
 		t.Fatal("intake went ahead under label rules it could not read")
+	}
+}
+
+// GitHub compares label names without regard to case: one repository
+// cannot hold two labels that differ only in case, so a label is read the
+// same under any casing.
+func TestLabelsAreReadWithoutRegardToCase(t *testing.T) {
+	t.Parallel()
+	rules, err := intake.RulesFrom(withAlias("ai-handle"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := intake.ReadLabels(named("SISF:READY", "Kind:Bug", "AGENT:claude", "Deployment:local"), intake.LabelRules{})
+	if !got.Ready || got.Kind != decision.KindBug || got.AgentPreference != "claude" || !got.AddressedTo("local") {
+		t.Fatalf("labels in other casings read as %+v", got)
+	}
+	if !intake.ReadLabels(named("\u017fisf:ready"), intake.LabelRules{}).Ready {
+		t.Fatal("the ready label with a long s, which folds to s, did not ask for intake")
+	}
+	if !intake.ReadLabels(named("AI-Handle"), rules).Ready {
+		t.Fatal("the alias in another casing did not ask for intake")
+	}
+	if !intake.HasLabel(named("SISF:Needs-Info"), github.LabelNeedsInfo) || intake.HasLabel(named("sisf:needs"), github.LabelNeedsInfo) {
+		t.Fatal("HasLabel must match a label name under any casing, and only the whole name")
 	}
 }

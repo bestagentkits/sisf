@@ -113,6 +113,9 @@ type Config struct {
 	PollInterval time.Duration
 	// NewRunID names a new run; random when nil. Every name must be new.
 	NewRunID func() core.RunID
+	// OnTick, when set, is called by Run after every tick with what the
+	// tick did and its store error, such as to log it. It must not block.
+	OnTick func(TickResult, error)
 }
 
 // withDefaults fills the optional fields and refuses an unusable config.

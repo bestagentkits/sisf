@@ -15,7 +15,8 @@ import (
 // empty holder.
 
 // AcquireLease grants the resource when it is free, when its lease has
-// expired, or when the same owner asks again; otherwise LEASE_HELD. Every
+// expired, or when the same owner asks again; otherwise LEASE_HELD, whose
+// details name the holder. Every
 // grant carries a token larger than any before it, including a grant to the
 // owner that already held the lease: a restarted holder thereby fences off
 // whatever its earlier incarnation still has in flight.
@@ -38,7 +39,12 @@ func (t *tx) AcquireLease(ctx context.Context, resource, owner string, ttl time.
 		RETURNING token`,
 		string(t.store.factory), resource, owner, toNanos(lease.ExpiresAt), toNanos(now)).Scan(&token)
 	if errors.Is(err, sql.ErrNoRows) {
-		return state.Lease{}, core.NewError(core.CodeLeaseHeld, "another owner holds the lease on "+resource)
+		held := core.NewError(core.CodeLeaseHeld, "another owner holds the lease on "+resource)
+		// The holder is named so a caller that must wait can say on whom.
+		if holder, _, found, readErr := t.leaseRow(ctx, resource, false); readErr == nil && found {
+			held.Details = map[string]string{"holder": holder}
+		}
+		return state.Lease{}, held
 	}
 	if err != nil {
 		return state.Lease{}, t.store.dialect.failure("acquire lease", err)

@@ -50,10 +50,23 @@ type LKG struct {
 	// IssueID and RunID name the release that was promoted.
 	IssueID core.IssueRef `json:"issue_id,omitzero"`
 	RunID   core.RunID    `json:"run_id,omitempty"`
+	// Commit is the commit the release was built from, as its verified QA
+	// receipt names it; a candidate whose base does not contain it is
+	// refused (checkBaseHasLKG). The release the install pins has none.
+	Commit core.CommitSHA `json:"commit,omitempty"`
 	// ArtifactKeyID is the key whose signature was verified at promotion.
 	ArtifactKeyID string    `json:"artifact_key_id,omitempty"`
 	VerifiedAt    time.Time `json:"verified_at,omitzero"`
-	RecordedAt    time.Time `json:"recorded_at"`
+	// VerifiedSequence is the place of the release's Verified step in the
+	// order of Verified steps (nextVerifiedSequence), by which releases of a
+	// unit are ordered. An entry an earlier build wrote has none, and is
+	// older than any release verified since.
+	VerifiedSequence int64 `json:"verified_sequence,omitempty"`
+	// VerifiedStepAt is read from entries an earlier build wrote and never
+	// written: a clock orders a release only against another an earlier
+	// build verified, neither numbered (verifiedLater).
+	VerifiedStepAt time.Time `json:"verified_step_at,omitzero"`
+	RecordedAt     time.Time `json:"recorded_at"`
 }
 
 // LKGBook keeps the LKG of each unit on the trust volume. Before any release
@@ -64,6 +77,10 @@ type LKGBook struct {
 	factory  core.FactoryID
 	manifest *supervisor.LKGStore
 	clock    core.Clock
+	// failWrites, when set, is the error every write of an LKG entry fails
+	// with: the seam through which this package's tests make the trust
+	// volume unwritable whatever user runs them. Production never sets it.
+	failWrites error
 }
 
 // OpenLKGBook returns the book kept in trustDir. manifest is the store of
@@ -115,6 +132,17 @@ func (b *LKGBook) Get(ctx context.Context, unit string) (LKG, bool, error) {
 	return entry, true, nil
 }
 
+// Installed returns the digest the root-signed release manifest pins for
+// unit: the release the install itself built, whatever was promoted since.
+// It is false when the install recorded no release or pins no such unit.
+func (b *LKGBook) Installed(ctx context.Context, unit string) (core.ReleaseDigest, bool, error) {
+	if !unitPattern.MatchString(unit) {
+		return "", false, invalid("unit %q is not a unit name", unit)
+	}
+	lkg, found, err := b.fromManifest(ctx, unit)
+	return lkg.Digest, found, err
+}
+
 // fromManifest reads the unit's digest from the root-signed release
 // manifest record. That store verifies the root signature as it loads.
 func (b *LKGBook) fromManifest(ctx context.Context, unit string) (LKG, bool, error) {
@@ -144,12 +172,15 @@ func (b *LKGBook) record(v verifiedRelease) error {
 	}
 	entry := LKG{
 		Unit: v.artifact.Unit, Digest: v.artifact.Digest, Image: v.artifact.Image, Source: SourcePromoted,
-		IssueID: v.issue, RunID: v.run, ArtifactKeyID: v.artifact.Signature.KeyID,
-		VerifiedAt: v.verifiedAt, RecordedAt: b.clock.Now().UTC(),
+		IssueID: v.issue, RunID: v.run, Commit: v.receipt.CandidateSHA, ArtifactKeyID: v.artifact.Signature.KeyID,
+		VerifiedAt: v.verifiedAt, VerifiedSequence: v.sequence, RecordedAt: b.clock.Now().UTC(),
 	}
 	data, err := json.MarshalIndent(entry, "", "  ")
 	if err != nil {
 		return invalid("the LKG entry cannot be encoded").WithCause(err)
+	}
+	if b.failWrites != nil {
+		return b.failWrites
 	}
 	return supervisor.WriteTrustFile(p, append(data, '\n'))
 }

@@ -59,7 +59,9 @@ func backoffAfter(failures int) time.Duration {
 // deliveries that are due and a batch of failing ones cannot hold back those
 // behind them. A delivery that still fails maxDeliveryAge after it arrived
 // is parked: it is not tried again, and its last failure is kept in the
-// inbox and the audit log for the Owner.
+// inbox and the audit log for the Owner. It returns an error when the store
+// failed or a delivery was held back or parked, and nil otherwise, even
+// when deliveries beyond one batch are left for the next pass.
 func (c *Control) drainInbox(ctx context.Context) error {
 	var pending []state.InboxEntry
 	err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
@@ -159,7 +161,9 @@ func (c *Control) failed(id string, now time.Time) {
 // carries a hidden marker, so an effect performed twice shows once; a failed
 // one is tried again after a growing wait. Messages of other topics belong
 // to other components and are left alone. The supervisor's recovery
-// reports and held build notices are delivered here too, as issue comments.
+// reports, held build notices and QA hold notices are delivered here too,
+// as issue comments.
+// Each is recorded as the factory's own edit of its issue (editIssue).
 func (c *Control) deliverOutbox(ctx context.Context) error {
 	var pending []state.OutboxMessage
 	err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
@@ -172,21 +176,26 @@ func (c *Control) deliverOutbox(ctx context.Context) error {
 	}
 	var failed error
 	for _, m := range pending {
-		var sendErr error
+		var deliver func(ctx context.Context) error
+		sent := func(ctx context.Context, tx state.Tx) error { return tx.MarkOutboxSent(ctx, m.ID) }
 		switch m.Topic {
 		case intake.TopicComment, intake.TopicLabels:
-			sendErr = intake.Deliver(ctx, c.cfg.GitHub, m)
+			deliver = func(ctx context.Context) error { return intake.Deliver(ctx, c.cfg.GitHub, m) }
+			sent = func(ctx context.Context, tx state.Tx) error { return intake.Delivered(ctx, tx, m) }
 		case release.TopicRecoveryReport:
-			sendErr = c.deliverRecoveryReport(ctx, m)
+			deliver = func(ctx context.Context) error { return c.deliverRecoveryReport(ctx, m) }
 		case handoff.TopicBuildHeld:
-			sendErr = c.deliverBuildHeld(ctx, m)
+			deliver = func(ctx context.Context) error { return c.deliverBuildHeld(ctx, m) }
+		case handoff.TopicQAHeld:
+			deliver = func(ctx context.Context) error { return c.deliverQAHeld(ctx, m) }
 		default:
 			continue
 		}
+		sendErr := c.editIssue(ctx, outboxIssue(m), outboxIntent(m), deliver)
 		now := c.cfg.Clock.Now()
 		err := c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 			if sendErr == nil {
-				return tx.MarkOutboxSent(ctx, m.ID)
+				return sent(ctx, tx)
 			}
 			return tx.MarkOutboxFailed(ctx, m.ID, now.Add(backoffAfter(m.Attempts+1)), reasonOf(sendErr))
 		})

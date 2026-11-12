@@ -43,7 +43,9 @@ func TestEachZoneWorksOverItsOwnRole(t *testing.T) {
 
 		// The run, as the dispatcher drives it.
 		claimed := claim(t, agent, ready, "worker-1", "run-1")
-		evaluating := along(t, agent, claimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted, core.EventQAFailed)
+		evaluating := along(t, agent, claimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted)
+		// The verdict of QA is the control zone's, over its own role.
+		evaluating = advance(t, control, evaluating, core.EventQAFailed, nil)
 		mustUpdate(t, agent, func(tx state.Tx) error {
 			if _, err := tx.GetKV(ctx, "install", "budget_confirmation"); err != nil {
 				return err

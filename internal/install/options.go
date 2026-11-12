@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -54,6 +55,8 @@ type Options struct {
 	// GitHubToken is the installation token. Under Sim a random stand-in is
 	// generated, since the fake accepts any token.
 	GitHubToken core.SecretValue
+	// GitHubApp names the GitHub App installation a real install acts for.
+	GitHubApp GitHubApp
 	// GitHubAPIURL overrides the API root. It must be https, or http on a
 	// loopback host.
 	GitHubAPIURL string
@@ -65,12 +68,31 @@ type Options struct {
 	// launcher that runs it in a sandbox. They come from the manifest's
 	// extensions qa_agent and qa_agent_binary.
 	QAAgent, QAAgentBinary string
-	// BuildCommand is the command, split on spaces, the supervisor runs in a
-	// runner sandbox to build a candidate in Docker mode; from the
-	// manifest's extension build_command. Without it the stages are off.
+	// BuildCommand is the command, split on spaces, the supervisor runs to
+	// build a candidate; from the manifest's extension build_command. In
+	// Docker mode the stages are off without it.
 	BuildCommand string
+	// Agents are the real coding and QA agents of a Standalone install.
+	Agents AgentOptions
+	// BuildSandbox is the Docker sandbox a Standalone install builds
+	// candidates in; the zero value builds with the local backend, which
+	// builds nothing an agent wrote.
+	BuildSandbox BuildSandbox
+	// Identity is how people sign in to the control zone.
+	Identity Identity
+	// Dev is a development install: Standalone on loopback only, signing in
+	// at the fake identity provider so no person has to click.
+	Dev bool
+	// GitHubCredential "gh-cli" takes the GitHub token from the local gh
+	// login (`gh auth token`) at init and at every start; development
+	// installs only.
+	GitHubCredential string
 	// Debug publishes the state store on 127.0.0.1:7469 (Docker mode only).
 	Debug bool
+	// ReconcileInterval is how often control reconciles with GitHub; zero
+	// keeps control's default. A development install on the operator's gh
+	// login takes no webhooks and learns of issues only this way.
+	ReconcileInterval time.Duration
 }
 
 // normalize validates the options and fills the defaults.
@@ -90,6 +112,9 @@ func (o Options) normalize() (Options, error) {
 	}
 	if !ownerPattern.MatchString(o.Repo.Owner) || !namePattern.MatchString(o.Repo.Repo) || o.Repo.Repo == "." || o.Repo.Repo == ".." {
 		return o, invalidf("the repository must be given as owner/name")
+	}
+	if err := o.checkGitHubApp(); err != nil {
+		return o, err
 	}
 	if o.FactoryID == "" {
 		slug := strings.Trim(slugPattern.ReplaceAllString(strings.ToLower(o.Repo.Repo), "-"), "-")
@@ -113,7 +138,28 @@ func (o Options) normalize() (Options, error) {
 	if err := checkGitHubURL(o.GitHubAPIURL); err != nil {
 		return o, err
 	}
-	return o, o.Budget.Validate()
+	if err := o.checkDev(); err != nil {
+		return o, err
+	}
+	id, err := o.Identity.normalize(o.Sim || o.Dev)
+	if err != nil {
+		return o, err
+	}
+	o.Identity = id
+	if o.Agents, err = o.Agents.normalize(o); err != nil {
+		return o, err
+	}
+	if err := o.BuildSandbox.normalize(o); err != nil {
+		return o, err
+	}
+	if err := checkReconcileInterval(o.ReconcileInterval); err != nil {
+		return o, err
+	}
+	if err := o.Budget.Validate(); err != nil {
+		return o, err
+	}
+	o.Budget = o.Budget.withDefaults()
+	return o, nil
 }
 
 // checkGitHubURL requires https, or plain http to a loopback host, so a

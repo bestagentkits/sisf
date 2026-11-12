@@ -2,11 +2,12 @@ package install
 
 import (
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
+	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
@@ -19,23 +20,28 @@ const (
 )
 
 // controlOnlyKeys are the variables that exist only in the control zone's
-// env file. If another zone's file has one, that zone holds a secret of
+// env files. If another zone's file has one, that zone holds a secret of
 // Zone 3, which the isolation rule forbids.
-var controlOnlyKeys = []string{"SISF_OWNER_TOKEN", "SISF_WEBHOOK_SECRET", "SISF_GITHUB_TOKEN", "SISF_APPROVAL_KEY",
-	"SISF_ROOT_PUBLIC_KEY", "EDGE_ADMIN_TOKEN",
+var controlOnlyKeys = []string{"SISF_WEBHOOK_SECRET", "SISF_GITHUB_TOKEN", "SISF_APPROVAL_KEY",
+	"SISF_ROOT_PUBLIC_KEY", "EDGE_ADMIN_TOKEN", wiring.EnvEdgeCountersToken,
+	wiring.EnvOIDCClientSecret, wiring.EnvGitHubLoginClientSecret,
 	"SISF_STATE_OWNER_DSN", "POSTGRES_PASSWORD"}
 
-// allowedKeys is everything the env file of a unit outside the shared
-// control runtime may hold, by path below secrets/. A key beyond these is a
-// secret the unit does not need: the supervisor holds what releasing needs
-// and the GitHub token, the agent zone its store role and the token of its
-// own run control route, the edge only its admin token.
+// allowedKeys is everything the env file of a unit may hold, by path below
+// secrets/. A key beyond these is a secret the unit does not need: control
+// holds its own credentials, the sign-in client secrets and the edge's
+// read-only counters token, never the edge's admin token; the supervisor
+// holds what releasing needs and the GitHub token, the agent zone its store
+// role and the token of its own run control route, the edge its admin and
+// counters tokens.
 var allowedKeys = map[string][]string{
+	"control/runtime.env": {"SISF_ZONE", "SISF_STATE_DSN", "SISF_WEBHOOK_SECRET", "SISF_APPROVAL_KEY", "SISF_GITHUB_TOKEN",
+		wiring.EnvEdgeCountersToken, wiring.EnvOIDCClientSecret, wiring.EnvGitHubLoginClientSecret},
 	"control/supervisor.env": {"SISF_ROOT_PUBLIC_KEY", "SISF_STATE_DSN", "SISF_APPROVAL_PUBLIC_KEY", "EDGE_ADMIN_TOKEN",
 		"SISF_DISPATCHER_ADMIN_TOKEN", "SISF_GITHUB_TOKEN"},
 	"agent/runtime.env":       {"SISF_ZONE", "SISF_STATE_DSN", "SISF_DISPATCHER_ADMIN_TOKEN"},
 	"application/runtime.env": {"SISF_ZONE", "SISF_STATE_DSN"},
-	"edge/runtime.env":        {"EDGE_ADMIN_TOKEN"},
+	"edge/runtime.env":        {"EDGE_ADMIN_TOKEN", wiring.EnvEdgeCountersToken},
 }
 
 // CheckSecrets verifies the secrets directory of an install: that only its
@@ -104,6 +110,11 @@ func CheckSecrets(l Layout, mode manifest.Mode) ([]Violation, error) {
 					add(ruleZoneKeys, "the %s zone's env file holds %s, which belongs to the control zone", z, key)
 				}
 			}
+			for _, key := range sortedKeys(env) {
+				if strings.HasPrefix(key, wiring.EnvControlSecretPrefix) {
+					add(ruleZoneKeys, "the %s zone's env file holds %s, a secret of the control zone's providers", z, key)
+				}
+			}
 		}
 		if mode == manifest.ModeDocker {
 			checkZoneDSN(z, env["SISF_STATE_DSN"], creds[z], add)
@@ -120,7 +131,7 @@ func CheckSecrets(l Layout, mode manifest.Mode) ([]Violation, error) {
 			return nil, err
 		}
 		for _, key := range sortedKeys(env) {
-			if !slices.Contains(allowedKeys[rel], key) {
+			if !slices.Contains(allowedKeys[rel], key) && !controlProviderSecret(rel, key) {
 				add(ruleZoneKeys, "%s holds %s, which its unit does not need", rel, key)
 			}
 		}
@@ -130,25 +141,12 @@ func CheckSecrets(l Layout, mode manifest.Mode) ([]Violation, error) {
 	} else if mode == manifest.ModeDocker {
 		checkZoneDSN(core.ZoneControl, sup["SISF_STATE_DSN"], creds[core.ZoneControl], add)
 	}
+	problems, err := edgeTokenProblems(l)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range problems {
+		add(ruleCredentials, "%s", p)
+	}
 	return out, nil
-}
-
-// checkZoneDSN requires a zone's connection string to name the zone's own
-// role and password, so no zone can open the store as another.
-func checkZoneDSN(z core.Zone, dsn, credential string, add func(rule, format string, args ...any)) {
-	u, err := url.Parse(dsn)
-	if err != nil || u.User == nil {
-		add(ruleCredentials, "the %s zone has no store connection of its own", z)
-		return
-	}
-	password, _ := u.User.Password()
-	if u.User.Username() != zoneRoles[z] {
-		add(ruleCredentials, "the %s zone opens the store as role %q, want %q", z, u.User.Username(), zoneRoles[z])
-	}
-	if password != credential {
-		add(ruleCredentials, "the %s zone's store password is not the zone's own credential", z)
-	}
-	if u.Path != "/"+stateDatabase {
-		add(ruleCredentials, "the %s zone's store connection names another database", z)
-	}
 }

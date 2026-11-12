@@ -1,0 +1,50 @@
+{{define "title"}}Security &amp; finance{{end}}
+{{define "content"}}
+<h1>Security &amp; finance</h1>
+<section>
+  <h2>Budget</h2>
+  {{if .Budget.OK}}{{with .Money}}
+  <dl class="fields">
+    <dt>Confirmed</dt><dd>{{if .Confirmed}}yes{{else}}no{{end}}</dd>
+    <dt>Mode</dt><dd data-field="budget-mode">{{.Mode}}</dd>
+    {{if .Cap}}<dt>Cap</dt><dd>{{.Cap}}</dd>{{end}}
+    {{if .Alert}}<dt>Alert threshold</dt><dd>{{.Alert}}</dd>{{end}}
+    <dt>Reserved</dt><dd>{{.Reserved}}</dd>
+    <dt>Spent, verified</dt><dd>{{.Verified}}</dd>
+    <dt>Spent, not verified</dt><dd>{{.Unverified}}</dd>
+    {{if .Available}}<dt>Still available</dt><dd>{{.Available}}</dd>{{end}}
+  </dl>
+  {{range .Warnings}}<p class="notice warn">{{.}}</p>{{end}}
+  {{end}}{{else}}{{template "panelstate" .Budget}}{{end}}
+  {{if .CanSetBudget}}
+  <h3>Change the budget</h3>
+  <p>A change needs the Owner's approval and, for planning, deciding and running it, a fresh confirmation of your identity for that exact call.</p>
+  <form method="post" action="/actions/budget.set" data-confirm="Change the budget? This asks the Owner for an approval.">
+    {{template "csrf" .}}
+    <input type="hidden" name="return_to" value="/security">
+    <label>Mode <select name="mode" required><option value="unlimited">unlimited</option><option value="capped">capped</option></select></label>
+    <label>Cap, in millionths <input type="number" name="cap_micros" min="0" step="1"></label>
+    <label>Period <select name="period"><option value="">one-time</option><option value="day">day</option><option value="week">week</option><option value="month">month</option></select></label>
+    <label>Alert threshold, in millionths <input type="number" name="alert_threshold_micros" min="0" step="1"></label>
+    <label>Rollback reserve, in millionths <input type="number" name="rollback_reserve_micros" min="0" step="1"></label>
+    <label><input type="checkbox" name="provider_hard_cap" value="1"> The provider enforces a hard cap</label>
+    <label>Approval id, once the Owner approved <input type="text" name="approval_id" maxlength="256"></label>
+    <button type="submit">Change the budget</button>
+  </form>
+  {{end}}
+</section>
+<section>
+  <h2>Secret references</h2>
+  {{if .Secrets.OK}}{{template "table" .SecretTable}}{{else}}{{template "panelstate" .Secrets}}{{end}}
+</section>
+<section>
+  <h2>Roles and agent capabilities</h2>
+  <p>What each role may run, from the action registry every surface shares.</p>
+  {{template "table" .Capabilities}}
+</section>
+<section>
+  <h2>Signed in as</h2>
+  <p data-field="who">{{.Who}}</p>
+  <p>Sign-in and GitHub App checks are on the <a href="/setup">setup page</a>.</p>
+</section>
+{{end}}

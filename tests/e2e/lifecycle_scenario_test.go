@@ -24,12 +24,18 @@ import (
 // deployment is one way of running the factory: Compose or Standalone.
 type deployment interface {
 	github() simGitHub
-	// control is the control plane's base URL and the Owner token.
-	control(t *testing.T) (base, ownerToken string)
+	// control is the control plane's base URL and the session cookie of the
+	// Owner, signed in through the fake identity provider.
+	control(t *testing.T) (base, session string)
 	// factoryYAML is the install's manifest, committed as the policy file.
 	factoryYAML(t *testing.T) []byte
 	// approvePolicy puts revision in force, as the Owner on the factory's host.
 	approvePolicy(t *testing.T, revision string)
+	// policy runs `factoryd policy` with args as the Owner on the factory's
+	// host and returns what it printed.
+	policy(t *testing.T, args ...string) (string, error)
+	// kv reads one entry of the store's key-value table, "" when absent.
+	kv(t *testing.T, namespace, key string) string
 	// dispatcherHealth is the dispatcher's /healthz, or an error while it is down.
 	dispatcherHealth(t *testing.T) (health, error)
 	// killDispatcher stops the dispatcher at once; startDispatcher starts it again.
@@ -103,8 +109,8 @@ func foundation(t *testing.T, manifest []byte) map[string]string {
 		}
 		files[path] = string(raw)
 	}
-	// Every scenario commits the same tree, so the policy approved first on
-	// an install stays the one in force for every later scenario.
+	// Every scenario puts the same files in force (seedPolicy), so the
+	// diffs of the scripted agent apply to the policy of every scenario.
 	maps.Copy(files, seedFiles)
 	return files
 }
@@ -112,10 +118,10 @@ func foundation(t *testing.T, manifest []byte) map[string]string {
 // states reads the issue's state from the API and the dashboard.
 func states(t *testing.T, d deployment, issue string) (api, dashboard string) {
 	t.Helper()
-	base, owner := d.control(t)
+	base, session := d.control(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	api, dashboard, err := harness.SurfaceStates(ctx, base, owner, issue)
+	api, dashboard, err := harness.SurfaceStates(ctx, base, session, issue)
 	if err != nil {
 		return "error: " + err.Error(), ""
 	}
@@ -177,7 +183,7 @@ func count(states []string, want string) int {
 func runLifecycle(t *testing.T, d deployment) {
 	gh := d.github()
 	manifestYAML := d.factoryYAML(t)
-	d.approvePolicy(t, gh.commit(t, foundation(t, manifestYAML)))
+	seedPolicy(t, d)
 	requireFreeRunSlot(t, d, manifestYAML)
 
 	// Every delivery of the new issue is held, then let through newest

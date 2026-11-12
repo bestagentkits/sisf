@@ -16,7 +16,8 @@ const trustEnvFile = "trust.env"
 // installTrust issues the supervisor's delegated keys for the release `sisf
 // up` just signed and places them, with the LKG record of that release, on
 // the trust volume: through the one-shot trust step in Docker mode, and
-// directly in the data directory in Standalone mode.
+// directly in the data directory in Standalone mode, where a promoted
+// release whose program the supervisor still holds stays the LKG.
 func (in *Installer) installTrust(ctx context.Context, m *manifest.Manifest, b built) error {
 	files, err := in.trustMaterial(ctx, m.FactoryID, b.release)
 	if err != nil {
@@ -32,7 +33,7 @@ func (in *Installer) installTrust(ctx context.Context, m *manifest.Manifest, b b
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return unavailablef(err, "cannot create the trust directory")
 		}
-		return WriteTrustFiles(dir, files)
+		return in.writeStandaloneTrust(dir, files, m.Extensions["profile"] == profileSim)
 	}
 	env, err := formatEnv(EnvTrustFiles, encodeTrustFiles(files))
 	if err != nil {

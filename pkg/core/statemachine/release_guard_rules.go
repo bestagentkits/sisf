@@ -1,6 +1,7 @@
 package statemachine
 
 import (
+	"slices"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -27,8 +28,9 @@ func checkCandidate(t core.Transition) error {
 
 // checkRollout requires the preflight to be of the issue, the run and the
 // release of the transition, the release to be the candidate QA passed and a
-// signed build of this factory, and a verified revision to roll back to with
-// readable metrics. The last two missing mean hold.
+// signed build of this factory of a unit the factory may publish by itself,
+// and a verified revision to roll back to with readable metrics. The last
+// two missing mean hold.
 func checkRollout(t core.Transition, p RolloutProof) error {
 	artifact, target := p.Artifact, p.RollbackTarget
 	switch {
@@ -41,6 +43,12 @@ func checkRollout(t core.Transition, p RolloutProof) error {
 	}
 	if err := artifact.ValidateFor(p.FactoryID); err != nil {
 		return refuse(GuardRollout, t, "the artifact is not a signed build of this factory: %v", err).WithCause(err)
+	}
+	if !slices.Contains(p.SelfPublishable, artifact.Unit) {
+		refusal := refuse(GuardRollout, t,
+			"unit %q is not one the factory may publish by itself; it changes only through a governance cycle a person approves", artifact.Unit)
+		refusal.Details["unit"] = artifact.Unit
+		return refusal
 	}
 	switch {
 	case artifact.Digest != t.ReleaseDigest:
@@ -59,8 +67,8 @@ func checkRollout(t core.Transition, p RolloutProof) error {
 
 // checkCanary requires the observation to be of the issue, the run and the
 // release of the transition, read with its metrics, of the released digest
-// running and healthy, and dated no later than now. Missing metrics mean
-// hold.
+// running and healthy, and dated within the rollout: no earlier than its
+// start and no later than now. Missing metrics mean hold.
 func checkCanary(t core.Transition, p CanaryProof, now time.Time) error {
 	switch {
 	case t.RunID == "" || t.ReleaseDigest == "":
@@ -79,6 +87,10 @@ func checkCanary(t core.Transition, p CanaryProof, now time.Time) error {
 		return refuse(GuardCanaryHealth, t, "the observation is not dated")
 	case p.ObservedAt.After(now):
 		return refuse(GuardCanaryHealth, t, "the observation is dated after the current instant")
+	case p.RolloutStartedAt.IsZero() || p.RolloutStartedAt.After(now):
+		return refuse(GuardCanaryHealth, t, "it is not known when the rollout started")
+	case p.ObservedAt.Before(p.RolloutStartedAt):
+		return refuse(GuardCanaryHealth, t, "the observation was made before the rollout started and says nothing about it")
 	}
 	if !p.Healthy {
 		refusal := refuse(GuardCanaryHealth, t, "the rolled-out revision is not healthy")

@@ -60,6 +60,9 @@ type AgentZoneConfig struct {
 	// ProtectedDirs are the factory's secrets, state and trust directories
 	// this process knows of.
 	ProtectedDirs []string
+	// Model, when set, is the model a real coding agent runs in place of
+	// the model of its route; the run records the route it ran on.
+	Model string
 	// Owner names the exporter in leases.
 	Owner string
 }
@@ -93,6 +96,9 @@ func NewAgentZone(cfg AgentZoneConfig) (*AgentZone, error) {
 // newCodingAgent builds the coding agent and where its artifacts are read.
 func newCodingAgent(cfg AgentZoneConfig) (agent.Backend, lifecycle.ArtifactSource, error) {
 	if cfg.Agent == "fake" || cfg.Agent == "" {
+		if cfg.Model != "" {
+			return nil, nil, core.NewError(core.CodeInvalidArgument, "--agent-model is for a real coding agent; the scripted agent runs no model")
+		}
 		if cfg.Home != "" {
 			return nil, nil, core.NewError(core.CodeInvalidArgument, "--agent-home is for a real coding agent; the scripted agent runs no program")
 		}
@@ -128,8 +134,14 @@ func newCodingAgent(cfg AgentZoneConfig) (agent.Backend, lifecycle.ArtifactSourc
 	if err != nil {
 		return nil, nil, err
 	}
+	adapter := inner
+	if cfg.Model != "" {
+		if inner, err = withModel(inner, cfg.Model); err != nil {
+			return nil, nil, err
+		}
+	}
 	fresh := &lifecycle.FreshWorkspaces{Backend: inner, Root: cfg.WorkspaceRoot, Provision: gitCheckout(cfg.WorkspaceSource)}
-	return fresh, lifecycle.FileArtifacts{Root: cfg.ArtifactDir}, nil
+	return withUsageOf(fresh, adapter), lifecycle.FileArtifacts{Root: cfg.ArtifactDir}, nil
 }
 
 // gitCheckout fills a new workspace with source at the base commit. No

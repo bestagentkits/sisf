@@ -87,7 +87,7 @@ func TestSimGithubServesTheFakeUntilInterrupted(t *testing.T) {
 	base := "http://" + ln.Addr().String()
 	req, _ := http.NewRequest(http.MethodPost, base+"/repos/acme/app/issues", strings.NewReader(`{"title":"hello"}`))
 	req.Header.Set("Authorization", "Bearer fake-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestSimGithubServesTheFakeUntilInterrupted(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("interrupt must end the server cleanly: %v", err)
 	}
-	if _, err := http.Get(base + "/repos/acme/app/issues"); err == nil {
+	if _, err := testClient.Get(base + "/repos/acme/app/issues"); err == nil {
 		t.Fatal("the server is still listening after it was stopped")
 	}
 	if !strings.Contains(out.String(), "listening on http://127.0.0.1:") {

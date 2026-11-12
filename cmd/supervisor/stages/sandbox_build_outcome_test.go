@@ -36,9 +36,6 @@ func (s scriptedSandbox) Exec(context.Context, execution.SandboxID, execution.Co
 
 func (scriptedSandbox) Destroy(context.Context, execution.SandboxID) error { return nil }
 
-const goodBuildOutput = "sisf-image-digest: sha256:0000000000000000000000000000000000000000000000000000000000000001\n" +
-	"sisf-image: registry.local/app@sha256:01\nsisf-tests: passed\n"
-
 func TestABuildCommandThatRanAndFailedIsTheCandidatesFault(t *testing.T) {
 	t.Parallel()
 	req := ImageRequest{RunID: "run-1", Unit: "app", Commit: baseSHA, Untrusted: true}
@@ -90,20 +87,19 @@ func TestABuildThatCouldNotRunIsAnOutageNotTheCandidatesFault(t *testing.T) {
 			t.Errorf("%s: %v, want an outage with %s", name, err, c.want)
 		}
 	}
-	out, err := SandboxImages{Exec: scriptedSandbox{result: execution.ExecResult{Stdout: []byte(goodBuildOutput)}},
-		Argv: []string{"build"}, Timeout: time.Minute}.BuildImage(context.Background(), req)
-	if err != nil || out.Image != "registry.local/app@sha256:01" || !out.TestsPassed {
+	out, err := sandboxBuild(t, &phasedSandbox{phase: map[string]execution.ExecResult{}})
+	if err != nil || out.Image != "registry.local/app@"+reportedDigest || !out.TestsPassed {
 		t.Errorf("a successful build: %+v, %v", out, err)
 	}
 }
 
 func TestAFailedBuildCommandNamesTheCommitItRanOn(t *testing.T) {
 	t.Parallel()
-	repo := &recordingRepo{files: map[string]string{"app/main.go": "a\n"}}
+	repo := &recordingRepo{files: map[string]string{"examples/hello-app/main.go": "a\n"}}
 	b := newTestBuilder(repo)
 	b.Images = SandboxImages{Exec: scriptedSandbox{result: execution.ExecResult{ExitCode: 1}}, Argv: []string{"build"}, Timeout: time.Minute}
 	built, err := b.Build(context.Background(), BuildRequest{RunID: "run-1", Attempt: 2, Base: baseSHA,
-		Diff: "--- a/app/main.go\n+++ b/app/main.go\n@@ -1 +1 @@\n-a\n+b\n"})
+		Diff: "--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-a\n+b\n"})
 	if r, ok := RefusalOf(err); !ok || r.Reason != RefusalBuildFailed {
 		t.Fatalf("a failing build command: %v", err)
 	}

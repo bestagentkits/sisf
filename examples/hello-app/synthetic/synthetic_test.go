@@ -3,6 +3,7 @@ package synthetic_test
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -90,9 +91,24 @@ func TestEachBrokenFlowFailsItsOwnCheck(t *testing.T) {
 
 func TestAnUnreachableOrMalformedTargetFailsEveryCheck(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(newGood())
-	srv.Close()
-	for _, base := range []string{srv.URL, "", "ftp://app", "http://"} {
+	// The address stays bound for the whole test and hangs up on every
+	// caller. A closed test server would free its port, and a server of a
+	// test running in parallel could be given it and answer some checks.
+	deaf, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = deaf.Close() })
+	go func() {
+		for {
+			conn, err := deaf.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	for _, base := range []string{"http://" + deaf.Addr().String(), "", "ftp://app", "http://"} {
 		report := synthetic.Run(context.Background(), synthetic.Target{BaseURL: base, ExpectedRevision: revision})
 		if report.Passed() || len(report.Failures()) != len(report.Results) {
 			t.Errorf("target %q: failures = %d of %d, want all", base, len(report.Failures()), len(report.Results))

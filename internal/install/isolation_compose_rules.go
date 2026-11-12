@@ -51,6 +51,9 @@ type composeVolume struct {
 	// as a bind of a host directory (type: none, o: bind, device: <path>).
 	Driver     string               `yaml:"driver"`
 	DriverOpts map[string]yaml.Node `yaml:"driver_opts"`
+	// Labels name the install that made the volume; they change nothing
+	// about what the volume is.
+	Labels map[string]string `yaml:"labels"`
 }
 
 type composeService struct {
@@ -135,12 +138,17 @@ const (
 )
 
 var serviceRules = map[string]serviceRule{
-	"app":     {envFiles: []string{"application/runtime.env"}, networks: []string{"app"}, volumes: []string{"app-data"}},
-	"control": {envFiles: []string{"control/runtime.env"}, networks: []string{"control", "factory"}, volumes: []string{"control-data"}, ports: []int{PortControl, PortFakeGitHub}},
+	"app": {envFiles: []string{"application/runtime.env"}, networks: []string{"app"}, volumes: []string{"app-data"}},
+	// Control shares the supervisor's admin socket volume, and in the
+	// simulation publishes the fake GitHub and the fake identity provider
+	// that run in its network namespace.
+	"control": {envFiles: []string{"control/runtime.env"}, networks: []string{"control", "factory"}, volumes: []string{"control-data", supervisorAdminVolume},
+		ports: []int{PortControl, PortFakeGitHub, PortFakeOIDC}},
 	// The supervisor reaches GitHub and the edge's admin listener (control),
 	// the store and the dispatcher's run control (factory), the revisions it
-	// deploys (app) and its two filters (docker).
-	"supervisor":      {envFiles: []string{"control/supervisor.env"}, networks: []string{"control", "factory", "app", dockerNetwork}, volumes: []string{"trust"}},
+	// deploys (app) and its two filters (docker); it serves its admin socket
+	// on the volume it shares with control alone.
+	"supervisor":      {envFiles: []string{"control/supervisor.env"}, networks: []string{"control", "factory", "app", dockerNetwork}, volumes: []string{"trust", supervisorAdminVolume}},
 	"trust-bootstrap": {envFiles: []string{"control/" + trustEnvFile}, volumes: []string{"trust"}, networkMode: "none"},
 	"dispatcher":      {envFiles: []string{"agent/runtime.env"}, networks: []string{"factory"}, simAgent: true},
 	"edge": {envFiles: []string{"edge/runtime.env"}, networks: []string{"app", "control", "sandbox"}, ports: []int{PortEdge},
@@ -148,10 +156,15 @@ var serviceRules = map[string]serviceRule{
 	"state":            {envFiles: []string{"state/runtime.env"}, networks: []string{"factory"}, volumes: []string{"state-data"}, ports: []int{PortPostgres}},
 	"state-bootstrap":  {envFiles: []string{"state/bootstrap.env"}, networks: []string{"factory"}},
 	"sim-github":       {envFiles: []string{"sim/runtime.env"}, networkMode: "service:control"},
+	"sim-oidc":         {networkMode: "service:control"},
 	"sim-github-relay": {networkMode: "service:supervisor"},
 	filterRunner:       {networks: []string{dockerNetwork}, socket: true},
 	filterDeploy:       {networks: []string{dockerNetwork}, socket: true},
 }
+
+// supervisorAdminVolume holds the supervisor's admin socket; only the
+// supervisor and control mount it.
+const supervisorAdminVolume = "supervisor-admin"
 
 // Aliases of the edge's two inner listeners. Each is bound to the address
 // the alias resolves to, so it is reachable on that one network only.

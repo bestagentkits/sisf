@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
+	"github.com/bestagentkits/sisf/internal/dispatcher"
 	iqa "github.com/bestagentkits/sisf/internal/qa"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
@@ -28,13 +29,18 @@ type QAStage struct {
 	MaxAttempts int
 	PassScore   int
 	ExtraGates  []string
-	Clock       core.Clock
-	LeaseTTL    time.Duration
+	// Budget closes the reservation of a run QA passed or held; nil leaves
+	// it to the dispatcher.
+	Budget   dispatcher.ReservationCloser
+	Clock    core.Clock
+	LeaseTTL time.Duration
 }
 
-// QAPassResult is what one pass of the stage did, per verdict.
+// QAPassResult is what one pass of the stage did, per verdict, with the
+// reason of each verdict that did not pass.
 type QAPassResult struct {
 	Passed, Failed, Held []core.IssueRef
+	Reasons              map[core.IssueRef]string
 	Errors               []error
 }
 
@@ -54,29 +60,38 @@ func (s *QAStage) Pass(ctx context.Context) QAPassResult {
 	if err != nil {
 		return QAPassResult{Errors: []error{err}}
 	}
+	res.Reasons = map[core.IssueRef]string{}
 	for _, record := range waiting {
-		verdict, err := s.evaluate(ctx, record)
+		r, err := s.evaluate(ctx, record)
 		switch {
-		case err != nil && !core.HasCode(err, core.CodeLeaseHeld):
-			res.Errors = append(res.Errors, fmt.Errorf("%s: %w", record.IssueID, err))
-		case verdict == VerdictPassed:
+		case err != nil:
+			if !core.HasCode(err, core.CodeLeaseHeld) {
+				res.Errors = append(res.Errors, fmt.Errorf("%s: %w", record.IssueID, err))
+			}
+			continue
+		case r.Verdict == VerdictPassed:
 			res.Passed = append(res.Passed, record.IssueID)
-		case verdict == VerdictFailed:
+		case r.Verdict == VerdictFailed:
 			res.Failed = append(res.Failed, record.IssueID)
-		case verdict == VerdictHeld:
+		case r.Verdict == VerdictHeld:
 			res.Held = append(res.Held, record.IssueID)
 		}
+		res.Reasons[record.IssueID] = r.Reason
 	}
+	// A passed or held verdict records that its run's reservation is due to
+	// close; closing it is a step of its own, so a budget failure never
+	// undoes a paid judgment, and one that fails is tried again next pass.
+	res.Errors = append(res.Errors, s.closeDueRuns(ctx)...)
 	return res
 }
 
 // evaluate judges one candidate and records the verdict under the lease.
 // A judge or a repository that is unavailable leaves the candidate for a
 // later pass; any other refusal is a failed evaluation.
-func (s *QAStage) evaluate(ctx context.Context, record core.StateRecord) (string, error) {
+func (s *QAStage) evaluate(ctx context.Context, record core.StateRecord) (QAResult, error) {
 	lease, err := s.take(ctx, record.IssueID)
 	if err != nil {
-		return "", err
+		return QAResult{}, err
 	}
 	defer s.letGo(ctx, lease)
 	var doc handoff.CandidateDoc
@@ -84,7 +99,7 @@ func (s *QAStage) evaluate(ctx context.Context, record core.StateRecord) (string
 		doc, err = handoff.ReadCandidate(ctx, tx, record.RunID, record.Attempt)
 		return err
 	}); err != nil {
-		return "", err
+		return QAResult{}, err
 	}
 	c := doc.Candidate
 	if doc.BuildFailure != "" {
@@ -93,13 +108,23 @@ func (s *QAStage) evaluate(ctx context.Context, record core.StateRecord) (string
 	if c.IssueID != record.IssueID || c.Digest != record.CandidateDigest {
 		return s.conclude(ctx, record, lease, QAResult{Candidate: c, Verdict: VerdictFailed, Reason: "the stored candidate is not the one the issue's run submitted"})
 	}
-	if c.ChangedPaths, err = s.Tree.ChangedPaths(ctx, c.BaselineSHA, c.CommitSHA); err != nil {
-		return "", err
+	listed, err := s.Tree.ChangedPaths(ctx, c.BaselineSHA, c.CommitSHA)
+	switch {
+	case core.HasCode(err, core.CodeLimitExceeded):
+		// The listing may be cut short: the candidate is judged on what is
+		// listed, and release governance then leaves it for the Owner.
+		c.ChangedPathsIncomplete = true
+	case err != nil:
+		return QAResult{}, err
 	}
+	// The builder's list is every path of the patch; GitHub's adds what
+	// differs from the baseline besides. The gates, the release governance
+	// and the merge see both.
+	c.ChangedPaths = unionPaths(c.ChangedPaths, listed)
 	result, err := s.Evaluator.Run(ctx, c)
 	switch {
 	case core.HasCode(err, core.CodeUnavailable) || core.HasCode(err, core.CodeTimeout) || core.HasCode(err, core.CodeRateLimited):
-		return "", err
+		return QAResult{}, err
 	case err != nil:
 		return s.conclude(ctx, record, lease, QAResult{Candidate: c, Verdict: VerdictFailed, Reason: "no receipt was issued: " + err.Error()})
 	case result.Passed && result.Action == iqa.ActionRelease:
@@ -113,11 +138,15 @@ func (s *QAStage) evaluate(ctx context.Context, record core.StateRecord) (string
 
 // conclude writes the verdict and its step in one transaction. A failure
 // with no attempt left is held: the lifecycle has no edge from QAEvaluation
-// but back to development, and the run may not start another attempt.
-func (s *QAStage) conclude(ctx context.Context, record core.StateRecord, lease state.Lease, r QAResult) (string, error) {
+// but back to development, and the run may not start another attempt. A
+// held verdict writes no step; its hold is recorded in the same
+// transaction. Every verdict leaves a note the issue's progress shows.
+func (s *QAStage) conclude(ctx context.Context, record core.StateRecord, lease state.Lease, r QAResult) (QAResult, error) {
 	r.At = s.Clock.Now().UTC()
+	hold := handoff.QAHoldOwnerApproval
 	if r.Verdict == VerdictFailed && record.Attempt >= s.MaxAttempts {
 		r.Verdict, r.Reason = VerdictHeld, fmt.Sprintf("attempt %d of %d failed QA: %s", record.Attempt, s.MaxAttempts, r.Reason)
+		hold = handoff.QAHoldAttemptsUsed
 	}
 	t := core.Transition{
 		IssueID: record.IssueID, From: core.StateQAEvaluation, ExpectedVersion: record.Version,
@@ -130,7 +159,7 @@ func (s *QAStage) conclude(ctx context.Context, record core.StateRecord, lease s
 		t.To, t.Event, t.IdempotencyKey = core.StateReleaseCandidate, core.EventQAPassed, "qa-passed/"+string(record.RunID)+"/"+itoa(record.Attempt)
 		proof, err := s.proof(ctx, r.Receipt)
 		if err != nil {
-			return "", err
+			return QAResult{}, err
 		}
 		guards.QA = statemachine.QAGuardFunc(func(context.Context, core.Transition) (statemachine.QAProof, error) { return proof, nil })
 	case VerdictFailed:
@@ -146,8 +175,17 @@ func (s *QAStage) conclude(ctx context.Context, record core.StateRecord, lease s
 		if err := put(ctx, tx, QAResultKey(record.RunID, record.Attempt), r); err != nil {
 			return err
 		}
+		note := s.noteOf(record, r)
+		if err := handoff.PutQANote(ctx, tx, note); err != nil {
+			return err
+		}
+		if r.Verdict != VerdictFailed {
+			if err := putCloseDue(ctx, tx, record.RunID); err != nil {
+				return err
+			}
+		}
 		if r.Verdict == VerdictHeld {
-			return nil
+			return handoff.PutQAHold(ctx, tx, holdOf(note, hold))
 		}
 		if err := statemachine.New(s.Clock, guards).Check(ctx, t); err != nil {
 			return err
@@ -155,7 +193,29 @@ func (s *QAStage) conclude(ctx context.Context, record core.StateRecord, lease s
 		_, err := tx.Transition(ctx, t)
 		return err
 	})
-	return r.Verdict, err
+	return r, err
+}
+
+// noteOf is the issue's view of a verdict: gates and numbers only.
+func (s *QAStage) noteOf(record core.StateRecord, r QAResult) handoff.QANote {
+	n := handoff.QANote{
+		IssueID: record.IssueID, RunID: record.RunID, Attempt: record.Attempt, MaxAttempts: s.MaxAttempts, Verdict: r.Verdict,
+		Built: r.Candidate.Digest != "", Receipt: !r.Receipt.Signature.IsZero(), Score: r.Receipt.Score, PassScore: s.PassScore, At: r.At,
+	}
+	for _, c := range r.Receipt.Checks {
+		if c.Kind == core.CheckHardGate && !c.Passed {
+			n.FailedGates = append(n.FailedGates, c.Name)
+		}
+	}
+	return n
+}
+
+// holdOf is the Owner's view of a held verdict.
+func holdOf(n handoff.QANote, cause handoff.QAHoldCause) handoff.QAHold {
+	return handoff.QAHold{
+		IssueID: n.IssueID, RunID: n.RunID, Attempt: n.Attempt, MaxAttempts: n.MaxAttempts, Cause: cause,
+		Built: n.Built, Receipt: n.Receipt, FailedGates: n.FailedGates, Score: n.Score, PassScore: n.PassScore, HeldAt: n.At,
+	}
 }
 
 // proof is the receipt next to the policy, baseline and suite in force now.
@@ -177,23 +237,9 @@ func (s *QAStage) take(ctx context.Context, issue core.IssueRef) (state.Lease, e
 
 func (s *QAStage) letGo(ctx context.Context, lease state.Lease) { letGo(ctx, s.State, lease) }
 
-// takeLease acquires the issue lease for owner.
-func takeLease(ctx context.Context, store state.Store, issue core.IssueRef, owner string, ttl time.Duration) (state.Lease, error) {
-	if ttl <= 0 {
-		ttl = 10 * time.Minute
-	}
-	var lease state.Lease
-	err := store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-		var err error
-		lease, err = tx.AcquireLease(ctx, state.IssueLeaseResource(issue), owner, ttl)
-		return err
-	})
-	return lease, err
-}
-
-// letGo gives an issue lease up; a lease already lost needs nothing more.
-func letGo(ctx context.Context, store state.Store, lease state.Lease) {
-	_ = store.Update(context.WithoutCancel(ctx), func(ctx context.Context, tx state.Tx) error {
-		return tx.ReleaseLease(ctx, lease)
-	})
+// unionPaths is the sorted set of the paths of a and b.
+func unionPaths(a, b []string) []string {
+	out := slices.Concat(a, b)
+	slices.Sort(out)
+	return slices.Compact(out)
 }

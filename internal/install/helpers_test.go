@@ -31,8 +31,24 @@ func newTestInstaller(t *testing.T) (*Installer, *fakeExec, *bytes.Buffer) {
 	in := &Installer{
 		Layout: Layout{Dir: t.TempDir()}, Exec: exec, Clock: sqlstoretest.NewClock(fixedStart),
 		Out: out, SourceDir: source, Sisf: "/usr/local/bin/sisf",
+		LookPath:     func(name string) (string, error) { return "/usr/local/go/bin/" + name, nil },
+		ProcessStart: onlyThisProcess,
 	}
 	return in, exec, out
+}
+
+// thisProcessStart is when the test's own process started, for the fake
+// process tables: asking ps would fork, and a process forked while another
+// test holds a run lock holds it too, for a moment.
+const thisProcessStart = "start of this test process"
+
+// onlyThisProcess is a process table in which the test's process alone
+// lives.
+func onlyThisProcess(pid int) (string, error) {
+	if pid == os.Getpid() {
+		return thisProcessStart, nil
+	}
+	return "", nil
 }
 
 // initOptions are options for a simulated install in the given mode, with
@@ -42,6 +58,18 @@ func initOptions(in *Installer, mode manifest.Mode) Options {
 		Dir: in.Layout.Dir, Mode: mode, Sim: true,
 		Repo:   manifest.Repository{Owner: "acme", Repo: "hello-app"},
 		Budget: BudgetChoice{Confirmed: true, AlertThresholdMicros: 50_000_000},
+	}
+}
+
+// production turns simulated options into those of a production install of
+// acme/shop signing in at a real OpenID Connect provider.
+func production(o *Options) {
+	o.Sim, o.Repo = false, manifest.Repository{Owner: "acme", Repo: "shop"}
+	o.GitHubApp = GitHubApp{InstallationID: 7, Login: "acme-factory[bot]"}
+	o.Identity = Identity{
+		ExternalURL: "https://factory.example.com", Owners: []string{"https://accounts.example.com#owner-1"},
+		OIDCIssuer: "https://accounts.example.com", OIDCClientID: "sisf-factory",
+		OIDCClientSecret: core.NewSecretValue([]byte("oidc-client-secret-for-tests")),
 	}
 }
 

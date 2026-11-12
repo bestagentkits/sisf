@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
@@ -30,6 +31,13 @@ func (in *Installer) bootstrapCommand(m *manifest.Manifest) ([]string, error) {
 	if err != nil || !ok {
 		return cmd, err
 	}
+	if rec.Mode == core.BudgetCapped {
+		cmd = append(cmd, "--cap-micros="+itoa64(int64(rec.CapMicros)), "--run-estimate-micros="+itoa64(int64(rec.RunEstimateMicros)))
+		if rec.AlertThresholdMicros > 0 {
+			cmd = append(cmd, "--alert-micros="+itoa64(int64(rec.AlertThresholdMicros)))
+		}
+		return cmd, nil
+	}
 	cmd = append(cmd, "--confirm-unlimited")
 	if rec.AlertOff {
 		return append(cmd, "--no-alert"), nil
@@ -43,6 +51,9 @@ func (in *Installer) bootstrapCommand(m *manifest.Manifest) ([]string, error) {
 // service. The project is checked before anything runs, so the file that
 // runs is the file that passed the isolation rules.
 func (in *Installer) upDocker(ctx context.Context, m *manifest.Manifest) error {
+	if err := in.checkProjectOwner(ctx, m); err != nil {
+		return err
+	}
 	b, err := in.release(ctx, m)
 	if err != nil {
 		return err
@@ -51,12 +62,10 @@ func (in *Installer) upDocker(ctx context.Context, m *manifest.Manifest) error {
 	if err != nil {
 		return err
 	}
-	opts := Options{
-		Dir: in.Layout.Dir, FactoryID: m.FactoryID, Repo: m.Repository,
-		Sim: m.Extensions["profile"] == profileSim, Debug: in.Debug,
+	opts, err := in.installedOptions(m)
+	if err != nil {
+		return err
 	}
-	opts.GitHubAPIURL, _ = m.Extensions["github_api_url"].(string)
-	opts.lifecycleExtensions(m)
 	if vs, err := CheckSecrets(in.Layout, m.Mode); err != nil {
 		return err
 	} else if len(vs) > 0 {
@@ -131,6 +140,16 @@ func (in *Installer) writeCompose(o Options, images Images, bootstrap []string, 
 // dockerStop runs a Compose subcommand that keeps the project ("stop",
 // "restart").
 func (in *Installer) dockerStop(ctx context.Context, m *manifest.Manifest, verb string) error {
+	if !in.composeRendered() {
+		if verb == "restart" {
+			return core.NewError(core.CodeNotFound, "the factory in "+in.Layout.Dir+" was never started",
+				core.NextAction{Action: "sisf up --dir " + in.Layout.Dir, Description: "start it"})
+		}
+		return nil // never started, so already stopped
+	}
+	if err := in.checkProjectOwner(ctx, m); err != nil {
+		return err
+	}
 	if err := in.compose(ctx, m, verb); err != nil {
 		return unavailablef(err, "docker compose %s failed", verb)
 	}
@@ -141,6 +160,12 @@ func (in *Installer) dockerStop(ctx context.Context, m *manifest.Manifest, verb 
 // removeData its volumes. Only this project is named, and every resource in
 // it carries the project's prefix.
 func (in *Installer) dockerDown(ctx context.Context, m *manifest.Manifest, removeData bool) error {
+	if !in.composeRendered() {
+		return nil // never started: no container, network or volume exists
+	}
+	if err := in.checkProjectOwner(ctx, m); err != nil {
+		return err
+	}
 	args := []string{"down", "--remove-orphans"}
 	if removeData {
 		args = append(args, "--volumes")

@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
+	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
 
 func TestVerifiedWebhookIsInTheInboxBeforeItIsAcknowledged(t *testing.T) {
@@ -129,8 +129,7 @@ func TestDuplicateDeliveryAfterARestartIsStillStoredOnce(t *testing.T) {
 			t.Errorf("the first delivery must stand; got %+v (%v)", stored.Issue, err)
 		}
 		e.seedRecord(t, 5, toReady...)
-		var detail control.IssueDetail
-		getJSON(t, e.api(http.MethodGet, "/api/v1/issues/"+url.PathEscape("acme/app#5")), &detail)
+		detail := e.issueView(t, 5)
 		if detail.Title != "first" {
 			t.Errorf("a replayed delivery changed the title to %q", detail.Title)
 		}
@@ -185,8 +184,7 @@ func TestStaleDeliveryDoesNotOverwriteANewerTitle(t *testing.T) {
 		base := time.Date(2026, 11, 10, 6, 0, 0, 0, time.UTC)
 		e.deliver(t, issueEvent{delivery: "newer", action: "edited", number: 5, title: "Newest title", updatedAt: base.Add(time.Hour)})
 		e.deliver(t, issueEvent{delivery: "older", action: "edited", number: 5, title: "Stale title", updatedAt: base})
-		var detail control.IssueDetail
-		getJSON(t, e.api(http.MethodGet, "/api/v1/issues/"+url.PathEscape("acme/app#5")), &detail)
+		detail := e.issueView(t, 5)
 		if detail.Title != "Newest title" {
 			t.Errorf("title = %q, want the newest edit to stand", detail.Title)
 		}
@@ -213,11 +211,7 @@ func TestCommentsAreProjectedEditedAndRemoved(t *testing.T) {
 				t.Fatalf("%s = %d: %s", delivery, rec.Code, rec.Body.String())
 			}
 		}
-		detail := func() control.IssueDetail {
-			var d control.IssueDetail
-			getJSON(t, e.api(http.MethodGet, "/api/v1/issues/"+url.PathEscape("acme/app#5")), &d)
-			return d
-		}
+		detail := func() control.IssueView { return e.issueView(t, 5) }
 		send("c1", "created", comment(1, "first", 1))
 		send("c2", "created", comment(2, "second", 2))
 		send("c1e", "edited", comment(1, "first, edited", 1))
@@ -233,6 +227,29 @@ func TestCommentsAreProjectedEditedAndRemoved(t *testing.T) {
 		}
 		if got := detail().Comments; len(got) != 20 {
 			t.Errorf("%d comments kept, want the newest 20", len(got))
+		}
+	})
+}
+
+// A server built without webhooks, for an install with no GitHub App
+// installation, has no webhook route: a signed delivery is not found and
+// nothing reaches the inbox. It still refuses to be told of an installation.
+func TestServerWithoutWebhooksHasNoWebhookRoute(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		e := newEnv(t, db, func(c *control.Config) {
+			c.NoWebhooks, c.Webhook = true, github.ReceiverConfig{}
+		})
+		if rec := e.deliver(t, issueEvent{delivery: "d-1", action: "opened", number: 5, title: "x"}); rec.Code != http.StatusNotFound {
+			t.Fatalf("a delivery answered %d, want 404: %s", rec.Code, rec.Body.String())
+		}
+		if n := len(e.pendingDeliveries(t)); n != 0 {
+			t.Fatalf("%d inbox entries, want none", n)
+		}
+		cfg := e.cfg
+		cfg.Webhook.InstallationID = installationID
+		if _, err := control.New(cfg, e.deps); !core.HasCode(err, core.CodeInvalidArgument) {
+			t.Fatalf("no webhooks with an installation: %v, want INVALID_ARGUMENT", err)
 		}
 	})
 }

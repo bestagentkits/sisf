@@ -52,7 +52,8 @@ func mayDecide(ctx context.Context, a Approval) error {
 // APPROVAL_REQUIRED, because the approver looked at something else; a
 // malformed decision, or one made before its request, is INVALID_ARGUMENT;
 // and a request marked StepUp accepts only a person who confirmed their
-// identity within the step-up age, otherwise STEP_UP_REQUIRED.
+// identity after the request was made and within the step-up age, and never
+// through WebMCP, otherwise STEP_UP_REQUIRED.
 //
 // The store stamps the decision time, caps the expiry at the request's and
 // signs Approval.SigningPayload itself. A time or a signature supplied by the
@@ -140,7 +141,7 @@ func (s *KVStore) judge(ctx context.Context, r Request, a Approval) (Approval, e
 	if err := a.Validate(); err != nil {
 		return Approval{}, err
 	}
-	if r.StepUp && !s.freshStepUp(a, now) {
+	if r.StepUp && !s.freshStepUp(r, a, now) {
 		return Approval{}, core.NewError(core.CodeStepUpRequired,
 			"this approval needs a person who has just confirmed their identity")
 	}
@@ -155,11 +156,11 @@ func (s *KVStore) judge(ctx context.Context, r Request, a Approval) (Approval, e
 	return a, nil
 }
 
-// freshStepUp reports whether a person confirmed their identity recently
-// enough. An agent or a service never satisfies it, whatever session it uses.
-func (s *KVStore) freshStepUp(a Approval, now time.Time) bool {
-	return a.ActorKind == core.ActorHuman && !a.StepUpAt.IsZero() &&
-		!a.StepUpAt.After(now) && now.Sub(a.StepUpAt) <= s.stepUp
+// freshStepUp reports whether a, stamped at now, carries the confirmation r
+// asks for (StepUpConfirmed), made within the step-up age. An agent or a
+// service never satisfies it, whatever session it uses.
+func (s *KVStore) freshStepUp(r Request, a Approval, now time.Time) bool {
+	return StepUpConfirmed(r, a) && now.Sub(a.StepUpAt) <= s.stepUp
 }
 
 // statusOf maps a valid decision to the status the request takes.

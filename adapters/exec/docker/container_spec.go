@@ -107,7 +107,9 @@ type appliedHost struct {
 }
 
 // verifyApplied checks that the daemon created the container as asked: a
-// runner of this factory with every part of the hardening in place.
+// runner of this factory, from the pinned image, with every part of the
+// hardening in place. An image pinned by its ID is checked against the ID
+// the daemon reports it created the container from.
 func (b *Backend) verifyApplied(view containerView, want dockerfilter.CreateRequest) error {
 	raw, err := json.Marshal(view.HostConfig)
 	if err != nil {
@@ -119,6 +121,7 @@ func (b *Backend) verifyApplied(view containerView, want dockerfilter.CreateRequ
 	}
 	w := want.HostConfig
 	ok := view.Config.Labels[b.cfg.RunnerLabel] == string(b.cfg.FactoryID) &&
+		view.Config.Image == want.Image && (!strings.HasPrefix(want.Image, "sha256:") || view.Image == want.Image) &&
 		h.NetworkMode == w.NetworkMode && h.ReadonlyRootfs && !h.Privileged && len(h.CapAdd) == 0 &&
 		slices.Contains(h.CapDrop, "ALL") && slices.Contains(h.SecurityOpt, "no-new-privileges") &&
 		(w.Runtime == "" || h.Runtime == w.Runtime) && h.Memory == w.Memory && h.NanoCpus == w.NanoCpus &&

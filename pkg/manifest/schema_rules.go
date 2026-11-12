@@ -110,6 +110,7 @@ var fieldRules = map[string]map[string]any{
 	"Manifest.trusted_code_only": described(
 		"Owner's acknowledgement that the execution backend can neither isolate agent runs nor enforce the egress policy, so the deployment runs only code the Owner trusts. Without it such a backend is refused.", nil),
 	"Manifest.model_routes": described("Model per kind of step. Code reads this table; a model never picks its own route.", nil),
+	"Manifest.decision":     described("How the factory decides what to work on. Left out, the deterministic rules decide alone.", nil),
 	"Manifest.extensions":   described("Settings these types do not model yet. Nothing here can grant a permission or relax a check.", nil),
 
 	"Repository.owner": {"pattern": ownerPattern},
@@ -140,8 +141,10 @@ var fieldRules = map[string]map[string]any{
 	"ArtifactStore.location": nonEmpty,
 	"AdapterRef.name":        {"pattern": `^[a-z0-9][a-z0-9_-]*$`},
 
-	"Release.canary_steps":         {"items": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}},
-	"Release.units":                described("Units the factory may publish by itself. The supervisor is never one of them.", map[string]any{"uniqueItems": true}),
+	"Release.canary_steps": {"items": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}},
+	"Release.units":        described("Units the factory may publish by itself. The supervisor is never one of them.", map[string]any{"uniqueItems": true}),
+	"Release.unit_inputs": described("Per unit of release.units, the repository paths it consumes, as patterns matched against whole paths without regard to case: * never crosses /. "+
+		"A self-published candidate may change only inputs of the unit it releases. A unit left out keeps its built-in inputs; an entry replaces them.", nil),
 	"Rollback.error_rate":          {"exclusiveMinimum": 0, "maximum": 1},
 	"Rollback.baseline_delta":      {"minimum": 0, "maximum": 1},
 	"Rollback.min_samples":         atLeastOne,
@@ -149,6 +152,15 @@ var fieldRules = map[string]map[string]any{
 
 	"Limits.max_attempts": atLeastOne,
 	"Limits.concurrency":  atLeastOne,
+
+	"Decision.system_one": described("The one System One decision model the rules consult. Left out, no model is asked.", nil),
+	"SystemOne.backend":   described("System One backend: jev or clef.", enum(SystemOneJev, SystemOneClef)),
+	"SystemOne.endpoint": described("Absolute URL of the backend, without user information, query or fragment; HTTPS, or HTTP only on a loopback address.",
+		nonEmpty),
+	"SystemOne.version":    described("Protocol version the backend must answer with, such as 1 or 2026-11-01; never a floating name such as latest.", text(systemOneVersionPattern)),
+	"SystemOne.timeout":    described("How long one judgment may take: above zero and at most "+SystemOneMaxTimeout.String()+".", nil),
+	"SystemOne.credential": described("Reference to the backend's credential, written env:NAME or local:path/name. Left out, the backend takes none.", secretRefField),
+	"SystemOne.model":      described("The model route every judgment must report; any other is refused.", nil),
 
 	"EgressPolicy.allow":          {"items": text(hostPattern)},
 	"ModelRoute.provider":         nonEmpty,

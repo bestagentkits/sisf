@@ -19,7 +19,13 @@ import (
 var units = []string{"runner", "qa-runner"}
 
 var (
-	digestImage   = regexp.MustCompile(`^[a-z0-9]+(?:[._/:-][a-z0-9]+)*@sha256:[a-f0-9]{64}$`)
+	// digestImage is an image pinned by content: name@sha256:<registry
+	// digest>, or sha256:<image ID>, the pin of an image built on this host,
+	// which has no registry digest. Docker resolves an image ID locally only
+	// and never pulls it, and the ID is the digest of the image's
+	// configuration, which names every layer by its digest, so it is as
+	// immutable as a registry digest. A tag and a short ID are refused.
+	digestImage   = regexp.MustCompile(`^(?:[a-z0-9]+(?:[._/:-][a-z0-9]+)*@)?sha256:[a-f0-9]{64}$`)
 	envName       = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 	labelKey      = regexp.MustCompile(`^sisf\.[a-z0-9][a-z0-9_.-]{0,62}$`)
 	reservedLabel = []string{"sisf.run_id", "sisf.unit", "sisf.sandbox"}

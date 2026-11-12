@@ -28,6 +28,8 @@ const (
 var (
 	start = time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
 	image = "ghcr.io/acme/sisf-runner@sha256:" + strings.Repeat("c", 64)
+	// localImage is a runner image built on this host, pinned by its ID.
+	localImage = "sha256:" + strings.Repeat("d", 64)
 )
 
 // clock is a test clock that also reports each timer a command sets, so a
@@ -59,6 +61,10 @@ type options struct {
 	cfg      func(*docker.Config)
 	// rewrite changes what the daemon answers to inspect requests.
 	rewrite func(view map[string]any)
+	// externalNetwork makes the sandbox network an ordinary, non-internal one.
+	externalNetwork bool
+	// noNetwork leaves the daemon without the sandbox network.
+	noNetwork bool
 }
 
 func newEnv(t *testing.T, o options) env {
@@ -67,6 +73,9 @@ func newEnv(t *testing.T, o options) env {
 		o.runtimes = []string{"runc", "runsc"}
 	}
 	daemon := dockerfiltertest.New(o.runtimes...)
+	if !o.noNetwork {
+		daemon.AddNetwork(network, !o.externalNetwork)
+	}
 	var handler http.Handler = daemon
 	if o.rewrite != nil {
 		handler = rewriteInspect(daemon, o.rewrite)
@@ -74,7 +83,7 @@ func newEnv(t *testing.T, o options) env {
 	upstream := httptest.NewServer(handler)
 	t.Cleanup(upstream.Close)
 	filter, err := dockerfilter.New(dockerfilter.Config{Upstream: upstream.Client().Transport, UpstreamURL: upstream.URL,
-		RunnerValue: factory, SandboxNetwork: network, Images: []string{image}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		RunnerValue: factory, SandboxNetwork: network, Images: []string{image, localImage}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}

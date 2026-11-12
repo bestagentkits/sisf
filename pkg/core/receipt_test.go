@@ -87,6 +87,16 @@ func TestAnEvaluatorCannotPassAsAnotherPartyByRespellingItsIdentity(t *testing.T
 		"upper case":      "AGENT:CODER-1",
 		"mixed case":      "Agent:Coder-1",
 		"case and spaces": "  Agent:CODER-1 ",
+		// Characters that render as nothing do not make another party.
+		"zero-width space":          "agent:\u200bcoder-1",
+		"zero-width joiner":         "agent:coder\u200d-1",
+		"byte order mark":           "\ufeffagent:coder-1",
+		"soft hyphen":               "agent:co\u00adder-1",
+		"word joiner":               "agent:coder-1\u2060",
+		"variation selector":        "agent:coder-1\ufe0f",
+		"combining grapheme joiner": "agent:\u034fcoder-1",
+		"hangul filler":             "agent:coder-1\u3164",
+		"invisible and case":        " AGENT:\u200bCoder-1\u200c",
 	} {
 		r := validReceipt()
 		r.QAAgentIdentity = evaluator

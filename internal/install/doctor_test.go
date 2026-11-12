@@ -54,8 +54,8 @@ func TestTheReportNeverContainsAnyTokenOrKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	key, _ := os.ReadFile(in.Layout.Secret(areaControl, "root-key.pem"))
-	owner, _ := os.ReadFile(in.Layout.Secret(areaControl, "owner-token"))
-	for _, secret := range [][]byte{token, key, owner} {
+	webhook, _ := os.ReadFile(in.Layout.Secret(areaControl, "webhook-secret"))
+	for _, secret := range [][]byte{token, key, webhook} {
 		if v := strings.TrimSpace(string(secret)); v != "" && strings.Contains(out.String(), v) {
 			t.Fatal("the report contains a secret")
 		}
@@ -94,7 +94,7 @@ func TestAFactoryThatIsDownFailsEachLiveCheckWithTheStartCommand(t *testing.T) {
 func TestAZoneThatReportsDownFailsOnlyThatZone(t *testing.T) {
 	t.Parallel()
 	net := healthyNet().with("127.0.0.1:7463/healthz", reply{code: 503,
-		body: `{"status":"degraded","zones":{"application":"ok","agent":"down","control":"ok"}}`})
+		body: `{"factory_id":"sisf-hello-app","status":"degraded","zones":{"application":"ok","agent":"down","control":"ok"}}`})
 	r := runDoctor(t, builtStandalone(t, net, nil))
 	if v := verdictOf(r, "zone agent"); len(v) != 1 || v[0] != VerdictFail {
 		t.Errorf("agent zone = %v", v)
@@ -174,7 +174,7 @@ func TestATokenWithTheWorkflowScopeIsAWarning(t *testing.T) {
 func TestWithoutALastKnownGoodReleaseRollbackIsAWarning(t *testing.T) {
 	t.Parallel()
 	in := builtStandalone(t, healthyNet(), nil)
-	in.SupervisorStatus = supervisorWith(false)
+	in.SupervisorStatus = asThisInstall(in, supervisorWith(false))
 	r := runDoctor(t, in)
 	if v := verdictOf(r, "rollback"); len(v) != 1 || v[0] != VerdictWarn {
 		t.Fatalf("rollback = %v", v)
@@ -187,7 +187,7 @@ func TestWithoutALastKnownGoodReleaseRollbackIsAWarning(t *testing.T) {
 func TestASupervisorThatFailedItsSelfCheckFailsRollback(t *testing.T) {
 	t.Parallel()
 	in := builtStandalone(t, healthyNet(), nil)
-	in.SupervisorStatus = func(_ context.Context, _ string) (supervisor.Status, error) { return supervisor.Status{}, nil }
+	in.SupervisorStatus = asThisInstall(in, func(_ context.Context, _ string) (supervisor.Status, error) { return supervisor.Status{}, nil })
 	if v := verdictOf(runDoctor(t, in), "rollback"); len(v) != 1 || v[0] != VerdictFail {
 		t.Fatalf("rollback = %v", v)
 	}
@@ -244,7 +244,7 @@ func TestATamperedReleaseIsCaught(t *testing.T) {
 func TestSecretsReadableByOthersFailTheReport(t *testing.T) {
 	t.Parallel()
 	in := builtStandalone(t, healthyNet(), nil)
-	if err := os.Chmod(in.Layout.Secret(areaControl, "owner-token"), 0o644); err != nil {
+	if err := os.Chmod(in.Layout.Secret(areaControl, "webhook-secret"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if v := verdictOf(runDoctor(t, in), "secrets"); len(v) == 0 || v[0] != VerdictFail {

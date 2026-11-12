@@ -8,11 +8,12 @@ import (
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
+	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
 // greetingDiff changes the application's greeting.
-const greetingDiff = `--- a/app/main.go
-+++ b/app/main.go
+const greetingDiff = `--- a/examples/hello-app/main.go
++++ b/examples/hello-app/main.go
 @@ -1,3 +1,3 @@
  package main
 
@@ -20,7 +21,8 @@ const greetingDiff = `--- a/app/main.go
 +func main() { println("hello, world") }
 `
 
-// dashboardDiff changes the read-only status page of the dashboard.
+// dashboardDiff changes the read-only status page of the dashboard, a
+// part of the trusted control surface.
 const dashboardDiff = `--- a/ui/dashboard/status.html
 +++ b/ui/dashboard/status.html
 @@ -1,2 +1,2 @@
@@ -29,14 +31,29 @@ const dashboardDiff = `--- a/ui/dashboard/status.html
 +<p>All systems nominal. Last checked by the factory.</p>
 `
 
-// dashboardRewordDiff words the status page differently.
-const dashboardRewordDiff = `--- a/ui/dashboard/status.html
-+++ b/ui/dashboard/status.html
+// sitePageDiff changes the status page outside the dashboard's templates,
+// which a test declares an input of the control unit.
+const sitePageDiff = `--- a/site/status.html
++++ b/site/status.html
 @@ -1,2 +1,2 @@
  <h1>Factory status</h1>
 -<p>All systems nominal.</p>
++<p>All systems nominal. Last checked by the factory.</p>
+`
+
+// sitePageRewordDiff words that page differently once sitePageDiff was
+// merged.
+const sitePageRewordDiff = `--- a/site/status.html
++++ b/site/status.html
+@@ -1,2 +1,2 @@
+ <h1>Factory status</h1>
+-<p>All systems nominal. Last checked by the factory.</p>
 +<p>Every system is working.</p>
 `
+
+// controlSitePage declares the status page outside the dashboard's
+// templates the input of the control unit, as an Owner may.
+var controlSitePage = map[manifest.UnitName][]string{manifest.UnitControl: {"site/*.html"}}
 
 // qaBaselineDiff lowers the QA bar: a change of the trusted control surface.
 const qaBaselineDiff = `--- a/internal/qa/thresholds.txt

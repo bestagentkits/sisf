@@ -2,7 +2,9 @@ package sqlstore
 
 import (
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
@@ -47,3 +49,11 @@ func ZoneMayWrite(zone core.Zone, event core.Event) bool { return zoneEvents[zon
 // StepKeyPrefix is the prefix of the idempotency keys under which zone writes
 // the step on event; empty when the zone has no keys of its own for it.
 func StepKeyPrefix(zone core.Zone, event core.Event) string { return zoneStepKeys[zone][event] }
+
+// SetBusyTimeout shortens how long the store's writing connection waits for
+// a lock another connection holds, so a test can make a migrator lose the
+// race without waiting the default timeout. SQLite only.
+func SetBusyTimeout(s *Store, d time.Duration) error {
+	_, err := s.write.Exec("PRAGMA busy_timeout = " + strconv.FormatInt(d.Milliseconds(), 10))
+	return err
+}

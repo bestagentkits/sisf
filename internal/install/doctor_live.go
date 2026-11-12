@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -26,7 +27,9 @@ func (in *Installer) checkBudget(c *collector, _ *manifest.Manifest) {
 	case err != nil:
 		c.fail("budget", "%v", err)
 	case !ok:
-		c.warn("budget", "not confirmed: the factory takes in issues but starts no work; confirm with `sisf up --confirm-unlimited`")
+		c.warn("budget", "not confirmed: the factory takes in issues but starts no work; confirm with `sisf up --confirm-unlimited` or `--budget-cap`")
+	case rec.Mode == core.BudgetCapped:
+		c.ok("budget", "capped at %g, confirmed; each run sets aside %g", float64(rec.CapMicros)/microsPerUnit, float64(rec.RunEstimateMicros)/microsPerUnit)
 	case rec.AlertOff:
 		c.ok("budget", "unlimited, confirmed, no alert")
 	default:
@@ -175,7 +178,7 @@ func (in *Installer) checkGitHub(ctx context.Context, c *collector, m *manifest.
 	case code != http.StatusOK:
 		c.fail("github", "answered %d for %s", code, repo)
 	case json.Unmarshal(body, &reply) == nil && reply.Permissions != nil && !reply.Permissions.Push:
-		c.fail("github", "the token can read %s but not write: issues, comments and pull requests need write access", repo)
+		c.fail("github", "the token can read %s but not write: issues, comments, candidate branches and pull requests, which the supervisor opens and merges, need write access", repo)
 	case reply.Permissions == nil:
 		c.ok("github", "%s is reachable; GitHub did not report the token's permissions", repo)
 	default:
@@ -232,10 +235,38 @@ func (in *Installer) supervisorStatus(ctx context.Context, m *manifest.Manifest)
 		}
 		return supervisor.FetchStatus(ctx, admin)
 	}
-	out, err := in.Exec.Run(ctx, Cmd{Name: "docker", Args: in.composeArgs(m, "exec", "-T", "supervisor", "supervisor", "status", "--admin="+admin)})
+	out, err := in.Exec.Run(ctx, Cmd{Name: "docker", Args: in.composeArgs(m, "exec", "-T", "supervisor", "supervisor", "status", "--admin=unix:"+supervisorAdminSocket)})
 	if err != nil {
 		return supervisor.Status{}, err
 	}
 	var status supervisor.Status
 	return status, json.Unmarshal(out, &status)
+}
+
+// checkGitHubEvents reads the GitHub settings as control and the
+// supervisor read them at start, so a manifest they would refuse fails
+// here rather than as units that exit and restart.
+func checkGitHubEvents(c *collector, m *manifest.Manifest) {
+	s, err := wiring.GitHubSettingsOf(m)
+	// An account named by its ID alone cannot tell the factory's own pull
+	// request from anyone else's, so no candidate is ever merged.
+	noLogin := ""
+	if s.Self.Login == "" && s.Self.ID != 0 {
+		noLogin = "; the factory's account is named by its ID alone: the login is missing from extensions.github_app_login, " +
+			"so the factory cannot tell its own pull request or progress comment from anyone else's: it merges no candidate, leaving every one for the Owner, and writes no progress comment"
+	}
+	switch {
+	case err != nil:
+		c.fail("github events", "control and the supervisor refuse to start: %v", err)
+	case s.NoWebhooks:
+		every := reconcileIntervalOf(m)
+		if every == 0 {
+			every = wiring.DefaultReconcileInterval
+		}
+		c.warn("github events", "no GitHub App installation: the factory acts as your gh login, takes no webhooks and learns of issues only by reconciling with GitHub every %s; this is the lower-assurance development setup%s", every, noLogin)
+	case noLogin != "":
+		c.warn("github events", "webhooks of installation %d are accepted%s", s.InstallationID, noLogin)
+	default:
+		c.ok("github events", "webhooks of installation %d are accepted", s.InstallationID)
+	}
 }

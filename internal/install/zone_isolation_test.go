@@ -22,7 +22,7 @@ func TestRenderedComposeProjectBreaksNoIsolationRule(t *testing.T) {
 	t.Parallel()
 	for name, mutate := range map[string]func(*Options){
 		"sim":   nil,
-		"real":  func(o *Options) { o.Sim = false; o.Repo = manifest.Repository{Owner: "acme", Repo: "shop"} },
+		"real":  production,
 		"debug": func(o *Options) { o.Debug = true },
 	} {
 		in, out := renderCompose(t, mutate)
@@ -233,7 +233,7 @@ func TestSimulationProfileRunsTheFakeGitHubInsideControlsNamespaceOnly(t *testin
 	if !ok || s.NetworkMode != "service:control" {
 		t.Fatalf("sim-github = %+v", s)
 	}
-	_, real := renderCompose(t, func(o *Options) { o.Sim = false; o.Repo = manifest.Repository{Owner: "acme", Repo: "shop"} })
+	_, real := renderCompose(t, production)
 	if _, ok := composeFileOf(t, real).Services["sim-github"]; ok {
 		t.Fatal("the fake GitHub is part of a project that is not the simulation profile")
 	}

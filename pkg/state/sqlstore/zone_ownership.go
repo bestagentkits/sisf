@@ -17,19 +17,30 @@ import (
 
 // runEvents are the steps the agent zone writes: the dispatcher claims a
 // Ready issue under its lease and a budget reservation and starts
-// development, the run submits the candidate it built, and the run's QA
-// sends a failed candidate back into development for the next attempt,
-// within the attempts the run has left.
+// development, and the run submits the candidate it built.
+//
+// Stopping a run is not among them either. A run that could block its own
+// issue could take it out of the queue; the control zone blocks an issue
+// whose run stopped, from what the run recorded.
+//
+// A failed evaluation is not among them. It is the verdict of the
+// independent QA, which the supervisor's QA stage writes in the control
+// zone; a run that could write it could discard an evaluation in progress
+// and spend the attempts of its own issue. Nothing in the agent zone has
+// written it, so the step is refused to that zone rather than left open.
 //
 // Every other step is the control zone's. Intake and scoping record the
 // conversation about the issue; every way into Ready rests on the Owner's
 // approval, a delegation of the policy in force or an authorized retry;
 // passing QA rests on a signed receipt the control zone verifies; and the
-// rollout, its observation and rollback and the closing of the issue belong
-// to the release supervisor. A run that could write any of them could start
-// unapproved work or release its own candidate.
+// refusal of a release, the rollout, its observation and rollback, the
+// closing of the issue and the block of a verified release that can no
+// longer be judged belong to the release supervisor, which writes as
+// the control zone. A run that could write any of them could start
+// unapproved work, release its own candidate or take a candidate it does
+// not like out of the release queue.
 var runEvents = []core.Event{
-	core.EventClaimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted, core.EventQAFailed,
+	core.EventClaimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted,
 }
 
 // controlEvents are the steps the control zone writes: all of them, the run
@@ -39,9 +50,10 @@ var runEvents = []core.Event{
 var controlEvents = []core.Event{
 	core.EventIssueReceived, core.EventInfoMissing, core.EventClarificationCompleted, core.EventInfoSufficient,
 	core.EventApprovalRequired, core.EventScopePermitted, core.EventOwnerApproved, core.EventApprovalDenied,
-	core.EventClaimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted, core.EventQAFailed,
-	core.EventQAPassed, core.EventRolloutStarted, core.EventRolloutHealthy, core.EventErrorThresholdExceeded,
-	core.EventPostDeployVerified, core.EventRegressionDetected, core.EventIssueClosed, core.EventRecoveryReported,
+	core.EventClaimed, core.EventDevelopmentStarted, core.EventClaimStopped, core.EventDevelopmentStopped,
+	core.EventCandidateSubmitted, core.EventQAFailed, core.EventQAPassed, core.EventReleaseRefused, core.EventRolloutStarted,
+	core.EventRolloutHealthy, core.EventErrorThresholdExceeded, core.EventPostDeployVerified, core.EventRegressionDetected, core.EventIssueClosed,
+	core.EventVerifiedReleaseUnjudged, core.EventRecoveryReported,
 	core.EventRetryAuthorized,
 }
 
@@ -58,9 +70,9 @@ var zoneEvents = map[core.Zone]map[core.Event]bool{
 // a step another zone has yet to write, and that step would then be refused
 // as a replay of a different one. The dispatcher keys the claim
 // "claim/<run>" and the start of development "develop/<run>"; the submission
-// of a candidate and a failed evaluation have their prefixes reserved here.
+// of a candidate has its prefix reserved here.
 // None of them meets a key of the control zone, whose intake keys its steps
-// "intake/<issue>/<event>" and an authorized retry "retry/<issue>".
+// "intake/<issue>/<event>" and an authorized retry "retry/<issue>/<version>".
 //
 // The control zone, which keeps the lifecycle, is not listed and may write
 // any key; a zone that is listed may write only the steps it lists.
@@ -69,7 +81,6 @@ var zoneStepKeys = map[core.Zone]map[core.Event]string{
 		core.EventClaimed:            "claim/",
 		core.EventDevelopmentStarted: "develop/",
 		core.EventCandidateSubmitted: "candidate/",
-		core.EventQAFailed:           "qa/",
 	},
 }
 

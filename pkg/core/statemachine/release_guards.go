@@ -39,6 +39,12 @@ type RolloutProof struct {
 	// unit could be read from the backend during the preflight. A release
 	// that cannot be observed cannot be judged and does not start.
 	MetricsAvailable bool
+	// SelfPublishable lists the units the factory may publish without a
+	// person, as the manifest's release.units names them. The artifact's
+	// unit must be one of them; any other unit, and every unit when the
+	// list is empty, changes only through a governance cycle a person
+	// approves.
+	SelfPublishable []string
 }
 
 // RolloutGuard proves that a release may start: its artifact is authentic
@@ -47,7 +53,8 @@ type RolloutProof struct {
 // artifact's SigningPayload, against the trusted release keys; the machine
 // cannot check that. The machine checks everything else: that the preflight
 // is of the issue, the run and the release of the transition, that the
-// release is the candidate QA passed and a build of this factory, and that
+// release is the candidate QA passed and a build of this factory of a unit
+// the factory may publish by itself, and that
 // the rollback target and the metrics are there. Without a verified way back
 // or readable metrics the step is refused with RELEASE_HOLD.
 type RolloutGuard interface {
@@ -74,6 +81,11 @@ type CanaryProof struct {
 	// threshold. ObservedAt must not lie after the current instant.
 	Healthy    bool
 	ObservedAt time.Time
+	// RolloutStartedAt is when the store wrote the start of this rollout,
+	// taken from the record, never from the backend. ObservedAt must not lie
+	// before it: an observation made before the rollout, such as one of an
+	// earlier release of the same digest, says nothing about this one.
+	RolloutStartedAt time.Time
 }
 
 // CanaryGuard proves that a rollout went well: the released revision was

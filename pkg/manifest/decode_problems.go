@@ -6,20 +6,71 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/bestagentkits/sisf/pkg/agent/redact"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // The decoder reports a rejected key or value in terms of the Go types it was
 // filling. These match its two such forms so they can be said in terms of the
-// file instead.
+// file instead. A value or key may span lines, as a block scalar does, so the
+// patterns let . match a line break.
 var (
-	unknownKeyProblem = regexp.MustCompile(`^(line \d+: )field (.+) not found in type \S+$`)
-	wrongKindProblem  = regexp.MustCompile("^(line \\d+: )cannot unmarshal !!(\\w+)(?: `(.*)`)? into .+$")
+	unknownKeyProblem = regexp.MustCompile(`(?s)^(line \d+: )field (.+) not found in type \S+$`)
+	wrongKindProblem  = regexp.MustCompile("(?s)^(line \\d+: )cannot unmarshal !!(\\w+)(?: `(.*)`)? into .+$")
+	// repeatedKeyProblem is a key given twice in one mapping; the decoder
+	// quotes the key as Go does.
+	repeatedKeyProblem = regexp.MustCompile(`(?s)^(line \d+: )mapping key (".*") already defined at line (\d+)$`)
+	// problemLine is the line a decoder message opens with, kept when the
+	// rest of a message of no known form is withheld.
+	problemLine = regexp.MustCompile(`^line \d+: `)
+	// urlWithUserInfo is a URL whose authority carries a user part, where a
+	// password or a token is written, as in a connection string.
+	urlWithUserInfo = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s/?#@]*@`)
+	// keyForm is the form of every key of the manifest; a key outside it is
+	// not a mistyped key name but something else pasted there.
+	keyForm = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	// plainValue is the form of a value a problem may quote: a number, a
+	// true/false value, a duration, or a lowercase word such as one of the
+	// manifest's choices. Anything else, a short password included, is
+	// withheld.
+	plainValue = regexp.MustCompile(`^(?:[-+]?[0-9]+(?:\.[0-9]+)?|true|false|(?:[0-9]+(?:\.[0-9]+)?(?:ns|us|ms|s|m|h|d))+|[a-z]+(?:[_-][a-z]+)*)$`)
 )
+
+// maxQuotedValue is the longest value a problem quotes: the decoder itself
+// cuts a longer one to its first seven characters and truncatedMark. A
+// token or a signed URL is longer.
+const (
+	maxQuotedValue = 10
+	truncatedMark  = "..."
+)
+
+// quotable reports whether a value from the file may be quoted in a problem.
+// A value pasted in the wrong place may be a credential, so only a short
+// plain value (plainValue) without the shape of a secret (pkg/agent/redact's
+// shapes, or a URL with a user part) is quoted; a prefix the decoder cut
+// short is not, since it may be the start of a secret.
+func quotable(value string) bool {
+	return len(value) <= maxQuotedValue && !strings.HasSuffix(value, truncatedMark) &&
+		plainValue.MatchString(value) && notSecretShaped(value)
+}
+
+// withheldValue is said in place of a value that is not quotable.
+const withheldValue = "its value is withheld"
+
+// quotableKey reports whether an unknown key may be quoted: it has the form
+// of a manifest key and no secret shape.
+func quotableKey(key string) bool {
+	return keyForm.MatchString(key) && notSecretShaped(key)
+}
+
+func notSecretShaped(text string) bool {
+	return redact.Text(text) == text && !urlWithUserInfo.MatchString(text)
+}
 
 // yamlKinds names each kind of YAML value the way its author thinks of it.
 var yamlKinds = map[string]string{
@@ -51,10 +102,14 @@ func decodeProblems(data []byte, err error) string {
 	return strings.Join(problems, "; ")
 }
 
-// plainProblem rewrites one decoder message; a form it does not recognize is
-// passed through unchanged rather than guessed at.
+// plainProblem rewrites one decoder message. A message of no form it
+// recognizes may quote a value it could not classify, so only its line is
+// kept and the rest is withheld.
 func plainProblem(problem string) string {
 	if m := unknownKeyProblem.FindStringSubmatch(problem); m != nil {
+		if !quotableKey(m[2]) {
+			return m[1] + "unknown key (its name is withheld: it has the shape of a secret)"
+		}
 		return m[1] + `unknown key "` + m[2] + `"`
 	}
 	if m := wrongKindProblem.FindStringSubmatch(problem); m != nil {
@@ -62,12 +117,22 @@ func plainProblem(problem string) string {
 		if !known {
 			kind = "this value"
 		}
-		if m[3] != "" {
+		switch {
+		case m[3] != "" && quotable(m[3]):
 			kind += " (" + m[3] + ")"
+		case m[3] != "":
+			kind += " (" + withheldValue + ")"
 		}
 		return m[1] + kind + " does not fit here"
 	}
-	return problem
+	if m := repeatedKeyProblem.FindStringSubmatch(problem); m != nil {
+		key, err := strconv.Unquote(m[2])
+		if err != nil || !quotableKey(key) {
+			return m[1] + "a key is repeated (its name is withheld: it has the shape of a secret); it was first given at line " + m[3]
+		}
+		return m[1] + `key "` + key + `" is repeated; it was first given at line ` + m[3]
+	}
+	return problemLine.FindString(problem) + "a value does not fit here (" + withheldValue + ")"
 }
 
 // textUnmarshaler is the interface of the manifest's own text forms, such as
@@ -91,6 +156,9 @@ func textProblem(data []byte) string {
 	var typed *core.Error
 	if errors.As(err, &typed) {
 		reason = typed.Message
+	}
+	if !quotable(node.Value) {
+		return fmt.Sprintf("line %d: %s (%s)", node.Line, reason, withheldValue)
 	}
 	return fmt.Sprintf("line %d: %q: %s", node.Line, node.Value, reason)
 }

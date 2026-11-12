@@ -15,8 +15,8 @@ import (
 // Helpers that bring a fake-backed Standalone install up and keep it running.
 
 // standaloneUnitCount is supervisor, control, dispatcher, edge and the
-// fake GitHub of the simulation profile.
-const standaloneUnitCount = 5
+// fake GitHub and fake identity provider of the simulation profile.
+const standaloneUnitCount = 6
 
 // buildAnswers makes the fake "go build" write a distinct file and the fake
 // docker answer like a daemon that built and measured everything.

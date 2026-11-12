@@ -103,6 +103,7 @@ func (r Rules) proposal(name string, a assessment, policy core.PolicyRefs, featu
 	limit := max(r.ErrorRateThreshold, ev.Baseline+r.MinDelta)
 	p := pkgdecision.Proposal{
 		Fingerprint: Fingerprint(name),
+		Options:     options(name),
 		Goal:        fmt.Sprintf("Bring the 5xx rate of endpoint %q from %.2f%% back to its baseline of %.2f%%.", name, 100*ev.Value, 100*ev.Baseline),
 		DraftSoW: fmt.Sprintf("Find and fix the cause of the server errors returned by endpoint %q. "+
 			"The scope is the code that serves this endpoint and its direct dependencies. "+

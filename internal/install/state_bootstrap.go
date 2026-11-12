@@ -11,6 +11,7 @@ import (
 	// The PostgreSQL driver the role statements run on, registered as "pgx".
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	budgetgate "github.com/bestagentkits/sisf/internal/budget"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
@@ -62,7 +63,37 @@ func Bootstrap(ctx context.Context, cfg BootstrapConfig) error {
 	if cfg.Budget == nil {
 		return nil
 	}
-	return storeBudgetConfirmation(ctx, store, *cfg.Budget)
+	if err := storeBudgetConfirmation(ctx, store, *cfg.Budget); err != nil {
+		return err
+	}
+	return storeCappedSettings(ctx, store, *cfg.Budget)
+}
+
+// storeCappedSettings records the cap of a capped confirmation as the
+// budget settings in force, which the gate needs before it admits a run
+// under a cap. Settings that exist are the Owner's later decision and are
+// never replaced here.
+func storeCappedSettings(ctx context.Context, store *sqlstore.Store, rec BudgetConfirmation) error {
+	if rec.Mode != core.BudgetCapped {
+		return nil
+	}
+	settings := budgetgate.Settings{Mode: core.BudgetCapped, CapMicros: rec.CapMicros, AlertThresholdMicros: rec.AlertThresholdMicros}
+	if err := settings.Validate(); err != nil {
+		return err
+	}
+	value, err := json.Marshal(settings)
+	if err != nil {
+		return invalidf("the budget settings cannot be encoded")
+	}
+	return store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		if _, err := tx.GetKV(ctx, budgetgate.SettingsNamespace, budgetgate.SettingsKey); err == nil {
+			return nil
+		} else if !isNotFound(err) {
+			return err
+		}
+		_, err := tx.PutKV(ctx, state.KVEntry{Namespace: budgetgate.SettingsNamespace, Key: budgetgate.SettingsKey, Value: value})
+		return err
+	})
 }
 
 // ensureRoles creates each zone's login role, or sets the password of one

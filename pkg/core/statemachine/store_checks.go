@@ -54,7 +54,9 @@ func CheckLease(t core.Transition) error {
 // before the write. A step that does not continue it yields CONFLICT:
 //
 //   - the claim must name a run, and not the run the stored record names: a
-//     claim starts a new run, so receipts of the run before never count again;
+//     claim starts a new run, so receipts of the run before never count again.
+//     The record names only the latest run, so the store also refuses a claim
+//     naming any run its journal shows the issue had;
 //   - any other step must not name another run than the stored one, and must
 //     name the stored one while a run holds the issue (RequiresLease);
 //   - the claim must carry attempt 1, since a new run starts its count; the

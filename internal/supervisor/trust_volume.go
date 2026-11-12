@@ -88,6 +88,40 @@ func TrustPath(trustDir, name string) (string, error) {
 	return resolveInside(root, filepath.Join(root, name), "trust record")
 }
 
+// TrustDirectory returns the real location of the directory name inside the
+// trust volume trustDir, for records kept as one file each. It refuses what
+// TrustPath refuses, and an existing entry that is not a directory of its
+// own (a link would be followed and could lead anywhere) or that other
+// accounts can write. The directory need not exist yet.
+func TrustDirectory(trustDir, name string) (string, error) {
+	root, err := resolveTrustDir(trustDir)
+	if err != nil {
+		return "", err
+	}
+	target := filepath.Join(root, name)
+	relative, err := filepath.Rel(root, target)
+	if err != nil || relative == "." || relative == ".." || filepath.IsAbs(relative) ||
+		strings.ContainsRune(relative, filepath.Separator) {
+		return "", newError(core.CodePermissionDenied,
+			"trust directory %s is not directly on the trust volume; it may only be kept where no other zone can write", target)
+	}
+	info, err := os.Lstat(target)
+	if errors.Is(err, fs.ErrNotExist) {
+		return target, nil
+	}
+	if err != nil {
+		return "", newError(core.CodeUnavailable, "trust directory %s cannot be inspected", target).WithCause(err)
+	}
+	if !info.IsDir() {
+		return "", newError(core.CodePermissionDenied, "trust directory %s is not a directory on the trust volume", target)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&othersCanWrite != 0 {
+		return "", newError(core.CodePermissionDenied,
+			"trust directory %s has mode %04o, which lets other accounts write it; only the supervisor may", target, info.Mode().Perm())
+	}
+	return target, nil
+}
+
 // WriteTrustFile replaces the file at path, a location TrustPath returned.
 // The new content is written beside the old one and renamed over it, so a
 // crash leaves either the old file or the new one, never a partial file.

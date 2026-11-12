@@ -46,8 +46,10 @@ type ReleaseRecord struct {
 	Result  string             `json:"result"`
 	State   core.State         `json:"state"`
 	Release core.ReleaseDigest `json:"release"`
-	Reason  string             `json:"reason,omitempty"`
-	At      time.Time          `json:"at"`
+	// Code is the error code of a release that did not go ahead.
+	Code   string    `json:"code,omitempty"`
+	Reason string    `json:"reason,omitempty"`
+	At     time.Time `json:"at"`
 }
 
 // QAResultKey and ReleaseKey name the records of one run's attempt.

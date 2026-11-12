@@ -168,6 +168,16 @@
       ],
       "type": "object"
     },
+    "Decision": {
+      "additionalProperties": false,
+      "properties": {
+        "system_one": {
+          "$ref": "#/$defs/SystemOne",
+          "description": "The one System One decision model the rules consult. Left out, no model is asked."
+        }
+      },
+      "type": "object"
+    },
     "EgressPolicy": {
       "additionalProperties": false,
       "properties": {
@@ -395,6 +405,67 @@
           ],
           "type": "string"
         },
+        "unit_inputs": {
+          "additionalProperties": false,
+          "description": "Per unit of release.units, the repository paths it consumes, as patterns matched against whole paths without regard to case: * never crosses /. A self-published candidate may change only inputs of the unit it releases. A unit left out keeps its built-in inputs; an entry replaces them.",
+          "properties": {
+            "app": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "artifacts": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "control": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "dispatcher": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "edge": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "qa-runner": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "runner": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "state": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "supervisor": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "units": {
           "description": "Units the factory may publish by itself. The supervisor is never one of them.",
           "items": {
@@ -599,6 +670,51 @@
       ],
       "type": "object"
     },
+    "SystemOne": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "description": "System One backend: jev or clef.",
+          "enum": [
+            "jev",
+            "clef"
+          ],
+          "type": "string"
+        },
+        "credential": {
+          "description": "Reference to the backend's credential, written env:NAME or local:path/name. Left out, the backend takes none.",
+          "pattern": "^(env:[A-Z_][A-Z0-9_]*|local:[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)$",
+          "type": "string"
+        },
+        "endpoint": {
+          "description": "Absolute URL of the backend, without user information, query or fragment; HTTPS, or HTTP only on a loopback address.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelRoute",
+          "description": "The model route every judgment must report; any other is refused."
+        },
+        "timeout": {
+          "description": "How long one judgment may take: above zero and at most 2m0s.",
+          "pattern": "^(0|([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$",
+          "type": "string"
+        },
+        "version": {
+          "description": "Protocol version the backend must answer with, such as 1 or 2026-11-01; never a floating name such as latest.",
+          "pattern": "^v?[0-9][A-Za-z0-9._-]{0,63}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "backend",
+        "endpoint",
+        "version",
+        "timeout",
+        "model"
+      ],
+      "type": "object"
+    },
     "Unit": {
       "additionalProperties": false,
       "properties": {
@@ -715,6 +831,10 @@
     "components": {
       "$ref": "#/$defs/Components",
       "description": "The three zone components. A deployment missing one is not a factory deployment."
+    },
+    "decision": {
+      "$ref": "#/$defs/Decision",
+      "description": "How the factory decides what to work on. Left out, the deterministic rules decide alone."
     },
     "deployment_id": {
       "description": "Name of this installation of the factory. It differs from factory_id and from any run identifier.",

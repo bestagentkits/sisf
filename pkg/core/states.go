@@ -76,6 +76,12 @@ const (
 	EventClaimed Event = "claimed"
 	// EventDevelopmentStarted moves Claimed to Developing.
 	EventDevelopmentStarted Event = "development_started"
+	// EventClaimStopped moves Claimed to Blocked: the run stopped before any
+	// agent attempt started working, and the issue waits for the Owner.
+	EventClaimStopped Event = "claim_stopped"
+	// EventDevelopmentStopped moves Developing to Blocked: the run stopped
+	// without a candidate to evaluate, and the issue waits for the Owner.
+	EventDevelopmentStopped Event = "development_stopped"
 	// EventCandidateSubmitted moves Developing to QAEvaluation: patch, tests
 	// and artifacts exist.
 	EventCandidateSubmitted Event = "candidate_submitted"
@@ -84,6 +90,10 @@ const (
 	// EventQAPassed moves QAEvaluation to ReleaseCandidate: the score and
 	// every hard gate pass.
 	EventQAPassed Event = "qa_passed"
+	// EventReleaseRefused moves ReleaseCandidate to Blocked: the supervisor
+	// refused to release the candidate before anything was deployed, and the
+	// issue waits for the Owner.
+	EventReleaseRefused Event = "release_refused"
 	// EventRolloutStarted moves ReleaseCandidate to Canary.
 	EventRolloutStarted Event = "rollout_started"
 	// EventRolloutHealthy moves Canary to Monitoring.
@@ -97,6 +107,11 @@ const (
 	EventRegressionDetected Event = "regression_detected"
 	// EventIssueClosed moves Verified to Closed.
 	EventIssueClosed Event = "issue_closed"
+	// EventVerifiedReleaseUnjudged moves Verified to Blocked: the verified
+	// release can no longer be judged to be what serves, healthy, and was
+	// not replaced by a later release, so it cannot be finished; the issue
+	// waits for the Owner.
+	EventVerifiedReleaseUnjudged Event = "verified_release_unjudged"
 	// EventRecoveryReported moves RolledBack to Blocked with evidence.
 	EventRecoveryReported Event = "recovery_reported"
 	// EventRetryAuthorized moves Blocked to Ready: a safe, authorized retry.
@@ -106,10 +121,10 @@ const (
 var allEvents = []Event{
 	EventIssueReceived, EventInfoMissing, EventClarificationCompleted, EventInfoSufficient,
 	EventApprovalRequired, EventScopePermitted, EventOwnerApproved, EventApprovalDenied,
-	EventClaimed, EventDevelopmentStarted, EventCandidateSubmitted, EventQAFailed,
-	EventQAPassed, EventRolloutStarted, EventRolloutHealthy, EventErrorThresholdExceeded,
-	EventPostDeployVerified, EventRegressionDetected, EventIssueClosed, EventRecoveryReported,
-	EventRetryAuthorized,
+	EventClaimed, EventDevelopmentStarted, EventClaimStopped, EventDevelopmentStopped,
+	EventCandidateSubmitted, EventQAFailed, EventQAPassed, EventReleaseRefused, EventRolloutStarted, EventRolloutHealthy,
+	EventErrorThresholdExceeded, EventPostDeployVerified, EventRegressionDetected, EventIssueClosed, EventVerifiedReleaseUnjudged,
+	EventRecoveryReported, EventRetryAuthorized,
 }
 
 // Events returns every lifecycle event in lifecycle order. The caller owns

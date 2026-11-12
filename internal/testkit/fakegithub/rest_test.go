@@ -109,6 +109,16 @@ func TestListingFiltersBySinceLabelsAndPagesWithALinkHeader(t *testing.T) {
 	if got, _ := list("state=all&since=" + since); len(got) != 1 || got[0].Number != 3 {
 		t.Fatalf("since filter = %+v", got)
 	}
+	// Reconciliation reads oldest first from a position, a page at a time;
+	// the next-page link keeps the order and the position.
+	since = time.Date(2026, 1, 1, 0, 0, 2, 0, time.UTC).Format(time.RFC3339)
+	asc, h := list("state=all&sort=updated&direction=asc&per_page=1&since=" + since)
+	if len(asc) != 1 || asc[0].Number != 2 || !strings.Contains(h.Get("Link"), "direction=asc") || !strings.Contains(h.Get("Link"), "since=") {
+		t.Fatalf("oldest first since %s = %+v, link %q", since, asc, h.Get("Link"))
+	}
+	if next, _ := list("state=all&sort=updated&direction=asc&per_page=1&page=2&since=" + since); len(next) != 1 || next[0].Number != 3 {
+		t.Fatalf("page 2 oldest first = %+v", next)
+	}
 }
 
 func TestIssueListAnswersNotModifiedForAnUnchangedPage(t *testing.T) {

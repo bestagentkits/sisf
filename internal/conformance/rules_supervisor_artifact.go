@@ -63,9 +63,14 @@ var launchers = []string{"sh", "bash", "dash", "zsh", "ash", "ksh", "csh", "tcsh
 func executableName(file string) string { return path.Base(path.Clean(file)) }
 
 // throughLauncher reports whether a command starts through a shell or
-// another launcher.
+// another launcher. Letter case is folded in every mode: a file system that
+// ignores case runs /bin/sh for /bin/SH.
 func throughLauncher(command []string) bool {
-	return len(command) > 0 && slices.Contains(launchers, executableName(command[0]))
+	if len(command) == 0 {
+		return false
+	}
+	name := foldCase(executableName(command[0]))
+	return slices.ContainsFunc(launchers, func(l string) bool { return foldCase(l) == name })
 }
 
 // comparedByExecutable reports whether what a unit starts identifies its
@@ -78,38 +83,99 @@ func (c *checker) comparedByExecutable(unit manifest.Unit) bool {
 	return c.m.Mode == manifest.ModeStandalone || unit.Image == ""
 }
 
-// startedExecutables lists the names of what a unit starts: the first word
-// of its command and, in Standalone mode, the binary it names as its image.
-// A command that starts through a launcher names nothing.
+// startedExecutables lists the paths of what a unit starts, as written:
+// the first word of its command and, in Standalone mode, the binary it names
+// as its image. A command that starts through a launcher names nothing.
 func (c *checker) startedExecutables(unit manifest.Unit, images ...string) []string {
 	var started []string
 	if len(unit.Command) > 0 && unit.Command[0] != "" && !throughLauncher(unit.Command) {
-		started = append(started, executableName(unit.Command[0]))
+		started = append(started, unit.Command[0])
 	}
 	if c.m.Mode == manifest.ModeStandalone {
 		for _, image := range append(images, unit.Image) {
 			if image != "" {
-				started = append(started, executableName(image))
+				started = append(started, image)
 			}
 		}
 	}
 	return started
 }
 
-// namesExecutable reports whether any word of a command, or the value after
-// "=" in a word such as --exec=FILE, names one of the executables. A wrapper
-// such as an init process or an interpreter runs the file it is given, so
-// the first word alone does not say what runs, and no list of launchers is
-// complete.
-func namesExecutable(command, executables []string) bool {
-	return slices.ContainsFunc(command, func(word string) bool {
-		if word == "" {
-			return false
+// executableNames returns the names the executables are recognized by
+// wherever they are installed.
+func (c *checker) executableNames(executables []string) []string {
+	names := make([]string, 0, len(executables))
+	for _, file := range executables {
+		names = append(names, c.spelled(executableName(file)))
+	}
+	return names
+}
+
+// spelled returns a path or a name in the form two spellings of one file
+// share: on the one machine of a Standalone deployment the file system may
+// ignore letter case, so case is folded there; inside a container it is not.
+func (c *checker) spelled(file string) string {
+	if c.m.Mode == manifest.ModeStandalone {
+		return foldCase(file)
+	}
+	return file
+}
+
+// namesExecutable reports whether a command names one of the executables.
+// Its first word is what runs, so it names an executable of the same name
+// from any directory. A wrapper such as an init process, an interpreter or
+// a shell runs the file it is given in a later word (see namedFiles), so a
+// later word names an executable when it is the bare
+// name, found through the search path, or the path the executable is
+// started from, written any way that cleans to it or under a directory the
+// manifest does not name (/opt/factory/bin/x is bin/x of a factory rooted
+// there); an executable started by its bare name may lie in any directory. A word that merely ends in the name, such as logs/sisf-supervisor
+// or a URL, names another file.
+func (c *checker) namesExecutable(command, executables []string) bool {
+	names := c.executableNames(executables)
+	paths := make([]string, 0, len(executables))
+	for _, file := range executables {
+		paths = append(paths, c.spelled(path.Clean(file)))
+	}
+	for i, word := range command {
+		for _, file := range namedFiles(word) {
+			if i == 0 {
+				if slices.Contains(names, c.spelled(executableName(file))) {
+					return true
+				}
+				continue
+			}
+			if !strings.Contains(file, "/") {
+				if slices.Contains(names, c.spelled(file)) {
+					return true
+				}
+				continue
+			}
+			// A path started by its bare name is found through the search
+			// path, so any directory may hold it.
+			if slices.ContainsFunc(paths, func(started string) bool {
+				return samePlace(c.spelled(path.Clean(file)), started) ||
+					(!strings.Contains(started, "/") && c.spelled(executableName(file)) == started)
+			}) {
+				return true
+			}
 		}
-		_, value, assigned := strings.Cut(word, "=")
-		return slices.Contains(executables, executableName(word)) ||
-			(assigned && value != "" && slices.Contains(executables, executableName(value)))
-	})
+	}
+	return false
+}
+
+// samePlace reports whether two cleaned paths may name one file: they are
+// equal, or one is relative to a directory the manifest does not name and
+// the other leads through that directory to it. A bare name is matched as a
+// name, not here.
+func samePlace(a, b string) bool {
+	if a == b {
+		return true
+	}
+	suffix := func(long, short string) bool {
+		return strings.Contains(short, "/") && !path.IsAbs(short) && !climbs(short) && strings.HasSuffix(long, "/"+short)
+	}
+	return suffix(a, b) || suffix(b, a)
 }
 
 // checkSupervisorArtifact verifies condition 1. The supervisor runs from a
@@ -117,10 +183,12 @@ func namesExecutable(command, executables []string) bool {
 // unit shares the supervisor's artifact when it has the supervisor's digest,
 // when its image is the supervisor's repository under any tag, digest or
 // registry alias, or, where executables identify artifacts, when it starts
-// an executable of the supervisor's name from any directory or names one in
-// any argument. A unit that starts through a shell hides what it runs and is
-// refused for that. In Standalone mode the supervisor must also start the
-// binary it pins, from a directory no unit mounts.
+// an executable of the supervisor's name from any directory or names the
+// supervisor's executable in a later argument (see namesExecutable). A unit
+// that starts through a shell hides what it runs and is refused for that by
+// checkLaunchers.
+// In Standalone mode the supervisor must also start the binary it pins,
+// from a directory no unit mounts.
 func (c *checker) checkSupervisorArtifact(sup manifest.Supervisor) {
 	if err := sup.Digest.Validate(); err != nil {
 		c.add(RuleSupervisorNotPinned, "supervisor.digest",
@@ -158,7 +226,8 @@ func (c *checker) checkSupervisorArtifact(sup manifest.Supervisor) {
 }
 
 // checkSupervisorArtifactShared compares every other unit with the
-// supervisor's digest, repository and executables.
+// supervisor's digest, repository and executables, given as the paths the
+// supervisor starts them from.
 func (c *checker) checkSupervisorArtifactShared(sup manifest.Supervisor, executables []string) {
 	const fix = "build the supervisor as its own artifact, separate from every unit a release can replace"
 	repository := canonicalRepository(sup.Image)
@@ -177,14 +246,10 @@ func (c *checker) checkSupervisorArtifactShared(sup manifest.Supervisor, executa
 				"unit %q runs image %q, which is the supervisor's repository %q whatever its tag, digest or registry alias, so a candidate built there is built where the supervisor is", name, unit.Image, imageRepository(sup.Image))
 		case !c.comparedByExecutable(unit):
 			// Its image, already compared, is what identifies this unit.
-		case throughLauncher(unit.Command):
-			c.add(RuleSupervisorSharesArtifact, at+".command",
-				"start the unit's own binary as the first word of its command, without a shell or launcher in front of it",
-				"unit %q starts through a shell or launcher, so what it runs is named in an argument this check cannot read and cannot be shown to differ from the supervisor's executable", name)
-		case namesExecutable(unit.Command, executables):
+		case c.namesExecutable(unit.Command, executables):
 			c.add(RuleSupervisorSharesArtifact, at+".command", fix,
 				"unit %q names the executable the supervisor starts in its command, so whatever program comes first can run the supervisor's executable, and replacing that unit replaces the supervisor", name)
-		case c.m.Mode == manifest.ModeStandalone && unit.Image != "" && slices.Contains(executables, executableName(unit.Image)):
+		case c.m.Mode == manifest.ModeStandalone && unit.Image != "" && slices.Contains(c.executableNames(executables), c.spelled(executableName(unit.Image))):
 			c.add(RuleSupervisorSharesArtifact, at+".image", fix,
 				"unit %q names as its binary the executable the supervisor starts, under another directory, so replacing that unit replaces the supervisor", name)
 		}

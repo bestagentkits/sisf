@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/bestagentkits/sisf/adapters/agent/fake"
 	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
+	"github.com/bestagentkits/sisf/cmd/supervisor/observe"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -53,8 +55,9 @@ func setup(ctx context.Context, getenv func(string) string, zone core.Zone) (zon
 	return zoneSetup{env: env, manifest: m, store: store, clock: clock}, nil
 }
 
-// newControl builds the control zone from its setup.
-func newControl(s zoneSetup, log *slog.Logger) (*wiring.Control, error) {
+// newControl builds the control zone from its setup; surfaces and decisions
+// are nil for the Owner's command-line use, which serves and decides nothing.
+func newControl(s zoneSetup, log *slog.Logger, surfaces *wiring.SurfaceConfig, decisions *wiring.DecisionConfig) (*wiring.Control, error) {
 	settings, err := wiring.GitHubSettingsOf(s.manifest)
 	if err != nil {
 		return nil, err
@@ -72,10 +75,10 @@ func newControl(s zoneSetup, log *slog.Logger) (*wiring.Control, error) {
 	}
 	return wiring.NewControl(wiring.ControlConfig{
 		Manifest: s.manifest, Store: s.store, GitHub: client,
-		OwnerToken: s.env.OwnerToken, WebhookSecret: s.env.WebhookSecret, ApprovalKey: key,
+		WebhookSecret: s.env.WebhookSecret, ApprovalKey: key, Surfaces: surfaces, Decision: decisions,
 		ListenAddr: listenOr(s.env.Listen, wiring.DefaultControlListen), AllowNonLoopback: s.env.AllowNonLoopback,
 		Probes: wiring.ZoneProbes(s.env.AppHealthURL, s.env.DispatcherHealthURL), Clock: s.clock, Logger: log,
-		TrustedProxies: s.env.TrustedProxies,
+		TrustedProxies: s.env.TrustedProxies, Reconcile: s.env.Reconcile,
 	})
 }
 
@@ -87,7 +90,8 @@ func listenOr(addr, fallback string) string {
 }
 
 // runControl serves the control zone until ctx ends.
-func runControl(ctx context.Context, args []string, getenv func(string) string, log *slog.Logger) error {
+func runControl(ctx context.Context, args []string, getenv func(string) string, proc *observe.Process) error {
+	log := proc.Log
 	if err := parse(newFlags("control"), args); err != nil {
 		return err
 	}
@@ -96,7 +100,25 @@ func runControl(ctx context.Context, args []string, getenv func(string) string, 
 		return err
 	}
 	defer func() { _ = s.store.Close() }()
-	c, err := newControl(s, log)
+	surfaces, err := surfacesFromEnv(getenv, s, proc)
+	if err != nil {
+		return err
+	}
+	decisions, err := decisionsFromEnv(getenv)
+	if err != nil {
+		return err
+	}
+	// The control zone's secret providers list references for
+	// secrets.list_refs and resolve a System One credential.
+	secretSet, err := wiring.ControlSecretsFromEnv(core.ZoneControl, getenv, os.Environ)
+	if err != nil {
+		return err
+	}
+	surfaces.SecretProviders = secretSet.Providers
+	if decisions != nil {
+		decisions.Secrets = secretSet.Resolver
+	}
+	c, err := newControl(s, log, surfaces, decisions)
 	if err != nil {
 		return err
 	}
@@ -137,7 +159,7 @@ func runPolicyApprove(ctx context.Context, args []string, getenv func(string) st
 		return err
 	}
 	defer func() { _ = s.store.Close() }()
-	c, err := newControl(s, log)
+	c, err := newControl(s, log, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -165,7 +187,7 @@ func runPolicyRequest(ctx context.Context, args []string, getenv func(string) st
 		return err
 	}
 	defer func() { _ = s.store.Close() }()
-	c, err := newControl(s, log)
+	c, err := newControl(s, log, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -177,7 +199,8 @@ func runPolicyRequest(ctx context.Context, args []string, getenv func(string) st
 	return err
 }
 
-// runIssueRetry sends a Blocked issue back to Ready, as the Owner.
+// runIssueRetry sends a Blocked issue back to Ready, or resumes its held
+// build or held release, as the Owner.
 func runIssueRetry(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer, log *slog.Logger) error {
 	fs := newFlags("issue retry")
 	ref := fs.String("issue", "", "issue to retry, owner/repo#N")
@@ -193,7 +216,7 @@ func runIssueRetry(ctx context.Context, args []string, getenv func(string) strin
 		return err
 	}
 	defer func() { _ = s.store.Close() }()
-	c, err := newControl(s, log)
+	c, err := newControl(s, log, nil, nil)
 	if err != nil {
 		return err
 	}

@@ -167,7 +167,7 @@ func TestUnknownAPIVersionsAndUnversionedPathsAreRefused(t *testing.T) {
 
 func TestTheFilterRefusesAnUnsafeConfiguration(t *testing.T) {
 	t.Parallel()
-	good := dockerfilter.Config{Upstream: http.DefaultTransport, RunnerValue: factory, SandboxNetwork: network, Images: []string{image}}
+	good := dockerfilter.Config{Upstream: testClient.Transport, RunnerValue: factory, SandboxNetwork: network, Images: []string{image}}
 	if _, err := dockerfilter.New(good); err != nil {
 		t.Fatalf("a good configuration was refused: %v", err)
 	}

@@ -1,0 +1,42 @@
+name: Feature or improvement
+description: Propose a change to what SISF does or how it does it.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Agents improve what is already approved; a new feature, a wider permission or a policy change needs Owner approval before it is built (FEATURES.md, ADR 0008).
+        A change to a product invariant of the decision brief needs an ADR. Remove tokens, secrets and personal data from anything you paste.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - Improvement of an existing feature
+        - New feature
+        - Documentation
+        - Developer experience (build, tests, CI)
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is missing or wrong today, and who it affects. Evidence (a measurement, a log line, a failing case) helps.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The change you suggest and how you would know it works (a test, a metric, a Definition of Done).
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Contract impact
+      description: Brief sections, ADRs or `pkg/` interfaces it touches; whether it widens permissions, egress, budget or scope.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

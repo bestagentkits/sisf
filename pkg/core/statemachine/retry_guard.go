@@ -8,8 +8,10 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// BlockCause says why an issue is in Blocked. The lifecycle has two ways in:
-// a scope the Owner did not approve, and a release that was rolled back.
+// BlockCause says why an issue is in Blocked. The lifecycle has four ways
+// in: a scope the Owner did not approve, a run that stopped without a
+// candidate, a release the supervisor refused, and a release that was
+// rolled back.
 type BlockCause string
 
 const (
@@ -19,21 +21,52 @@ const (
 	// BlockApprovalExpired means the approval request lapsed undecided, or
 	// the approval lapsed unused.
 	BlockApprovalExpired BlockCause = "approval_expired"
-	// BlockRolledBack means a release of the issue was rolled back and its
-	// recovery was reported.
+	// BlockRolledBack means a release of the issue was judged unhealthy, was
+	// rolled back to the last known good release and its recovery was
+	// reported.
 	BlockRolledBack BlockCause = "rolled_back"
+	// BlockReleaseRefused means the supervisor refused to release the
+	// issue's candidate before anything was deployed: it could not be
+	// verified, or it is not one the factory may publish by itself.
+	BlockReleaseRefused BlockCause = "release_refused"
+	// BlockReleaseInterrupted means a release of the issue stopped being
+	// watched before it was judged, because the supervisor stopped or could
+	// not go on with it, so the last known good release was restored.
+	BlockReleaseInterrupted BlockCause = "release_interrupted"
+	// BlockReleaseUnjudged means a release of the issue could not be judged
+	// while it served traffic, because it could not be observed or measured
+	// or the synthetic suite that judges a release under low traffic could
+	// not be run, so the last known good release was restored. Unlike
+	// BlockRolledBack it says nothing about whether the release was
+	// healthy.
+	BlockReleaseUnjudged BlockCause = "release_unjudged"
+	// BlockRunExhausted means the run of the issue used every coding
+	// attempt it was allowed without producing a candidate.
+	BlockRunExhausted BlockCause = "run_exhausted"
+	// BlockPolicySuperseded means the run of the issue was coded under a
+	// policy that was replaced before its patch was built, so the patch is
+	// never built, judged or released.
+	BlockPolicySuperseded BlockCause = "policy_superseded"
 )
 
 // Valid reports whether c is a known cause.
 func (c BlockCause) Valid() bool {
-	return c == BlockApprovalDenied || c == BlockApprovalExpired || c == BlockRolledBack
+	switch c {
+	case BlockApprovalDenied, BlockApprovalExpired, BlockRolledBack, BlockRunExhausted, BlockPolicySuperseded,
+		BlockReleaseRefused, BlockReleaseInterrupted, BlockReleaseUnjudged:
+		return true
+	}
+	return false
 }
 
-// NeedsScopeProof reports whether the block came from an approval that was
-// not given. Such an issue never had a scope it may be worked on, so a retry
-// has to bring one.
+// NeedsScopeProof reports whether a retry has to prove the scope anew. An
+// issue blocked over an approval that was not given never had a scope it
+// may be worked on. One whose policy was superseded had its scope permitted
+// or approved under a policy that is no longer in force, and a permission
+// is bound to the policy it was given under. Either way the retry has to
+// bring the proof, under the policy in force.
 func (c BlockCause) NeedsScopeProof() bool {
-	return c == BlockApprovalDenied || c == BlockApprovalExpired
+	return c == BlockApprovalDenied || c == BlockApprovalExpired || c == BlockPolicySuperseded
 }
 
 // RetryProof is what is known about one request to retry a blocked issue.
@@ -46,6 +79,14 @@ type RetryProof struct {
 	// request to retry.
 	Cause     BlockCause
 	BlockedAt time.Time
+	// DeniedScope and DeniedPolicy are the scope digest and the policy
+	// revision of the approval request that was not given, read from the
+	// same record. A delegation lifts a block over a denied approval only
+	// for another scope or under another policy revision: the policy that
+	// sent the scope to the Owner, and the Owner who refused it, had the
+	// last word on exactly that pair.
+	DeniedScope  core.Digest
+	DeniedPolicy core.CommitSHA
 	// Actor is the authenticated party asking for the retry, as the
 	// authentication layer built it. It must be the actor the transition
 	// names. An agent cannot retry.
@@ -54,10 +95,13 @@ type RetryProof struct {
 	// issue. Only an outright allow counts.
 	Decision core.AuthzDecision
 	// Approval and Delegation prove the scope of an issue that was blocked
-	// because its approval was denied or expired: an approval the Owner gave
-	// after the block, or the policy's answer that the scope now lies within
-	// the delegation. One of them is required for such an issue, each one
-	// presented must hold, and neither is needed after a rollback.
+	// because its approval was denied or expired, or because the policy it
+	// was permitted under was superseded: an approval the Owner gave after
+	// the block, or the policy's answer that the scope now lies within the
+	// delegation. One of them is required for such an issue, each one
+	// presented must hold, and neither is needed after a release that was
+	// refused, rolled back or interrupted, or for a run that used its
+	// attempts: the scope of such an issue was approved and still is.
 	Approval   *ApprovalProof
 	Delegation *DelegationProof
 }
@@ -87,7 +131,7 @@ func (f RetryGuardFunc) RetryProof(ctx context.Context, t core.Transition) (Retr
 // that actor and this issue, the actor to be a person or a service that is
 // allowed outright, and the cause of the block to be known. A decision that
 // still needs an approval or a step-up is not an authorization. An issue
-// blocked over its approval also needs the scope proof.
+// whose cause needs it (NeedsScopeProof) also needs the scope proof.
 func checkRetry(t core.Transition, p RetryProof, now time.Time) error {
 	switch {
 	case strings.TrimSpace(t.ActorID) == "":
@@ -117,9 +161,11 @@ func checkRetry(t core.Transition, p RetryProof, now time.Time) error {
 	return checkRetriedScope(t, p, now)
 }
 
-// checkRetriedScope requires, for an issue blocked over its approval, an
-// approval decided after the block or proof of delegation. Whatever is
-// presented must hold by the rule of its own guard.
+// checkRetriedScope requires, for an issue blocked over its approval or
+// over a superseded policy, an approval decided after the block or proof of
+// delegation. Whatever is
+// presented must hold by the rule of its own guard, and a delegation alone
+// lifts a denied approval only for another scope or policy revision.
 func checkRetriedScope(t core.Transition, p RetryProof, now time.Time) error {
 	switch {
 	case p.BlockedAt.IsZero() || p.BlockedAt.After(now):
@@ -141,6 +187,30 @@ func checkRetriedScope(t core.Transition, p RetryProof, now time.Time) error {
 		if err := checkDelegation(t, *p.Delegation); err != nil {
 			return refuseAs(GuardRetry, t, err)
 		}
+		if p.Approval == nil && p.Cause == BlockApprovalDenied {
+			return checkDelegationAfterDenial(t, p)
+		}
+	}
+	return nil
+}
+
+// checkDelegationAfterDenial requires a delegation that lifts a denied
+// approval to be about another scope, or judged under another policy
+// revision, than the request that was denied. The same pair would be the
+// very question the Owner already answered with no; only the Owner's own
+// later approval undoes that. A denied request that is not known by its
+// full digest and commit cannot be told apart, so it is refused.
+func checkDelegationAfterDenial(t core.Transition, p RetryProof) error {
+	refusal := func(message string) error {
+		refused := refuse(GuardRetry, t, "%s", message)
+		refused.Details["cause"] = string(p.Cause)
+		return refused
+	}
+	switch {
+	case p.DeniedScope.Validate() != nil || p.DeniedPolicy.Validate() != nil:
+		return refusal("it is not known which scope and policy the Owner refused, so a delegation cannot lift the refusal")
+	case p.Delegation.ScopeDigest == p.DeniedScope && p.Delegation.PolicyRevision == p.DeniedPolicy:
+		return refusal("the Owner refused this scope under this policy; only a new approval lifts that refusal")
 	}
 	return nil
 }

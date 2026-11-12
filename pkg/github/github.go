@@ -11,6 +11,7 @@ package github
 import (
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -115,9 +116,10 @@ type Issue struct {
 	UpdatedAt         time.Time         `json:"updated_at"`
 }
 
-// HasLabel reports whether the issue carries the label.
+// HasLabel reports whether the issue carries the label. GitHub compares
+// label names without regard to case, and so does HasLabel.
 func (i Issue) HasLabel(name string) bool {
-	return slices.ContainsFunc(i.Labels, func(l Label) bool { return l.Name == name })
+	return slices.ContainsFunc(i.Labels, func(l Label) bool { return strings.EqualFold(l.Name, name) })
 }
 
 // Comment is a comment on an issue or pull request.
@@ -137,6 +139,7 @@ type Comment struct {
 type PullRequest struct {
 	Repo              RepoRef           `json:"repo"`
 	Number            int               `json:"number"`
+	URL               string            `json:"url,omitempty"`
 	Title             string            `json:"title"`
 	Body              string            `json:"body"`
 	State             IssueState        `json:"state"`
@@ -185,6 +188,14 @@ type ListIssuesOptions struct {
 	Since  time.Time
 	Labels []string
 	State  IssueState
+	// MaxPages bounds the pages of 100 issues one listing follows; zero
+	// or more than the client's own bound means the client's bound. A
+	// listing with more pages fails with LIMIT_EXCEEDED, or for PollIssues
+	// is cut there and reported as IssuePage.More.
+	MaxPages int
+	// Page starts the listing at this page of 100 instead of the first;
+	// zero or one is the first.
+	Page int
 }
 
 // NewIssue is the content of an issue to create.

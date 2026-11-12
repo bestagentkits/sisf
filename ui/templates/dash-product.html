@@ -1,0 +1,10 @@
+{{define "title"}}Product{{end}}
+{{define "content"}}
+<h1>Product</h1>
+{{range .Sections}}
+<section data-section="{{.Action}}">
+  <h2>{{.Title}}</h2>
+  {{if .Panel.OK}}{{template "table" .Table}}{{else}}{{template "panelstate" .Panel}}{{end}}
+</section>
+{{end}}
+{{end}}

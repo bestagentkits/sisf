@@ -98,11 +98,11 @@ func TestServeAnswersOnLoopbackAndStopsWhenAsked(t *testing.T) {
 		done := make(chan error, 1)
 		go func() { done <- e.server.Serve(ctx, ln) }()
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+ln.Addr().String()+"/api/v1/issues", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+ln.Addr().String()+"/api/v1/actions/factory.status", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := testClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

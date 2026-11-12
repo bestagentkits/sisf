@@ -96,10 +96,16 @@ func TestAPendingDecisionCostsNoGitHubCall(t *testing.T) {
 	number := f.OpenIssue("maintainer", "MEMBER", "Deploy history page", featureBody, github.LabelReady, github.LabelKindFeature)
 	f.Pass()
 	wantRecordState(t, f, number, core.StateApprovalPending)
-	before := len(f.GitHub.Requests())
+	// The factory's own comment and label moved the issue's update time
+	// after the webhook; reconciliation reads the issue once more for
+	// that, in the next pass, and never again while nothing changes.
 	f.Pass()
+	before := len(f.GitHub.Requests())
+	for range 3 {
+		f.Pass()
+	}
 	if after := len(f.GitHub.Requests()); after != before {
-		t.Fatalf("a pass over a pending decision called GitHub %d times", after-before)
+		t.Fatalf("passes over a pending decision called GitHub %d times", after-before)
 	}
 }
 

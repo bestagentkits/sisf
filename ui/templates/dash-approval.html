@@ -1,0 +1,59 @@
+{{define "title"}}Approval request{{end}}
+{{define "content"}}
+<h1>Approval request</h1>
+{{if .Get.OK}}{{with .Request}}
+<p class="risk" data-field="risk-summary"><strong>{{.RiskSummary}}</strong></p>
+<dl class="fields">
+  <dt>Action</dt><dd><code>{{.Action}}</code></dd>
+  <dt>Status</dt><dd data-field="status">{{.Status}}</dd>
+  <dt>Requested by</dt><dd>{{.RequestedBy}}</dd>
+  {{if .Issue}}<dt>Issue</dt><dd><a href="/runs?issue={{.Issue}}">{{.Issue}}</a></dd>{{end}}
+  <dt>Expires</dt><dd><time datetime="{{iso .ExpiresAt}}">{{utc .ExpiresAt}}</time></dd>
+  <dt>Subject digest</dt><dd><code>{{.SubjectDigest}}</code></dd>
+  <dt>Policy revision</dt><dd><code>{{.PolicyRevision}}</code></dd>
+</dl>
+<h2>Expected diff</h2>
+{{if .Diff}}<pre class="diff" data-field="diff">{{.Diff}}</pre>{{else}}<p class="empty">The request carries no diff.</p>{{end}}
+<h2>Affected features</h2>
+{{if .AffectedFeatures}}<ul data-field="features">{{range .AffectedFeatures}}<li>{{.}}</li>{{end}}</ul>{{else}}<p class="empty">No feature is named.</p>{{end}}
+{{if .EvidenceRefs}}<h2>Evidence</h2><ul>{{range .EvidenceRefs}}<li><code>{{.}}</code></li>{{end}}</ul>{{end}}
+{{end}}
+{{with .Decision}}
+<h2>Decision</h2>
+<dl class="fields">
+  <dt>Decision</dt><dd data-field="decision">{{.Decision}}</dd><dt>By</dt><dd>{{.Approver}}</dd>
+  {{if .Reason}}<dt>Reason</dt><dd>{{.Reason}}</dd>{{end}}
+  {{if .BudgetCap}}<dt>Budget cap</dt><dd>{{.BudgetCap}}</dd>{{end}}
+  {{if not .CondExpires.IsZero}}<dt>Approval expires</dt><dd><time datetime="{{iso .CondExpires}}">{{utc .CondExpires}}</time></dd>{{end}}
+  <dt>At</dt><dd><time datetime="{{iso .At}}">{{utc .At}}</time></dd>
+</dl>
+{{end}}
+{{if .Open}}
+<h2>Decide</h2>
+{{if .CanDecide}}
+<div class="notice warn"><p>A decision needs a fresh confirmation of your identity for this request and the decision you will record. It is spent by that one decision and lapses after a few minutes.</p>
+{{range .StepUpProviders}}{{$provider := .}}<form method="post" action="/auth/step-up/{{.}}?return_to={{$.ReturnTo}}">{{template "csrf" $}}<input type="hidden" name="action" value="approvals.decide">{{range $.Verdicts}}<button type="submit" name="target" value="{{.Target}}">Confirm with {{$provider}} to {{.Label}}</button>{{end}}</form>{{else}}<p class="notice unavailable" data-state="no-step-up">Confirming your identity needs a sign-in through an OpenID Connect provider; sign in through one to continue.</p>{{end}}</div>
+<form method="post" action="/actions/approvals.decide" class="decide">
+  {{template "csrf" .}}
+  <input type="hidden" name="return_to" value="{{.ReturnTo}}">
+  <input type="hidden" name="request_id" value="{{.Request.ID}}">
+  <input type="hidden" name="nonce" value="{{.Request.Nonce}}">
+  <input type="hidden" name="subject_digest" value="{{.Request.SubjectDigest}}">
+  <input type="hidden" name="policy_revision" value="{{.Request.PolicyRevision}}">
+  <fieldset><legend>Decision</legend>
+    <label><input type="radio" name="decision" value="approve" required> Approve</label>
+    <label><input type="radio" name="decision" value="request_changes"> Request changes</label>
+    <label><input type="radio" name="decision" value="reject"> Reject</label>
+  </fieldset>
+  <label>Reason <input type="text" name="reason" maxlength="1000"></label>
+  <fieldset><legend>Conditional approval (optional)</legend>
+    <label>Budget cap, in millionths of a currency unit <input type="number" name="budget_cap" min="0" step="1"></label>
+    <label>Expires at (RFC 3339, for example 2026-11-12T09:00:00Z) <input type="text" name="expires_at"></label>
+  </fieldset>
+  <button type="submit">Record the decision</button>
+</form>
+{{else}}<p class="notice unavailable" data-state="unavailable"><strong>Not available yet.</strong> This factory offers no decision action to the control zone.</p>{{end}}
+{{end}}
+{{else}}{{template "panelstate" .Get}}{{end}}
+<p><a href="/approvals">All approvals</a></p>
+{{end}}

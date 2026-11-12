@@ -1,0 +1,28 @@
+package core
+
+import "testing"
+
+// Usage counts as without a reported cost when it is unverified, states no
+// cost and counted some tokens, however many: token counts so large that
+// their sum would not fit in an int64 still count.
+func TestUsageWithoutAReportedCost(t *testing.T) {
+	t.Parallel()
+	const huge = int64(1) << 62
+	for name, c := range map[string]struct {
+		u    Usage
+		want bool
+	}{
+		"tokens, no cost":     {Usage{InputTokens: 10, OutputTokens: 20}, true},
+		"output tokens only":  {Usage{OutputTokens: 1}, true},
+		"input tokens only":   {Usage{InputTokens: 1}, true},
+		"huge token counts":   {Usage{InputTokens: huge, OutputTokens: huge}, true},
+		"no tokens":           {Usage{}, false},
+		"a cost":              {Usage{InputTokens: 10, Cost: 1}, false},
+		"verified, no cost":   {Usage{InputTokens: 10, Verified: true}, false},
+		"huge tokens, a cost": {Usage{InputTokens: huge, OutputTokens: huge, Cost: 1}, false},
+	} {
+		if got := c.u.CostUnreported(); got != c.want {
+			t.Errorf("%s: CostUnreported = %v, want %v", name, got, c.want)
+		}
+	}
+}

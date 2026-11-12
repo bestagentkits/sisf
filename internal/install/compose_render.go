@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"regexp"
+	"strings"
 	"text/template"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -31,6 +32,15 @@ type ComposeData struct {
 	Project    string
 	FactoryID  core.FactoryID
 	Repository string
+	// InstallDir is the install's directory, an absolute host path. It
+	// labels every volume of the project with the install that made it
+	// (see checkProjectOwner).
+	InstallDir string
+	// RootKeyID is the id of the install's root public key, which control
+	// names on /healthz so the CLI can tell this install from another one
+	// of the same factory id.
+	RootKeyID string
+
 	// SecretsDir, ConfigFile, ReleaseFile and SimAgentDir are absolute host
 	// paths.
 	SecretsDir, ConfigFile, ReleaseFile, SimAgentDir string
@@ -46,12 +56,28 @@ type ComposeData struct {
 	AppDigest, AppContainer string
 	Host                    HostFacts
 	Lifecycle               LifecycleChoice
+	// Identity is the sign-in contract of control, and Owners its Owner
+	// identities joined by commas.
+	Identity Identity
+	Owners   string
+	// ReconcileInterval is control's interval of reconciliation with
+	// GitHub, empty for its default.
+	ReconcileInterval string
+	// SupervisorAdmin is the supervisor's admin socket, in
+	// SupervisorAdminDir, the one volume the supervisor and control share.
+	SupervisorAdmin, SupervisorAdminDir string
 
 	PostgresImage                                                  string
 	PortEdge, PortApp, PortControl, PortSupervisor, PortDispatcher int
 	PortFakeGitHub, PortPostgres, PortEgress, PortEdgeAdmin        int
-	PortDockerFilter, PortDispatcherAdmin                          int
+	PortDockerFilter, PortDispatcherAdmin, PortFakeOIDC            int
 }
+
+// The supervisor's admin socket in Docker mode.
+const (
+	supervisorAdminDir    = "/run/sisf/admin"
+	supervisorAdminSocket = supervisorAdminDir + "/supervisor.sock"
+)
 
 // newComposeData fills the fixed parts of the data for an install.
 func newComposeData(l Layout, o Options, images Images, bootstrap []string, host HostFacts) (ComposeData, error) {
@@ -66,17 +92,23 @@ func newComposeData(l Layout, o Options, images Images, bootstrap []string, host
 		return ComposeData{}, invalidf("Docker mode needs a factory id that starts with sisf- and has no dot, not %q", o.FactoryID)
 	}
 	app := digestOf(images.App)
+	keyID, err := l.RootKeyID()
+	if err != nil {
+		return ComposeData{}, err
+	}
 	return ComposeData{
 		Project: proj, FactoryID: o.FactoryID, Repository: o.Repo.Owner + "/" + o.Repo.Repo,
-		SecretsDir: l.Dir + "/secrets", ConfigFile: l.Config(), ReleaseFile: l.ReleaseManifest(), SimAgentDir: l.SimAgentDir(),
+		InstallDir: l.Dir, RootKeyID: keyID, SecretsDir: l.Dir + "/secrets", ConfigFile: l.Config(), ReleaseFile: l.ReleaseManifest(), SimAgentDir: l.SimAgentDir(),
 		GitHubAPIURL: o.GitHubAPIURL, Images: images, Sim: o.Sim, Debug: o.Debug,
 		BootstrapCommand: string(cmd), PostgresImage: PostgresImage,
 		AppDigest: string(app), AppContainer: deployedContainer(o.FactoryID, "app", app),
 		Host: host, Lifecycle: lifecycleChoice(o, manifest.ModeDocker),
+		Identity: o.Identity, Owners: strings.Join(o.Identity.Owners, ","), ReconcileInterval: reconcileString(o.ReconcileInterval),
+		SupervisorAdmin: supervisorAdminSocket, SupervisorAdminDir: supervisorAdminDir,
 		PortEdge: PortEdge, PortApp: PortApp, PortControl: PortControl, PortSupervisor: PortSupervisor,
 		PortDispatcher: PortDispatcher, PortFakeGitHub: PortFakeGitHub, PortPostgres: PortPostgres,
 		PortEgress: PortEgress, PortEdgeAdmin: PortEdgeAdmin, PortDockerFilter: PortDockerFilter,
-		PortDispatcherAdmin: PortDispatcherAdmin,
+		PortDispatcherAdmin: PortDispatcherAdmin, PortFakeOIDC: PortFakeOIDC,
 	}, nil
 }
 
@@ -85,11 +117,20 @@ func newComposeData(l Layout, o Options, images Images, bootstrap []string, host
 // or unit file would read as syntax.
 var pathPattern = regexp.MustCompile(`^/[A-Za-z0-9_./+-]*$`)
 
+// quotedPathPattern is what an install path may contain where every
+// template quotes it: a Compose file, a launcher script, a systemd unit or
+// a property list. Single spaces are allowed, as in "/Users/me/My Factory";
+// no quote, percent sign, dollar sign, backslash, XML character or control
+// character, which one of them would read as syntax.
+var quotedPathPattern = regexp.MustCompile(`^/[A-Za-z0-9_./+-]*( [A-Za-z0-9_./+-]+)*$`)
+
 // check refuses data that would let a value break out of its place in the file.
 func (d ComposeData) check() error {
-	for _, p := range []string{d.SecretsDir, d.ConfigFile, d.ReleaseFile, d.SimAgentDir} {
-		if !pathPattern.MatchString(p) {
-			return invalidf("the install path %q has characters Compose files cannot carry; use letters, digits and . _ + - /", p)
+	// The template writes these paths inside double-quoted YAML strings, so
+	// single spaces are safe; quotes, "$", "#" and the rest are not.
+	for _, p := range []string{d.InstallDir, d.SecretsDir, d.ConfigFile, d.ReleaseFile, d.SimAgentDir} {
+		if !quotedPathPattern.MatchString(p) {
+			return invalidf("the install path %q has characters Compose files cannot carry; use letters, digits, single spaces and . _ + - /", p)
 		}
 	}
 	if err := checkGitHubURL(d.GitHubAPIURL); err != nil {
@@ -102,6 +143,15 @@ func (d ComposeData) check() error {
 	}
 	if err := d.Host.check(); err != nil {
 		return err
+	}
+	for _, v := range []string{d.Identity.ExternalURL, d.Owners, d.Identity.OIDCIssuer, d.Identity.OIDCClientID,
+		d.Identity.GitHubClientID, d.Identity.GitHubURL, d.Identity.GitHubAPIURL} {
+		if !identityValue.MatchString(v) {
+			return invalidf("the sign-in setting %q has characters Compose files cannot carry", v)
+		}
+	}
+	if d.Identity.ExternalURL == "" || d.Owners == "" {
+		return invalidf("the control zone needs its external URL and an Owner identity")
 	}
 	return d.Lifecycle.check()
 }

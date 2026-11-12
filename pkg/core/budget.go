@@ -41,6 +41,14 @@ type Usage struct {
 	At            time.Time  `json:"at"`
 }
 
+// CostUnreported reports whether u counted tokens but its provider stated
+// no cost for them, as a CLI that prints tokens only does. Such usage is
+// not free; its cost is unknown.
+func (u Usage) CostUnreported() bool {
+	// The counts are compared one by one: their sum may not fit in an int64.
+	return !u.Verified && u.Cost == 0 && (u.InputTokens > 0 || u.OutputTokens > 0)
+}
+
 // ReservationStatus is the life stage of a reservation.
 type ReservationStatus string
 
@@ -113,6 +121,9 @@ type BudgetTotals struct {
 	Reserved        Micros `json:"reserved"`
 	SpentVerified   Micros `json:"spent_verified"`
 	SpentUnverified Micros `json:"spent_unverified"`
+	// Unpriced counts the usage records whose provider reported no cost
+	// (see Usage.CostUnreported). Their cost is not in the spending above.
+	Unpriced int64 `json:"unpriced"`
 }
 
 // BudgetLedger is the durable record a gate works against. A state-store

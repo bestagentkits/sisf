@@ -2,7 +2,7 @@
 // leads to, and which proof a step needs before it may be taken.
 //
 // The transition table is the single list of legal steps. It holds the edge
-// that creates a record in Intake and the twenty edges between the fifteen
+// that creates a record in Intake and the twenty-four edges between the fifteen
 // states; a step that is not in the table is refused with INVALID_TRANSITION,
 // so no component can add a state or a shortcut by writing one. Ten edges are
 // guarded: a guard supplies the facts and the machine judges them, and a step
@@ -113,9 +113,25 @@ var lifecycle = []Edge{
 	// the lease the claim took and by the run it started, which the lease
 	// check and the store's check against the stored run enforce.
 	{core.StateClaimed, core.EventDevelopmentStarted, core.StateDeveloping, GuardNone},
+	// A run that stopped without a candidate, because it used every attempt
+	// or because its work can no longer be built, must always be able to
+	// block its issue: Blocked starts no work, spends nothing and releases
+	// nothing, and the way out of it is guarded. Only the control zone
+	// writes these steps, under the issue lease, for the run the record
+	// names.
+	{core.StateClaimed, core.EventClaimStopped, core.StateBlocked, GuardNone},
+	{core.StateDeveloping, core.EventDevelopmentStopped, core.StateBlocked, GuardNone},
 	{core.StateDeveloping, core.EventCandidateSubmitted, core.StateQAEvaluation, GuardCandidate},
 	{core.StateQAEvaluation, core.EventQAFailed, core.StateDeveloping, GuardAttempts},
 	{core.StateQAEvaluation, core.EventQAPassed, core.StateReleaseCandidate, GuardQAPass},
+	// A release the supervisor refuses before anything is deployed, because
+	// the candidate cannot be verified or is not one the factory may publish
+	// by itself, must always be able to block its issue rather than leave it
+	// waiting for a release that never comes. Blocked starts no work, spends
+	// nothing and releases nothing, and the way out of it is guarded. Only
+	// the control zone, where the supervisor writes, takes this step, under
+	// the issue lease, for the run the record names.
+	{core.StateReleaseCandidate, core.EventReleaseRefused, core.StateBlocked, GuardNone},
 	{core.StateReleaseCandidate, core.EventRolloutStarted, core.StateCanary, GuardRollout},
 	{core.StateCanary, core.EventRolloutHealthy, core.StateMonitoring, GuardCanaryHealth},
 	// A rollback is the safe direction and must never wait for a proof that
@@ -128,6 +144,13 @@ var lifecycle = []Edge{
 	// Verified is entered only on the post-deploy proof, which is the proof
 	// that the issue may close; closing records it and adds nothing.
 	{core.StateVerified, core.EventIssueClosed, core.StateClosed, GuardNone},
+	// A verified release that can no longer be judged to be what serves,
+	// healthy, and that no later release replaced, cannot be finished, and
+	// must be able to block its issue rather than wait in Verified for good.
+	// Blocked starts no work, spends nothing and releases nothing, and the
+	// way out of it is guarded. Only the control zone, where the supervisor
+	// writes, takes this step, under the issue lease.
+	{core.StateVerified, core.EventVerifiedReleaseUnjudged, core.StateBlocked, GuardNone},
 	// The recovery report is evidence for people, not a permission: Blocked
 	// grants nothing and the way out of it is guarded.
 	{core.StateRolledBack, core.EventRecoveryReported, core.StateBlocked, GuardNone},

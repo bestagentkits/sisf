@@ -11,6 +11,11 @@
 // within the sandbox's time limit. When the host has gVisor the containers
 // run under runsc, and the backend says so in its capabilities.
 //
+// Before declaring its capabilities, and so before creating any sandbox,
+// the backend reads the sandbox network through the filter and refuses
+// unless the daemon reports it internal: on an ordinary bridge a runner
+// would reach the internet around the egress proxy.
+//
 // After creating a container the backend reads its configuration back and
 // refuses to start it unless the daemon applied the hardening, so neither a
 // misconfigured filter nor a daemon that ignores a field goes unnoticed.
@@ -165,8 +170,15 @@ func (b *Backend) Health(ctx context.Context) error { return b.api.ping(ctx) }
 // Capabilities declares what the backend proves. Isolation rests on the
 // filter-enforced and read-back hardening, and on gVisor when the backend
 // was told to require it; egress enforcement on the egress proxy being the
-// sandbox network's only way out.
+// sandbox network's only way out, which holds only on an internal network.
+// So the backend reads the network through the filter each time and
+// refuses to declare anything, and with that to create any sandbox, unless
+// the daemon reports it internal: a runner on an ordinary bridge would
+// reach the internet around the proxy.
 func (b *Backend) Capabilities(ctx context.Context) (core.CapabilitySet, error) {
+	if err := b.requireInternalNetwork(ctx); err != nil {
+		return nil, err
+	}
 	gvisor, err := b.hasGVisor(ctx)
 	if err != nil {
 		return nil, err
@@ -186,6 +198,25 @@ func (b *Backend) Capabilities(ctx context.Context) (core.CapabilitySet, error) 
 		caps[core.CapExecEgressEnforcement] = core.SupportNotSupported
 	}
 	return caps, nil
+}
+
+// requireInternalNetwork proves the sandbox network exists and is internal.
+// It is not remembered: a network can be removed and created again under
+// the same name.
+func (b *Backend) requireInternalNetwork(ctx context.Context) error {
+	view, err := b.api.network(ctx, b.cfg.Network)
+	switch {
+	case core.HasCode(err, core.CodeNotFound):
+		return core.NewError(core.CodeNotSupported, "the sandbox network "+b.cfg.Network+" does not exist; it must be an internal Docker network")
+	case err != nil:
+		return core.NewError(core.CodeUnavailable, "the backend cannot tell whether the sandbox network "+b.cfg.Network+" is internal").WithCause(err)
+	case view.Name != b.cfg.Network:
+		return core.NewError(core.CodeUnavailable, "the filter answered for another network than the sandbox network "+b.cfg.Network)
+	case !view.Internal:
+		return core.NewError(core.CodeNotSupported, "the sandbox network "+b.cfg.Network+
+			" is not internal, so a runner on it could reach the internet around the egress proxy; recreate it with `docker network create --internal`")
+	}
+	return nil
 }
 
 // hasGVisor asks once whether the host has runsc and remembers the answer.

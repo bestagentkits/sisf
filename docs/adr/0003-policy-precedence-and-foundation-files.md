@@ -23,4 +23,4 @@ Agents read many instructions: code, signed policy, repository documents, issues
 
 ## Acceptance test
 
-Planned: SISF-11 (an unapproved agent PR to `DECISIONS.md` does not change the policy baseline).
+- SISF-11 (an unapproved agent PR to `DECISIONS.md` does not change the policy baseline): `internal/policy/unapproved_policy_change_ignored_test.go`.

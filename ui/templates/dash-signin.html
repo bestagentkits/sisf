@@ -1,0 +1,13 @@
+{{define "title"}}Sign in{{end}}
+{{define "content"}}
+<h1>Sign in</h1>
+{{if .Message}}<p class="error" role="alert">{{.Message}}</p>{{end}}
+{{if .Providers}}
+<p>Sign in with your organisation account.</p>
+<ul class="providers">
+{{range .Providers}}<li><a class="button" href="/auth/login/{{.}}?return_to={{$.ReturnTo}}">Sign in with {{.}}</a></li>{{end}}
+</ul>
+{{else}}
+<p class="notice unavailable">No sign-in provider is configured for this factory.</p>
+{{end}}
+{{end}}

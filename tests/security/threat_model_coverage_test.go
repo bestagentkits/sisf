@@ -105,7 +105,11 @@ var coverage = map[string][]proof{
 			"TestAnApprovalIsSpentExactlyOnce", "TestAnApprovalIsNotSpentOnAnEditedSubjectOrAChangedPolicy", "TestAnExpiredApprovalIsRefused",
 		}},
 		{"pkg/approvals/submit_test.go", []string{"TestOnlyAnOwnerMayDecide"}},
-		{"internal/control/auth_test.go", []string{"TestAPIIgnoresADashboardSession"}},
+		{"internal/control/surfaces_test.go", []string{"TestAPIIgnoresADashboardSession", "TestASessionWritesOnlyWithItsCSRFToken"}},
+		{"tests/acceptance/cross_surface_approval_test.go", []string{
+			"TestAnApprovalCrossesEverySurfaceAndOnlyAFreshSessionDecidesIt", "TestAnApprovalIsSpentOnceAndOnlyInItsOwnFactory",
+		}},
+		{"tests/acceptance/step_up_and_write_limits_test.go", []string{"TestAStaleStepUpIsRefusedAndAFreshOneDecides"}},
 		{"internal/supervisor/release/owner_rollback_test.go", []string{"TestARollbackWithoutAValidSingleUseApprovalIsRefused"}},
 	},
 	// Audit records are edited or deleted to hide an action.
@@ -127,6 +131,8 @@ var coverage = map[string][]proof{
 		}},
 		{"internal/dispatcher/budget_gate_test.go", []string{"TestReservationsAreIdempotentBoundToTheirRunAndSettleOrRelease"}},
 		{"internal/install/manifest_build_test.go", []string{"TestUnconfirmedBudgetAlertsOnAnySpendingAndNeverSwitchesTheAlertOff"}},
+		{"internal/actions/service_roles_rate_delegated_test.go", []string{"TestWritesBeyondTheRateLimitAreRefusedAndReadsAreNot"}},
+		{"tests/acceptance/step_up_and_write_limits_test.go", []string{"TestWritesBeyondTheLimitAreRefusedOnEverySurfaceAndReadsAreNot"}},
 	},
 	// Secrets or personal data reach logs, transcripts, issues, PRs or providers.
 	"TM-13": {

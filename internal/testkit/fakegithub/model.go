@@ -85,18 +85,22 @@ type jBranch struct {
 }
 
 type jPull struct {
-	Number            int       `json:"number"`
-	Title             string    `json:"title"`
-	Body              string    `json:"body"`
-	State             string    `json:"state"`
-	Draft             bool      `json:"draft"`
-	Merged            bool      `json:"merged"`
-	Head              jBranch   `json:"head"`
-	Base              jBranch   `json:"base"`
-	User              jUser     `json:"user"`
-	AuthorAssociation string    `json:"author_association"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	Number  int    `json:"number"`
+	HTMLURL string `json:"html_url"`
+	Title   string `json:"title"`
+	Body    string `json:"body"`
+	State   string `json:"state"`
+	Draft   bool   `json:"draft"`
+	// Merged is in the single pull request's answer only; the list answers
+	// carry merged_at alone, as GitHub's do.
+	Merged            *bool      `json:"merged,omitempty"`
+	MergedAt          *time.Time `json:"merged_at"`
+	Head              jBranch    `json:"head"`
+	Base              jBranch    `json:"base"`
+	User              jUser      `json:"user"`
+	AuthorAssociation string     `json:"author_association"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 // pull is the pull-request half of an issue entry.
@@ -105,6 +109,7 @@ type pull struct {
 	headOwner, headName string
 	headSHA, baseSHA    string
 	draft, merged       bool
+	mergedAt            time.Time
 }
 
 type issue struct {
@@ -153,6 +158,9 @@ type repo struct {
 	commits map[string]map[string][]byte
 	// entryKinds marks "commit:path" entries that are not plain files.
 	entryKinds map[string]string
+	// readOnly takes write access away from the token the fake answers
+	// for: the repository then reports no push permission.
+	readOnly bool
 }
 
 func repoKey(owner, name string) string { return strings.ToLower(owner + "/" + name) }

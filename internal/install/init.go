@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/bestagentkits/sisf/internal/conformance"
 	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -17,8 +16,6 @@ import (
 type InitResult struct {
 	FactoryID core.FactoryID
 	Options   Options
-	// OwnerTokenFile is where the bootstrap Owner token was written.
-	OwnerTokenFile string
 	// Warnings are things the Owner must read.
 	Warnings []string
 }
@@ -28,33 +25,47 @@ const rootKeyWarning = "The root signing key is stored in %s. This is the lower-
 	"profile: anyone who can read that directory can sign releases for this factory. " +
 	"Keep the key outside the factory (KMS, HSM or a hardware key) before you rely on self-update."
 
-// Init creates a new install: identity, the Owner token, one credential set
-// per zone, the root key, the manifest, and the service units. It refuses to
+// devWarning is shown at the init of a development install and by the doctor.
+const devWarning = "DEVELOPMENT INSTALL: the Owner signs in through the fake identity provider on 127.0.0.1:7468, without a password; " +
+	"sign-in is unlocked only with the secret `sisf up` writes to secrets/control/dev-sign-in, so anyone who can read that file, " +
+	"including an agent running as your user under trusted_code_only, signs in as the Owner. Use it on a machine only you use, never for a factory others rely on."
+
+// Init creates a new install: identity, the sign-in settings, one
+// credential set per zone, the root key, the manifest, and the service
+// units. It refuses to
 // touch a directory that already holds an install, so one directory is
 // exactly one factory_id for its whole life.
-func (in *Installer) Init(_ context.Context, o Options) (InitResult, error) {
-	o, err := o.normalize()
+func (in *Installer) Init(ctx context.Context, o Options) (InitResult, error) {
+	o, err := in.Preflight(o)
 	if err != nil {
 		return InitResult{}, err
 	}
 	l := in.Layout
-	if l.Dir != o.Dir {
-		return InitResult{}, invalidf("the options and the installer name different directories")
+	if o.GitHubCredential == GitHubCredentialGHCLI {
+		if o.GitHubToken, err = in.ghToken(ctx); err != nil {
+			return InitResult{}, err
+		}
 	}
-	if done, err := l.installed(); err != nil {
-		return InitResult{}, unavailablef(err, "cannot inspect %s", l.Dir)
-	} else if done {
-		return InitResult{}, core.NewError(core.CodeAlreadyExists, "an install already exists in "+l.Dir,
-			core.NextAction{Action: "sisf up", Description: "start the existing install"})
+	// A failed init leaves nothing behind: what it created is removed, and
+	// a directory that held something before keeps exactly that.
+	created := beginCreate(l.Dir)
+	res, err := in.writeInstall(o)
+	if err != nil {
+		created.undo(l.Dir)
+		return InitResult{}, err
 	}
+	return res, nil
+}
+
+// writeInstall writes every file of a new install whose options passed
+// Preflight. The manifest is written last: its presence is what makes a
+// directory an install.
+func (in *Installer) writeInstall(o Options) (InitResult, error) {
+	l := in.Layout
 	if err := os.MkdirAll(l.Dir, secretDirMode); err != nil {
 		return InitResult{}, unavailablef(err, "cannot create %s", l.Dir)
 	}
 	if err := in.writeSecrets(o); err != nil {
-		return InitResult{}, err
-	}
-	m := buildManifest(o)
-	if err := conformance.Check(m).Err(); err != nil {
 		return InitResult{}, err
 	}
 	if rec, ok := o.Budget.confirmation(in.Clock.Now()); ok {
@@ -62,19 +73,37 @@ func (in *Installer) Init(_ context.Context, o Options) (InitResult, error) {
 			return InitResult{}, err
 		}
 	}
-	if o.Mode == manifest.ModeStandalone {
-		if err := in.writeServiceUnits(o); err != nil {
-			return InitResult{}, err
-		}
-	}
-	// The manifest is written last: its presence is what makes a directory an install.
-	if err := writeManifest(l.Config(), m); err != nil {
+	if err := writeSourceRecord(l, in.SourceDir); err != nil {
 		return InitResult{}, err
 	}
-	res := InitResult{FactoryID: o.FactoryID, Options: o, OwnerTokenFile: l.Secret(areaControl, "owner-token")}
+	res := InitResult{FactoryID: o.FactoryID, Options: o}
+	if o.Mode == manifest.ModeStandalone {
+		note, err := in.writeServiceUnits(o)
+		if err != nil {
+			return InitResult{}, err
+		}
+		if note != "" {
+			res.Warnings = append(res.Warnings, note)
+		}
+	}
+	if err := writeManifest(l.Config(), buildManifest(o)); err != nil {
+		return InitResult{}, err
+	}
 	res.Warnings = append(res.Warnings, fmt.Sprintf(rootKeyWarning, l.SecretsDir(areaControl)))
+	if o.Dev {
+		res.Warnings = append(res.Warnings, devWarning)
+	}
+	if !o.Sim && !o.Dev && o.Identity.OIDCIssuer != "" && o.Identity.OIDCClientSecret.IsZero() {
+		res.Warnings = append(res.Warnings, "No OpenID Connect client secret was given: the factory signs in at "+o.Identity.OIDCIssuer+
+			" as a public client (with PKCE). If the provider registered a confidential client, init again with --oidc-client-secret-file or --oidc-client-secret-env.")
+	}
+	if o.Mode == manifest.ModeDocker {
+		res.Warnings = append(res.Warnings, "The Compose file is rendered by `sisf up` into "+l.Compose()+
+			" once the images are built, because it pins each image by its digest; its template is templates/compose/compose.yaml in the source checkout.")
+	}
 	if !o.Budget.Confirmed {
-		res.Warnings = append(res.Warnings, "The unlimited budget is not confirmed: the factory takes in issues and starts no work until you confirm it.")
+		res.Warnings = append(res.Warnings, "The budget is not confirmed: the factory takes in issues and starts no work until you confirm it with "+
+			"`sisf up --confirm-unlimited --alert-threshold AMOUNT` (or --no-alert), or `sisf up --budget-cap AMOUNT`.")
 	}
 	return res, nil
 }
@@ -96,9 +125,9 @@ func (in *Installer) writeSecrets(o Options) error {
 		return t
 	}
 	pw := map[core.Zone]string{core.ZoneApplication: tok(), core.ZoneAgent: tok(), core.ZoneControl: tok()}
-	owner, webhook, statePW := tok(), tok(), tok()
+	webhook, statePW := tok(), tok()
 	simToken, qa := tok(), tok()
-	edgeAdmin, dispatcherAdmin := tok(), tok()
+	edgeAdmin, edgeCounters, dispatcherAdmin := tok(), tok(), tok()
 	// The control zone signs approval decisions with an ed25519 key; a token
 	// is 32 random bytes in unpadded base64url, which is the seed's format.
 	approvalKey := tok()
@@ -116,7 +145,6 @@ func (in *Installer) writeSecrets(o Options) error {
 	files := map[string][]byte{
 		l.Secret(areaControl, "root-key.pem"):    pem,
 		l.Secret(areaControl, "root-public-key"): []byte(signing.EncodePublicKey(pub) + "\n"),
-		l.Secret(areaControl, "owner-token"):     []byte(owner + "\n"),
 		l.Secret(areaControl, "webhook-secret"):  []byte(webhook + "\n"),
 		l.Secret(areaApplication, "credentials"): []byte(pw[core.ZoneApplication] + "\n"),
 		l.Secret(areaAgent, "credentials"):       []byte(pw[core.ZoneAgent] + "\n"),
@@ -132,7 +160,8 @@ func (in *Installer) writeSecrets(o Options) error {
 		files[l.Secret(areaControl, "github-token")] = append(token.Reveal(), '\n')
 	}
 	envs, err := in.runtimeEnvs(o, pw, controlSecrets{
-		owner: owner, webhook: webhook, approvalKey: approvalKey, edgeAdmin: edgeAdmin, dispatcherAdmin: dispatcherAdmin,
+		webhook: webhook, approvalKey: approvalKey, edgeAdmin: edgeAdmin, edgeCounters: edgeCounters,
+		dispatcherAdmin: dispatcherAdmin, oidcClientSecret: o.Identity.OIDCClientSecret, githubClientSecret: o.Identity.GitHubClientSecret,
 	}, statePW, token, signing.EncodePublicKey(pub))
 	if err != nil {
 		return err

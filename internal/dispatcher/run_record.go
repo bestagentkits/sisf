@@ -23,7 +23,8 @@ const (
 	// for evaluation and no agent works on it.
 	RunSucceeded RunStatus = "succeeded"
 	// RunExhausted means the run used every attempt it was allowed; its
-	// reservation was released and nothing more is started for it.
+	// reservation was closed (see CloseReservationOfRun) and nothing more is
+	// started for it.
 	RunExhausted RunStatus = "exhausted"
 )
 
@@ -54,8 +55,10 @@ type RunRecord struct {
 	Failures         []AttemptFailure `json:"failures,omitempty"`
 	Artifacts        []agent.Artifact `json:"artifacts,omitempty"`
 	PullRequests     []string         `json:"pull_requests,omitempty"`
-	ClaimedAt        time.Time        `json:"claimed_at"`
-	UpdatedAt        time.Time        `json:"updated_at"`
+	// Spend tallies what the attempts' agents reported; see RunSpend.
+	Spend     RunSpend  `json:"spend,omitzero"`
+	ClaimedAt time.Time `json:"claimed_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func recordKey(run core.RunID) string { return "run/" + string(run) }
@@ -88,6 +91,21 @@ func writeRunRecord(ctx context.Context, kv state.KV, record RunRecord, version 
 func (d *Dispatcher) RunRecord(ctx context.Context, run core.RunID) (RunRecord, error) {
 	var record RunRecord
 	err := d.cfg.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		var err error
+		record, _, err = readRunRecord(ctx, tx, run)
+		return err
+	})
+	return record, err
+}
+
+// StoredRunRecords reads run records from a store opened by another zone,
+// such as the control zone, which may read them but never writes them.
+type StoredRunRecords struct{ State state.Store }
+
+// RunRecord returns the stored record of a run, or NOT_FOUND.
+func (s StoredRunRecords) RunRecord(ctx context.Context, run core.RunID) (RunRecord, error) {
+	var record RunRecord
+	err := s.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
 		var err error
 		record, _, err = readRunRecord(ctx, tx, run)
 		return err

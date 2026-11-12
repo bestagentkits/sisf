@@ -1,6 +1,7 @@
 package sqlstore_test
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -192,6 +193,23 @@ func TestConcurrentAcquirersGetOneLease(t *testing.T) {
 		}
 		if held != 1 {
 			t.Fatalf("%d contenders hold the lease, want exactly 1", held)
+		}
+	})
+}
+
+// A refused lease names who holds it, so a caller that must wait can say
+// on whom.
+func TestARefusedLeaseNamesItsHolder(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		s := db.Open(t, core.ZoneControl)
+		if _, err := acquire(s, "issue:acme/hello#1", "killswitch", time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		_, err := acquire(s, "issue:acme/hello#1", "supervisor", time.Minute)
+		var refused *core.Error
+		if !errors.As(err, &refused) || refused.Code != core.CodeLeaseHeld || refused.Details["holder"] != "killswitch" {
+			t.Fatalf("a refused lease = %v (details %v), want LEASE_HELD naming the holder", err, refused)
 		}
 	})
 }

@@ -155,8 +155,7 @@ func TestAgentZoneWritesNoStepOutsideTheRunItWorksOn(t *testing.T) {
 		agent := db.Open(t, core.ZoneAgent)
 		application := db.Open(t, core.ZoneApplication)
 		run := map[core.Event]bool{
-			core.EventClaimed: true, core.EventDevelopmentStarted: true,
-			core.EventCandidateSubmitted: true, core.EventQAFailed: true,
+			core.EventClaimed: true, core.EventDevelopmentStarted: true, core.EventCandidateSubmitted: true,
 		}
 		for i, edge := range statemachine.Edges() {
 			write := step(issue(100+i), edge.From, edge.Event, edge.To, 1, "forged")
@@ -184,7 +183,10 @@ func TestAgentZoneDrivesTheRunFromClaimToEvaluation(t *testing.T) {
 		ready := readyRecord(t, control, issue(3))
 
 		claimed := claim(t, agent, ready, "worker-1", "run-1")
-		retried := along(t, agent, claimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted, core.EventQAFailed)
+		submitted := along(t, agent, claimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted)
+		// The independent QA fails the candidate; its verdict is written in
+		// the control zone, and the run goes on with its next attempt.
+		retried := advance(t, control, submitted, core.EventQAFailed, nil)
 		evaluating := advance(t, agent, retried, core.EventCandidateSubmitted, func(tr *core.Transition) {
 			tr.IdempotencyKey = "candidate/resubmitted"
 		})

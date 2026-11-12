@@ -115,15 +115,25 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	return newFixtureWith(t, nil)
+}
+
+// newFixtureWith lets mutate change the configuration before the layer is built.
+func newFixtureWith(t *testing.T, mutate func(*decision.Config)) *fixture {
+	t.Helper()
 	f := &fixture{
 		counters: newCounters(), sink: &issueSink{}, store: decision.NewMemoryProposals(),
 		clock: &manualClock{now: time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)},
 	}
-	layer, err := decision.New(decision.Config{
+	cfg := decision.Config{
 		Source: f.counters, Sink: f.sink, Store: f.store, Clock: f.clock,
 		Redactor: redact.New(redact.Config{}), Policy: policyRefs(), Rules: decision.DefaultRules(),
 		Features: map[string]string{"POST /checkout": "checkout"},
-	})
+	}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	layer, err := decision.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

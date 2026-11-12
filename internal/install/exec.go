@@ -28,6 +28,9 @@ type Cmd struct {
 	// Stdout and Stderr receive the output of a background process; Run
 	// captures output itself.
 	Stdout, Stderr io.Writer
+	// ExtraFiles are open files a background process inherits, as file
+	// descriptors 3 and up, such as the run lock of a Standalone install.
+	ExtraFiles []*os.File
 }
 
 // Process is a program started in the background.
@@ -90,13 +93,15 @@ func (OSExec) Start(_ context.Context, c Cmd) (Process, error) {
 		cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}, c.Env...)
 	}
 	cmd.Stdout, cmd.Stderr = c.Stdout, c.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.ExtraFiles = c.ExtraFiles
+	cmd.SysProcAttr = backgroundProcAttr()
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	return &osProcess{cmd: cmd}, nil
 }
 
+func (p *osProcess) PID() int         { return p.cmd.Process.Pid }
 func (p *osProcess) Wait() error      { return p.cmd.Wait() }
 func (p *osProcess) Terminate() error { return signalGroup(p.cmd, syscall.SIGTERM) }
 func (p *osProcess) Kill() error      { return signalGroup(p.cmd, syscall.SIGKILL) }

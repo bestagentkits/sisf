@@ -13,13 +13,17 @@ func init() {
 	register(Command{
 		Path:    []string{"docker-filter"},
 		Args:    "--role runner|deploy --listen host:port --factory-id id --network name --image ref... [--socket path] [--sim-image unit=ref]...",
-		Summary: "Serve a Docker request filter of a Docker install",
+		Summary: "Serve a Docker request filter in front of the Docker socket",
 		Help: `
-Run by the Compose project of a Docker install, never by hand. Serves the
-Docker request filter of one role in front of the Docker socket:
+Serves the Docker request filter of one role in front of the Docker socket:
 
   runner  the runner containers candidate builds run in, on the sandbox network
   deploy  the revisions of the factory's units, on the deploy network
+
+A Docker install's Compose project starts both roles itself. For the Docker
+build sandbox of a Standalone install, the operator starts the runner role
+before ` + "`sisf up`" + `, on a loopback address, and gives that address to
+` + "`sisf init`" + ` with --exec-docker-endpoint (see ` + "`sisf help init`" + `).
 
 Everything the role does not need is refused. --image lists the allowed
 images, each pinned by digest or named by its local image ID. --sim-image is

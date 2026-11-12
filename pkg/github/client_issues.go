@@ -34,25 +34,43 @@ func (c *RESTClient) GetIssue(ctx context.Context, ref core.IssueRef) (Issue, er
 
 // IssuePage is the result of a conditional listing.
 type IssuePage struct {
+	// Issues are the issues read, oldest update first.
 	Issues []Issue
-	// ETag identifies this listing; send it back to learn cheaply whether
-	// anything changed.
+	// ETag identifies the first page of this listing; send it back to
+	// learn cheaply whether anything changed.
 	ETag string
 	// NotModified is true when GitHub answered 304 to the ETag sent.
 	NotModified bool
+	// More is true when the listing goes on past the page bound: what was
+	// read is the oldest part of it, and the rest starts at Through.
+	More bool
+	// Through is the newest update time of anything read, pull requests
+	// included, so a caller can continue the listing after them.
+	Through time.Time
+
+	// pulls are the pull requests the listing held, which take places in
+	// it like issues do.
+	pulls []Issue
 }
 
 // ListIssues reads every issue matching opts, oldest update first. Pull
-// requests, which GitHub also lists as issues, are left out.
+// requests, which GitHub also lists as issues, are left out. A listing
+// longer than the page bound fails with LIMIT_EXCEEDED.
 func (c *RESTClient) ListIssues(ctx context.Context, repo RepoRef, opts ListIssuesOptions) ([]Issue, error) {
 	page, err := c.PollIssues(ctx, repo, opts, "")
+	if err == nil && page.More {
+		err = core.NewError(core.CodeLimitExceeded, "the listing has more pages than this client follows")
+	}
 	return page.Issues, err
 }
 
-// PollIssues is ListIssues with a conditional request. The listing is sorted
-// by update time, newest first, which is what makes the ETag of the first
-// page a valid change detector: any change to a matching issue moves it to
-// the front of the first page.
+// PollIssues is ListIssues with a conditional request that stops at the
+// page bound instead of failing (see IssuePage.More). The listing is sorted
+// by update time, oldest first, starting at opts.Since, so a bounded read
+// is always the oldest part of the changes and a caller continues it by
+// asking again from the newest update it read. The ETag of the first page
+// detects a change only while the whole listing fits on that page: any
+// change to a matching issue then adds it to, or moves it within, that page.
 func (c *RESTClient) PollIssues(ctx context.Context, repo RepoRef, opts ListIssuesOptions, etag string) (IssuePage, error) {
 	if err := validateRepo(repo); err != nil {
 		return IssuePage{}, err
@@ -64,26 +82,38 @@ func (c *RESTClient) PollIssues(ctx context.Context, repo RepoRef, opts ListIssu
 	if state != "all" && opts.State != IssueOpen && opts.State != IssueClosed {
 		return IssuePage{}, core.NewError(core.CodeInvalidArgument, "issue state must be open, closed or empty")
 	}
-	q := url.Values{"state": {state}, "sort": {"updated"}, "direction": {"desc"}, "per_page": {"100"}}
+	if opts.Page < 0 {
+		return IssuePage{}, core.NewError(core.CodeInvalidArgument, "the page number must not be negative")
+	}
+	q := url.Values{"state": {state}, "sort": {"updated"}, "direction": {"asc"}, "per_page": {"100"}}
 	if len(opts.Labels) > 0 {
 		q.Set("labels", strings.Join(opts.Labels, ","))
 	}
 	if !opts.Since.IsZero() {
 		q.Set("since", opts.Since.UTC().Format(time.RFC3339))
 	}
+	if opts.Page > 1 {
+		q.Set("page", strconv.Itoa(opts.Page))
+	}
 	var header http.Header
 	if etag != "" {
 		header = http.Header{"If-None-Match": {etag}}
 	}
 	var out IssuePage
-	first, err := c.getPages(ctx, repoPath(repo, "issues"), q, header, func(resp apiResponse) error {
+	first, more, err := c.getPagesBounded(ctx, opts.MaxPages, repoPath(repo, "issues"), q, header, func(resp apiResponse) error {
 		var wire []wireIssue
 		if err := decode(resp, &wire); err != nil {
 			return err
 		}
 		for _, w := range wire {
-			if !w.isPullRequest() {
-				out.Issues = append(out.Issues, w.issue(repo))
+			issue := w.issue(repo)
+			if issue.UpdatedAt.After(out.Through) {
+				out.Through = issue.UpdatedAt
+			}
+			if w.isPullRequest() {
+				out.pulls = append(out.pulls, issue)
+			} else {
+				out.Issues = append(out.Issues, issue)
 			}
 		}
 		return nil
@@ -91,7 +121,7 @@ func (c *RESTClient) PollIssues(ctx context.Context, repo RepoRef, opts ListIssu
 	if err != nil {
 		return IssuePage{}, err
 	}
-	out.ETag, out.NotModified = first.header.Get("ETag"), first.status == http.StatusNotModified
+	out.ETag, out.NotModified, out.More = first.header.Get("ETag"), first.status == http.StatusNotModified, more
 	sort.SliceStable(out.Issues, func(i, j int) bool { return out.Issues[i].UpdatedAt.Before(out.Issues[j].UpdatedAt) })
 	return out, nil
 }

@@ -84,7 +84,8 @@ func TestDroppedWebhookIsRecoveredByRedeliveryOrByPolling(t *testing.T) {
 		t.Fatal("a dropped delivery arrived")
 	}
 	// Reconciliation finds the issue although no webhook announced it.
-	found, err := github.NewPoller(f.client, repoRef, zeroTime).Poll(bg)
+	changes, err := github.NewPoller(f.client, repoRef, zeroTime).Poll(bg)
+	found := changes.Issues
 	if err != nil || len(found) != 1 || found[0].Ref.Number != n {
 		t.Fatalf("poll = %v, %v", numbers(found), err)
 	}

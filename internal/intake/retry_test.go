@@ -2,6 +2,7 @@ package intake_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -321,4 +322,73 @@ func TestIntakeRetriesOnlyIssuesItBlockedForWantOfAnApproval(t *testing.T) {
 	_, err := g.service.Retry(ctx, g.retryBy(g.owner()))
 	wantCode(t, err, core.CodePolicyHold, "a retry under a policy hold")
 	g.wantState(core.StateBlocked)
+}
+
+func TestAScopeTheOwnerRefusedIsNotRetriedOnADelegationUnderTheSamePolicy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFactory(t)
+	// A bug report by someone without write access waits for the Owner,
+	// who refuses it.
+	f.open(outsider, completeBody, github.LabelReady, github.LabelKindBug)
+	f.reconcile()
+	f.decide(f.waiting(), approvals.DecisionReject)
+	f.reconcile()
+	f.wantState(core.StateBlocked)
+	f.clock.Advance(time.Hour)
+	queued := len(f.state.Outbox())
+
+	// The author is given write access, so the policy in force would now let
+	// the same scope proceed on its own. The Owner's refusal of exactly that
+	// scope under exactly that policy still stands.
+	f.github.edit(issueRef, func(issue *github.Issue) { issue.AuthorAssociation = github.AssociationMember })
+	_, err := f.service.Retry(ctx, f.retryBy(f.owner()))
+	wantCode(t, err, core.CodeGuardFailed, "a retry of the refused scope on a delegation")
+	f.wantStillBlocked("a refused scope retried on a delegation", queued)
+}
+
+func TestAScopeTheOwnerRefusedIsRetriedOnADelegationUnderALaterPolicy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFactory(t)
+	f.open(outsider, completeBody, github.LabelReady, github.LabelKindBug)
+	f.reconcile()
+	f.decide(f.waiting(), approvals.DecisionReject)
+	f.reconcile()
+	f.wantState(core.StateBlocked)
+	f.clock.Advance(time.Hour)
+
+	// The author is given write access and the policy is revised, so the
+	// scope the Owner refused now lies within a delegation the Owner did not
+	// rule on.
+	f.github.edit(issueRef, func(issue *github.Issue) { issue.AuthorAssociation = github.AssociationMember })
+	f.policy.set(func(s *policy.Snapshot) { s.Revision = newerPolicy }, nil)
+	result, err := f.service.Retry(ctx, f.retryBy(f.owner()))
+	if err != nil {
+		t.Fatalf("the retry of a refused scope delegated under a later policy was refused: %v", err)
+	}
+	wantEvents(t, result, core.EventRetryAuthorized)
+	f.wantState(core.StateReady)
+}
+
+// An issue that was closed on GitHub after it was blocked is no longer one
+// intake takes. Its retry fails with the reason instead of answering that
+// the issue is still Blocked as if nothing had been asked.
+func TestARetryOfAnIssueClosedOnGitHubFailsWithTheReason(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f, rejected := refused(t)
+	second := f.askAgain(rejected, "retry-1", nil)
+	f.decide(second, approvals.DecisionApprove)
+	f.github.edit(issueRef, func(issue *github.Issue) { issue.State = github.IssueClosed })
+
+	_, err := f.service.Retry(ctx, f.retryBy(f.owner()))
+	wantCode(t, err, core.CodeConflict, "the retry of a closed issue")
+	if !strings.Contains(err.Error(), "the issue is not open") {
+		t.Fatalf("the refusal does not say why: %v", err)
+	}
+	f.wantState(core.StateBlocked)
+	if got := f.statusOf(second.ID); got != approvals.StatusApproved {
+		t.Fatalf("the refused retry left the approval %s, want it unspent", got)
+	}
 }

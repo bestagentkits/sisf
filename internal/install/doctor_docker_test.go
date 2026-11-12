@@ -32,6 +32,9 @@ type dockerHost struct {
 	missingImage     bool
 	trust            map[string][]byte
 	supervisorBlocks bool
+	// sandboxInternal is what the sandbox network reports as its internal
+	// flag; empty when the network does not exist.
+	sandboxInternal string
 }
 
 // healthyDockerHost is a host on which every topology check passes; the
@@ -45,6 +48,7 @@ func healthyDockerHost(t *testing.T, in *Installer) dockerHost {
 	return dockerHost{
 		dockerNetwork: "sisf-hello-app-supervisor sisf-hello-app-docker-filter-runner sisf-hello-app-docker-filter-deploy",
 		edgePorts:     "7460/tcp=127.0.0.1:7460 ", adminRefusal: "wget: server returned error: HTTP/1.1 401 Unauthorized", trust: files,
+		sandboxInternal: "true",
 	}
 }
 
@@ -60,6 +64,11 @@ func (h dockerHost) answer(ps, status string) func(Cmd) ([]byte, error) {
 				return nil, errors.New("no such container")
 			}
 			return []byte(status), nil
+		case strings.HasPrefix(args, "network inspect --format {{.Internal}} "):
+			if h.sandboxInternal == "" {
+				return nil, errors.New("Error response from daemon: network not found")
+			}
+			return []byte(h.sandboxInternal + "\n"), nil
 		case strings.HasPrefix(args, "network inspect"):
 			return []byte(h.dockerNetwork), nil
 		case strings.HasPrefix(args, "inspect --format"):
@@ -126,7 +135,7 @@ func TestAHealthyDockerFactoryPassesAndSeesZonesThroughTheirContainers(t *testin
 		}
 	}
 	for _, name := range []string{"container app", "container dispatcher", "container state", "compose isolation",
-		"docker filters", "edge admin", "runner images", "delegated keys", "lifecycle"} {
+		"docker filters", "edge admin", "runner images", "sandbox network", "delegated keys", "lifecycle"} {
 		if len(verdictOf(r, name)) == 0 {
 			t.Errorf("no %q check ran", name)
 		}
@@ -135,7 +144,7 @@ func TestAHealthyDockerFactoryPassesAndSeesZonesThroughTheirContainers(t *testin
 	// reaches the admin address.
 	found := false
 	for _, l := range in.Exec.(*fakeExec).lines() {
-		found = found || strings.Contains(l, "exec -T supervisor supervisor status --admin=127.0.0.1:7464")
+		found = found || strings.Contains(l, "exec -T supervisor supervisor status --admin=unix:/run/sisf/admin/supervisor.sock")
 	}
 	if !found {
 		t.Error("rollback readiness was not read from the supervisor container")
@@ -160,11 +169,15 @@ func TestAnUnhealthyOrStoppedContainerFailsTheReport(t *testing.T) {
 func TestADockerFactoryWithoutContainersSaysHowToStartIt(t *testing.T) {
 	t.Parallel()
 	r := runDoctor(t, dockerFactory(t, "", ""))
-	if v := verdictOf(r, "containers"); len(v) != 1 || v[0] != VerdictFail || !strings.Contains(detailOf(r, "containers"), "sisf up") {
-		t.Fatalf("containers = %v %q", v, detailOf(r, "containers"))
+	// One line says the factory is not running and how to start it; the
+	// checks that would only repeat it are skipped.
+	if v := verdictOf(r, runningCheck); len(v) != 1 || v[0] != VerdictFail || !strings.Contains(detailOf(r, runningCheck), "sisf up") {
+		t.Fatalf("running = %v %q", v, detailOf(r, runningCheck))
 	}
-	if v := verdictOf(r, "rollback"); len(v) != 1 || v[0] != VerdictFail {
-		t.Fatalf("rollback = %v", v)
+	for _, name := range []string{"zones", "rollback"} {
+		if v := verdictOf(r, name); len(v) != 1 || v[0] != VerdictSkip {
+			t.Fatalf("%s = %v, want skipped", name, v)
+		}
 	}
 }
 

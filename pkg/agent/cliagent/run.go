@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/agent"
@@ -24,10 +25,16 @@ const (
 	maxEvents = 5000
 	// logTailSize bounds the stderr kept per run.
 	logTailSize = 64 << 10
-	// drainGrace is how long the output pipes may stay open after the
-	// process exits before they are closed on a straggler that left the
-	// process group.
+	// drainGrace is how long, once the process has exited, its output
+	// pipes may stay empty before reading stops on a straggler that left
+	// the process group and holds them open. It bounds silence at the
+	// pipe, not the drain: output the process wrote before it exited is
+	// still in the pipe and is read to the end however long that takes on
+	// a loaded machine, so the final report at its end is never lost.
 	drainGrace = 2 * time.Second
+	// drainLimit bounds the whole drain after the exit, for a straggler
+	// that keeps writing.
+	drainLimit = time.Minute
 )
 
 type stopReason int
@@ -64,12 +71,19 @@ type run struct {
 	dropped bool
 	// truncated is set when an output line over the size limit was skipped.
 	truncated bool
-	usage     *Usage
-	turns     int
-	final     *Outcome
-	stopped   stopReason
-	exited    bool
-	logTails  []byte
+	// cutOff is set when reading stopped after the process exited without
+	// knowing that its pipes were empty: some of what it wrote may not
+	// have been read.
+	cutOff bool
+	// draining is set once the process has exited; every read of its
+	// output from then on gives up after drainGrace of an empty pipe.
+	draining atomic.Bool
+	usage    *Usage
+	turns    int
+	final    *Outcome
+	stopped  stopReason
+	exited   bool
+	logTails []byte
 }
 
 func newRun(b *Backend, ref agent.RunRef, in Input, version string) *run {
@@ -128,8 +142,8 @@ func (r *run) spawn(bin string, args, env []string, session Session) error {
 	r.apply(session.Begin())
 	var readers sync.WaitGroup
 	readers.Add(2)
-	go func() { defer readers.Done(); r.readOutput(outR) }()
-	go func() { defer readers.Done(); r.readLog(errR) }()
+	go func() { defer readers.Done(); r.readOutput(drainReader{r: r, f: outR}) }()
+	go func() { defer readers.Done(); r.readLog(drainReader{r: r, f: errR}) }()
 	go func() {
 		select {
 		case <-limit:
@@ -153,21 +167,82 @@ func (r *run) supervise(readers *sync.WaitGroup, outR, errR *os.File) {
 	_ = killGroup(r.cmd)
 	r.closeStdin()
 
-	drained := make(chan struct{})
-	go func() { readers.Wait(); close(drained) }()
-	select {
-	case <-drained:
-	case <-time.After(drainGrace):
-		// A descendant that left the group still holds the output; stop
-		// waiting for it.
-		_ = outR.Close()
-		_ = errR.Close()
-		<-drained
-	}
+	r.drain(readers, outR, errR)
 	_ = outR.Close()
 	_ = errR.Close()
 	r.finish(waitErr)
 	r.b.remember(r.ref.ID)
+}
+
+// drain reads the output of the exited process to its end. A reader that
+// is waiting on an empty pipe is woken after drainGrace, and every read
+// from now on gives up after drainGrace of an empty pipe (drainReader), so
+// a descendant that left the group cannot hold the run open. Where pipes
+// take no deadline, and for a straggler that keeps writing past
+// drainLimit, the pipes are closed on the readers instead.
+func (r *run) drain(readers *sync.WaitGroup, outR, errR *os.File) {
+	r.draining.Store(true)
+	grace := r.b.drainGrace
+	limit := drainLimit
+	for _, f := range []*os.File{outR, errR} {
+		if f.SetReadDeadline(time.Now().Add(grace)) != nil {
+			limit = grace
+		}
+	}
+	drained := make(chan struct{})
+	go func() { readers.Wait(); close(drained) }()
+	select {
+	case <-drained:
+	case <-time.After(limit):
+		r.markCutOff()
+		_ = outR.Close()
+		_ = errR.Close()
+		<-drained
+	}
+}
+
+// markCutOff notes, once, that reading stopped before the end of the output.
+func (r *run) markCutOff() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cutOff {
+		return
+	}
+	r.cutOff = true
+	r.appendLocked(agent.EventError, map[string]any{"detail": "reading the output stopped on a process that held it open after the run exited; some of it may not have been read"})
+}
+
+// drainReader reads one output pipe of the run. Once the process exited,
+// each read is given drainGrace from its own start: a pipe that still holds
+// what the process wrote answers at once, and only an empty pipe held open
+// by a straggler runs out of time and ends the output.
+type drainReader struct {
+	r *run
+	f *os.File
+}
+
+func (d drainReader) Read(p []byte) (int, error) {
+	if d.r.draining.Load() {
+		_ = d.f.SetReadDeadline(time.Now().Add(d.r.b.drainGrace))
+	}
+	n, err := d.f.Read(p)
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		return n, err
+	}
+	// The wait ran out, but a reader that was slow to be scheduled may
+	// have waited less than it seems: the pipe is asked again without
+	// waiting. Data is read on; a pipe found empty holds nothing the
+	// exited process wrote, so its output ends here, complete. Only when
+	// that cannot be told is the record marked cut off.
+	m, known, rerr := readReady(d.f, p)
+	switch {
+	case known && (m > 0 || rerr != nil):
+		return m, rerr
+	case known:
+		return 0, io.EOF
+	}
+	d.r.markCutOff()
+	return n, err
 }
 
 // stop kills the process group once, unless the process is already gone.
@@ -217,7 +292,7 @@ func (r *run) finish(waitErr error) {
 }
 
 // readOutput feeds stdout lines to the protocol session.
-func (r *run) readOutput(f *os.File) {
+func (r *run) readOutput(f io.Reader) {
 	br := bufio.NewReaderSize(f, 64<<10)
 	for {
 		line, over, err := readLine(br, maxLine)
@@ -237,7 +312,7 @@ func (r *run) readOutput(f *os.File) {
 }
 
 // readLog keeps the tail of stderr.
-func (r *run) readLog(f *os.File) {
+func (r *run) readLog(f io.Reader) {
 	buf := make([]byte, 8<<10)
 	for {
 		n, err := f.Read(buf)

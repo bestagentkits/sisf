@@ -24,7 +24,7 @@ func (s *Service) planScope(ctx context.Context, in input, snap snapshot) (*plan
 		return nil, core.NewError(core.CodeInternal, "the issue has a drafted scope state but no stored scope")
 	}
 	sow := *snap.sow
-	verdict := Classify(draftOf(sow), in.issue.AuthorAssociation, in.policy.Catalog)
+	verdict := Classify(draftOf(sow), requester(in.issue), in.policy.Catalog)
 	if !verdict.NeedsApproval {
 		p, err := s.ready(snap, sow, core.EventScopePermitted, "the scope lies inside the delegated scope")
 		if err != nil {
@@ -109,9 +109,9 @@ func (s *Service) planApproval(ctx context.Context, in input, snap snapshot) (*p
 		return nil, core.NewError(core.CodeInternal, "the issue waits for approval but has no stored scope or request")
 	}
 	sow := *snap.sow
-	verdict := Classify(draftOf(sow), in.issue.AuthorAssociation, in.policy.Catalog)
+	verdict := Classify(draftOf(sow), requester(in.issue), in.policy.Catalog)
 	if draft := Analyze(in.issue, in.comments, in.labels); draft.Complete() {
-		edited := Classify(draft, in.issue.AuthorAssociation, in.policy.Catalog)
+		edited := Classify(draft, requester(in.issue), in.policy.Catalog)
 		if ScopeDigest(sow.Issue, edited.Kind, draft) != sow.Digest {
 			next := newSoW(sow.Issue, sow.Version+1, edited.Kind, draft, in.policy.Revision, in.now)
 			return s.rerequest(ctx, in, snap, next, edited, true)
@@ -187,7 +187,8 @@ func (s *Service) rerequest(ctx context.Context, in input, snap snapshot, sow So
 	}
 	doc := snap.doc
 	doc.ApprovalID, doc.NotedRequest = request.ID, ""
-	p := &plan{doc: doc, supersedes: snap.doc.ApprovalID}
+	doc.Closing = owesClose(snap.doc.Closing, snap.doc.ApprovalID, request.ID)
+	p := &plan{doc: doc}
 	effects := []func() (state.OutboxMessage, error){waitingEffect(sow, request.ID, verdict)}
 	if edited {
 		doc.SoWVersion, doc.SoWDigest = sow.Version, sow.Digest

@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"net/http"
 	"regexp"
@@ -77,9 +78,16 @@ func (c *RESTClient) CommitExists(ctx context.Context, repo RepoRef, commit core
 	return atStep(err, StepBaseCommit)
 }
 
+// FactoryBranchPrefix starts every branch the factory writes: candidate
+// branches (sisf/<factory>/<run>-<attempt>), release notes and decision
+// proposals. CommitToBranch writes no other branch, so no caller of it can
+// move the default branch; only a supervisor merge (Merger) changes that.
+const FactoryBranchPrefix = "sisf/"
+
 // CommitToBranch writes the files of bc as one commit on top of its base and
 // points its branch at that commit, creating the branch when it does not
-// exist. It never touches any other branch. It returns the new commit.
+// exist. The branch must be one of the factory's own (FactoryBranchPrefix);
+// it never touches any other branch. It returns the new commit.
 // Every error names the step it came from (ErrorStep), and a path no
 // commit can hold (see ValidTreePath) is refused before any write.
 func (c *RESTClient) CommitToBranch(ctx context.Context, repo RepoRef, bc BranchCommit) (core.CommitSHA, error) {
@@ -88,6 +96,9 @@ func (c *RESTClient) CommitToBranch(ctx context.Context, repo RepoRef, bc Branch
 	}
 	if err := validBranch(bc.Branch); err != nil {
 		return "", err
+	}
+	if !strings.HasPrefix(bc.Branch, FactoryBranchPrefix) {
+		return "", core.NewError(core.CodePermissionDenied, "branch "+bc.Branch+" is not one of the factory's own; only "+FactoryBranchPrefix+"* branches are written")
 	}
 	if err := bc.Base.Validate(); err != nil {
 		return "", err
@@ -163,7 +174,12 @@ func (c *RESTClient) pointBranch(ctx context.Context, repo RepoRef, branch strin
 }
 
 // ChangedPaths lists the paths that differ between base and head, as the
-// compare API reports them, sorted.
+// compare API reports them, sorted, each once. A file GitHub reports as
+// renamed or copied is one entry naming its new path and, as
+// previous_filename, its old one: both are listed, so a file moved out of
+// a directory shows as a change there too. A listing of CompareFileLimit
+// entries may be incomplete: it is returned with LIMIT_EXCEEDED, so a
+// caller that must see every path fails closed.
 func (c *RESTClient) ChangedPaths(ctx context.Context, repo RepoRef, base, head core.CommitSHA) ([]string, error) {
 	if err := validateRepo(repo); err != nil {
 		return nil, err
@@ -179,8 +195,10 @@ func (c *RESTClient) ChangedPaths(ctx context.Context, repo RepoRef, base, head 
 		return nil, err
 	}
 	var cmp struct {
-		Files []struct {
-			Filename string `json:"filename"`
+		TotalCommits int `json:"total_commits"`
+		Files        []struct {
+			Filename         string `json:"filename"`
+			PreviousFilename string `json:"previous_filename"`
 		} `json:"files"`
 	}
 	if err := decode(resp, &cmp); err != nil {
@@ -189,7 +207,23 @@ func (c *RESTClient) ChangedPaths(ctx context.Context, repo RepoRef, base, head 
 	paths := make([]string, 0, len(cmp.Files))
 	for _, f := range cmp.Files {
 		paths = append(paths, f.Filename)
+		if f.PreviousFilename != "" {
+			paths = append(paths, f.PreviousFilename)
+		}
 	}
 	slices.Sort(paths)
+	paths = slices.Compact(paths)
+	if len(cmp.Files) == 0 && cmp.TotalCommits > 0 {
+		// GitHub leaves the files out when it cannot compute the diff in
+		// time; commits that list no file are not shown to change none.
+		return paths, core.NewError(core.CodeLimitExceeded, fmt.Sprintf("GitHub's comparison counts %d commits up to %s and lists no file, so the listing may be incomplete", cmp.TotalCommits, head))
+	}
+	if len(cmp.Files) >= CompareFileLimit {
+		return paths, core.NewError(core.CodeLimitExceeded, fmt.Sprintf("GitHub's comparison lists at most %d files, so the listing of %s may be incomplete", CompareFileLimit, head))
+	}
 	return paths, nil
 }
+
+// CompareFileLimit is the most files GitHub's comparison lists; a listing
+// that long may leave files out.
+const CompareFileLimit = 300

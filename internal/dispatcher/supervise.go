@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/bestagentkits/sisf/pkg/agent"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -37,8 +38,9 @@ func fencedOff(err error) bool {
 
 // step looks at one run and the agent working on it, and acts: it starts an
 // attempt that has not started, collects the artifacts of one that
-// succeeded, and counts one that failed, crashed or ran out of time as a
-// failed attempt.
+// succeeded, and counts one that failed, ran out of time, or that the
+// backend lost, or could not be reached or kept failing about for a lease
+// lifetime, as a failed attempt.
 func (d *Dispatcher) step(ctx context.Context, r *activeRun, res *TickResult) error {
 	var (
 		record  core.StateRecord
@@ -66,11 +68,42 @@ func (d *Dispatcher) step(ctx context.Context, r *activeRun, res *TickResult) er
 		return d.startAttempt(ctx, r, run, version, res)
 	}
 	status, err := d.cfg.Agent.Status(ctx, *run.Agent)
-	switch {
-	case core.HasCode(err, core.CodeUnavailable) || core.HasCode(err, core.CodeNotFound):
-		return d.failAttempt(ctx, r, run, version, core.CodeOf(err), "the agent run was lost: "+err.Error(), res)
-	case err != nil:
+	if err != nil && ctx.Err() != nil {
+		// The tick was cancelled, as on shutdown: that costs no attempt.
 		return err
+	}
+	failing := err != nil && !core.HasCode(err, core.CodeNotFound)
+	if !failing {
+		r.unreachableSince = time.Time{}
+	}
+	// statusErr is a status error to report once the lease is renewed: one
+	// other than UNAVAILABLE, which is an expected outage.
+	var statusErr error
+	switch {
+	case core.HasCode(err, core.CodeNotFound):
+		// The backend answered and no longer knows the run: it is lost.
+		return d.failAttempt(ctx, r, run, version, core.CodeNotFound, "the agent run was lost: "+err.Error(), res)
+	case failing:
+		// The backend could not answer, or answered with an error of its
+		// own. A short outage or fault of a remote backend must not cost
+		// the run an attempt, so the run is watched on within the lease,
+		// which keeps being renewed, and counted as lost only once the
+		// backend kept failing for a whole lease lifetime. The run timeout
+		// still applies below.
+		now := d.cfg.Clock.Now()
+		if r.unreachableSince.IsZero() {
+			r.unreachableSince = now
+		}
+		if since := now.Sub(r.unreachableSince); since >= d.cfg.LeaseTTL {
+			detail := fmt.Sprintf("the agent run was lost: the backend's status calls kept failing for %s: %s", since, err.Error())
+			if core.HasCode(err, core.CodeUnavailable) {
+				detail = fmt.Sprintf("the agent run was lost: the backend stayed unreachable for %s: %s", since, err.Error())
+			}
+			return d.failAttempt(ctx, r, run, version, core.CodeOf(err), detail, res)
+		}
+		if !core.HasCode(err, core.CodeUnavailable) {
+			statusErr = err
+		}
 	case status.Phase == agent.PhaseSucceeded:
 		return d.succeed(ctx, r, run, version, res)
 	case status.Phase == agent.PhaseFailed || status.Phase == agent.PhaseCancelled:
@@ -80,15 +113,19 @@ func (d *Dispatcher) step(ctx context.Context, r *activeRun, res *TickResult) er
 		// Still working within its time: renew the lease, which also proves
 		// this instance still holds the run.
 		lease, _, err := d.fenced(ctx, r.issue, r.run, r.lease, version, func(context.Context, state.Tx, core.StateRecord, *RunRecord) error { return nil })
-		if err == nil {
-			r.lease = lease
+		if err != nil {
+			return err
 		}
-		return err
+		r.lease = lease
+		return statusErr
 	}
 	// The cancel is best effort: the attempt is over either way, and a run
 	// that ignores it is no longer watched or paid for by this attempt.
 	cancelErr := d.cfg.Agent.Cancel(ctx, *run.Agent)
 	detail := fmt.Sprintf("the attempt ran past the run timeout of %s", d.cfg.Limits.RunTimeout)
+	if failing {
+		detail += "; the backend's last status call failed: " + err.Error()
+	}
 	if cancelErr != nil {
 		detail += "; cancelling it failed: " + cancelErr.Error()
 	}
@@ -111,13 +148,23 @@ func (d *Dispatcher) startAttempt(ctx context.Context, r *activeRun, run RunReco
 		Limits:         agent.Limits{Timeout: d.cfg.Limits.RunTimeout},
 		IdempotencyKey: fmt.Sprintf("%s/attempt/%d", run.RunID, attempt),
 	}
-	ref, startErr := d.cfg.Agent.Start(ctx, task, agent.WorkspaceRef{ID: string(run.RunID)}, nil)
+	// The workspace starts at the commit the run's policy is pinned to. The
+	// supervisor applies the patch to the commit of the policy in force when
+	// it builds, which is this one only while that policy does not change
+	// during the run. A real agent's workspace is checked out at it and
+	// cannot be made without it.
+	ws := agent.WorkspaceRef{ID: string(run.RunID), BaseSHA: run.Brief.Policy.PolicySHA}
+	ref, startErr := d.cfg.Agent.Start(ctx, task, ws, nil)
 	now := d.cfg.Clock.Now()
 	var exhausted bool
+	failure := AttemptFailure{Attempt: attempt, At: now}
+	if startErr != nil {
+		failure.Code, failure.Detail = core.CodeOf(startErr), "the agent did not start: "+startErr.Error()
+	}
 	lease, _, err := d.fenced(ctx, r.issue, r.run, r.lease, version, func(ctx context.Context, tx state.Tx, record core.StateRecord, stored *RunRecord) error {
 		stored.Attempt = attempt
 		if startErr != nil {
-			stored.Failures = append(stored.Failures, AttemptFailure{Attempt: attempt, Code: core.CodeOf(startErr), Detail: "the agent did not start: " + startErr.Error(), At: now})
+			stored.Failures = append(stored.Failures, failure)
 			if exhausted = attempt >= d.cfg.Limits.MaxAttempts; exhausted {
 				return d.stopRun(ctx, tx, stored, r.lease)
 			}
@@ -139,6 +186,9 @@ func (d *Dispatcher) startAttempt(ctx context.Context, r *activeRun, run RunReco
 		return err
 	}
 	r.lease = lease
+	if startErr != nil {
+		res.Failed = append(res.Failed, FailedAttempt{Issue: r.issue, RunID: r.run, AttemptFailure: failure})
+	}
 	if exhausted {
 		delete(d.runs, r.run)
 		res.Exhausted = append(res.Exhausted, r.issue)
@@ -148,16 +198,21 @@ func (d *Dispatcher) startAttempt(ctx context.Context, r *activeRun, run RunReco
 
 // failAttempt records a failed attempt and starts the next one, if any is left.
 func (d *Dispatcher) failAttempt(ctx context.Context, r *activeRun, run RunRecord, version int64, code core.ErrorCode, detail string, res *TickResult) error {
-	now := d.cfg.Clock.Now()
-	lease, written, err := d.fenced(ctx, r.issue, r.run, r.lease, version, func(_ context.Context, _ state.Tx, _ core.StateRecord, stored *RunRecord) error {
-		stored.Failures = append(stored.Failures, AttemptFailure{Attempt: stored.Attempt, Code: code, Detail: detail, At: now})
-		stored.Agent, stored.AttemptStartedAt = nil, now
+	failure := AttemptFailure{Attempt: run.Attempt, Code: code, Detail: detail, At: d.cfg.Clock.Now()}
+	usage, reported := d.attemptUsage(ctx, run)
+	lease, written, err := d.fenced(ctx, r.issue, r.run, r.lease, version, func(ctx context.Context, tx state.Tx, _ core.StateRecord, stored *RunRecord) error {
+		if err := bookAttempt(ctx, tx, stored, usage, reported); err != nil {
+			return err
+		}
+		stored.Failures = append(stored.Failures, failure)
+		stored.Agent, stored.AttemptStartedAt = nil, failure.At
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	r.lease = lease
+	r.lease, r.unreachableSince = lease, time.Time{}
+	res.Failed = append(res.Failed, FailedAttempt{Issue: r.issue, RunID: r.run, AttemptFailure: failure})
 	run.Agent = nil
 	return d.startAttempt(ctx, r, run, written, res)
 }
@@ -169,7 +224,11 @@ func (d *Dispatcher) succeed(ctx context.Context, r *activeRun, run RunRecord, v
 	if err != nil {
 		return err
 	}
+	usage, reported := d.attemptUsage(ctx, run)
 	_, _, err = d.fenced(ctx, r.issue, r.run, r.lease, version, func(ctx context.Context, tx state.Tx, _ core.StateRecord, stored *RunRecord) error {
+		if err := bookAttempt(ctx, tx, stored, usage, reported); err != nil {
+			return err
+		}
 		stored.Artifacts = mergeArtifacts(stored.Artifacts, artifacts)
 		stored.Status = RunSucceeded
 		return releaseIssueLease(ctx, tx, r.lease)
@@ -195,11 +254,11 @@ func (d *Dispatcher) exhaust(ctx context.Context, r *activeRun, version int64, r
 	return nil
 }
 
-// stopRun marks a run exhausted, releases its reservation, since it will
+// stopRun marks a run exhausted, closes its reservation, since it will
 // spend nothing more, and gives up its issue lease.
 func (d *Dispatcher) stopRun(ctx context.Context, tx state.Tx, run *RunRecord, lease state.Lease) error {
 	run.Status, run.Agent = RunExhausted, nil
-	if err := d.cfg.Budget.Release(ctx, tx, run.ReservationID); err != nil {
+	if err := CloseReservationOfRun(ctx, d.cfg.Budget, tx, run.RunID, run.ReservationID, run.Spend); err != nil {
 		return err
 	}
 	return releaseIssueLease(ctx, tx, lease)

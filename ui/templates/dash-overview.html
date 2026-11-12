@@ -1,0 +1,60 @@
+{{define "title"}}Overview{{end}}
+{{define "content"}}
+<h1>Overview</h1>
+{{if .Status.OK}}
+{{with .Stats}}
+<p class="summary">Factory <code>{{.FactoryID}}</code>. Updated <time datetime="{{iso .Generated}}">{{utc .Generated}}</time>.</p>
+<ul class="cards">
+  <li><span class="n" data-field="issue-total">{{.Total}}</span> issues</li>
+  <li><span class="n" data-field="stopped">{{.Stopped}}</span> stopped</li>
+  <li><a href="/approvals?status=pending"><span class="n" data-field="open-approvals">{{.OpenApprovals}}</span> open approvals</a></li>
+</ul>
+<h2>Issues by state</h2>
+<table class="grid">
+  <thead><tr><th>State</th><th>Issues</th></tr></thead>
+  <tbody>{{range .Counts}}<tr data-state-count="{{.State}}"><td><a href="/workboard?state={{.State}}">{{.State}}</a></td><td>{{.Count}}</td></tr>{{end}}</tbody>
+</table>
+{{end}}
+{{else}}{{template "panelstate" .Status}}{{end}}
+
+<h2>Cost</h2>
+{{if .Budget.OK}}{{with .Money}}
+<dl class="fields">
+  <dt>Mode</dt><dd data-field="budget-mode">{{.Mode}}</dd>
+  <dt>Spent, verified</dt><dd>{{.Verified}}</dd>
+  <dt>Spent, not verified</dt><dd>{{.Unverified}}</dd>
+  {{if .Available}}<dt>Still available</dt><dd>{{.Available}}</dd>{{end}}
+</dl>
+{{range .Warnings}}<p class="notice warn">{{.}}</p>{{end}}
+{{end}}{{else}}{{template "panelstate" .Budget}}{{end}}
+
+<h2>Health and traffic</h2>
+<p class="notice unavailable" data-state="unavailable"><strong>Not available yet.</strong> Zone health, the running revision, the error rate and throughput are not published by any action in this factory yet. See <a href="/telemetry">Telemetry</a>.</p>
+
+<h2>Controls</h2>
+<div class="controls">
+<section>
+  <h3>Emergency stop</h3>
+  {{if .CanStop}}
+  <form method="post" action="/actions/factory.emergency_stop" data-confirm="Stop the factory? This asks the Owner for an approval.">
+    {{template "csrf" .}}
+    <label>Reason <input type="text" name="reason" maxlength="500" required></label>
+    <label>Approval id, once the Owner approved <input type="text" name="approval_id" maxlength="256"></label>
+    <button type="submit" class="danger" name="stop" value="1">Stop the factory</button>
+  </form>
+  {{else}}<p class="notice unavailable" data-state="unavailable"><strong>Not available yet.</strong> This factory offers no emergency-stop action to the control zone.</p>{{end}}
+</section>
+<section>
+  <h3>Roll back</h3>
+  {{if .CanRollback}}
+  <form method="post" action="/actions/deployments.rollback" data-confirm="Roll back to the last known good release? This asks the Owner for an approval.">
+    {{template "csrf" .}}
+    <label>Reason <input type="text" name="reason" maxlength="500" required></label>
+    <label>Approval id, once the Owner approved <input type="text" name="approval_id" maxlength="256"></label>
+    <button type="submit" class="danger" name="rollback" value="1">Roll back</button>
+  </form>
+  {{else}}<p class="notice unavailable" data-state="unavailable"><strong>Not available yet.</strong> This factory offers no rollback action to the control zone.</p>{{end}}
+</section>
+</div>
+<p><label><input type="checkbox" id="auto-refresh"> Refresh every 15 seconds</label></p>
+{{end}}

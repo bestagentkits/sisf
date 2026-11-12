@@ -1,6 +1,7 @@
 package install
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"syscall"
@@ -23,6 +24,10 @@ func TestFreshStandaloneInstallIsOneFactoryAcrossAllThreeZones(t *testing.T) {
 	t.Parallel()
 	r := startStandalone(t, nil)
 	r.stop(t)
+	// up created the install, so it names the checkout it builds from.
+	if out := r.in.Out.(*bytes.Buffer).String(); !strings.Contains(out, "source checkout "+r.in.SourceDir+":") {
+		t.Errorf("up on a new directory does not name its source checkout:\n%s", out)
+	}
 
 	for _, p := range r.procs {
 		if !p.terminated {
@@ -123,7 +128,7 @@ func TestStandaloneUnitsGetOnlyTheEnvironmentOfTheirOwnZone(t *testing.T) {
 	r.stop(t)
 	envOf := func(p *fakeProc) string { return strings.Join(p.cmd.Env, "\n") }
 	control, dispatcher := envOf(r.factoryd(t, "control")), envOf(r.factoryd(t, "dispatcher"))
-	for _, want := range []string{"SISF_OWNER_TOKEN=", "SISF_WEBHOOK_SECRET=", "SISF_GITHUB_TOKEN=", "SISF_APPROVAL_KEY="} {
+	for _, want := range []string{"EDGE_COUNTERS_TOKEN=", "SISF_WEBHOOK_SECRET=", "SISF_GITHUB_TOKEN=", "SISF_APPROVAL_KEY="} {
 		if !strings.Contains(control, want) {
 			t.Errorf("control lacks %s", want)
 		}
@@ -131,9 +136,31 @@ func TestStandaloneUnitsGetOnlyTheEnvironmentOfTheirOwnZone(t *testing.T) {
 			t.Errorf("the dispatcher, Zone 2, was given %s", want)
 		}
 	}
-	// The edge holds its admin token and nothing else of the secrets.
-	if edge := r.proc(t, "sisf-edge").cmd.Env; len(edge) != 1 || !strings.HasPrefix(edge[0], "EDGE_ADMIN_TOKEN=") {
-		t.Errorf("the edge was given %d variables, want its admin token alone", len(edge))
+	// Control signs in at the fake identity provider of the simulation and
+	// reads the edge's counters; it never holds the edge's admin token.
+	for _, want := range []string{"SISF_EXTERNAL_URL=http://127.0.0.1:7463", "SISF_OWNER_IDENTITIES=http://127.0.0.1:7468#owner",
+		"SISF_AUTH_OIDC_ISSUER=http://127.0.0.1:7468", "SISF_SUPERVISOR_ADMIN_ADDR=127.0.0.1:7464",
+		"SISF_EDGE_COUNTERS_URL=http://127.0.0.1:7469", "SISF_LOCAL_STORE_DIR=" + r.in.Layout.Data("control", "secrets")} {
+		if !strings.Contains(control, want) {
+			t.Errorf("control lacks %s", want)
+		}
+	}
+	for _, banned := range []string{"EDGE_ADMIN_TOKEN=", "SISF_EDGE_ADMIN_URL=", "SISF_OWNER_TOKEN="} {
+		if strings.Contains(control, banned) {
+			t.Errorf("control was given %s", banned)
+		}
+	}
+	// The edge holds its admin and counters tokens and nothing else.
+	edge := r.proc(t, "sisf-edge").cmd.Env
+	if len(edge) != 2 || !strings.HasPrefix(edge[0], "EDGE_ADMIN_TOKEN=") || !strings.HasPrefix(edge[1], "EDGE_COUNTERS_TOKEN=") {
+		t.Errorf("the edge was given %d variables, want its admin and counters tokens alone", len(edge))
+	}
+	fakeOIDC := false
+	for _, p := range r.procs {
+		fakeOIDC = fakeOIDC || strings.Join(p.cmd.Args, " ") == "sim oidc --addr=127.0.0.1:7468"
+	}
+	if !fakeOIDC {
+		t.Error("the simulation runs no fake identity provider on 127.0.0.1:7468")
 	}
 	// The supervisor holds what releasing needs; the dispatcher none of it.
 	supervisor := envOf(r.proc(t, "sisf-supervisor"))
@@ -247,13 +274,9 @@ func TestStandaloneUpRefusesASecondRunOfTheSameInstall(t *testing.T) {
 	in, exec, _ := newTestInstaller(t)
 	exec.answer = buildAnswers
 	in.Signal = func(int, syscall.Signal) error { return nil } // every pid is alive
+	in.ProcessStart = everyPIDStarted
 	mustInit(t, in, manifest.ModeStandalone)
-	if err := os.MkdirAll(in.Layout.Dir+"/run", 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(in.Layout.PIDFile(), []byte("4242\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	holdRunLock(t, in, 4242, nil) // the first `up`, still building or running
 	if err := in.Up(t.Context(), UpOptions{Init: initOptions(in, manifest.ModeStandalone)}); err == nil {
 		t.Fatal("a second up ran next to a live one")
 	}

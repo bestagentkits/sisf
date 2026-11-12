@@ -20,14 +20,35 @@ type CountsAnswer struct {
 	Revisions     map[string]Counts `json:"revisions"`
 }
 
+// AdminOption changes what an admin handler accepts.
+type AdminOption func(*adminTokens)
+
+type adminTokens struct{ admin, counts string }
+
+// WithCountsToken adds a second, read-only bearer token that authorizes GET
+// /counters and nothing else, for a reader of the counters such as the
+// control zone. It must differ from the admin token.
+func WithCountsToken(token string) AdminOption {
+	return func(t *adminTokens) { t.counts = token }
+}
+
 // NewAdminHandler serves the control surface of a splitter: GET and PUT
 // /split, and GET /counters with an optional ?window=10m. It is meant for a
 // listener of its own, never the public one, and every request must carry
-// the bearer token. An empty token is refused so the surface cannot be left
-// open by accident.
-func NewAdminHandler(s *Splitter, token string) (http.Handler, error) {
-	if token == "" {
+// the admin bearer token, or the counters token for GET /counters only. An
+// empty admin token is refused so the surface cannot be left open by
+// accident, and a counters token equal to it is refused so reading the
+// counters never grants moving traffic.
+func NewAdminHandler(s *Splitter, token string, opts ...AdminOption) (http.Handler, error) {
+	tokens := adminTokens{admin: token}
+	for _, o := range opts {
+		o(&tokens)
+	}
+	if tokens.admin == "" {
 		return nil, errors.New("the admin surface needs a token")
+	}
+	if tokens.counts != "" && subtle.ConstantTimeCompare([]byte(tokens.counts), []byte(tokens.admin)) == 1 {
+		return nil, errors.New("the counters token must differ from the admin token")
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /split", func(w http.ResponseWriter, r *http.Request) {
@@ -70,18 +91,26 @@ func NewAdminHandler(s *Splitter, token string) (http.Handler, error) {
 		}
 		writeJSON(w, http.StatusOK, CountsAnswer{WindowSeconds: int64(window / time.Second), Revisions: counts})
 	})
-	return authorized(token, mux), nil
+	return authorized(tokens, mux), nil
 }
 
-// authorized lets a request through only with the exact bearer token.
-func authorized(token string, next http.Handler) http.Handler {
+// authorized lets a request through with the exact admin token, and lets
+// the counters token through to GET /counters only.
+func authorized(tokens adminTokens, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+		switch {
+		case ok && subtle.ConstantTimeCompare([]byte(got), []byte(tokens.admin)) == 1:
+			next.ServeHTTP(w, r)
+		case ok && tokens.counts != "" && subtle.ConstantTimeCompare([]byte(got), []byte(tokens.counts)) == 1:
+			if r.Method != http.MethodGet || r.URL.Path != "/counters" {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "the counters token reads the counters only"})
+				return
+			}
+			next.ServeHTTP(w, r)
+		default:
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "a bearer token is required"})
-			return
 		}
-		next.ServeHTTP(w, r)
 	})
 }
 

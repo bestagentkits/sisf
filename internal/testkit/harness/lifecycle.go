@@ -8,11 +8,13 @@ import (
 	"github.com/bestagentkits/sisf/adapters/agent/fake"
 	"github.com/bestagentkits/sisf/cmd/factoryd/lifecycle"
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
+	"github.com/bestagentkits/sisf/internal/budget"
 	"github.com/bestagentkits/sisf/internal/redact"
 	"github.com/bestagentkits/sisf/internal/supervisor/killswitch"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/agent"
 	"github.com/bestagentkits/sisf/pkg/github"
+	"github.com/bestagentkits/sisf/pkg/manifest"
 	"github.com/bestagentkits/sisf/pkg/qa"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
@@ -76,13 +78,24 @@ func (f *Factory) startLifecycle(client *github.RESTClient) {
 		judge, err = f.opts.QAJudge(stages.CandidateMaterials{State: f.ControlStore, Tree: stages.Tree{GitHub: client, Repo: repo}})
 		must(f.t, err)
 	}
+	merger, err := github.NewMerger(client)
+	must(f.t, err)
+	declared := map[string][]string{}
+	for unit, patterns := range m.Release.UnitInputs {
+		declared[string(unit)] = patterns
+	}
+	inputs, err := release.NewUnitInputs(declared)
+	must(f.t, err)
 	f.Stages, err = stages.New(stages.Config{
-		FactoryID: m.FactoryID, Repo: repo, State: f.ControlStore, GitHub: client, Judge: judge,
+		FactoryID: m.FactoryID, Repo: repo, State: f.ControlStore, GitHub: client, Judge: judge, Merger: merger,
 		QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
+		Self:     github.Identity{ID: f.GitHub.Bot().ID, Login: f.GitHub.Bot().Login},
 		QASigner: f.Trust.QA, ArtifactSigner: f.Trust.Artifact, Verifier: f.Trust.Verifier, ApprovalVerifier: f.Trust.Verifier,
 		Redactor: redact.New(redact.Config{}), MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: clock,
+		Budget: budget.NewGate(budget.Config{Clock: f.Clock}),
 		Release: release.Config{
 			Backend: f.Deploy, LKG: f.Trust.LKG, Freeze: f.Freeze,
+			SelfPublishable: unitNames(m.Release.Units), UnitInputs: inputs,
 			Monitor: release.MonitorConfig{Window: ReleaseWindow, MinSamples: minSamples},
 		},
 	})
@@ -126,6 +139,9 @@ func (f *Factory) ScriptQA(number int, points map[qa.Category]int) {
 // no real traffic to judge the last known good release by.
 func (f *Factory) Quiet() { f.quiet = true }
 
+// Busy brings the users' traffic back after Quiet.
+func (f *Factory) Busy() { f.quiet = false }
+
 // Cycle runs rounds of the whole factory: the control zone's pass, a
 // dispatcher tick, the agent zone's exporter and the supervisor's stages,
 // with one window of users' traffic through every unit before the stages.
@@ -148,4 +164,14 @@ func (f *Factory) Cycle(rounds int) {
 		}
 		f.Pass()
 	}
+}
+
+// unitNames returns units as the release pipeline names them. The result is
+// never nil, so a manifest naming no unit publishes nothing.
+func unitNames(units []manifest.UnitName) []string {
+	names := make([]string, 0, len(units))
+	for _, u := range units {
+		names = append(names, string(u))
+	}
+	return names
 }

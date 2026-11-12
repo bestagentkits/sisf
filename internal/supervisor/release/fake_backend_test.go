@@ -51,14 +51,23 @@ type fakeBackend struct {
 	existing       map[core.ReleaseDigest]bool
 	totalPerWindow int64
 	errorRate      map[core.ReleaseDigest]float64
-	unhealthy      map[core.ReleaseDigest]bool
-	critical       map[core.ReleaseDigest]int64
+	// unhealthy revisions do not answer their health check; degraded ones
+	// answer it as down, naming themselves.
+	unhealthy, degraded map[core.ReleaseDigest]bool
+	critical            map[core.ReleaseDigest]int64
 	// runningInstead, when set, is what the running system reports whatever
 	// the calls answered.
 	runningInstead core.ReleaseDigest
+	// observedAt, when set, is the instant every observation is dated with,
+	// as a backend that answers from a stale cache would date it.
+	observedAt time.Time
 
 	capsErr, observeErr, stageErr, rollbackErr error
 	measureErr                                 map[core.ReleaseDigest]error
+
+	// onMeasure, when set, is called, without the lock, before each
+	// measurement, so a test can act in the middle of a rollout.
+	onMeasure func(rev core.ReleaseDigest)
 
 	// dataVolume stands for the application's stored data; no call changes it.
 	dataVolume string
@@ -76,7 +85,7 @@ func newFakeBackend(clock *fakeClock, stable core.ReleaseDigest) *fakeBackend {
 			core.CapDeployObservedRevision: core.SupportSupported, core.CapDeployRollback: core.SupportSupported,
 		},
 		totalPerWindow: 10000, errorRate: map[core.ReleaseDigest]float64{}, unhealthy: map[core.ReleaseDigest]bool{},
-		critical: map[core.ReleaseDigest]int64{}, measureErr: map[core.ReleaseDigest]error{}, dataVolume: "customer-data-v1",
+		degraded: map[core.ReleaseDigest]bool{}, critical: map[core.ReleaseDigest]int64{}, measureErr: map[core.ReleaseDigest]error{}, dataVolume: "customer-data-v1",
 	}
 }
 
@@ -118,6 +127,12 @@ func (b *fakeBackend) share(rev core.ReleaseDigest) int64 {
 
 func (b *fakeBackend) Measure(_ context.Context, rev deploy.Revision, window time.Duration) (deploy.Metrics, error) {
 	b.mu.Lock()
+	hook := b.onMeasure
+	b.mu.Unlock()
+	if hook != nil {
+		hook(rev.Digest)
+	}
+	b.mu.Lock()
 	defer b.mu.Unlock()
 	if err := b.measureErr[rev.Digest]; err != nil {
 		return deploy.Metrics{}, err
@@ -153,7 +168,22 @@ func (b *fakeBackend) ObservedRevision(_ context.Context, unit string) (deploy.O
 	if b.runningInstead != "" {
 		running = b.runningInstead
 	}
-	return deploy.Observed{Unit: unit, Digest: running, Healthy: !b.unhealthy[running], ObservedAt: b.clock.Now()}, nil
+	at := b.clock.Now()
+	if !b.observedAt.IsZero() {
+		at = b.observedAt
+	}
+	switch {
+	case b.unhealthy[running]:
+		// The real backends answer a probe that fails, times out or finds no
+		// process with no digest and not healthy, and no error: nothing
+		// about the running system is known.
+		return deploy.Observed{Unit: unit, ObservedAt: at}, nil
+	case b.degraded[running]:
+		// An application that answers its health check as down still names
+		// the revision it runs.
+		return deploy.Observed{Unit: unit, Digest: running, ObservedAt: at}, nil
+	}
+	return deploy.Observed{Unit: unit, Digest: running, Healthy: true, ObservedAt: at}, nil
 }
 
 func (b *fakeBackend) Rollback(_ context.Context, to deploy.Revision) error {

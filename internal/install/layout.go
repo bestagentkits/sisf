@@ -54,7 +54,8 @@ func (l Layout) BudgetConfirmation() string {
 	return filepath.Join(l.Dir, "budget-confirmation.json")
 }
 
-// SimAgentDir holds the scripted agent's patch of the simulation profile.
+// SimAgentDir holds the scripted agent's patch, in the simulation profile
+// and in any install whose coding agent is the scripted one.
 // It is not secret: the dispatcher reads it, mounted read-only in Docker mode.
 func (l Layout) SimAgentDir() string { return filepath.Join(l.Dir, "sim", "agent") }
 
@@ -63,6 +64,11 @@ func (l Layout) SecretsDir(area string) string { return filepath.Join(l.Dir, "se
 
 // Secret is one file of a secrets area.
 func (l Layout) Secret(area, name string) string { return filepath.Join(l.SecretsDir(area), name) }
+
+// DevSignInSecret is the file of the secret that unlocks sign-in at the
+// fake identity provider of a development install. It is a control
+// secret: the operator reads it, no unit's environment holds it.
+func (l Layout) DevSignInSecret() string { return l.Secret(areaControl, "dev-sign-in") }
 
 // RuntimeEnv is the environment file of the units of one area.
 func (l Layout) RuntimeEnv(area string) string { return l.Secret(area, "runtime.env") }
@@ -83,6 +89,16 @@ func (l Layout) Logs() string { return filepath.Join(l.Dir, "logs") }
 
 // PIDFile names the foreground `sisf up` process of Standalone mode.
 func (l Layout) PIDFile() string { return filepath.Join(l.Dir, "run", "sisf.pid") }
+
+// RunGate is the lock file every attempt on the run lock is made under (see
+// Installer.withRunGate), so a run lock found held is held by a run, never by
+// another command that is only testing it.
+func (l Layout) RunGate() string { return filepath.Join(l.Dir, "run", "sisf.gate") }
+
+// UnitRecords is the directory where a running `sisf up` records the process
+// of each unit it started, so the units can be found and stopped after that
+// `sisf up` ended without stopping them.
+func (l Layout) UnitRecords() string { return filepath.Join(l.Dir, "run", "units") }
 
 // ServiceDir holds the launchd and systemd units, ready to copy.
 func (l Layout) ServiceDir() string { return filepath.Join(l.Dir, "service") }

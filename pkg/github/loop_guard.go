@@ -22,6 +22,15 @@ func (i Identity) Matches(u User) bool {
 	return i.Login != "" && strings.EqualFold(u.Login, i.Login)
 }
 
+// Wrote reports whether u, as the author of something the factory acts on
+// as its own, is the factory's account. The login decides, and without one
+// nothing matches: an install may name the App's numeric ID, which another
+// user's ID can equal, so an ID never stands in for the login. Matches,
+// which only tells the factory's own echoes, may still go by the ID.
+func (i Identity) Wrote(u User) bool {
+	return i.Login != "" && strings.EqualFold(u.Login, i.Login)
+}
+
 // Caused reports whether the event is an echo of the factory's own edit: it
 // was sent by the factory's account, or it concerns a comment the factory
 // wrote. Such events must not be processed again as new input, or a label
