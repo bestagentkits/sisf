@@ -83,6 +83,41 @@ func (s simGitHub) commit(t *testing.T, files map[string]string) string {
 	return made.SHA
 }
 
+// mainHead is the commit the repository's main branch points at.
+func (s simGitHub) mainHead(t *testing.T) string {
+	t.Helper()
+	var ref struct {
+		Object struct{ SHA string } `json:"object"`
+	}
+	if err := json.Unmarshal(s.must(t, http.StatusOK, "GET", "/repos/"+s.repo+"/git/ref/heads/main", "", nil), &ref); err != nil {
+		t.Fatal(err)
+	}
+	return ref.Object.SHA
+}
+
+// commitOnMain makes a commit on main's head that holds exactly files, as
+// a push to main does, points main at it and returns its SHA.
+func (s simGitHub) commitOnMain(t *testing.T, files map[string]string, message string) string {
+	t.Helper()
+	head := s.mainHead(t)
+	entries := make([]map[string]any, 0, len(files))
+	for path, content := range files {
+		entries = append(entries, map[string]any{"path": path, "mode": "100644", "type": "blob", "content": content})
+	}
+	var tree, made struct{ SHA string }
+	if err := json.Unmarshal(s.must(t, http.StatusCreated, "POST", "/repos/"+s.repo+"/git/trees", "", map[string]any{"tree": entries}), &tree); err != nil {
+		t.Fatal(err)
+	}
+	// Without base_tree the tree holds only files: paths of head that are
+	// not among them are removed by this commit.
+	if err := json.Unmarshal(s.must(t, http.StatusCreated, "POST", "/repos/"+s.repo+"/git/commits", "",
+		map[string]any{"message": message, "tree": tree.SHA, "parents": []string{head}}), &made); err != nil {
+		t.Fatal(err)
+	}
+	s.must(t, http.StatusOK, "PATCH", "/repos/"+s.repo+"/git/refs/heads/main", "", map[string]any{"sha": made.SHA})
+	return made.SHA
+}
+
 func (s simGitHub) openIssue(t *testing.T, actor, title, body string, labels ...string) int {
 	t.Helper()
 	var issue struct{ Number int }

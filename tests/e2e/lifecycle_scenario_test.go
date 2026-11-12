@@ -31,6 +31,11 @@ type deployment interface {
 	factoryYAML(t *testing.T) []byte
 	// approvePolicy puts revision in force, as the Owner on the factory's host.
 	approvePolicy(t *testing.T, revision string)
+	// policy runs `factoryd policy` with args as the Owner on the factory's
+	// host and returns what it printed.
+	policy(t *testing.T, args ...string) (string, error)
+	// kv reads one entry of the store's key-value table, "" when absent.
+	kv(t *testing.T, namespace, key string) string
 	// dispatcherHealth is the dispatcher's /healthz, or an error while it is down.
 	dispatcherHealth(t *testing.T) (health, error)
 	// killDispatcher stops the dispatcher at once; startDispatcher starts it again.
@@ -104,8 +109,8 @@ func foundation(t *testing.T, manifest []byte) map[string]string {
 		}
 		files[path] = string(raw)
 	}
-	// Every scenario commits the same tree, so the policy approved first on
-	// an install stays the one in force for every later scenario.
+	// Every scenario puts the same files in force (seedPolicy), so the
+	// diffs of the scripted agent apply to the policy of every scenario.
 	maps.Copy(files, seedFiles)
 	return files
 }
@@ -178,7 +183,7 @@ func count(states []string, want string) int {
 func runLifecycle(t *testing.T, d deployment) {
 	gh := d.github()
 	manifestYAML := d.factoryYAML(t)
-	d.approvePolicy(t, gh.commit(t, foundation(t, manifestYAML)))
+	seedPolicy(t, d)
 	requireFreeRunSlot(t, d, manifestYAML)
 
 	// Every delivery of the new issue is held, then let through newest

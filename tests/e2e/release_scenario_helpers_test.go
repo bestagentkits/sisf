@@ -25,8 +25,6 @@ type releaseDeployment interface {
 	setAgentPatch(t *testing.T, diff string)
 	// records lists every issue's record: its state, run and attempt.
 	records(t *testing.T) []issueRecord
-	// kv reads one entry of the store's key-value table, "" when absent.
-	kv(t *testing.T, namespace, key string) string
 	// candidateDigest is the digest of the candidate the issue was built into.
 	candidateDigest(t *testing.T, issue string) string
 	// edgeURL is the base URL of the edge, where the application is served.
@@ -95,8 +93,10 @@ const releaseLimit = 5 * time.Minute
 // scripted agent leave diff.
 func seedRelease(t *testing.T, d releaseDeployment, diff string) {
 	t.Helper()
-	gh := d.github()
-	d.approvePolicy(t, gh.commit(t, foundation(t, d.factoryYAML(t))))
+	// The issues of earlier tests come to rest before the policy changes,
+	// so none of their runs is cut short by a change of policy.
+	awaitQuiet(t, d)
+	seedPolicy(t, d)
 	awaitQuiet(t, d)
 	setPatch(t, d, diff)
 }

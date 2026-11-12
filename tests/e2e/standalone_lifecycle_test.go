@@ -169,6 +169,10 @@ func (d *standaloneDeployment) approvePolicy(t *testing.T, revision string) {
 	}
 }
 
+func (d *standaloneDeployment) policy(_ *testing.T, args ...string) (string, error) {
+	return d.factoryd("control", append([]string{"policy"}, args...)...)
+}
+
 func (d *standaloneDeployment) dispatcherHealth(*testing.T) (health, error) {
 	var h health
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Get("http://" + standaloneDispatcher + "/healthz")

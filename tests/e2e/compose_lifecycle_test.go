@@ -105,6 +105,11 @@ func (d *composeDeployment) approvePolicy(t *testing.T, revision string) {
 	}
 }
 
+func (d *composeDeployment) policy(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	return d.docker(t, append([]string{"exec", d.container("control"), "factoryd", "policy"}, args...)...)
+}
+
 func (d *composeDeployment) dispatcherHealth(t *testing.T) (health, error) {
 	t.Helper()
 	var h health
