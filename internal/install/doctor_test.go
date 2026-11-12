@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -26,8 +27,9 @@ func TestAHealthyStandaloneFactoryPassesEveryCheck(t *testing.T) {
 	in := builtStandalone(t, healthyNet(), nil)
 	r := runDoctor(t, in)
 	for _, c := range r.Checks {
-		// The runner images are built by a later release, so they warn.
-		if c.Verdict != VerdictOK && c.Name != "artifacts" {
+		// The runner images are built by a later release, so they warn; and
+		// Standalone states trusted_code_only, which always warns.
+		if c.Verdict != VerdictOK && c.Name != "artifacts" && c.Name != "trust model" {
 			t.Errorf("%s: %s %s", c.Name, c.Verdict, c.Detail)
 		}
 	}
@@ -129,6 +131,42 @@ func TestGitHubProblemsAreNamedForTheOwner(t *testing.T) {
 		}
 		if len(v) != 1 || v[0] != VerdictFail || !strings.Contains(detailOf(r, "github"), tc.want) {
 			t.Errorf("%s: %v %q, want a failure saying %q", name, v, detailOf(r, "github"), tc.want)
+		}
+	}
+}
+
+func TestTheTrustedCodeOnlyModelIsAlwaysAWarning(t *testing.T) {
+	t.Parallel()
+	r := runDoctor(t, builtStandalone(t, healthyNet(), nil))
+	if v := verdictOf(r, "trust model"); len(v) != 1 || v[0] != VerdictWarn || !strings.Contains(detailOf(r, "trust model"), "trusted_code_only") ||
+		!strings.Contains(detailOf(r, "trust model"), "--agent-home") || !strings.Contains(detailOf(r, "trust model"), "--qa-home") ||
+		!strings.Contains(detailOf(r, "trust model"), "--agent-binary") || !strings.Contains(detailOf(r, "trust model"), "--qa-agent-binary") {
+		t.Fatalf("trust model = %v %q", v, detailOf(r, "trust model"))
+	}
+}
+
+func TestATokenWithTheWorkflowScopeIsAWarning(t *testing.T) {
+	t.Parallel()
+	const route = "127.0.0.1:7467/repos/acme/hello-app"
+	for name, tc := range map[string]struct {
+		scopes []string
+		want   []Verdict
+	}{
+		"workflow scope":      {[]string{"repo, workflow"}, []Verdict{VerdictWarn}},
+		"no workflow scope":   {[]string{"repo, read:org"}, []Verdict{VerdictOK}},
+		"no scopes header":    {nil, nil},
+		"workflow-like scope": {[]string{"repo, workflows:read"}, []Verdict{VerdictOK}},
+	} {
+		got := reply{code: 200, body: repoWritable}
+		if tc.scopes != nil {
+			got.header = http.Header{"X-OAuth-Scopes": tc.scopes}
+		}
+		r := runDoctor(t, builtStandalone(t, healthyNet().with(route, got), nil))
+		if v := verdictOf(r, "github token scope"); !slices.Equal(v, tc.want) {
+			t.Errorf("%s: %v, want %v", name, v, tc.want)
+		}
+		if v := verdictOf(r, "github"); len(v) != 1 || v[0] != VerdictOK {
+			t.Errorf("%s: github = %v", name, v)
 		}
 	}
 }

@@ -142,7 +142,9 @@ func serveSimGithub(ctx context.Context, env *Env, ln net.Listener, opts simGith
 		_ = ln.Close()
 		return err
 	}
-	if err := fakegithub.Serve(ctx, ln, fake); err != nil {
+	// The git data API serves the trees and commits the supervisor builds
+	// candidates on; every other request goes to the fake itself.
+	if err := fakegithub.Serve(ctx, ln, fakegithub.NewGitData(fake)); err != nil {
 		return core.NewError(core.CodeInternal, "the fake GitHub stopped unexpectedly").WithCause(err)
 	}
 	return nil

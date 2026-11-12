@@ -118,8 +118,8 @@ func TestADRSetIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 19 {
-		t.Fatalf("want 19 ADR files, got %d: %v", len(files), files)
+	if len(files) != 20 {
+		t.Fatalf("want 20 ADR files, got %d: %v", len(files), files)
 	}
 	nameRe := regexp.MustCompile(`^(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`)
 	required := []string{"## Status", "## Context", "## Decision", "## Consequences", "## Acceptance test"}

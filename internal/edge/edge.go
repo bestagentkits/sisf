@@ -31,8 +31,13 @@ type Route struct {
 
 // Config describes what the proxy forwards where.
 type Config struct {
-	// Default receives every request no route matches.
+	// Default receives every request no route matches. It is required
+	// unless Split is set.
 	Default *url.URL
+	// Split, when set, receives every request no route matches instead of
+	// Default: it divides them between a stable and a canary revision and
+	// counts the outcome of each. Routes are never split.
+	Split *Splitter
 	// Routes are matched by the longest prefix. Prefixes must differ.
 	Routes []Route
 	// Logger receives one line per failed upstream call. It never receives
@@ -87,13 +92,13 @@ func checkPrefix(prefix string) error {
 // handler is the proxy: one reverse proxy per upstream, chosen per request.
 type handler struct {
 	routes   []Route // longest prefix first
-	fallback *httputil.ReverseProxy
+	fallback http.Handler
 	proxies  map[string]*httputil.ReverseProxy
 }
 
 // New validates the configuration and returns the proxy.
 func New(cfg Config) (http.Handler, error) {
-	if cfg.Default == nil {
+	if cfg.Default == nil && cfg.Split == nil {
 		return nil, errors.New("the edge needs a default upstream")
 	}
 	log := cfg.Logger
@@ -101,7 +106,11 @@ func New(cfg Config) (http.Handler, error) {
 		log = slog.New(slog.DiscardHandler)
 	}
 	h := &handler{proxies: map[string]*httputil.ReverseProxy{}}
-	h.fallback = newProxy(cfg.Default, log)
+	if cfg.Split != nil {
+		h.fallback = cfg.Split
+	} else {
+		h.fallback = newProxy(cfg.Default, log, "")
+	}
 	seen := map[string]bool{}
 	for _, r := range cfg.Routes {
 		if err := checkPrefix(r.Prefix); err != nil {
@@ -113,7 +122,7 @@ func New(cfg Config) (http.Handler, error) {
 		seen[r.Prefix] = true
 		h.routes = append(h.routes, r)
 		if h.proxies[r.Upstream.String()] == nil {
-			h.proxies[r.Upstream.String()] = newProxy(r.Upstream, log)
+			h.proxies[r.Upstream.String()] = newProxy(r.Upstream, log, "")
 		}
 	}
 	// Longest prefix first, so a specific route wins over a general one.
@@ -127,11 +136,19 @@ func New(cfg Config) (http.Handler, error) {
 
 // newProxy forwards to one upstream. Rewrite starts from an empty outbound
 // request, so a client-supplied X-Forwarded-* header is not passed on; the
-// edge states who connected to it.
-func newProxy(target *url.URL, log *slog.Logger) *httputil.ReverseProxy {
+// edge states who connected to it. A non-empty revision is stamped on every
+// response, an upstream's own header of that name included, so the label
+// always says which revision the edge chose.
+func newProxy(target *url.URL, log *slog.Logger, revision string) *httputil.ReverseProxy {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = upstreamResponseTimeout
 	return &httputil.ReverseProxy{
+		ModifyResponse: func(resp *http.Response) error {
+			if revision != "" {
+				resp.Header.Set(RevisionHeader, revision)
+			}
+			return nil
+		},
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(target)
 			r.SetXForwarded()
@@ -139,6 +156,9 @@ func newProxy(target *url.URL, log *slog.Logger) *httputil.ReverseProxy {
 		Transport: transport,
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			log.Warn("upstream call failed", "upstream", target.Host, "error", err.Error())
+			if revision != "" {
+				w.Header().Set(RevisionHeader, revision)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write([]byte(`{"error":"upstream unavailable"}` + "\n"))

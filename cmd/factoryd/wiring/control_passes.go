@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/intake"
+	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/state"
@@ -156,7 +158,8 @@ func (c *Control) failed(id string, now time.Time) {
 // deliverOutbox performs the effects intake queued, oldest first. A comment
 // carries a hidden marker, so an effect performed twice shows once; a failed
 // one is tried again after a growing wait. Messages of other topics belong
-// to other components and are left alone.
+// to other components and are left alone. The supervisor's recovery
+// reports and held build notices are delivered here too, as issue comments.
 func (c *Control) deliverOutbox(ctx context.Context) error {
 	var pending []state.OutboxMessage
 	err := c.cfg.Store.View(ctx, func(ctx context.Context, tx state.Tx) error {
@@ -169,10 +172,17 @@ func (c *Control) deliverOutbox(ctx context.Context) error {
 	}
 	var failed error
 	for _, m := range pending {
-		if m.Topic != intake.TopicComment && m.Topic != intake.TopicLabels {
+		var sendErr error
+		switch m.Topic {
+		case intake.TopicComment, intake.TopicLabels:
+			sendErr = intake.Deliver(ctx, c.cfg.GitHub, m)
+		case release.TopicRecoveryReport:
+			sendErr = c.deliverRecoveryReport(ctx, m)
+		case handoff.TopicBuildHeld:
+			sendErr = c.deliverBuildHeld(ctx, m)
+		default:
 			continue
 		}
-		sendErr := intake.Deliver(ctx, c.cfg.GitHub, m)
 		now := c.cfg.Clock.Now()
 		err := c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 			if sendErr == nil {

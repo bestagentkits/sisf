@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/bestagentkits/sisf/internal/intake/report"
 	"github.com/bestagentkits/sisf/ui"
 )
 
@@ -21,15 +22,19 @@ const webhookPath = "/webhooks/github"
 // PublicPaths are the paths of the control zone that outside traffic may
 // reach through the edge. Everything else the control zone serves is for
 // the Owner on the factory's own network. The caller owns the slice.
-func PublicPaths() []string { return []string{webhookPath} }
+func PublicPaths() []string { return []string{webhookPath, report.Path} }
 
-// routes builds the route table. Only /healthz, the webhook route and the
-// static assets are open; the webhook route proves itself with its signature.
+// routes builds the route table. Only /healthz, the webhook route, the
+// report route and the static assets are open; the webhook route proves
+// itself with its signature and the report route is rate limited.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.Handle(webhookPath, s.webhook)
+	if s.report != nil {
+		mux.Handle(report.Path, s.report)
+	}
 	mux.Handle("GET /static/", ui.StaticHandler())
 
 	mux.HandleFunc("GET /api/v1/factory/status", s.requireOwner(s.apiFactoryStatus))

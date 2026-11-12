@@ -75,3 +75,41 @@ func resolveInside(root, target, what string) (string, error) {
 	}
 	return resolved, nil
 }
+
+// TrustPath returns the real location of the file name inside the trust
+// volume trustDir. It refuses a volume that other accounts can write and a
+// name that leads out of the volume or to anything but a plain file, so a
+// record kept there cannot be reached by another zone.
+func TrustPath(trustDir, name string) (string, error) {
+	root, err := resolveTrustDir(trustDir)
+	if err != nil {
+		return "", err
+	}
+	return resolveInside(root, filepath.Join(root, name), "trust record")
+}
+
+// WriteTrustFile replaces the file at path, a location TrustPath returned.
+// The new content is written beside the old one and renamed over it, so a
+// crash leaves either the old file or the new one, never a partial file.
+// The file is readable and writable by its owner only.
+func WriteTrustFile(path string, data []byte) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), ".trust-*.tmp")
+	if err != nil {
+		return newError(core.CodeUnavailable, "the trust volume cannot be written").WithCause(err)
+	}
+	_, err = temp.Write(data)
+	if err == nil {
+		err = temp.Sync()
+	}
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(temp.Name(), path)
+	}
+	if err != nil {
+		_ = os.Remove(temp.Name()) // best effort: the write already failed and is reported
+		return newError(core.CodeUnavailable, "trust record %s cannot be written", path).WithCause(err)
+	}
+	return nil
+}

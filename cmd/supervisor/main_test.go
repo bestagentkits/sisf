@@ -76,6 +76,9 @@ type install struct {
 	socket string
 	pinned core.Digest
 	env    map[string]string
+	// rootPrivate is the PEM of the root private key, for a test of the
+	// local native profile, where the supervisor issues its own keys.
+	rootPrivate string
 }
 
 // lookupEnv is the environment the supervisor of this installation sees.
@@ -119,8 +122,12 @@ func newInstall(t *testing.T, pinned core.Digest) *install {
 		t.Fatalf("create socket directory: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	encoded, err := signing.EncodePrivateKey(priv)
+	if err != nil {
+		t.Fatalf("EncodePrivateKey: %v", err)
+	}
 	return &install{t: t, dir: dir, socket: filepath.Join(socketDir, "admin.sock"), pinned: pinned,
-		env: map[string]string{rootKeyVariable: signing.EncodePublicKey(pub)}}
+		env: map[string]string{rootKeyVariable: signing.EncodePublicKey(pub)}, rootPrivate: string(encoded)}
 }
 
 // runArgs is the command line that starts this installation's supervisor.

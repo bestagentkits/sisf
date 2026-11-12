@@ -24,6 +24,17 @@ type Options struct {
 	LookupEnv func(string) (string, bool)
 	// Measure returns the digest of the running supervisor.
 	Measure Measure
+	// EmergencyStop, when set, is served on EmergencyStopPath of the admin
+	// socket. Without it the socket answers status only.
+	EmergencyStop EmergencyStopper
+	// FreezeStatus, when set, answers GET on EmergencyStopPath.
+	FreezeStatus FreezeStatusReader
+	// Rollback, when set, is served on RollbackPath: an Owner-approved
+	// rollback to the last known good release.
+	Rollback Rollbacker
+	// HeldBuilds, when set, adds the held candidate builds to every status
+	// answer.
+	HeldBuilds HeldBuildsReader
 }
 
 // Supervisor is a supervisor that passed its startup checks. There is no
@@ -109,7 +120,7 @@ func Start(ctx context.Context, cfg Config, opts Options) (*Supervisor, error) {
 		listener: listener,
 	}
 	sup.server = &http.Server{
-		Handler:           newAdminHandler(sup.Status),
+		Handler:           newAdminMux(sup.Status, opts),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

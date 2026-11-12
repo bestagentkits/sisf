@@ -7,6 +7,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -61,7 +62,13 @@ const (
 // eventually polls cond until it holds or waitLimit passes.
 func eventually(t *testing.T, what string, cond func() (bool, string)) {
 	t.Helper()
-	deadline := time.Now().Add(waitLimit)
+	eventuallyWithin(t, waitLimit, what, cond)
+}
+
+// eventuallyWithin polls cond until it holds or limit passes.
+func eventuallyWithin(t *testing.T, limit time.Duration, what string, cond func() (bool, string)) {
+	t.Helper()
+	deadline := time.Now().Add(limit)
 	last := ""
 	for time.Now().Before(deadline) {
 		ok, detail := cond()
@@ -85,7 +92,7 @@ func moduleRoot(t *testing.T) string {
 }
 
 // foundation is the policy commit: the repository's foundation files with
-// the install's own manifest.
+// the install's own manifest, and the sources the release scenarios patch.
 func foundation(t *testing.T, manifest []byte) map[string]string {
 	t.Helper()
 	files := map[string]string{".sisf/factory.yaml": string(manifest)}
@@ -96,6 +103,9 @@ func foundation(t *testing.T, manifest []byte) map[string]string {
 		}
 		files[path] = string(raw)
 	}
+	// Every scenario commits the same tree, so the policy approved first on
+	// an install stays the one in force for every later scenario.
+	maps.Copy(files, seedFiles)
 	return files
 }
 

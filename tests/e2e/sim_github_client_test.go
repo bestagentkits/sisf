@@ -71,13 +71,15 @@ func (s simGitHub) must(t *testing.T, want int, method, path, actor string, body
 	return out
 }
 
-// commit stores files as one commit of the repository and returns its SHA.
+// commit stores files as one commit of the repository, points its main
+// branch at it, as a push to main does, and returns its SHA.
 func (s simGitHub) commit(t *testing.T, files map[string]string) string {
 	t.Helper()
 	var made struct{ SHA string }
 	if err := json.Unmarshal(s.must(t, http.StatusCreated, "POST", "/_sim/commits", "", map[string]any{"repo": s.repo, "files": files}), &made); err != nil {
 		t.Fatal(err)
 	}
+	s.must(t, http.StatusOK, "PATCH", "/repos/"+s.repo+"/git/refs/heads/main", "", map[string]any{"sha": made.SHA, "force": true})
 	return made.SHA
 }
 
@@ -147,4 +149,14 @@ func (s simGitHub) redeliverAll(t *testing.T, ds []delivery) {
 			t.Fatalf("redeliver %d answered %d: %s", d.ID, status, out)
 		}
 	}
+}
+
+// issueState is the state GitHub shows for issue number: open or closed.
+func (s simGitHub) issueState(t *testing.T, number int) string {
+	t.Helper()
+	var issue struct{ State string }
+	if err := json.Unmarshal(s.must(t, http.StatusOK, "GET", fmt.Sprintf("/repos/%s/issues/%d", s.repo, number), "", nil), &issue); err != nil {
+		t.Fatal(err)
+	}
+	return issue.State
 }

@@ -31,6 +31,9 @@ func (in *Installer) checkManifest(c *collector, m *manifest.Manifest) {
 	if len(unbuiltUnits) > 0 {
 		c.warn("artifacts", "not built yet, with placeholder digests: %s; a release must build them before tasks can run", strings.Join(unbuiltUnits, ", "))
 	}
+	if m.TrustedCodeOnly {
+		c.warn("trust model", "trusted_code_only: agents run as local processes of your user, unconfined and able to read the factory's processes and their environment; run only code and agents you trust here. With the dispatcher's --agent-home or the supervisor's --qa-home an agent also runs with that home, such as your own, and can read and change everything in it. A launcher named by --agent-binary or --qa-agent-binary is trusted on your word to run the agent in a sandbox; nothing checks that it does")
+	}
 }
 
 // checkRelease verifies the signed release manifest against the install's
@@ -115,6 +118,5 @@ func (in *Installer) checkCompose(c *collector) {
 		}
 		return
 	}
-	c.ok("compose isolation", "pinned images, loopback ports, no Docker socket or API for any service, one credential set per zone")
-	c.warn("container sandbox", "not available in this release: no service has Docker access, so agent runs cannot be isolated in containers; the sandbox network is declared but unused")
+	c.ok("compose isolation", "pinned images, loopback ports, the Docker socket for the two filters only, one credential set per zone")
 }

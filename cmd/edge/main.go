@@ -5,9 +5,18 @@
 //	edge --listen :7460 --upstream http://app:7461 \
 //	     --route /webhooks/github=http://control:7463
 //
-// It listens on the loopback address 127.0.0.1:7460 unless told otherwise,
-// and any other address needs --allow-non-loopback, because the program has
-// no TLS and no access control of its own.
+// The default upstream is the stable revision, labelled by --revision. A
+// canary is added and removed through the admin listener (--admin-listen,
+// guarded by the token in EDGE_ADMIN_TOKEN), which also serves the
+// per-revision counters a release monitor reads.
+//
+// The egress proxy of the agent sandbox listens next to it on
+// --egress-listen (default 127.0.0.1:7466, empty turns it off) with the
+// default allowlist plus the hosts of each --egress-provider.
+//
+// Every listener is on loopback unless told otherwise, and any other
+// address needs --allow-non-loopback, because the program has no TLS and
+// no access control of its own beyond the admin token.
 //
 // Exit status: 0 after a clean shutdown, 1 when the proxy fails, 2 when it
 // was invoked wrongly.
@@ -19,7 +28,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/netip"
 	"os"
@@ -27,7 +35,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/observe"
 	"github.com/bestagentkits/sisf/internal/edge"
+	"github.com/bestagentkits/sisf/pkg/core"
 )
 
 // Exit statuses of the program.
@@ -37,8 +47,15 @@ const (
 	exitUsage   = 2
 )
 
-// defaultListen is the edge port of the fixed port table, on loopback.
-const defaultListen = "127.0.0.1:7460"
+// Listen addresses of the fixed port table, on loopback.
+const (
+	defaultListen       = "127.0.0.1:7460"
+	defaultEgressListen = "127.0.0.1:7466"
+)
+
+// adminTokenEnv names the variable that carries the admin bearer token, so
+// the token never appears in a process listing.
+const adminTokenEnv = "EDGE_ADMIN_TOKEN"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -60,18 +77,28 @@ func (r *routeFlags) Set(spec string) error {
 	return nil
 }
 
-// run parses the command line, builds the proxy and serves until ctx ends.
+// listFlags collects a repeated string flag.
+type listFlags []string
+
+func (l *listFlags) String() string     { return strings.Join(*l, ",") }
+func (l *listFlags) Set(v string) error { *l = append(*l, v); return nil }
+
+// run parses the command line, builds the listeners and serves until ctx ends.
 func run(ctx context.Context, args []string, stderr io.Writer) int {
 	var (
-		listen, upstream string
-		allowPublic      bool
-		routes           routeFlags
+		opts     options
+		routes   routeFlags
+		upstream string
 	)
 	flags := flag.NewFlagSet("edge", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.StringVar(&listen, "listen", defaultListen, "address to listen on")
-	flags.StringVar(&upstream, "upstream", "", "default upstream, http://host:port (required)")
-	flags.BoolVar(&allowPublic, "allow-non-loopback", false, "allow a listen address other hosts can reach")
+	flags.StringVar(&opts.listen, "listen", defaultListen, "address to listen on")
+	flags.StringVar(&upstream, "upstream", "", "default upstream, the stable revision, http://host:port (required)")
+	flags.StringVar(&opts.revision, "revision", "stable", "label of the stable revision on responses and counters")
+	flags.StringVar(&opts.adminListen, "admin-listen", "", "address of the admin listener for the traffic split and counters; off when empty")
+	flags.StringVar(&opts.egressListen, "egress-listen", defaultEgressListen, "address of the egress proxy; off when empty")
+	flags.Var(&opts.providers, "egress-provider", "model provider whose API hosts the egress allowlist adds, repeatable")
+	flags.BoolVar(&opts.allowPublic, "allow-non-loopback", false, "allow a listen address other hosts can reach")
 	flags.Var(&routes, "route", "/prefix=http://host:port, repeatable")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -90,21 +117,24 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	if err != nil {
 		return usage("--upstream: %v", err)
 	}
-	if !allowPublic && !loopbackAddr(listen) {
-		return usage("--listen %q is reachable from other hosts; pass --allow-non-loopback to serve it", listen)
-	}
-	log := slog.New(slog.NewTextHandler(stderr, nil))
-	handler, err := edge.New(edge.Config{Default: def, Routes: routes, Logger: log})
+	opts.stable, opts.routes, opts.adminToken = edge.Target{Revision: opts.revision, URL: def.String()}, routes, os.Getenv(adminTokenEnv)
+	proc, err := observe.Start(stderr, os.Getenv, core.SystemClock{})
 	if err != nil {
-		return usage("%v", err)
-	}
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", listen)
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "edge: cannot listen on %s: %v\n", listen, err)
+		_, _ = fmt.Fprintf(stderr, "edge: %v\n", err)
 		return exitFailure
 	}
-	log.Info("edge serving", "listen", ln.Addr().String(), "routes", len(routes))
-	if err := edge.Serve(ctx, ln, handler); err != nil {
+	defer func() { _ = proc.Shutdown(context.WithoutCancel(ctx)) }()
+	log := proc.Log
+	srv, err := newServers(ctx, opts, log)
+	if err != nil {
+		var u usageError
+		if errors.As(err, &u) {
+			return usage("%v", err)
+		}
+		_, _ = fmt.Fprintf(stderr, "edge: %v\n", err)
+		return exitFailure
+	}
+	if err := srv.serve(ctx, log); err != nil {
 		_, _ = fmt.Fprintf(stderr, "edge: %v\n", err)
 		return exitFailure
 	}

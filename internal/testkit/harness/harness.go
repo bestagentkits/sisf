@@ -21,19 +21,27 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/bestagentkits/sisf/adapters/agent/fake"
+	"github.com/bestagentkits/sisf/cmd/factoryd/lifecycle"
 	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
+	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/internal/install"
 	"github.com/bestagentkits/sisf/internal/policy"
+	"github.com/bestagentkits/sisf/internal/qa/agentjudge"
+	"github.com/bestagentkits/sisf/internal/supervisor/killswitch"
 	"github.com/bestagentkits/sisf/internal/testkit/fakegithub"
+	"github.com/bestagentkits/sisf/pkg/agent"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/manifest"
+	"github.com/bestagentkits/sisf/pkg/qa"
 	"github.com/bestagentkits/sisf/pkg/state"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
@@ -60,6 +68,22 @@ type Options struct {
 	Unconfirmed bool
 	// NoPolicy leaves the policy unapproved, so intake holds.
 	NoPolicy bool
+	// FactoryID gives the factory its own ID; with it the factory serves
+	// its own repository, "<factory id>/hello-app".
+	FactoryID core.FactoryID
+	// Upstream is a fake GitHub shared with other factories, where the
+	// factory's repository is a fork of the upstream one. A factory gets a
+	// fake GitHub of its own when it is nil.
+	Upstream *Upstream
+	// Coder, when set, is the coding agent the dispatcher runs in place of
+	// the scripted one, and CoderArtifacts where the agent zone's exporter
+	// reads its patches.
+	Coder          agent.Backend
+	CoderArtifacts lifecycle.ArtifactSource
+	// QAJudge, when set, builds the judge the supervisor's evaluator uses
+	// in place of the scripted one, from the materials the supervisor
+	// gathers of each candidate.
+	QAJudge func(materials agentjudge.MaterialsSource) (qa.Judge, error)
 }
 
 // Factory is one factory running in the test process.
@@ -74,13 +98,27 @@ type Factory struct {
 	PolicyRevision core.CommitSHA
 
 	GitHub     *fakegithub.Server
+	GitData    *fakegithub.GitData
+	host       *Upstream
 	Control    *wiring.Control
 	Agent      *fake.Backend
 	Dispatcher *dispatcher.Dispatcher
 
+	// The lifecycle after development: the agent zone's exporter, the
+	// supervisor's stages, the trust they rely on and the deployment.
+	Exporter  *lifecycle.Exporter
+	Stages    *stages.Stages
+	Trust     *Trust
+	Deploy    *Deployment
+	Freeze    *killswitch.Switch
+	Artifacts *lifecycle.MemoryArtifacts
+	probes    *probes
+	quiet     bool
+
 	ControlStore *sqlstore.Store
 	AgentStore   *sqlstore.Store
 
+	opts       Options
 	ownerToken string
 	dsn        string
 	controlSrv *httptest.Server
@@ -94,9 +132,12 @@ func New(t testing.TB, opts Options) *Factory {
 	t.Helper()
 	ctx := context.Background()
 	root := moduleRoot(t)
-	f := &Factory{t: t, Clock: sqlstoretest.NewClock(Start), ownerToken: token(t), dsn: filepath.Join(t.TempDir(), "factory.db")}
+	f := &Factory{t: t, opts: opts, Clock: sqlstoretest.NewClock(Start), ownerToken: token(t), dsn: filepath.Join(t.TempDir(), "factory.db")}
 
 	manifestBytes := read(t, root, policy.PathFactory)
+	if opts.FactoryID != "" {
+		manifestBytes = forkManifest(manifestBytes, opts.FactoryID)
+	}
 	m, err := manifest.Parse(manifestBytes)
 	if err != nil {
 		t.Fatalf("harness: the sample manifest cannot be read: %v", err)
@@ -104,7 +145,11 @@ func New(t testing.TB, opts Options) *Factory {
 	m.Extensions = map[string]any{"profile": "sim"}
 	f.Manifest, f.Repo = m, m.Repository.Owner+"/"+m.Repository.Repo
 
-	f.GitHub = fakegithub.New()
+	host := opts.Upstream
+	if host == nil {
+		host = newHost(t)
+	}
+	f.host, f.GitHub, f.GitData = host, host.GitHub, host.GitData
 	if err := f.GitHub.AddRepo(f.Repo); err != nil {
 		t.Fatal(err)
 	}
@@ -112,13 +157,17 @@ func New(t testing.TB, opts Options) *Factory {
 	for _, path := range []string{policy.PathAgents, policy.PathReview, policy.PathDecisions, policy.PathFeatures} {
 		files[path] = string(read(t, root, path))
 	}
+	for path, content := range SeedFiles {
+		files[path] = content
+	}
 	sha, err := f.GitHub.Commit(f.Repo, files)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.PolicyRevision = core.CommitSHA(sha)
-	githubSrv := httptest.NewServer(f.GitHub)
-	t.Cleanup(githubSrv.Close)
+	if err := f.GitData.SetBranch(f.Repo, "main", sha); err != nil {
+		t.Fatal(err)
+	}
 
 	bootstrap := install.BootstrapConfig{FactoryID: m.FactoryID, Dialect: sqlstore.DialectSQLite, DSN: f.dsn, Clock: f.Clock}
 	if !opts.Unconfirmed {
@@ -132,7 +181,7 @@ func New(t testing.TB, opts Options) *Factory {
 
 	// The GitHub client waits out failures on the wall clock: the harness
 	// clock moves only when the test moves it.
-	client, err := wiring.NewGitHubClient(wiring.GitHubSettings{APIURL: githubSrv.URL}, core.NewSecretValue([]byte("harness-github-token")), nil)
+	client, err := wiring.NewGitHubClient(wiring.GitHubSettings{APIURL: host.URL}, core.NewSecretValue([]byte("harness-github-token")), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,10 +189,15 @@ func New(t testing.TB, opts Options) *Factory {
 	if err != nil {
 		t.Fatal(err)
 	}
-	webhookSecret := token(t)
+	webhookSecret := host.secret
+	var upstream github.RepoRef
+	if opts.Upstream != nil {
+		owner, name, _ := strings.Cut(opts.Upstream.Repo, "/")
+		upstream = github.RepoRef{Owner: owner, Name: name}
+	}
 	f.Control, err = wiring.NewControl(wiring.ControlConfig{
 		Manifest: m, Store: f.ControlStore, GitHub: client, OwnerToken: core.NewSecretValue([]byte(f.ownerToken)),
-		WebhookSecret: core.NewSecretValue([]byte(webhookSecret)), ApprovalKey: key, Clock: f.Clock,
+		WebhookSecret: core.NewSecretValue([]byte(webhookSecret)), ApprovalKey: key, Clock: f.Clock, Upstream: upstream,
 		Probes: map[core.Zone]control.HealthProbe{
 			core.ZoneApplication: control.HealthProbeFunc(func(context.Context) error { return nil }),
 			core.ZoneAgent:       control.HealthProbeFunc(f.dispatcherAlive),
@@ -154,18 +208,27 @@ func New(t testing.TB, opts Options) *Factory {
 	}
 	f.controlSrv = httptest.NewServer(f.Control.Server.Handler())
 	t.Cleanup(f.controlSrv.Close)
-	f.GitHub.SetWebhook(f.controlSrv.URL+"/webhooks/github", webhookSecret)
+	host.subscribe(f.controlSrv.URL + "/webhooks/github")
 
 	if !opts.NoPolicy {
 		if _, err := f.Control.ApproveBaseline(ctx, f.PolicyRevision, ""); err != nil {
 			t.Fatalf("harness: approve the policy: %v", err)
 		}
 	}
-	if f.Agent, err = fake.New(fake.Config{Clock: f.Clock}); err != nil {
+	if f.Agent, err = fake.New(fake.Config{Clock: f.Clock, Roles: []agent.Role{agent.RoleCoder, agent.RoleQA}}); err != nil {
 		t.Fatal(err)
 	}
 	f.Dispatcher = f.newDispatcher(f.AgentStore)
+	f.startLifecycle(client)
 	return f
+}
+
+// SeedFiles are the application and dashboard sources the fake repository
+// starts with, next to the foundation files: what a scripted patch changes.
+var SeedFiles = map[string]string{
+	"app/main.go":                "package main\n\nfunc main() { println(\"hello\") }\n",
+	"ui/dashboard/status.html":   "<h1>Factory status</h1>\n<p>All systems nominal.</p>\n",
+	"internal/qa/thresholds.txt": "pass_score=85\n",
 }
 
 // moduleRoot is the repository root, found from this file's location so a
@@ -211,7 +274,7 @@ func (f *Factory) openStore(zone core.Zone) *sqlstore.Store {
 func (f *Factory) newDispatcher(store state.Store) *dispatcher.Dispatcher {
 	f.t.Helper()
 	d, err := wiring.NewDispatcher(wiring.DispatcherConfig{
-		Manifest: f.Manifest, Store: store, Agent: f.Agent, Clock: f.Clock,
+		Manifest: f.Manifest, Store: store, Agent: f.coder(), Clock: f.Clock,
 		Owner:        fmt.Sprintf("dispatcher@harness#%d", f.dispatchers.Add(1)),
 		PollInterval: PollInterval, LeaseTTL: LeaseTTL,
 		NewRunID: func() core.RunID { return core.RunID(fmt.Sprintf("run-%04d", f.runs.Add(1))) },
@@ -220,6 +283,14 @@ func (f *Factory) newDispatcher(store state.Store) *dispatcher.Dispatcher {
 		f.t.Fatalf("harness: build the dispatcher: %v", err)
 	}
 	return d
+}
+
+// coder is the coding agent the dispatcher runs.
+func (f *Factory) coder() agent.Backend {
+	if f.opts.Coder != nil {
+		return f.opts.Coder
+	}
+	return f.Agent
 }
 
 // RestartDispatcher replaces the dispatcher by a new one under a new name,

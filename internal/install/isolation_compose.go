@@ -38,7 +38,11 @@ func CheckCompose(l Layout, data []byte) ([]Violation, error) {
 	if err := dec.Decode(&file); err != nil {
 		return nil, invalidf("the Compose file has a key this deployment does not write, or a value of another shape: %v", err)
 	}
-	c := &composeChecker{l: l, file: file}
+	aliases, err := networkAliases(data)
+	if err != nil {
+		return nil, err
+	}
+	c := &composeChecker{l: l, file: file, aliases: aliases}
 	c.names()
 	c.hostMaterial()
 	for _, name := range sortedKeys(file.Services) {
@@ -52,7 +56,9 @@ func CheckCompose(l Layout, data []byte) ([]Violation, error) {
 type composeChecker struct {
 	l    Layout
 	file composeFile
-	out  []Violation
+	// aliases are the network aliases of each service, by network.
+	aliases map[string]map[string][]string
+	out     []Violation
 }
 
 func (c *composeChecker) add(rule, service, format string, args ...any) {
@@ -96,6 +102,7 @@ func (c *composeChecker) service(name string, s composeService) {
 	c.networks(name, s, rule)
 	c.ports(name, s, rule)
 	c.mounts(name, s, rule)
+	c.reach(name, s, rule)
 }
 
 // hardening keeps each service confined: unprivileged, without added
@@ -154,8 +161,11 @@ func (c *composeChecker) secrets(name string, s composeService, rule serviceRule
 }
 
 func (c *composeChecker) networks(name string, s composeService, rule serviceRule) {
-	if s.NetworkMode != "" && (name != "sim-github" || s.NetworkMode != "service:control") {
-		c.add(ruleNetwork, name, "network_mode %q gives it a network outside the four segments", s.NetworkMode)
+	if s.NetworkMode != "" && s.NetworkMode != rule.networkMode {
+		c.add(ruleNetwork, name, "network_mode %q gives it a network outside its segments", s.NetworkMode)
+	}
+	if rule.networkMode != "" && len(s.Networks) > 0 {
+		c.add(ruleNetwork, name, "is attached to networks %v besides the namespace it shares", []string(s.Networks))
 	}
 	for _, n := range s.Networks {
 		if !slices.Contains(rule.networks, n) {
@@ -167,10 +177,14 @@ func (c *composeChecker) networks(name string, s composeService, rule serviceRul
 	}
 }
 
-// sandbox requires the sandbox to be internal and to hold the edge alone.
+// sandbox requires the sandbox to be internal and to hold the edge alone,
+// and the docker network, where the filters serve, to be internal.
 func (c *composeChecker) sandbox() {
 	if sb, ok := c.file.Networks["sandbox"]; !ok || !sb.Internal {
 		c.add(ruleNetwork, "", "the sandbox network must be internal, so runners have no route out except through the edge")
+	}
+	if d, ok := c.file.Networks[dockerNetwork]; !ok || !d.Internal {
+		c.add(ruleNetwork, "", "the docker network must be internal: the Docker request filters serve on it and have no other way out")
 	}
 	for _, name := range sortedKeys(c.file.Services) {
 		if slices.Contains(c.file.Services[name].Networks, "sandbox") && name != "edge" {
@@ -215,8 +229,24 @@ func (c *composeChecker) hostMaterial() {
 	}
 }
 
+// hostFileAllowed reports whether a service may mount the host path src:
+// the manifest and the release manifest, the scripted agent's directory for
+// the dispatcher, and the Docker socket for the filters (dockerAccess
+// checks how).
+func (c *composeChecker) hostFileAllowed(src string, rule serviceRule) bool {
+	switch {
+	case src == c.l.Config() || src == c.l.ReleaseManifest():
+		return true
+	case src == c.l.SimAgentDir():
+		return rule.simAgent
+	case src == dockerSocket:
+		return rule.socket
+	}
+	return false
+}
+
 // mounts allows named volumes of the service's own, and a few read-only host
-// files. No service has a Docker socket (dockerAccess); the secrets
+// files. Only the filters have a Docker socket (dockerAccess); the secrets
 // directory belongs to nobody, and no service takes another's mounts or is
 // handed configs or secrets.
 func (c *composeChecker) mounts(name string, s composeService, rule serviceRule) {
@@ -232,7 +262,7 @@ func (c *composeChecker) mounts(name string, s composeService, rule serviceRule)
 		case strings.HasPrefix(src, "/"):
 			if strings.HasPrefix(src, c.l.Dir+"/secrets") {
 				c.add(ruleSecretMount, name, "mounts the secrets directory")
-			} else if (src != c.l.Config() && src != c.l.ReleaseManifest()) || !strings.HasSuffix(rest, ":ro") {
+			} else if !c.hostFileAllowed(src, rule) || !strings.HasSuffix(rest, ":ro") {
 				c.add(ruleVolume, name, "mounts host path %s; only the manifest and the release manifest, read-only, are allowed", src)
 			}
 		default:
@@ -248,10 +278,11 @@ func (c *composeChecker) mounts(name string, s composeService, rule serviceRule)
 // the privilege that makes a container the host. No unit of this release
 // creates containers, so none may be able to.
 func (c *composeChecker) dockerAccess(name string, s composeService) {
+	filter := serviceRules[name].socket
 	for _, m := range s.Volumes {
 		for _, sock := range dockerSocketNames {
-			if strings.Contains(m, sock) {
-				c.add(ruleSocket, name, "mounts %q; no service has a Docker socket", m)
+			if strings.Contains(m, sock) && (!filter || m != socketMount) {
+				c.add(ruleSocket, name, "mounts %q; only the Docker request filters mount the Docker socket, read-only", m)
 			}
 		}
 	}

@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"github.com/bestagentkits/sisf/internal/signing"
 	"os"
 	"path/filepath"
 
@@ -18,6 +19,9 @@ type built struct {
 	units  map[manifest.UnitName]core.Digest
 	// supervisorExe is what the supervisor's startup self-check compares to.
 	supervisorExe core.Digest
+	// release is the manifest signed with the root key at this up; its
+	// record is the supervisor's last known good release.
+	release signing.SignedManifest
 }
 
 // program is one executable of a Standalone install.

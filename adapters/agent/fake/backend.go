@@ -13,6 +13,7 @@ import (
 
 	"github.com/bestagentkits/sisf/pkg/agent"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/qa"
 )
 
 // Config builds a backend. Every field is optional.
@@ -41,6 +42,8 @@ type Backend struct {
 	// byKey maps a task idempotency key to the run it started.
 	byKey   map[string]string
 	started []agent.Task
+	// judged records every judgment asked of the evaluator role.
+	judged []qa.JudgeRequest
 }
 
 type scriptKey struct {
@@ -228,13 +231,17 @@ func (b *Backend) CollectArtifacts(_ context.Context, ref agent.RunRef) ([]agent
 	if status.Phase != agent.PhaseSucceeded {
 		return nil, core.NewError(core.CodeConflict, "the run has not succeeded, so it left no patch")
 	}
-	sum := sha256.Sum256([]byte(r.step.Diff))
+	name, kind, content := "patch.diff", agent.ArtifactPatch, []byte(r.step.Diff)
+	if r.step.Outcome == OutcomeScore {
+		name, kind, content = scoreReportName, agent.ArtifactTestReport, scoreReport(r.step.Points)
+	}
+	sum := sha256.Sum256(content)
 	return []agent.Artifact{{
-		Name:   "patch.diff",
-		Kind:   agent.ArtifactPatch,
+		Name:   name,
+		Kind:   kind,
 		Digest: core.Digest("sha256:" + hex.EncodeToString(sum[:])),
-		URI:    "fake://" + b.name + "/" + r.ref.ID + "/patch.diff",
-		Size:   int64(len(r.step.Diff)),
+		URI:    "fake://" + b.name + "/" + r.ref.ID + "/" + name,
+		Size:   int64(len(content)),
 	}}, nil
 }
 
@@ -262,7 +269,7 @@ func (r *run) status(now time.Time) (agent.Status, error) {
 	}
 	finishedAt := r.startedAt.Add(r.step.After)
 	switch r.step.Outcome {
-	case OutcomePatch:
+	case OutcomePatch, OutcomeScore:
 		return agent.Status{Phase: agent.PhaseSucceeded, UpdatedAt: finishedAt}, nil
 	case OutcomeFail:
 		return agent.Status{Phase: agent.PhaseFailed, Detail: r.step.Detail, UpdatedAt: finishedAt}, nil

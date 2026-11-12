@@ -3,6 +3,7 @@ package wiring
 import (
 	"context"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/intake"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
@@ -20,10 +21,18 @@ import (
 // the retry surface is what files the new request, and nothing is filed
 // unless someone asked for a retry.
 //
+// An issue in Developing whose candidate build the supervisor held after
+// repeated outages is not Blocked: the lifecycle has no step from
+// Developing to Blocked. The Owner's retry of such an issue resumes the
+// build instead, and the supervisor tries it again at once.
+//
 // Any other block is judged by the lifecycle's retry guard, with intake's
 // rule in front of it; no other cause of a block has a retry rule yet, so
 // such a retry is refused.
 func (c *Control) Retry(ctx context.Context, issue core.IssueRef, actor core.Actor) (intake.Result, error) {
+	if result, held, err := c.resumeHeldBuild(ctx, issue, actor); held {
+		return result, err
+	}
 	decision := core.AuthzDecision{Effect: core.EffectAllow, Reason: "the Owner asked for the retry"}
 	if !actor.HasRole(core.RoleOwner) {
 		decision = core.AuthzDecision{Effect: core.EffectDeny, Reason: "only the Owner retries a blocked issue"}
@@ -75,4 +84,27 @@ func (c *Control) guardedRetry(ctx context.Context, issue core.IssueRef, actor c
 		_, err := tx.Transition(ctx, step)
 		return err
 	})
+}
+
+// resumeHeldBuild resumes the held build of issue's current attempt on the
+// Owner's retry. held is false when the issue has no held build, and the
+// retry then goes on as a retry of a block.
+func (c *Control) resumeHeldBuild(ctx context.Context, issue core.IssueRef, actor core.Actor) (result intake.Result, held bool, err error) {
+	err = c.cfg.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+		record, err := tx.GetRecord(ctx, issue)
+		if err != nil || record.State != core.StateDeveloping {
+			return nil
+		}
+		outage, _, err := handoff.ReadBuildOutage(ctx, tx, record.RunID, record.Attempt)
+		if err != nil || !outage.Held {
+			return nil
+		}
+		held = true
+		result = intake.Result{Issue: issue, State: record.State}
+		if !actor.HasRole(core.RoleOwner) {
+			return core.NewError(core.CodePermissionDenied, "only the Owner resumes a held build")
+		}
+		return handoff.ResumeHeldBuild(ctx, tx, record.RunID, record.Attempt, actor.ID, c.cfg.Clock.Now().UTC())
+	})
+	return result, held, err
 }

@@ -1,0 +1,61 @@
+package main
+
+import (
+	"log/slog"
+	"path/filepath"
+	"regexp"
+
+	"github.com/bestagentkits/sisf/adapters/deploy/compose"
+	"github.com/bestagentkits/sisf/adapters/deploy/local"
+	"github.com/bestagentkits/sisf/internal/edge"
+	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/deploy"
+)
+
+// localAddrEnv tells a locally started unit where to listen.
+const localAddrEnv = "SISF_LISTEN"
+
+// imageRefPattern is the shape of an image reference a local program is
+// given as its only argument: no option, no shell syntax.
+var imageRefPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@+-]{0,254}$`)
+
+// edgeAdmin connects to the edge's admin route. The token is read from the
+// environment only and is never logged or put in an error.
+func (l *lifecycleFlags) edgeAdmin(lookupEnv func(string) (string, bool)) (*edge.AdminClient, error) {
+	if l.edgeAdminURL == "" {
+		return nil, core.NewError(core.CodeInvalidArgument, "releases need --edge-admin-url")
+	}
+	token, _ := lookupEnv(envEdgeAdminToken)
+	if token == "" {
+		return nil, core.NewError(core.CodeNotFound, envEdgeAdminToken+" is not set")
+	}
+	return edge.NewAdminClient(l.edgeAdminURL, token, nil)
+}
+
+// deployBackend builds the configured deploy backend over the edge.
+func (l *lifecycleFlags) deployBackend(factory core.FactoryID, ctl edge.Controller, clock core.Clock, log *slog.Logger) (deploy.Backend, error) {
+	switch l.deploy {
+	case "local":
+		if l.localProgram == "" || !filepath.IsAbs(l.localProgram) {
+			return nil, core.NewError(core.CodeInvalidArgument, "deploy local needs an absolute --deploy-local-program")
+		}
+		program := l.localProgram
+		starter := local.ExecStarter{
+			AddrEnv: localAddrEnv, Clock: clock,
+			Command: func(image string) (string, []string, error) {
+				if !imageRefPattern.MatchString(image) {
+					return "", nil, core.NewError(core.CodeInvalidArgument, "the release's image reference is not one a local program accepts")
+				}
+				return program, []string{image}, nil
+			},
+			OnLog: func(line string) { log.Info("unit output", "line", line) },
+		}
+		return local.New(local.Config{Factory: factory, Starter: starter, Edge: ctl, Clock: clock, Logger: log})
+	case "compose":
+		return compose.New(compose.Config{
+			Endpoint: l.deployEndpoint, Factory: factory, Network: l.deployNetwork, AppPort: l.appPort,
+			Edge: ctl, Clock: clock, Logger: log,
+		})
+	}
+	return nil, core.NewError(core.CodeInvalidArgument, "--deploy must be local or compose")
+}

@@ -48,6 +48,8 @@ type Deps struct {
 	// Logger receives operational messages and never a token or a payload.
 	// Nil discards them.
 	Logger *slog.Logger
+	// Report, when set, serves the public bug report route.
+	Report *ReportRoute
 }
 
 // Server is the control HTTP server. Handler gives the routes for tests and
@@ -59,6 +61,7 @@ type Server struct {
 	sessions *sessions
 	pages    *ui.Pages
 	webhook  *github.Receiver
+	report   http.Handler
 	log      *slog.Logger
 	handler  http.Handler
 }
@@ -105,6 +108,11 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	s := &Server{
 		cfg: cfg, svc: svc, token: token, sessions: newSessions(deps.Clock, cfg.SessionTTL),
 		pages: pages, webhook: receiver, log: deps.Logger,
+	}
+	if deps.Report != nil {
+		if s.report, err = deps.Report.handler(deps.Clock); err != nil {
+			return nil, err
+		}
 	}
 	s.handler = s.routes()
 	return s, nil

@@ -30,7 +30,7 @@ func (in *Installer) release(ctx context.Context, m *manifest.Manifest) (built, 
 	if err := conformance.Check(m).Err(); err != nil {
 		return built{}, err
 	}
-	if err := in.signRelease(ctx, m, b); err != nil {
+	if b.release, err = in.signRelease(ctx, m, b); err != nil {
 		return built{}, err
 	}
 	return b, writeManifest(in.Layout.Config(), m)
@@ -51,18 +51,19 @@ func applyPins(m *manifest.Manifest, b built) {
 }
 
 // signRelease signs the release manifest with the root key and writes it.
-func (in *Installer) signRelease(ctx context.Context, m *manifest.Manifest, b built) error {
+func (in *Installer) signRelease(ctx context.Context, m *manifest.Manifest, b built) (signing.SignedManifest, error) {
 	pem, err := os.ReadFile(in.Layout.Secret(areaControl, "root-key.pem"))
 	if err != nil {
-		return unavailablef(err, "the root key cannot be read")
+		return signing.SignedManifest{}, unavailablef(err, "the root key cannot be read")
 	}
 	priv, err := signing.ParsePrivateKey(pem)
+	clear(pem)
 	if err != nil {
-		return err
+		return signing.SignedManifest{}, err
 	}
 	signer, err := signing.NewSigner(priv)
 	if err != nil {
-		return err
+		return signing.SignedManifest{}, err
 	}
 	pins := map[manifest.UnitName]core.Digest{}
 	for name := range b.units {
@@ -74,10 +75,10 @@ func (in *Installer) signRelease(ctx context.Context, m *manifest.Manifest, b bu
 	}
 	signed, err := signing.SignManifest(ctx, signer, rm)
 	if err != nil {
-		return err
+		return signing.SignedManifest{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(in.Layout.ReleaseManifest()), 0o755); err != nil {
-		return unavailablef(err, "cannot create the release directory")
+		return signing.SignedManifest{}, unavailablef(err, "cannot create the release directory")
 	}
-	return signing.WriteSignedManifest(in.Layout.ReleaseManifest(), signed)
+	return signed, signing.WriteSignedManifest(in.Layout.ReleaseManifest(), signed)
 }
