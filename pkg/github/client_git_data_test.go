@@ -1,10 +1,12 @@
 package github_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/bestagentkits/sisf/internal/testkit/fakegithub"
@@ -218,4 +220,89 @@ func TestRenamesBelowTheLimitAreNotTakenForAListingCutShort(t *testing.T) {
 	if err != nil || len(paths) != 2*len(before) {
 		t.Fatalf("ChangedPaths listed %d paths, %v; want %d and no limit", len(paths), err, 2*len(before))
 	}
+}
+
+// GitHub's three-dot comparison lists nothing exactly when base contains
+// head. A squash merge does not contain the commit it squashed, so a base
+// on main after it lists that commit's change; a commit that merges the
+// squashed commit into main, with it as a parent, contains it and lists
+// nothing.
+func TestOnlyACommitThatMergesACommitContainsIt(t *testing.T) {
+	t.Parallel()
+	fake := fakegithub.New(fakegithub.WithToken(testToken))
+	if err := fake.AddRepo(testRepo); err != nil {
+		t.Fatal(err)
+	}
+	data := fakegithub.NewGitData(fake)
+	srv := httptest.NewServer(data)
+	t.Cleanup(srv.Close)
+	client, err := github.NewRESTClient(github.ClientConfig{BaseURL: srv.URL,
+		Token: github.StaticToken(core.NewSecretValue([]byte(testToken))), Clock: newFakeClock()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := fake.Commit(testRepo, map[string]string{"a.txt": "1\n", "b.txt": "1\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := func(branch string, base core.CommitSHA, files map[string][]byte) core.CommitSHA {
+		t.Helper()
+		sha, err := client.CommitToBranch(bg, repoRef, github.BranchCommit{Branch: branch, Base: base, Message: branch, Files: files})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sha
+	}
+	released := commit("sisf/f/run-1", core.CommitSHA(root), map[string][]byte{"a.txt": []byte("2\n")})
+	moved := commit("sisf/f/main", core.CommitSHA(root), map[string][]byte{"b.txt": []byte("2\n")})
+	squashed := commit("sisf/f/main", moved, map[string][]byte{"a.txt": []byte("2\n")})
+	if paths, err := client.ChangedPaths(bg, repoRef, squashed, released); err != nil || len(paths) == 0 {
+		t.Fatalf("the squash merge compared with the commit it squashed lists %v, %v; want its change", paths, err)
+	}
+	// The merge commit has the squash merge's tree and both commits as
+	// parents, as git merge makes it.
+	body := fmt.Sprintf(`{"message":"merge","tree":%q,"parents":[%q,%q]}`, treeOf(t, srv.URL, squashed), squashed, released)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/repos/"+testRepo+"/git/commits", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var merged struct {
+		SHA string `json:"sha"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&merged); err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("the merge commit: %d, %v", resp.StatusCode, err)
+	}
+	if paths, err := client.ChangedPaths(bg, repoRef, core.CommitSHA(merged.SHA), released); err != nil || len(paths) != 0 {
+		t.Fatalf("a commit that merges the released commit compared with it lists %v, %v; want nothing", paths, err)
+	}
+}
+
+// treeOf is the tree of commit as the fake's git data API gives it.
+func treeOf(t *testing.T, base string, commit core.CommitSHA) string {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, base+"/repos/"+testRepo+"/git/commits/"+string(commit), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var c struct {
+		Tree struct {
+			SHA string `json:"sha"`
+		} `json:"tree"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&c); err != nil || c.Tree.SHA == "" {
+		t.Fatalf("the tree of %s: %v", commit, err)
+	}
+	return c.Tree.SHA
 }
