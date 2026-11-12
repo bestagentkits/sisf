@@ -131,9 +131,6 @@ func (m *memoryLedger) GetReservation(_ context.Context, id string) (Reservation
 	return r, nil
 }
 func (m *memoryLedger) AppendUsage(context.Context, Usage) error { return nil }
-func (m *memoryLedger) RunCostUnreported(context.Context, RunID) (bool, error) {
-	return false, nil
-}
 func (m *memoryLedger) BudgetTotals(context.Context, time.Time) (BudgetTotals, error) {
 	return BudgetTotals{}, nil
 }

@@ -73,9 +73,7 @@ type ReservationCloser interface {
 
 // CloseReservationOfRun ends the reservation of a run that will start no
 // more coding attempts. The usage already booked stays in the ledger. When
-// some of the run's work reported no cost, as spend says or as usage of run
-// in the ledger shows (spend may come from the agent zone's record, which
-// can leave it out), the Owner's estimate stands for
+// some of the run's work reported no cost, the Owner's estimate stands for
 // it: the part of the reserved amount the reported cost does not cover is
 // booked as an unverified estimate and the reservation is settled. Booking
 // at most the amount keeps a capped reservation from being suspended by its
@@ -98,14 +96,8 @@ func CloseReservationOfRun(ctx context.Context, gate ReservationCloser, ledger c
 	if r.Status != core.ReservationHeld && r.Status != core.ReservationSuspended {
 		return nil
 	}
-	unpriced := spend.Unpriced
-	if !unpriced {
-		if unpriced, err = ledger.RunCostUnreported(ctx, run); err != nil {
-			return err
-		}
-	}
 	estimate := r.Amount - spend.ReportedCost
-	if !unpriced || estimate <= 0 {
+	if !spend.Unpriced || estimate <= 0 {
 		return gate.Release(ctx, ledger, reservationID)
 	}
 	return gate.Settle(ctx, ledger, reservationID, core.Usage{IssueID: r.IssueID, RunID: r.RunID, Cost: estimate, Verified: false})

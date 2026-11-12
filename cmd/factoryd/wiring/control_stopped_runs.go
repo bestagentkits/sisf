@@ -203,10 +203,10 @@ func runRecordOf(ctx context.Context, tx state.Tx, record core.StateRecord) (*di
 // lifecycle record whose issue is being blocked. The reservation is the one
 // the run's claim made, derived from that run's ID, never the one the
 // dispatcher's record names: that record is the agent zone's, so it is not
-// trusted, and it may be missing or name another run. It is settled with
-// the spend the dispatcher's record of runID shows, when there is one, and
-// with none otherwise; usage of runID in the ledger without a reported cost
-// makes the run count as unpriced either way. A record naming another reservation is returned as
+// trusted, and it may be missing or name another run. Whether the run had
+// usage without a reported cost, and its reported cost, are read from the
+// dispatcher's record of runID, when there is one; without one the run
+// counts as having neither. A record naming another reservation is returned as
 // refused, and so is a missing reservation the record claims; the block
 // still goes on. Any other failure fails the block, which the next pass
 // retries.

@@ -158,33 +158,15 @@ func (t *tx) BudgetTotals(ctx context.Context, since time.Time) (core.BudgetTota
 	if err != nil {
 		return core.BudgetTotals{}, err
 	}
+	// Usage whose provider reported tokens and no cost (core.Usage.CostUnreported).
+	// The token counts are compared one by one: their sum may not fit in a
+	// BIGINT, which PostgreSQL refuses to compute.
 	if err := t.q.row(ctx, `SELECT CAST(COUNT(*) AS BIGINT) FROM usage_ledger
-		WHERE factory_id = ? AND recorded_at >= ? AND `+costUnreported,
+		WHERE factory_id = ? AND recorded_at >= ? AND verified = ? AND cost = 0 AND (input_tokens > 0 OR output_tokens > 0)`,
 		string(t.store.factory), toNanos(since), false).Scan(&totals.Unpriced); err != nil {
 		return core.BudgetTotals{}, t.store.dialect.failure("count usage without a cost", err)
 	}
 	return totals, nil
-}
-
-// costUnreported selects usage whose provider reported tokens and no cost
-// (core.Usage.CostUnreported); its one argument is false, for verified. The
-// token counts are compared one by one: their sum may not fit in a BIGINT,
-// which PostgreSQL refuses to compute.
-const costUnreported = `verified = ? AND cost = 0 AND (input_tokens > 0 OR output_tokens > 0)`
-
-// RunCostUnreported reports whether the ledger holds usage of run whose
-// provider reported tokens and no cost, whenever it was recorded.
-func (t *tx) RunCostUnreported(ctx context.Context, run core.RunID) (bool, error) {
-	if err := t.reads(tableUsage); err != nil {
-		return false, err
-	}
-	var n int64
-	if err := t.q.row(ctx, `SELECT CAST(COUNT(*) AS BIGINT) FROM usage_ledger
-		WHERE factory_id = ? AND run_id = ? AND `+costUnreported,
-		string(t.store.factory), string(run), false).Scan(&n); err != nil {
-		return false, t.store.dialect.failure("look for usage of a run without a cost", err)
-	}
-	return n > 0, nil
 }
 
 // ownFactory fills in the factory of the store when the caller left it out
