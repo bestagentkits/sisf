@@ -21,7 +21,7 @@ func TestAnInstallOnTheOperatorsLoginTakesIssuesOnlyByReconciliationAndRunsEachO
 	t.Parallel()
 	f := harness.New(t, harness.Options{OperatorToken: true})
 
-	resp, err := http.Post(f.Base()+"/webhooks/github", "application/json", http.NoBody)
+	resp, err := testClient.Post(f.Base()+"/webhooks/github", "application/json", http.NoBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestAnInstallOnTheOperatorsLoginTakesIssuesOnlyByReconciliationAndRunsEachO
 		t.Fatal(err)
 	}
 	req.Header = http.Header{"Content-Type": {"application/json"}, "Authorization": {"Bearer " + f.SignInOwner().PAT(scopes...)}}
-	resp, err = http.DefaultClient.Do(req)
+	resp, err = testClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

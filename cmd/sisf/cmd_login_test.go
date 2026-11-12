@@ -143,7 +143,7 @@ func (f *factory) approve(t *testing.T, code string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	c := &http.Client{Transport: &http.Transport{}, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	send := func(method, target, body string, header map[string]string) (*http.Response, []byte) {
 		req, err := http.NewRequest(method, target, strings.NewReader(body))
 		if err != nil {

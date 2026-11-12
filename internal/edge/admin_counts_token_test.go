@@ -49,7 +49,7 @@ func TestTheCountsTokenReadsTheCountersAndNothingElse(t *testing.T) {
 	} {
 		req, _ := http.NewRequest(c.method, srv.URL+c.path, strings.NewReader(c.body))
 		req.Header.Set("Authorization", "Bearer "+countsToken)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := testClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

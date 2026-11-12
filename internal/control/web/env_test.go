@@ -190,7 +190,7 @@ func (e *env) browser(t *testing.T) *browser {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &browser{e: e, c: &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &browser{e: e, c: &http.Client{Transport: &http.Transport{}, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
 type reply struct {

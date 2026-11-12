@@ -267,7 +267,7 @@ func TestOnlyACommitThatMergesACommitContainsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer "+testToken)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func treeOf(t *testing.T, base string, commit core.CommitSHA) string {
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer "+testToken)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

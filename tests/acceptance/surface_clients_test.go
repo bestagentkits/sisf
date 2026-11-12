@@ -135,7 +135,7 @@ type bearer struct{ token string }
 func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+b.token)
-	return http.DefaultTransport.RoundTrip(r)
+	return testClient.Transport.RoundTrip(r)
 }
 
 // on calls action through surface.
@@ -190,7 +190,7 @@ func (c *clients) rest(t *testing.T, action string, req call, header http.Header
 			t.Fatal(err)
 		}
 		r.Header = header
-		if resp, err = http.DefaultClient.Do(r); err != nil {
+		if resp, err = testClient.Do(r); err != nil {
 			t.Fatalf("REST %s: %v", action, err)
 		}
 		defer func() { _ = resp.Body.Close() }()

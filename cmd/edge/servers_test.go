@@ -53,7 +53,7 @@ func start(t *testing.T, opts options) *servers {
 func TestThePublicListenerServesTheStableWithItsRevisionLabel(t *testing.T) {
 	t.Parallel()
 	srv := start(t, baseOptions(t))
-	resp, err := http.Get("http://" + srv.publicLn.Addr().String() + "/")
+	resp, err := testClient.Get("http://" + srv.publicLn.Addr().String() + "/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestTheAdminSurfaceLivesOnItsOwnListenerOnly(t *testing.T) {
 	t.Parallel()
 	srv := start(t, baseOptions(t))
 	for name, base := range map[string]string{"public": "http://" + srv.publicLn.Addr().String(), "admin": "http://" + srv.adminLn.Addr().String()} {
-		resp, err := http.Get(base + "/split")
+		resp, err := testClient.Get(base + "/split")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -101,7 +101,7 @@ func TestTheCountersTokenReadsTheCountersButCannotChangeTheSplit(t *testing.T) {
 	} {
 		req, _ := http.NewRequest(c.method, base+c.path, strings.NewReader(`{"stable":{"revision":"x","url":"http://127.0.0.1:9"}}`))
 		req.Header.Set("Authorization", "Bearer "+opts.countsToken)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := testClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

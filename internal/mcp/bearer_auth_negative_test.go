@@ -34,7 +34,7 @@ func post(t *testing.T, base string, header http.Header) *http.Response {
 	for k, vs := range header {
 		req.Header[k] = vs
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

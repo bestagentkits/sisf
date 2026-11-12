@@ -47,7 +47,7 @@ func TestALockedFakeIdentityProviderSignsNoOneInWithoutTheSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	browser := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	browser := &http.Client{Transport: &http.Transport{}, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	do := func(method, path, contentType, body string) *http.Response {
 		t.Helper()
 		req, err := http.NewRequest(method, base+path, strings.NewReader(body))
@@ -143,7 +143,7 @@ func newLockedBrowser(t *testing.T, base string) *lockedBrowser {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &lockedBrowser{t: t, base: base, c: &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &lockedBrowser{t: t, base: base, c: &http.Client{Transport: &http.Transport{}, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
 func (b *lockedBrowser) post(path, contentType, body string, header map[string]string) *http.Response {

@@ -155,7 +155,7 @@ type bearer struct{ token string }
 func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+b.token)
-	return http.DefaultTransport.RoundTrip(r)
+	return testClient.Transport.RoundTrip(r)
 }
 
 // connect opens an MCP client session that presents token.

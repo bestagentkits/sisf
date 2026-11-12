@@ -80,7 +80,7 @@ func TestTheSandboxNetworkAnswerIsTheSandboxNetworksOwn(t *testing.T) {
 	}
 	front := httptest.NewServer(f)
 	t.Cleanup(front.Close)
-	resp, err := http.Get(front.URL + version + "/networks/" + network)
+	resp, err := testClient.Get(front.URL + version + "/networks/" + network)
 	if err != nil {
 		t.Fatal(err)
 	}

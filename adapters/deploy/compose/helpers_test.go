@@ -318,7 +318,7 @@ func edgeSplit(revision, url string) edge.Split {
 // stopContainer stops a container through the daemon API, as an operator would.
 func (w *world) stopContainer(name string) error {
 	req, _ := http.NewRequest(http.MethodPost, w.docker.URL+"/v1.43/containers/"+name+"/stop", nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testClient.Do(req)
 	if err != nil {
 		return err
 	}

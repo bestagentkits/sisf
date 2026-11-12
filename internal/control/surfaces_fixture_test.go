@@ -90,7 +90,7 @@ func (e *env) signIn(t *testing.T, subject string) *http.Cookie {
 	if !e.fake.SignInAs(subject) {
 		t.Fatalf("no user %s", subject)
 	}
-	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Transport: &http.Transport{}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Get(start.Header().Get("Location"))
 	if err != nil {
 		t.Fatal(err)

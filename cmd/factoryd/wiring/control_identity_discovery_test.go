@@ -23,7 +23,7 @@ func TestControlWaitsForAnIdentityProviderThatStartsLater(t *testing.T) {
 	issuer := "http://" + ln.Addr().String()
 	_ = ln.Close() // nothing answers until the provider starts below
 	cfg := auth.OIDCConfig{Name: ProviderOIDC, Issuer: issuer, ClientID: "c", RedirectURL: "http://127.0.0.1:7463/auth/callback/google",
-		HTTPClient: &http.Client{Timeout: time.Second}, Clock: core.SystemClock{}}
+		HTTPClient: &http.Client{Transport: &http.Transport{}, Timeout: time.Second}, Clock: core.SystemClock{}}
 
 	if _, err := discoverOIDC(context.Background(), cfg, 0, 10*time.Millisecond); !core.HasCode(err, core.CodeUnavailable) {
 		t.Fatalf("without a wait: %v, want UNAVAILABLE at once", err)

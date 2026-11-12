@@ -17,7 +17,7 @@ import (
 
 const redirect = "http://127.0.0.1:1/callback"
 
-var noFollow = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+var noFollow = &http.Client{Transport: &http.Transport{}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
 func setup(t *testing.T) (*fakeoidc.Server, *sqlstoretest.Clock) {
 	t.Helper()
@@ -59,7 +59,7 @@ func exchange(t *testing.T, fake *fakeoidc.Server, path, code string, extra url.
 	req, _ := http.NewRequest(http.MethodPost, fake.Issuer()+path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.SetBasicAuth("rp", "rp-secret")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestOIDCCodeFlowIssuesASignedIDTokenWithTheNonce(t *testing.T) {
 		t.Fatal(err)
 	}
 	var keys jose.JSONWebKeySet
-	resp, err := http.Get(fake.Issuer() + fakeoidc.JWKSPath)
+	resp, err := testClient.Get(fake.Issuer() + fakeoidc.JWKSPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestGitHubDialectServesTheUserAndRepositoryPermission(t *testing.T) {
 	get := func(path, token string) map[string]any {
 		req, _ := http.NewRequest(http.MethodGet, fake.Issuer()+fakeoidc.GitHubAPIPrefix+path, nil)
 		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := testClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -184,7 +184,7 @@ func TestControlEndpointsConfigureTheFake(t *testing.T) {
 	t.Parallel()
 	fake, _ := setup(t)
 	post := func(path, body string) int {
-		resp, err := http.Post(fake.Issuer()+path, "application/json", strings.NewReader(body))
+		resp, err := testClient.Post(fake.Issuer()+path, "application/json", strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}

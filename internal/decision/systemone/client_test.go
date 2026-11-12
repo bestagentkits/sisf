@@ -277,7 +277,7 @@ func TestACallerSuppliedClientStillRefusesRedirects(t *testing.T) {
 		return systemonetest.Reply{Status: http.StatusTemporaryRedirect, Location: elsewhere.URL + "/judge"}
 	})
 	client, err := systemone.New(systemone.Config{Backend: systemone.BackendJev, Endpoint: fake.URL + "/judge", Version: version,
-		Timeout: time.Second, Model: jevModel}, systemone.Deps{Clock: triggerClock{}, HTTP: &http.Client{}})
+		Timeout: time.Second, Model: jevModel}, systemone.Deps{Clock: triggerClock{}, HTTP: &http.Client{Transport: &http.Transport{}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -102,7 +102,7 @@ func TestServeAnswersOnLoopbackAndStopsWhenAsked(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := testClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

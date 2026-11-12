@@ -79,7 +79,7 @@ func TestARollbackWithoutAnApprovalNeverReachesTheSupervisor(t *testing.T) {
 		t.Fatalf("client without approval = %v, want APPROVAL_REQUIRED", err)
 	}
 	// A client that skips the check is refused by the socket itself.
-	resp, err := http.Post(url+RollbackPath, "application/json", strings.NewReader(`{"factory_id":"acme-hello","unit":"app","reason":"x"}`))
+	resp, err := testClient.Post(url+RollbackPath, "application/json", strings.NewReader(`{"factory_id":"acme-hello","unit":"app","reason":"x"}`))
 	if err != nil {
 		t.Fatalf("raw post: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestActionsAreNotServedUnlessTheSupervisorWasGivenThem(t *testing.T) {
 	t.Parallel()
 	_, url := serveActions(t, Options{})
 	for _, path := range []string{EmergencyStopPath, RollbackPath} {
-		resp, err := http.Post(url+path, "application/json", strings.NewReader(`{}`))
+		resp, err := testClient.Post(url+path, "application/json", strings.NewReader(`{}`))
 		if err != nil {
 			t.Fatalf("post %s: %v", path, err)
 		}

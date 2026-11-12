@@ -64,7 +64,7 @@ func TestWebMCPScriptDetectsFeatureUsesSessionCSRFAndFallsBack(t *testing.T) {
 func TestActionListGivesWebMCPTheSameToolsAsMCP(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	resp, err := http.Get(f.env.Base + mcp.ActionListPath)
+	resp, err := testClient.Get(f.env.Base + mcp.ActionListPath)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -64,7 +64,7 @@ func TestTheAdminSurfaceRefusesAMissingOrWrongToken(t *testing.T) {
 		if auth != "" {
 			req.Header.Set("Authorization", auth)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := testClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,7 +92,7 @@ func TestTheAdminSurfaceRefusesBadBodies(t *testing.T) {
 	} {
 		req, _ := http.NewRequest(http.MethodPut, srv.URL+"/split", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+adminToken)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := testClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

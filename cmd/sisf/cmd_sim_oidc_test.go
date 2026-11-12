@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"net"
-	"net/http"
 	"strings"
 	"testing"
 
@@ -55,7 +54,7 @@ func TestSimOIDCServesDiscoveryUntilInterrupted(t *testing.T) {
 	}()
 
 	base := "http://" + ln.Addr().String()
-	resp, err := http.Get(base + fakeoidc.DiscoveryPath)
+	resp, err := testClient.Get(base + fakeoidc.DiscoveryPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +68,7 @@ func TestSimOIDCServesDiscoveryUntilInterrupted(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("interrupt must end the server cleanly: %v", err)
 	}
-	if _, err := http.Get(base + fakeoidc.DiscoveryPath); err == nil {
+	if _, err := testClient.Get(base + fakeoidc.DiscoveryPath); err == nil {
 		t.Fatal("the server is still listening after it was stopped")
 	}
 	if !strings.Contains(out.String(), "listening on "+base) || strings.Contains(out.String(), "sim-client-secret") {

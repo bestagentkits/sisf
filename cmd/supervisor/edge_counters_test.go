@@ -36,7 +36,7 @@ func TestEdgeCountersAreTheCumulativeCountsOfEachRevision(t *testing.T) {
 	adminSrv := httptest.NewServer(admin)
 	t.Cleanup(adminSrv.Close)
 	for _, path := range []string{"/", "/", "/fail"} {
-		resp, err := http.Get(front.URL + path)
+		resp, err := testClient.Get(front.URL + path)
 		if err != nil {
 			t.Fatal(err)
 		}

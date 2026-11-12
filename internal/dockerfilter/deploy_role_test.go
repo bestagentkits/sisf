@@ -229,7 +229,7 @@ func TestTheDeployRoleRefusesWhatADeploymentDoesNotNeed(t *testing.T) {
 
 func TestADeployFilterNeedsItsOwnSettings(t *testing.T) {
 	t.Parallel()
-	transport := http.DefaultTransport
+	transport := testClient.Transport
 	for name, cfg := range map[string]dockerfilter.Config{
 		"no deploy network":              {Role: dockerfilter.RoleDeploy, Upstream: transport, RunnerValue: factory, Images: []string{unitImage}},
 		"a sandbox network":              {Role: dockerfilter.RoleDeploy, Upstream: transport, RunnerValue: factory, Images: []string{unitImage}, DeployNetwork: deployNetwork, SandboxNetwork: network},
