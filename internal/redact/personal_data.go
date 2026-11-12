@@ -27,8 +27,9 @@ var personalRules = []personalRule{
 	// Shortened IPv6 addresses ("2001:db8::1", "::1"): every unbroken run
 	// of letters, digits and colons is a candidate, and only the address in
 	// it is replaced (see shortIPv6Within), so "std::string" and "12:30:45"
-	// stay. Text that happens to be a valid address ("a::b") is replaced as
-	// well: hiding too much is the safer mistake.
+	// stay. Text that happens to be a valid address ("a::b", or "abc::def"
+	// in "sha256:abc::def") is replaced as well: hiding too much is the
+	// safer mistake.
 	{marker: MarkerIP, re: regexp.MustCompile(`[0-9A-Za-z:]+`), within: shortIPv6Within},
 	// International numbers, then common national formats.
 	{marker: MarkerPhone, re: regexp.MustCompile(`\+\d[\d ().\-]{6,18}\d`), valid: phoneDigits},
@@ -108,16 +109,31 @@ const maxIPv6Text = 39
 
 // shortIPv6Within finds an IPv6 address written with "::" in run, an
 // unbroken run of letters, digits and colons: the whole run, or else what is
-// left after one colon that ends the run, a "label:" in front, or both are
-// cut, as "2001:db8::5" in "2001:db8::5:" or "::1" in "ip:::1". A label
-// ends at a colon not preceded by another, so the "::" of an address is
-// never split.
-// Only the last maxIPv6Text characters are tried, so the work per run is
+// left after the colons that end the run, a "label:" in front, labels at
+// the end, or a combination are cut, as "2001:db8::5" in "2001:db8::5:" or
+// "2001:db8::1::", "::1" in "ip:::1" and "fe80::1" in "fe80::1:eth0:up". A
+// label ends at a colon not preceded by another, and a label at the end
+// starts after one, so the "::" of an address is never split. The ends
+// tried are the end of the run, the colons that end it, and each single
+// colon within maxIPv6Text characters after the last "::"; each is tried
+// with the last maxIPv6Text characters before it, so the work per run is
 // bounded however long it is.
 func shortIPv6Within(run string) (start, end int, ok bool) {
 	ends := []int{len(run)}
-	if strings.HasSuffix(run, ":") {
+	body := strings.TrimRight(run, ":")
+	if len(body) < len(run) {
 		ends = append(ends, len(run)-1)
+		if len(body) < len(run)-1 {
+			ends = append(ends, len(body))
+		}
+	}
+	if last := strings.LastIndex(body, "::"); last >= 0 {
+		// Longest first: the last single colon before a label first.
+		for cut := min(len(body)-1, last+1+maxIPv6Text); cut > last+1; cut-- {
+			if body[cut] == ':' && body[cut-1] != ':' {
+				ends = append(ends, cut)
+			}
+		}
 	}
 	for _, end := range ends {
 		// Longest first: the run up to end, then after each label.

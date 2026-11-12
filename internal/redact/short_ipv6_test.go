@@ -63,3 +63,39 @@ func TestColonTextAroundWhichNoAddressStandsIsLeftAlone(t *testing.T) {
 		}
 	}
 }
+
+// An address written with "::" may be followed by a colon and a label, as
+// in "fe80::1:established", or by two colons that end the run. Only the
+// address is replaced. "2001:db8::1:eth0" is no address as a whole, since
+// "eth0" is no group of hex digits; "2001:db8::1:beef" is one, and is
+// replaced whole.
+func TestShortenedIPv6AddressBeforeATrailingLabelIsRedacted(t *testing.T) {
+	long := strings.Repeat("xy:", 10000)
+	for text, want := range map[string]string{
+		"peer fe80::1:established":  "peer " + MarkerIP + ":established",
+		"x:2001:db8::1:y":           "x:" + MarkerIP + ":y",
+		"host 2001:db8::1:: done":   "host " + MarkerIP + ":: done",
+		"2001:db8::1:eth0":          MarkerIP + ":eth0",
+		"2001:db8::1:beef":          MarkerIP,
+		"ip:2001:db8::1:eth0: down": "ip:" + MarkerIP + ":eth0: down",
+		long + "2001:db8::1:eth0":   long + MarkerIP + ":eth0",
+		"fe80::1:eth0:up":           MarkerIP + ":eth0:up",
+		"x:2001:db8::1:eth0:1500":   "x:" + MarkerIP + ":eth0:1500",
+		long + "fe80::1:eth0:up:":   long + MarkerIP + ":eth0:up:",
+	} {
+		if got := personalData(text); got != want {
+			t.Errorf("personalData(%q) = %q, want %q", text, got, want)
+		}
+	}
+}
+
+// Colon text with labels at its end has no address in it either.
+func TestColonTextWithTrailingLabelsIsLeftAlone(t *testing.T) {
+	for _, text := range []string{
+		"12:30:45:eth0", "00:1a:2b:3c:4d:5e:eth0", "host:8080:tcp", "Foo::Bar:baz", "std::vector:x:y", "dead::beefcafe1:x",
+	} {
+		if got := personalData(text); got != text {
+			t.Errorf("personalData(%q) = %q; want it unchanged", text, got)
+		}
+	}
+}
