@@ -119,10 +119,11 @@ func stagedWithRecord(t *testing.T, app *sleeper) (*world, string) {
 
 // restarted is a new backend over the same state directory and ports as
 // earlier, as after a restart of the supervisor: it has started nothing
-// itself.
+// itself. It keeps the system's time, since a real process it stops needs
+// real time to leave before it is looked for again.
 func restarted(t *testing.T, earlier *world, dir string) *world {
 	t.Helper()
-	return newWorld(t, worldOptions{over: earlier, cfg: func(c *local.Config) { c.StateDir = dir }})
+	return newWorld(t, worldOptions{over: earlier, cfg: func(c *local.Config) { c.StateDir, c.Clock = dir, core.SystemClock{} }})
 }
 
 // A backend with a state directory records the process of each slot it
@@ -465,9 +466,7 @@ func TestClosingABackendStopsTheProcessesOfBothSlotsTogether(t *testing.T) {
 			t.Fatalf("slot %s is not recorded", slot)
 		}
 	}
-	w := newWorld(t, worldOptions{over: earlier, cfg: func(c *local.Config) {
-		c.StateDir, c.Clock = dir, core.SystemClock{}
-	}})
+	w := restarted(t, earlier, dir)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	if err := w.backend.Close(ctx); err != nil {
