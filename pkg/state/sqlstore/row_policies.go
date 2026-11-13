@@ -147,6 +147,7 @@ func rowRule(table string, command privilege, zone core.Zone, records string) (u
 			if check, err = inList("event", eventNames(zone), false); err != nil {
 				return "", "", err
 			}
+			check += " AND " + journalsItsRecord(records)
 			foreign, err := foreignKeyCheck(zone)
 			if err != nil || foreign == "" {
 				return "", check, err
@@ -213,15 +214,10 @@ func stepStates(zone core.Zone) (created, from, to []string) {
 // keyedStepCheck is the condition on a step a zone with keys of its own
 // journals: the step is one of the zone's edges of the lifecycle, taken
 // under the key prefix of its event (zoneStepKeys), and it journals the
-// record exactly as written (journal): the record of the issue stands in the
-// state the step ends in, at the version, under the key and with the run,
-// lease, fencing token, attempt, candidate, release and time of the step.
-// The candidate and the release the step itself names are none or the
-// record's, which is what CheckRecordBinding admits for every step a keyed
-// zone writes. A stolen credential can so neither take a key of another
-// zone, nor journal a step the lifecycle has no edge for, nor one for a
-// record it did not write, nor one whose replay would return other values
-// than the record holds.
+// record exactly as written (journalsItsRecord). A stolen credential can so
+// neither take a key of another zone, nor journal a step the lifecycle has
+// no edge for, nor one for a record it did not write, nor one whose replay
+// would return other values than the record holds.
 //
 // The state the step starts from cannot be bound to the record: a policy
 // sees the record only as it stands after the step. The edge binds it
@@ -264,7 +260,21 @@ func keyedStepCheck(zone core.Zone, records string) (string, error) {
 		return "false", nil
 	}
 	slices.Sort(edges)
-	return "(" + strings.Join(edges, " OR ") + ") AND EXISTS (SELECT 1 FROM " + records + " AS r" +
+	return "(" + strings.Join(edges, " OR ") + ") AND " + journalsItsRecord(records), nil
+}
+
+// journalsItsRecord is the condition that a journal row keeps the record of
+// its issue exactly as the step wrote it (journal): the record stands in the
+// state the step ends in, at the version, under the key and with the run,
+// lease, fencing token, attempt, candidate, release and time of the row. The
+// candidate and the release the step itself names are none or the record's,
+// which is all CheckRecordBinding admits: a step that sets one names what the
+// record now holds, one that must repeat it names the stored one, and any
+// other names none or the stored one. Every zone's journal is held to it, so
+// no journal row stands for a step that did not write its record, and a
+// replay returns only what the record held.
+func journalsItsRecord(records string) string {
+	return "EXISTS (SELECT 1 FROM " + records + " AS r" +
 		" WHERE r.factory_id = transitions.factory_id AND r.issue = transitions.issue" +
 		" AND r.state = transitions.to_state AND r.version = transitions.version" +
 		" AND r.idempotency_key = transitions.idempotency_key" +
@@ -274,7 +284,7 @@ func keyedStepCheck(zone core.Zone, records string) (string, error) {
 		" AND r.release_digest = transitions.record_release_digest" +
 		" AND r.updated_at = transitions.created_at" +
 		" AND transitions.candidate_digest IN ('', r.candidate_digest)" +
-		" AND transitions.release_digest IN ('', r.release_digest))", nil
+		" AND transitions.release_digest IN ('', r.release_digest))"
 }
 
 // foreignKeyCheck is the condition that holds a zone without keys of its own

@@ -58,21 +58,62 @@ func TestControlZoneWritesNoOtherStepUnderAnAgentKey(t *testing.T) {
 	})
 }
 
-// The same rule holds the control role used with plain SQL.
-func TestPostgresHoldsTheControlRoleOffTheAgentKeys(t *testing.T) {
+// The same rule holds the control role used with plain SQL, and its
+// journal rows, like the agent role's, keep the record as the step wrote it:
+// no row stands for a step that wrote no record.
+func TestPostgresHoldsTheControlRoleOffTheAgentKeysAndToItsRecords(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		logins := db.ZoneLogins(t)
-		control := rawLogin(t, logins.DSN[core.ZoneControl])
-		received := func(key string) string {
-			return journalRow("acme/app#41", "", "issue_received", "Intake", 1, key).sql()
-		}
-		refusedRow(t, control, "an intake step under the agent zone's claim key", received("claim/run-1"))
-		refusedRow(t, control, "an intake step under the agent zone's development key", received("develop/run-1"))
-		if _, err := control.ExecContext(ctx, received("intake/acme/app#41/issue_received")); err != nil {
-			t.Fatalf("the control role must journal a step under its own key: %v", err)
-		}
+		assertControlJournalRules(t, db, rawLogin(t, logins.DSN[core.ZoneControl]))
 	})
+}
+
+// assertControlJournalRules checks the control role's journal policy over
+// its own connection, on the intake of an issue whose record the owner puts
+// in place, past the store.
+func assertControlJournalRules(t *testing.T, db *sqlstoretest.Database, control *sql.DB) {
+	t.Helper()
+	const ref = "acme/app#41"
+	place := func(key string) {
+		t.Helper()
+		for _, statement := range []string{
+			`DELETE FROM records WHERE factory_id = '` + string(sqlstoretest.Factory) + `' AND issue = '` + ref + `'`,
+			`INSERT INTO records (factory_id, issue, state, version, idempotency_key, lease_owner, fencing_token, attempt,
+				run_id, candidate_digest, release_digest, updated_at)
+				VALUES ('` + string(sqlstoretest.Factory) + `', '` + ref + `', 'Intake', 1, '` + key + `', '', 0, 0, '', '', '', 7)`,
+		} {
+			if _, err := db.Raw(t).ExecContext(ctx, statement); err != nil {
+				t.Fatalf("place the record: %v", err)
+			}
+		}
+	}
+	received := func(key string) journalInsert {
+		return journalRow(ref, "", "issue_received", "Intake", 1, key).
+			with("lease_owner", "''").with("fencing_token", "0").with("attempt", "0").with("run_id", "''")
+	}
+	place("claim/run-1")
+	refusedRow(t, control, "an intake step under the agent zone's claim key", received("claim/run-1").sql())
+	place("develop/run-1")
+	refusedRow(t, control, "an intake step under the agent zone's development key", received("develop/run-1").sql())
+
+	const key = "intake/acme/app#41/issue_received"
+	place(key)
+	refusedRow(t, control, "a step of an issue with no record", journalRow("acme/app#404", "", "issue_received", "Intake", 1, key).
+		with("lease_owner", "''").with("fencing_token", "0").with("attempt", "0").with("run_id", "''").sql())
+	for name, column := range map[string][2]string{
+		"a run the record does not name":       {"run_id", "'run-2'"},
+		"a lease the record does not name":     {"lease_owner", "'worker-2'"},
+		"another version":                      {"version", "2"},
+		"another state":                        {"to_state", "'Clarifying'"},
+		"another time":                         {"created_at", "8"},
+		"a candidate the record does not name": {"candidate_digest", "'" + string(candidateDigest) + "'"},
+	} {
+		refusedRow(t, control, "a journal row with "+name, received(key).with(column[0], column[1]).sql())
+	}
+	if _, err := control.ExecContext(ctx, received(key).sql()); err != nil {
+		t.Fatalf("the control role must journal a step under its own key, for its record: %v", err)
+	}
 }
 
 // A record changes only together with the journal row of its step, as the
@@ -214,4 +255,78 @@ func forgetStoreRules(t *testing.T, raw *sql.DB) {
 			t.Fatalf("%s: %v", statement, err)
 		}
 	}
+}
+
+// A store whose roles an earlier release granted is held to the new rules
+// from the moment it is migrated, keeping the roles its policies name.
+func TestPostgresStoreRulesMigrationUpgradesAGrantedStore(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		logins := db.ZoneLogins(t)
+		raw := db.Raw(t)
+		agentRole, controlRole := logins.Roles[core.ZoneAgent], logins.Roles[core.ZoneControl]
+		// The schema as migration 11 left it: no journal pairing or budget
+		// rules, a journal policy of each zone that does not bind a row to
+		// its record, and the agent zone still submitting candidates.
+		forgetStoreRules(t, raw)
+		for _, statement := range []string{
+			`DROP POLICY "sisf_agent_insert" ON transitions`,
+			`CREATE POLICY "sisf_agent_insert" ON transitions FOR INSERT TO "` + agentRole + `"
+				WITH CHECK (event IN ('candidate_submitted', 'claimed', 'development_started'))`,
+			`DROP POLICY "sisf_control_insert" ON transitions`,
+			`CREATE POLICY "sisf_control_insert" ON transitions FOR INSERT TO "` + controlRole + `" WITH CHECK (true)`,
+			`DROP POLICY "sisf_agent_update" ON records`,
+			`CREATE POLICY "sisf_agent_update" ON records FOR UPDATE TO "` + agentRole + `"
+				USING (state IN ('Claimed', 'Developing', 'Ready'))
+				WITH CHECK (state IN ('Claimed', 'Developing', 'QAEvaluation'))`,
+			`DELETE FROM schema_migrations WHERE version > 11`,
+		} {
+			if _, err := raw.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("restore the schema of migration 11: %v", err)
+			}
+		}
+		agent := rawLogin(t, logins.DSN[core.ZoneAgent])
+		control := rawLogin(t, logins.DSN[core.ZoneControl])
+		// The premise: the earlier schema lets forged rows in.
+		for name, statement := range map[string]struct {
+			role *sql.DB
+			sql  string
+		}{
+			"a journal row for no record":              {agent, journalRow("acme/app#404", "Ready", "claimed", "Claimed", 1, "claim/run-1").sql()},
+			"an intake step under the agent claim key": {control, journalRow("acme/app#405", "", "issue_received", "Intake", 1, "claim/run-1").sql()},
+			"a negative cost":                          {agent, `INSERT INTO usage_ledger (factory_id, issue, run_id, reservation_id, step, model_route, input_tokens, output_tokens, cost, verified, recorded_at) VALUES ('` + string(sqlstoretest.Factory) + `', 'acme/app#7', 'run-1', 'r-1', 'coding', '{}', 0, 0, -1, false, 1)`},
+		} {
+			if _, err := statement.role.ExecContext(ctx, statement.sql); err != nil {
+				t.Fatalf("the earlier schema should let %s in, the premise of this test: %v", name, err)
+			}
+		}
+
+		migrator := db.Open(t, core.ZoneControl)
+		if err := migrator.Migrate(ctx, state.MigrateOptions{}); err != nil {
+			t.Fatalf("migrate a granted store at migration 11: %v", err)
+		}
+		for policy, want := range map[string]string{"sisf_agent_insert": agentRole, "sisf_control_insert": controlRole} {
+			var roles string
+			if err := raw.QueryRowContext(ctx, `SELECT array_to_string(roles, ',') FROM pg_policies
+				WHERE schemaname = current_schema() AND tablename = 'transitions' AND policyname = $1`, policy).Scan(&roles); err != nil {
+				t.Fatalf("read the rewritten policy %s: %v", policy, err)
+			}
+			if roles != want {
+				t.Errorf("the rewritten policy %s names %q, want %q", policy, roles, want)
+			}
+		}
+		assertAgentJournalRules(t, db, agent)
+		assertControlJournalRules(t, db, control)
+		owner := db.Open(t, core.ZoneControl)
+		claimed := claim(t, owner, readyRecord(t, owner, issue(61)), "worker-1", "run-1")
+		refusedRow(t, agent, "a record step with no journal row",
+			recordUpdate(`state = 'Developing', version = version + 1, idempotency_key = 'develop/run-1'`, claimed.IssueID))
+		_, err := agent.ExecContext(ctx, `INSERT INTO usage_ledger (factory_id, issue, run_id, reservation_id, step, model_route,
+			input_tokens, output_tokens, cost, verified, recorded_at) VALUES ('`+string(sqlstoretest.Factory)+`', 'acme/app#7',
+			'run-1', 'r-1', 'coding', '{}', 0, 0, -1, false, 1)`)
+		var pg *pgconn.PgError
+		if !errors.As(err, &pg) || pg.Code != "23514" {
+			t.Errorf("a negative cost after the migration must be refused by a constraint, got %v", err)
+		}
+	})
 }
