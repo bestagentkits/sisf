@@ -156,11 +156,21 @@ func rowRule(table string, command privilege, zone core.Zone, records string) (u
 		// granted per schema and not per factory; the store reads and writes
 		// only the rows of its own factory. Changing or removing a row is
 		// granted to no zone, and a trigger refuses it to the owner as well.
+		//
+		// No zone books usage as verified: nothing confirms a cost with its
+		// provider. The agent zone books usage only against a reservation of
+		// the same factory, run and issue, so it cannot charge another run's
+		// reservation nor book usage no reservation answers for.
 		switch command {
 		case canSelect:
 			return "true", "", nil
 		case canInsert:
-			return "", "true", nil
+			if zone != core.ZoneAgent {
+				return "", "verified = false", nil
+			}
+			usage, reservations := quote(tableUsage), quote(tableReservations)
+			return "", "verified = false AND EXISTS (SELECT 1 FROM " + reservations + " AS r WHERE r.factory_id = " + usage +
+				".factory_id AND r.id = " + usage + ".reservation_id AND r.run_id = " + usage + ".run_id AND r.issue = " + usage + ".issue)", nil
 		}
 	case tableKV:
 		read, readNegated := namespaces(zone, kvNamespace.mayRead)
