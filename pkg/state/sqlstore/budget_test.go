@@ -274,7 +274,7 @@ func TestBudgetTotalsCountUsageWithoutACost(t *testing.T) {
 				forRun("run-2", spend(0, false, periodStart)), // its run reserved nothing
 				forRun("run-3", spend(0, false, periodStart)), // its run reserved 0
 				spend(60, false, periodStart),                 // priced
-				noTokens,                                      // nothing to price
+				noTokens,                                      // no cost stated, no tokens: still unpriced
 			} {
 				if err := tx.AppendUsage(ctx, u); err != nil {
 					return err
@@ -283,7 +283,7 @@ func TestBudgetTotalsCountUsageWithoutACost(t *testing.T) {
 			return nil
 		})
 		rawUsage(t, db, "run-1", 0, true, periodStart) // verified
-		want := core.BudgetTotals{Reserved: 5_000_000, SpentUnverified: 60, Unpriced: 3}
+		want := core.BudgetTotals{Reserved: 5_000_000, SpentUnverified: 60, Unpriced: 4}
 		if got := totals(t, s, periodStart); got != want {
 			t.Fatalf("totals since the period start = %+v, want %+v", got, want)
 		}

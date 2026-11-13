@@ -49,12 +49,13 @@ type Usage struct {
 	At            time.Time  `json:"at"`
 }
 
-// CostUnreported reports whether u counted tokens but its provider stated
-// no cost for them, as a CLI that prints tokens only does. Such usage is
-// not free; its cost is unknown.
+// CostUnreported reports whether u is unverified and states no cost, as a
+// CLI that prints tokens only does, whatever tokens it counted. Such usage
+// is not free; its cost is unknown. A row that states no cost and no
+// tokens is no proof that nothing was spent: the agent zone writes these
+// rows, and an empty one must not stand for a run that spent nothing.
 func (u Usage) CostUnreported() bool {
-	// The counts are compared one by one: their sum may not fit in an int64.
-	return !u.Verified && u.Cost == 0 && (u.InputTokens > 0 || u.OutputTokens > 0)
+	return !u.Verified && u.Cost == 0
 }
 
 // ReservationStatus is the life stage of a reservation.
@@ -169,9 +170,8 @@ type RunUsage struct {
 	// Cost sums the costs booked for the run, capped far above any amount a
 	// run reserves rather than overflowing.
 	Cost Micros `json:"cost"`
-	// CostUnreported is set when some unverified usage of the run stated no
-	// cost, with or without tokens: a row that prices nothing never proves
-	// that the run spent nothing.
+	// CostUnreported is set when some usage of the run stated no cost (see
+	// Usage.CostUnreported).
 	CostUnreported bool `json:"cost_unreported"`
 	// Entries counts the usage records of the run.
 	Entries int64 `json:"entries"`

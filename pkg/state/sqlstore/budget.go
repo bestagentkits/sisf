@@ -260,12 +260,11 @@ func (t *tx) BudgetTotals(ctx context.Context, since time.Time) (core.BudgetTota
 	if err != nil {
 		return core.BudgetTotals{}, err
 	}
-	// Usage whose provider reported tokens and no cost (core.Usage.CostUnreported).
-	// A row that states no cost leaves the run unpriced whether or not it
-	// counted tokens: the agent zone writes these rows, and an empty one
-	// must not stand for a run that spent nothing.
+	// Usage that states no cost, whatever tokens it counted
+	// (core.Usage.CostUnreported), by the same rule RunUsage applies to one
+	// run.
 	if err := t.q.row(ctx, `SELECT CAST(COUNT(*) AS BIGINT) FROM usage_ledger
-		WHERE factory_id = ? AND recorded_at >= ? AND verified = ? AND cost = 0 AND (input_tokens > 0 OR output_tokens > 0)`,
+		WHERE factory_id = ? AND recorded_at >= ? AND verified = ? AND cost = 0`,
 		string(t.store.factory), toNanos(since), false).Scan(&totals.Unpriced); err != nil {
 		return core.BudgetTotals{}, t.store.dialect.failure("count usage without a cost", err)
 	}
@@ -286,9 +285,8 @@ func (t *tx) RunUsage(ctx context.Context, run core.RunID, since time.Time) (cor
 		costUnreported int64
 		negative       int64
 	)
-	// A row that states no cost leaves the run unpriced whether or not it
-	// counted tokens: the agent zone writes these rows, and an empty one
-	// must not stand for a run that spent nothing.
+	// A row that states no cost leaves the run unpriced whatever tokens it
+	// counted (core.Usage.CostUnreported).
 	if err := t.q.row(ctx, `SELECT CAST(COUNT(*) AS BIGINT), `+t.store.dialect.cappedSum("cost")+`,
 		CAST(COALESCE(SUM(CASE WHEN verified = ? AND cost = 0 THEN 1 ELSE 0 END), 0) AS BIGINT),
 		CAST(COALESCE(SUM(CASE WHEN cost < 0 THEN 1 ELSE 0 END), 0) AS BIGINT)
