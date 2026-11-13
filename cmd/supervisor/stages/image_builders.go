@@ -219,7 +219,10 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 // maxBuildInfoBytes bounds the Go build information of a candidate's
 // program that goes into its SBOM, which the build record and the state
 // store keep. The program was built from the candidate's code, so what it
-// carries is untrusted in size as well as content.
+// carries is untrusted in size as well as content. It bounds what is kept,
+// not what is read: debug/buildinfo exposes no length before it parses, and
+// the parse reads at most the program itself, which the program store
+// limits to programstore.MaxProgramBytes.
 const maxBuildInfoBytes = 1 << 20
 
 // programBuildInfo reads the Go build information of the program the store
