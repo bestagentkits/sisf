@@ -68,7 +68,7 @@ func policyStatements(schema string, roles ZoneRoles) ([]string, error) {
 				if zonePrivileges[zone][table]&command.bit == 0 {
 					continue
 				}
-				clauses, err := policyClauses(table, command.bit, zone, quote(schema)+"."+quote(tableRecords))
+				clauses, err := policyClauses(table, command.bit, zone, quote(schema)+".")
 				if err != nil {
 					return nil, err
 				}
@@ -82,8 +82,8 @@ func policyStatements(schema string, roles ZoneRoles) ([]string, error) {
 
 // policyClauses renders the USING and WITH CHECK clauses of the policy of
 // zone for one command on table, each with a leading space, from rowRule.
-func policyClauses(table string, command privilege, zone core.Zone, records string) (string, error) {
-	using, check, err := rowRule(table, command, zone, records)
+func policyClauses(table string, command privilege, zone core.Zone, qualifier string) (string, error) {
+	using, check, err := rowRule(table, command, zone, qualifier)
 	if err != nil {
 		return "", err
 	}
@@ -113,9 +113,11 @@ func policyName(zone core.Zone, command string) string {
 
 // rowRule returns the conditions of the policy of zone for one command on
 // table: the rows the zone may see or change (USING) and the rows it may
-// leave behind (WITH CHECK). An empty condition is not written. records is
-// how the conditions name the records table.
-func rowRule(table string, command privilege, zone core.Zone, records string) (using, check string, err error) {
+// leave behind (WITH CHECK). An empty condition is not written. qualifier
+// prefixes the tables the conditions name: the quoted schema and a dot, or
+// nothing where the search path finds the tables.
+func rowRule(table string, command privilege, zone core.Zone, qualifier string) (using, check string, err error) {
+	records := qualifier + quote(tableRecords)
 	switch table {
 	case tableRecords:
 		created, from, to := stepStates(zone)
@@ -168,7 +170,7 @@ func rowRule(table string, command privilege, zone core.Zone, records string) (u
 			if zone != core.ZoneAgent {
 				return "", "verified = false", nil
 			}
-			usage, reservations := quote(tableUsage), quote(tableReservations)
+			usage, reservations := qualifier+quote(tableUsage), qualifier+quote(tableReservations)
 			return "", "verified = false AND EXISTS (SELECT 1 FROM " + reservations + " AS r WHERE r.factory_id = " + usage +
 				".factory_id AND r.id = " + usage + ".reservation_id AND r.run_id = " + usage + ".run_id AND r.issue = " + usage + ".issue)", nil
 		}

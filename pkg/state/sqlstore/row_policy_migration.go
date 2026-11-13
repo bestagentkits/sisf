@@ -98,7 +98,7 @@ BEGIN
 			if granted&command.bit == 0 {
 				continue
 			}
-			clauses, err := policyClauses(tableUsage, command.bit, zone, quote(tableRecords))
+			clauses, err := policyClauses(tableUsage, command.bit, zone, "")
 			if err != nil {
 				return "", err
 			}
@@ -142,7 +142,7 @@ func recordStepScript() (string, error) {
 			if zonePrivileges[zone][rewrite.table]&rewrite.command == 0 {
 				continue
 			}
-			clauses, err := policyClauses(rewrite.table, rewrite.command, zone, quote(tableRecords))
+			clauses, err := policyClauses(rewrite.table, rewrite.command, zone, "")
 			if err != nil {
 				return "", err
 			}
