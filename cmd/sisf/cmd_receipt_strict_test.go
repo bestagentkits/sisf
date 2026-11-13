@@ -2,7 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +34,9 @@ func TestReceiptVerifyPinsTheRootKeyAndStatesTheAssurance(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("the report does not say %q:\n%s", want, stdout)
 		}
+	}
+	if status, _, stderr := runWithOutput(t, append(claimArgs(f, f.rootKey, "run-1"), "--root-key-id", strings.ToUpper(rootID), f.bundle)...); status != exitOK {
+		t.Errorf("the fingerprint in upper case: exit %d, %s", status, stderr)
 	}
 	status, _, stderr = runWithOutput(t, append(claimArgs(f, f.rootKey, "run-1"), "--root-key-id", "ed25519:"+strings.Repeat("0", 64), f.bundle)...)
 	if status != exitFailure || !strings.Contains(stderr, "fingerprint") {
@@ -60,17 +68,24 @@ func TestReceiptVerifyExitStatusSaysWhetherTheGatesPassed(t *testing.T) {
 	expired := f.receipt
 	expired.ExpiresAt = expired.IssuedAt.Add(time.Minute)
 	expiredFile := f.resign(t, "expired.json", expired)
+	failedExpired := failed
+	failedExpired.ExpiresAt = failedExpired.IssuedAt.Add(time.Minute)
+	failedExpiredFile := f.resign(t, "failed-expired.json", failedExpired)
 	for name, c := range map[string]struct {
 		extra  []string
 		file   string
 		status int
 		says   string
 	}{
-		"gates failed":                   {nil, failedFile, exitGatesFailed, "hard gates did NOT pass"},
-		"gates failed, --allow-failed":   {[]string{"--allow-failed"}, failedFile, exitOK, "hard gates did NOT pass"},
-		"expired, reported":              {nil, expiredFile, exitOK, "expired"},
-		"expired, --require-unexpired":   {[]string{"--require-unexpired"}, expiredFile, exitExpired, "expired"},
-		"unexpired, --require-unexpired": {[]string{"--require-unexpired"}, f.bundle, exitOK, "still valid"},
+		"gates failed":                                  {nil, failedFile, exitGatesFailed, "hard gates did NOT pass"},
+		"gates failed, --allow-failed":                  {[]string{"--allow-failed"}, failedFile, exitOK, "hard gates did NOT pass"},
+		"expired, reported":                             {nil, expiredFile, exitOK, "expired"},
+		"expired, --require-unexpired":                  {[]string{"--require-unexpired"}, expiredFile, exitExpired, "expired"},
+		"unexpired, --require-unexpired":                {[]string{"--require-unexpired"}, f.bundle, exitOK, "still valid"},
+		"gates failed and expired, both flags":          {[]string{"--allow-failed", "--require-unexpired"}, failedExpiredFile, exitExpired, "expired"},
+		"gates failed and expired, --require-unexpired": {[]string{"--require-unexpired"}, failedExpiredFile, exitGatesFailed, "hard gates did NOT pass"},
+		"gates failed and expired, --allow-failed":      {[]string{"--allow-failed"}, failedExpiredFile, exitOK, "expired"},
+		"gates failed, unexpired, both flags":           {[]string{"--allow-failed", "--require-unexpired"}, failedFile, exitOK, "hard gates did NOT pass"},
 	} {
 		args := append(claimArgs(f, f.rootKey, "run-1"), c.extra...)
 		status, stdout, stderr := runWithOutput(t, append(args, c.file)...)
@@ -103,7 +118,17 @@ func TestReceiptVerifyRefusesAReceiptOfAnotherAttempt(t *testing.T) {
 			t.Errorf("%s: exit %d, %s%s", name, status, stdout, stderr)
 		}
 	}
-	args := append(claimArgs(f, f.rootKey, "run-1"), "--commit", string(f.receipt.CandidateSHA),
+	for name, extra := range map[string][]string{
+		"short commit":     {"--commit", "abc123"},
+		"digest, no algo":  {"--digest", strings.Repeat("2", 64)},
+		"negative attempt": {"--attempt", "-1"},
+	} {
+		args := append(claimArgs(f, f.rootKey, "run-1"), extra...)
+		if status, _, stderr := runWithOutput(t, append(args, f.bundle)...); status != exitUsage {
+			t.Errorf("%s: exit %d, want %d: %s", name, status, exitUsage, stderr)
+		}
+	}
+	args := append(claimArgs(f, f.rootKey, "run-1"), "--commit", strings.ToUpper(string(f.receipt.CandidateSHA)),
 		"--digest", string(f.receipt.CandidateDigest), "--attempt", "1", f.bundle)
 	if status, _, stderr := runWithOutput(t, args...); status != exitOK {
 		t.Errorf("the receipt's own commit, digest and attempt: exit %d, %s", status, stderr)
@@ -129,6 +154,10 @@ func TestReceiptVerifyRefusesMalformedAndUnsignedInput(t *testing.T) {
 	unsigned.Signature = core.Signature{}
 	none := f.receipt
 	none.Signature.Algorithm = "none"
+	unknownAlgorithm := f.receipt
+	unknownAlgorithm.Signature.Algorithm = "rsa-pss-sha256"
+	delegationAlgorithm := f.delegation
+	delegationAlgorithm.Signature.Algorithm = "ecdsa-p256"
 	for name, c := range map[string]struct {
 		content string
 		says    string
@@ -150,9 +179,22 @@ func TestReceiptVerifyRefusesMalformedAndUnsignedInput(t *testing.T) {
 			t.Errorf("%s: exit %d, want %d saying %q: %s%s", name, status, exitFailure, c.says, stdout, stderr)
 		}
 	}
-	notEd25519 := f.write(t, "rsa.pub", []byte("-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n"))
-	if status, _, stderr := runWithOutput(t, append(claimArgs(f, notEd25519, "run-1"), f.bundle)...); status == exitOK {
-		t.Errorf("a root key that is not an ed25519 key was accepted: %s", stderr)
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&ecKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct{ content, says string }{
+		"an ECDSA root key":    {string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})), "not an ed25519 key"},
+		"a truncated root key": {"-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n", "INVALID_ARGUMENT"},
+	} {
+		key := f.write(t, strings.ReplaceAll(name, " ", "-")+".pub", []byte(c.content))
+		if status, _, stderr := runWithOutput(t, append(claimArgs(f, key, "run-1"), f.bundle)...); status != exitFailure || !strings.Contains(stderr, c.says) {
+			t.Errorf("%s: exit %d, want %d saying %q: %s", name, status, exitFailure, c.says, stderr)
+		}
 	}
 
 	revoke := func(name string, sequence int64, keys ...string) string {
