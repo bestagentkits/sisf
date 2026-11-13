@@ -48,7 +48,10 @@ var tables = []string{
 //
 // Zone 2, the agent factory, gets what the dispatcher uses and nothing
 // more: it reads the lifecycle records and moves those of its runs, holds
-// leases, reserves budget and meters usage, and keeps its own documents. It
+// leases, reserves budget and meters usage, and keeps its own documents.
+// It makes the reservation of a claim and changes none: closing a run's
+// reservation is the control plane's and the supervisor's, so a stolen
+// agent credential cannot free money a live run set aside. It
 // reads the usage ledger because a capped budget admits a run only against
 // the spending recorded so far; it never changes a ledger row.
 // It creates no record and deletes nothing, and it does not touch the
@@ -67,7 +70,7 @@ var zonePrivileges = map[core.Zone]map[string]privilege{
 		tableRecords:      canSelect | canUpdate,
 		tableTransitions:  canSelect | canInsert,
 		tableLeases:       canSelect | canInsert | canUpdate,
-		tableReservations: canSelect | canInsert | canUpdate,
+		tableReservations: canSelect | canInsert,
 		tableUsage:        canSelect | canInsert,
 		tableKV:           canSelect | canInsert | canUpdate,
 		tableMigrations:   canSelect,

@@ -165,6 +165,12 @@ func TestReservationsAreIdempotentBoundToTheirRunAndSettleOrRelease(t *testing.T
 		in := func(fn func(ctx context.Context, tx state.Tx) error) error {
 			return store.Update(context.Background(), fn)
 		}
+		// The agent zone reserves at the claim; the control plane and the
+		// supervisor settle and release.
+		control := db.Open(t, core.ZoneControl)
+		closing := func(fn func(ctx context.Context, tx state.Tx) error) error {
+			return control.Update(context.Background(), fn)
+		}
 		var first, again core.Reservation
 		if err := in(func(ctx context.Context, tx state.Tx) error {
 			var err error
@@ -186,17 +192,17 @@ func TestReservationsAreIdempotentBoundToTheirRunAndSettleOrRelease(t *testing.T
 			t.Fatalf("a key reused for another run must conflict, got %v", err)
 		}
 		usage := core.Usage{IssueID: first.IssueID, RunID: "run-9", Cost: 5}
-		if err := in(func(ctx context.Context, tx state.Tx) error { return gate.Settle(ctx, tx, first.ID, usage) }); !core.HasCode(err, core.CodeConflict) {
+		if err := closing(func(ctx context.Context, tx state.Tx) error { return gate.Settle(ctx, tx, first.ID, usage) }); !core.HasCode(err, core.CodeConflict) {
 			t.Fatalf("usage of another run must not settle the reservation, got %v", err)
 		}
 		usage.RunID = first.RunID
-		if err := in(func(ctx context.Context, tx state.Tx) error { return gate.Settle(ctx, tx, first.ID, usage) }); err != nil {
+		if err := closing(func(ctx context.Context, tx state.Tx) error { return gate.Settle(ctx, tx, first.ID, usage) }); err != nil {
 			t.Fatal(err)
 		}
 		var settled core.Reservation
 		var totals core.BudgetTotals
 		// The agent zone may read the totals of its own factory.
-		_ = db.Open(t, core.ZoneControl).View(context.Background(), func(ctx context.Context, tx state.Tx) error {
+		_ = control.View(context.Background(), func(ctx context.Context, tx state.Tx) error {
 			settled, _ = tx.GetReservation(ctx, first.ID)
 			totals, _ = tx.BudgetTotals(ctx, time.Time{})
 			return nil
@@ -204,7 +210,7 @@ func TestReservationsAreIdempotentBoundToTheirRunAndSettleOrRelease(t *testing.T
 		if settled.Status != core.ReservationSettled || totals.SpentUnverified != 5 {
 			t.Fatalf("settling left %+v and totals %+v", settled, totals)
 		}
-		if err := in(func(ctx context.Context, tx state.Tx) error { return gate.Release(ctx, tx, first.ID) }); err != nil {
+		if err := closing(func(ctx context.Context, tx state.Tx) error { return gate.Release(ctx, tx, first.ID) }); err != nil {
 			t.Fatalf("releasing a settled reservation must change nothing, got %v", err)
 		}
 		if _, err := dispatcher.NewConfirmedBudgetGate(nil, nil); !core.HasCode(err, core.CodeInvalidArgument) {

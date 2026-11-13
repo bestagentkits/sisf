@@ -160,6 +160,52 @@ func TestARunExhaustedBeforeItsAgentStartsBlocksTheClaimedIssue(t *testing.T) {
 	}
 }
 
+// The dispatcher that exhausts a run, under the agent zone, leaves the run's
+// reservation held: that zone makes reservations and changes none. The
+// control zone's pass that blocks the issue closes the reservation in the
+// same step, so an exhausted run does not count against the budget cap for
+// ever.
+func TestTheBlockOfAnExhaustedRunClosesTheReservationTheDispatcherLeftHeld(t *testing.T) {
+	t.Parallel()
+	inner, err := fake.New(fake.Config{Clock: core.SystemClock{}, Roles: []agent.Role{agent.RoleCoder}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := harness.New(t, harness.Options{Coder: startRefused{inner}})
+	number := f.OpenIssue("maintainer", "MEMBER", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
+	f.Pass()
+	for range f.Manifest.Limits.MaxAttempts + 2 {
+		f.Tick()
+	}
+	runs := f.Runs(number)
+	if len(runs) != 1 || runs[0].Status != dispatcher.RunExhausted {
+		t.Fatalf("the run is not exhausted: %+v", runs)
+	}
+	reservation := func() core.Reservation {
+		t.Helper()
+		var r core.Reservation
+		err := f.ControlStore.View(context.Background(), func(ctx context.Context, tx state.Tx) error {
+			var err error
+			r, err = tx.GetReservation(ctx, runs[0].ReservationID)
+			return err
+		})
+		if err != nil {
+			t.Fatalf("read the reservation of the exhausted run: %v", err)
+		}
+		return r
+	}
+	if r := reservation(); r.Status != core.ReservationHeld {
+		t.Fatalf("the dispatcher moved the reservation of the run it exhausted to %s", r.Status)
+	}
+	f.Pass()
+	if got := f.Record(number).State; got != core.StateBlocked {
+		t.Fatalf("the issue of the exhausted run is %s, want Blocked", got)
+	}
+	if r := reservation(); r.Status == core.ReservationHeld || r.Status == core.ReservationSuspended {
+		t.Fatalf("the reservation of the blocked run is still %s", r.Status)
+	}
+}
+
 // The Owner's retry is judged by the record of the run whose block it
 // lifts: after the retried issue's next run is released and rolled back,
 // the rollback's own record lets the Owner retry it, and the progress of

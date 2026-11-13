@@ -18,8 +18,9 @@ func TestAgentZoneDoesNotFailAnEvaluation(t *testing.T) {
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		control := db.Open(t, core.ZoneControl)
 		agent := db.Open(t, core.ZoneAgent)
-		evaluating := along(t, agent, claim(t, agent, readyRecord(t, control, issue(3)), "worker-1", "run-1"),
-			core.EventDevelopmentStarted, core.EventCandidateSubmitted)
+		developed := along(t, agent, claim(t, agent, readyRecord(t, control, issue(3)), "worker-1", "run-1"),
+			core.EventDevelopmentStarted)
+		evaluating := advance(t, control, developed, core.EventCandidateSubmitted, nil)
 		refused(t, agent, "qa failure written by the agent zone", next(t, evaluating, core.EventQAFailed, nil), core.CodePermissionDenied)
 		if retried := advance(t, control, evaluating, core.EventQAFailed, nil); retried.Attempt != 2 {
 			t.Fatalf("the control zone's qa failure wrote %+v", retried)
@@ -72,6 +73,7 @@ func TestPostgresMigrationHoldsAGrantedStoreToLifecycleSteps(t *testing.T) {
 		// The schema and the policy as the earlier release left them: no
 		// trigger, and a policy on the records that lets the agent role
 		// leave QAEvaluation.
+		forgetStoreRules(t, raw)
 		for _, statement := range []string{
 			`DROP TRIGGER IF EXISTS sisf_record_step ON records`,
 			`DROP POLICY "sisf_agent_update" ON records`,
@@ -149,12 +151,8 @@ func assertRecordStepRules(t *testing.T, db *sqlstoretest.Database, agent *sql.D
 			t.Fatalf("a refused change moved %s to %+v", rec.IssueID, got)
 		}
 	}
-	// The one step the agent zone may take from Claimed goes through.
-	result, err = agent.ExecContext(ctx, update(`state = 'Developing', version = version + 1`, claimed.IssueID))
-	if err != nil {
-		t.Fatalf("the agent role's own step was refused: %v", err)
-	}
-	if changed, _ := result.RowsAffected(); changed != 1 {
-		t.Fatalf("the agent role's own step changed %d records", changed)
-	}
+	// The one step the agent zone may take from Claimed goes through, with
+	// its journal row.
+	rawStep(t, agent, "the agent role's own step", claimed.IssueID,
+		`state = 'Developing', version = version + 1, idempotency_key = 'develop/run-1'`, core.StateClaimed, core.EventDevelopmentStarted)
 }

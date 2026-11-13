@@ -17,7 +17,16 @@ import (
 
 // runEvents are the steps the agent zone writes: the dispatcher claims a
 // Ready issue under its lease and a budget reservation and starts
-// development, and the run submits the candidate it built.
+// development.
+//
+// Submitting a candidate is not among them. The candidate is built from the
+// run's patch by the supervisor's build stage, which writes as the control
+// zone and names the digest of what it built. A run that could submit a
+// candidate itself could put on its record a digest the trusted build never
+// produced, and take ahead of time the key under which the build submits it,
+// so that the build's submission would be refused as a replay of another
+// step. Nothing in the agent zone has written it, so the step is refused to
+// that zone rather than left open.
 //
 // Stopping a run is not among them either. A run that could block its own
 // issue could take it out of the queue; the control zone blocks an issue
@@ -39,9 +48,7 @@ import (
 // the control zone. A run that could write any of them could start
 // unapproved work, release its own candidate or take a candidate it does
 // not like out of the release queue.
-var runEvents = []core.Event{
-	core.EventClaimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted,
-}
+var runEvents = []core.Event{core.EventClaimed, core.EventDevelopmentStarted}
 
 // controlEvents are the steps the control zone writes: all of them, the run
 // steps included, since the control plane is where the lifecycle is kept.
@@ -69,29 +76,42 @@ var zoneEvents = map[core.Zone]map[core.Event]bool{
 // that could write any key could take, ahead of time, the predictable key of
 // a step another zone has yet to write, and that step would then be refused
 // as a replay of a different one. The dispatcher keys the claim
-// "claim/<run>" and the start of development "develop/<run>"; the submission
-// of a candidate has its prefix reserved here.
-// None of them meets a key of the control zone, whose intake keys its steps
-// "intake/<issue>/<event>" and an authorized retry "retry/<issue>/<version>".
+// "claim/<run>" and the start of development "develop/<run>".
 //
-// The control zone, which keeps the lifecycle, is not listed and may write
-// any key; a zone that is listed may write only the steps it lists.
+// The control zone, which keeps the lifecycle, is not listed and may key its
+// steps as it likes, except that it writes under the prefix of another
+// zone's step only that step (ownsKey): a key it writes any other step under
+// could be taken ahead of time by that zone. Its intake keys its steps
+// "intake/<issue>/<event>", an authorized retry "retry/<issue>/<version>",
+// the build stage a candidate "candidate/<run>/<attempt>", and the
+// supervisor its QA, release and stop steps "qa-passed/", "release/" and
+// "stop/" followed by the run; none of them is under an agent prefix.
 var zoneStepKeys = map[core.Zone]map[core.Event]string{
 	core.ZoneAgent: {
 		core.EventClaimed:            "claim/",
 		core.EventDevelopmentStarted: "develop/",
-		core.EventCandidateSubmitted: "candidate/",
 	},
 }
 
-// ownsKey reports whether zone may write the step on event under key.
+// ownsKey reports whether zone may write the step on event under key: a zone
+// with keys of its own only under the prefix of that step, and any other zone
+// under any key but the prefix another zone holds for another step.
 func ownsKey(zone core.Zone, event core.Event, key string) bool {
-	prefixes, limited := zoneStepKeys[zone]
-	if !limited {
-		return true
+	if prefixes, limited := zoneStepKeys[zone]; limited {
+		prefix, listed := prefixes[event]
+		return listed && len(key) > len(prefix) && strings.HasPrefix(key, prefix)
 	}
-	prefix, listed := prefixes[event]
-	return listed && len(key) > len(prefix) && strings.HasPrefix(key, prefix)
+	for other, prefixes := range zoneStepKeys {
+		if other == zone {
+			continue
+		}
+		for step, prefix := range prefixes {
+			if step != event && strings.HasPrefix(key, prefix) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func eventSet(events []core.Event) map[core.Event]bool {

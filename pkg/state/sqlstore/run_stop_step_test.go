@@ -111,12 +111,7 @@ func TestPostgresRunStopMigrationUpgradesAGrantedStore(t *testing.T) {
 		}
 		refusedRow(t, rawLogin(t, logins.DSN[core.ZoneAgent]), "a stopped run blocked by the agent role",
 			`UPDATE records SET state = 'Blocked', version = version + 1 WHERE issue = '`+held.IssueID.String()+`'`)
-		result, err := controlRole.ExecContext(ctx, block, held.IssueID.String())
-		if err != nil {
-			t.Fatalf("the control role's new step was refused after the migration: %v", err)
-		}
-		if changed, _ := result.RowsAffected(); changed != 1 {
-			t.Fatalf("the control role's new step changed %d records", changed)
-		}
+		rawStep(t, controlRole, "the control role's new step after the migration", held.IssueID,
+			`state = 'Blocked', version = version + 1, idempotency_key = 'stop/run-1'`, core.StateClaimed, core.EventClaimStopped)
 	})
 }

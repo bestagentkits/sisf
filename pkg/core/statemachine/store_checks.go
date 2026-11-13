@@ -56,7 +56,8 @@ func CheckLease(t core.Transition) error {
 //   - the claim must name a run, and not the run the stored record names: a
 //     claim starts a new run, so receipts of the run before never count again.
 //     The record names only the latest run, so the store also refuses a claim
-//     naming any run its journal shows the issue had;
+//     naming any run its journal shows the issue had. A new run has no
+//     candidate and no release yet, so the claim names neither;
 //   - any other step must not name another run than the stored one, and must
 //     name the stored one while a run holds the issue (RequiresLease);
 //   - the claim must carry attempt 1, since a new run starts its count; the
@@ -80,6 +81,9 @@ func CheckRecordBinding(stored core.StateRecord, t core.Transition) error {
 	if t.Event == core.EventClaimed {
 		if t.RunID == "" || t.RunID == stored.RunID {
 			return unbound(t, "a claim starts a new run and must name another run than the one the record names")
+		}
+		if t.CandidateDigest != "" || t.ReleaseDigest != "" {
+			return unbound(t, "a claim starts a run that has no candidate and no release yet")
 		}
 		return nil
 	}

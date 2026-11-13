@@ -253,6 +253,7 @@ type Migrator interface {
 	Pending(ctx context.Context) ([]Migration, error)
 	// Migrate applies pending migrations in order. It returns
 	// APPROVAL_REQUIRED and applies nothing when a pending migration is not
-	// backward compatible and opts does not allow it.
+	// backward compatible and opts does not allow it, unless the database
+	// holds no store yet: no migration applied and no store tables.
 	Migrate(ctx context.Context, opts MigrateOptions) error
 }

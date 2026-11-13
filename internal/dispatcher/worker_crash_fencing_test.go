@@ -65,8 +65,9 @@ func TestAWorkerThatCrashesMidRunIsFencedAndItsRunResumedOnce(t *testing.T) {
 				t.Fatalf("a report under the crashed worker's token was not refused as stale: %v", err)
 			}
 		}
-		// Nor can it write a lifecycle step with its old token.
-		err := f.store.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
+		// Nor can a candidate be submitted under its old token, even by the
+		// build stage in the control zone, which submits the run's candidate.
+		err := f.db.Open(t, core.ZoneControl).Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
 			_, err := tx.Transition(ctx, core.Transition{
 				IssueID: issue, From: core.StateDeveloping, To: core.StateQAEvaluation, Event: core.EventCandidateSubmitted,
 				ExpectedVersion: resumed.Version, IdempotencyKey: "late-candidate", LeaseOwner: "worker-a",
