@@ -128,7 +128,17 @@ func releaseNext(t *testing.T, d releaseDeployment, n int) (int, string) {
 	setPatch(t, d, nextGreetingDiff(t, d, n))
 	load := startTraffic(t, d)
 	number, issue := openBug(t, d, fmt.Sprintf("Greet the world, take %d", n))
-	waitStateWithin(t, d, issue, "Closed", releaseLimit)
+	eventuallyWithin(t, releaseLimit, issue+" closed", func() (bool, string) {
+		api, dashboard := states(t, d, issue)
+		if api == "Blocked" {
+			// No Owner acts in this scenario, so a block never clears:
+			// say why at once.
+			r := recordOf(t, d, issue)
+			t.Fatalf("release %d: %s was blocked; it went %v, its release is %s, the commit to build on is %+v",
+				n, issue, d.journey(t, issue), d.kv(t, "supervisor", releaseKey(r)), buildBaseOf(t, d))
+		}
+		return api == "Closed" && dashboard == "Closed", "API " + api + ", dashboard " + dashboard
+	})
 	load.halt()
 	journeyEnds(t, d, issue, fullLifecycle)
 	if released := awaitRelease(t, d, issue); released.Result != "closed" {
