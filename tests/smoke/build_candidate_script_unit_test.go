@@ -100,7 +100,7 @@ func TestTheBuildScriptRefusesACandidateWithTwoPrograms(t *testing.T) {
 	commit := sandboxCommit(t, repo, filepath.Join(dir, "mirror.git"))
 	build := &scriptBuild{t: t, script: filepath.Join(repoRoot(), "tests", "smoke", "sandbox", "build-candidate.sh"), env: []string{
 		"SISF_SMOKE_MIRROR=" + filepath.Join(dir, "mirror.git"), "GOFLAGS=-mod=readonly"}, work: filepath.Join(dir, "work")}
-	images := stages.SandboxImages{Exec: build, Argv: []string{"build"}, Timeout: 5 * time.Minute}
+	images := stages.SandboxImages{Exec: build, Argv: []string{"build"}, Timeout: 5 * time.Minute, Programs: scriptStore(t, dir)}
 	_, err := images.BuildImage(context.Background(), stages.ImageRequest{Commit: core.CommitSHA(commit), Unit: "app", RunID: "run-1"})
 	if r, refused := stages.RefusalOf(err); !refused || r.Reason != stages.RefusalBuildFailed {
 		t.Fatalf("a candidate with two programs: %v, want its build refused", err)

@@ -66,8 +66,11 @@ func (SimulatedArtifacts) ObserveArtifact(_ context.Context, a deploy.Artifact) 
 //
 //   - test runs the candidate's tests. Only its exit status is read: 0
 //     means the tests passed.
-//   - build builds the candidate. Only its exit status is read: anything
-//     but 0 refuses the candidate.
+//   - build builds the candidate, for the supervisor's operating system and
+//     architecture as Go names them in SISF_TARGET_OS and SISF_TARGET_ARCH.
+//     Only its exit status is read: anything but 0 refuses the candidate,
+//     so a candidate that does not compile for that target is refused
+//     here rather than held as an outage of the report phase.
 //   - report runs no code of the candidate. It builds the commit again
 //     deterministically without running it, and reports the image and its
 //     digest on lines "sisf-report <nonce> <key>: <value>", with the keys
@@ -161,7 +164,12 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 	if err != nil {
 		return ImageResult{}, err
 	}
-	built, err := s.phase(ctx, sandbox.ID, phaseBuild, candidate, deadline, nil)
+	// The build compiles for the target the report phase will export
+	// for, so a candidate that does not compile for the supervisor's
+	// system fails here, as its own failure.
+	targeted := maps.Clone(candidate)
+	targeted["SISF_TARGET_OS"], targeted["SISF_TARGET_ARCH"] = runtime.GOOS, runtime.GOARCH
+	built, err := s.phase(ctx, sandbox.ID, phaseBuild, targeted, deadline, nil)
 	if err != nil {
 		return ImageResult{}, err
 	}

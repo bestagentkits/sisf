@@ -5,7 +5,9 @@
 #
 #   test    vets and tests every Go package of the candidate (SISF_COMMIT);
 #           the supervisor reads only the exit status.
-#   build   builds every package; the supervisor reads only the exit status.
+#   build   builds every package for the supervisor's operating system and
+#           architecture (SISF_TARGET_OS, SISF_TARGET_ARCH); the supervisor
+#           reads only the exit status.
 #   report  builds the one program of the commit the supervisor names
 #           (SISF_REPORT_COMMIT) for the supervisor's own operating system
 #           and architecture (SISF_REPORT_TARGET_OS, SISF_REPORT_TARGET_ARCH),
@@ -28,7 +30,18 @@
 set -eu
 phase=${SISF_PHASE:?the supervisor sets SISF_PHASE}
 case $phase in
-test | build) commit=${SISF_COMMIT:?the supervisor sets SISF_COMMIT} ;;
+test) commit=${SISF_COMMIT:?the supervisor sets SISF_COMMIT} ;;
+build)
+	commit=${SISF_COMMIT:?the supervisor sets SISF_COMMIT}
+	target_os=${SISF_TARGET_OS:?the supervisor sets SISF_TARGET_OS}
+	target_arch=${SISF_TARGET_ARCH:?the supervisor sets SISF_TARGET_ARCH}
+	case $target_os$target_arch in
+	*[!a-z0-9]*)
+		echo "the target $target_os/$target_arch is not an operating system and architecture" >&2
+		exit 2
+		;;
+	esac
+	;;
 report)
 	commit=${SISF_REPORT_COMMIT:?the supervisor sets SISF_REPORT_COMMIT}
 	nonce=${SISF_REPORT_NONCE:?the supervisor sets SISF_REPORT_NONCE}
@@ -96,7 +109,7 @@ fi
 program=$(go list -f '{{if eq .Name "main"}}{{.ImportPath}}{{end}}' ./... | grep .)
 # Building compiles the candidate and runs none of it: no cgo, no generate.
 if [ "$phase" = build ]; then
-	CGO_ENABLED=0 go build -trimpath -o "$out/" ./... >&2
+	CGO_ENABLED=0 GOOS=$target_os GOARCH=$target_arch go build -trimpath -o "$out/" ./... >&2
 	exit 0
 fi
 rm -f "$out/program"

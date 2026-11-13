@@ -107,6 +107,9 @@ func (o Options) normalize() (Options, error) {
 	if o.Debug && o.Mode != manifest.ModeDocker {
 		return o, invalidf("--debug publishes the state store, which only Docker mode has")
 	}
+	if err := o.refuseDockerBuildFlags(o.Mode); err != nil {
+		return o, err
+	}
 	if o.Repo == (manifest.Repository{}) && o.Sim {
 		o.Repo.Owner, o.Repo.Repo, _ = strings.Cut(SimRepository, "/")
 	}
@@ -160,6 +163,19 @@ func (o Options) normalize() (Options, error) {
 	}
 	o.Budget = o.Budget.withDefaults()
 	return o, nil
+}
+
+// refuseDockerBuildFlags refuses a build command and a QA launcher for an
+// install in Docker mode. Docker mode deploys images, and the supervisor
+// accepts a build only on a program it received (lifecycleChoice), so it
+// builds and releases nothing whatever they say.
+func (o Options) refuseDockerBuildFlags(mode manifest.Mode) error {
+	if mode != manifest.ModeDocker || (o.BuildCommand == "" && o.QAAgentBinary == "") {
+		return nil
+	}
+	return invalidf("--build-command and --qa-agent-binary have no effect in Docker mode, which builds and releases nothing " +
+		"because the supervisor cannot observe an image a sandboxed build reports; " +
+		"a Standalone install with --exec docker builds candidates in a sandbox and deploys the program each build exports")
 }
 
 // checkGitHubURL requires https, or plain http to a loopback host, so a

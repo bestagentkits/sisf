@@ -64,6 +64,9 @@ func (in *Installer) ensure(ctx context.Context, o UpOptions) (*manifest.Manifes
 		if wantSim := o.Init.Sim; wantSim != (m.Extensions["profile"] == profileSim) {
 			return nil, invalidf("the simulation profile is fixed when the install is created")
 		}
+		if err := o.Init.refuseDockerBuildFlags(m.Mode); err != nil {
+			return nil, err
+		}
 	}
 	if o.Budget != nil && o.Budget.Confirmed {
 		if err := in.confirmBudget(m, *o.Budget); err != nil {

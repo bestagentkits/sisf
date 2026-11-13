@@ -32,6 +32,8 @@ Two checks of a release read as verification but compared a claim with itself.
 - A program swapped in the store after QA judged it is never released, and is never recorded as the last known good.
 - A build command that speaks the earlier protocol is held until its report drops the two keys (`tests/smoke/sandbox/build-candidate.sh` is updated).
 - The release pipeline changed only at its two verification call sites and its configuration.
+- The build phase is told the target it builds for (`SISF_TARGET_OS`, `SISF_TARGET_ARCH`), so a candidate that does not compile for it is the candidate's failure, not an outage of the report phase.
+- Docker mode, which builds and releases nothing since ADR 0024, refuses `--build-command` and `--qa-agent-binary` at `sisf init` and `sisf up` instead of taking them in silence, and its doctor check is always `build evidence`.
 - **Not covered:**
   - **The staged digest is an echo.** The `staged.Digest` compared in `start()` is still the artifact's own digest echoed by the backends. What a local start runs is still re-hashed by the program store before it starts.
   - **The installed release's artifact is a label.** It names its origin (`lkg/<source>:<digest>`), not documents, and is not gated by the observed-build gate.

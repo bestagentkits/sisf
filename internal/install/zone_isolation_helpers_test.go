@@ -23,6 +23,14 @@ func testImages() Images {
 // renderCompose renders the project of a fresh Docker install.
 func renderCompose(t *testing.T, mutate func(*Options)) (*Installer, []byte) {
 	t.Helper()
+	return renderComposeOf(t, mutate, nil)
+}
+
+// renderComposeOf renders the project of a fresh Docker install whose
+// options are then changed by recorded, as settings read back from a
+// manifest that init would no longer write.
+func renderComposeOf(t *testing.T, mutate, recorded func(*Options)) (*Installer, []byte) {
+	t.Helper()
 	in, _, _ := newTestInstaller(t)
 	o := initOptions(in, manifest.ModeDocker)
 	if mutate != nil {
@@ -32,6 +40,9 @@ func renderCompose(t *testing.T, mutate func(*Options)) (*Installer, []byte) {
 		t.Fatal(err)
 	}
 	o, _ = o.normalize()
+	if recorded != nil {
+		recorded(&o)
+	}
 	data, err := newComposeData(in.Layout, o, testImages(), []string{"sisf", "state", "bootstrap"}, testHost)
 	if err != nil {
 		t.Fatal(err)

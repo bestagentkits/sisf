@@ -101,6 +101,14 @@ func TestTheImageDigestIsTheDigestOfTheProgramTheSupervisorReceived(t *testing.T
 			t.Errorf("the %s phase, where the candidate's code runs, was told the report's target", phase)
 		}
 	}
+	// The build phase compiles for the same target, so a candidate that
+	// does not compile for the supervisor's system fails where its own
+	// failure is charged to it, never first in the report phase as an
+	// outage of the build command.
+	build := s.envs["build"]
+	if build["SISF_TARGET_OS"] != runtime.GOOS || build["SISF_TARGET_ARCH"] != runtime.GOARCH {
+		t.Errorf("the build phase was not told the supervisor's target: %v", build)
+	}
 }
 
 // A program that is not the one the report names, is missing, malformed or
