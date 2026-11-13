@@ -24,6 +24,9 @@ type receiptFiles struct {
 	dir, rootKey, otherRootKey, bundle string
 	receipt                            core.QAReceipt
 	delegation                         delegation.SignedDelegation
+	// root and signer sign further receipts and revocation lists for a
+	// test; they live only in memory.
+	root, signer core.Signer
 }
 
 // writeReceiptFiles signs a receipt for run-1 of acme/app#7 with a key the
@@ -70,11 +73,21 @@ func writeReceiptFiles(t *testing.T) receiptFiles {
 	if r.Signature, err = signer.Sign(ctx, r.SigningPayload()); err != nil {
 		t.Fatal(err)
 	}
-	f := receiptFiles{dir: t.TempDir(), receipt: r, delegation: key.Delegation}
+	f := receiptFiles{dir: t.TempDir(), receipt: r, delegation: key.Delegation, root: root, signer: signer}
 	f.rootKey = f.write(t, "root.pub", []byte(signing.EncodePublicKey(pub)))
 	f.otherRootKey = f.write(t, "other-root.pub", []byte(signing.EncodePublicKey(otherPub)))
 	f.bundle = f.writeBundle(t, "bundle.json", iqa.ReceiptBundle{Receipt: r, Delegation: &f.delegation}, false)
 	return f
+}
+
+// resign signs r again with the delegated key and writes it as a bundle.
+func (f receiptFiles) resign(t *testing.T, name string, r core.QAReceipt) string {
+	t.Helper()
+	var err error
+	if r.Signature, err = f.signer.Sign(context.Background(), r.SigningPayload()); err != nil {
+		t.Fatal(err)
+	}
+	return f.writeBundle(t, name, iqa.ReceiptBundle{Receipt: r, Delegation: &f.delegation}, false)
 }
 
 func (f receiptFiles) write(t *testing.T, name string, data []byte) string {
