@@ -90,6 +90,9 @@ func (in *Installer) writeInstall(o Options) (InitResult, error) {
 		return InitResult{}, err
 	}
 	res.Warnings = append(res.Warnings, fmt.Sprintf(rootKeyWarning, l.SecretsDir(areaControl)))
+	if needsBuildSandbox(o, o.Mode) {
+		res.Warnings = append(res.Warnings, "This install cannot start: "+noBuildSandbox+".")
+	}
 	if o.Dev {
 		res.Warnings = append(res.Warnings, devWarning)
 	}

@@ -72,8 +72,9 @@ A Standalone install can run real agents as local processes under
 trusted_code_only: --coder-agent claude|codex [--coder-model M] [--agent-home DIR]
 [--workspace-source URL|PATH], --qa-judge agent --qa-agent codex|claude
 [--qa-model M] [--qa-home DIR], --build-command CMD, --exec local.
-The local backend builds nothing an agent wrote. To build candidates, give
-the install a Docker build sandbox the operator runs: --exec docker
+The local backend builds nothing an agent wrote, so outside the simulation
+sisf up refuses such an install. Give it a Docker build sandbox the
+operator runs: --exec docker
 --exec-docker-endpoint http://127.0.0.1:PORT (the runner filter, sisf
 docker-filter --role runner) --exec-docker-network NET (internal)
 --egress-proxy http://HOST:PORT (on NET) --runner-image NAME@sha256:DIGEST

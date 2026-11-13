@@ -98,6 +98,8 @@ func TestTheDoctorSaysAProductionDockerInstallReleasesNothing(t *testing.T) {
 	// Where the stages run, the launcher is trusted on the operator's word,
 	// and the doctor says so.
 	m.Mode = manifest.ModeStandalone
+	BuildSandbox{Endpoint: "http://127.0.0.1:17480", Network: "sisf-shop-sandbox", EgressProxy: "http://egress:3128",
+		RunnerImage: "127.0.0.1:17481/sisf-runner@sha256:" + strings.Repeat("ab", 32)}.extensions(m.Extensions)
 	var c collector
 	in.checkStages(&c, m)
 	if v := verdictOf(c.report, "qa launcher"); len(v) != 1 || v[0] != VerdictWarn ||

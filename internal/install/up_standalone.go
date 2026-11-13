@@ -13,6 +13,9 @@ import (
 // command, one process for a service manager to watch, and one lifecycle for
 // the three zones.
 func (in *Installer) upStandalone(ctx context.Context, m *manifest.Manifest, reload <-chan struct{}) error {
+	if err := in.standaloneRunnable(m); err != nil {
+		return err
+	}
 	// The run lock is held from before the build until the units stopped;
 	// a second `up` of this install fails here at once.
 	lock, err := in.acquireRunLock()
