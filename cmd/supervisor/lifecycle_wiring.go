@@ -37,17 +37,17 @@ type lifecycleDeps struct {
 // Keys are loaded here and handed on only as signers.
 func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*stages.Stages, error) {
 	if l.buildOutageLimit < 1 {
-		return nil, core.NewError(core.CodeInvalidArgument, "--build-outage-limit must be at least 1")
+		return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "--build-outage-limit must be at least 1"))
 	}
 	if d.stop == nil {
-		return nil, core.NewError(core.CodeInvalidArgument, "the lifecycle needs the state store; set the variable --state-dsn-env names")
+		return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "the lifecycle needs the state store; set the variable --state-dsn-env names"))
 	}
 	m, err := manifest.Load(l.factoryManifest)
 	if err != nil {
 		return nil, err
 	}
 	if m.FactoryID != d.cfg.FactoryID {
-		return nil, core.NewError(core.CodeInvalidArgument, "the factory manifest is not the one of --factory-id")
+		return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "the factory manifest is not the one of --factory-id"))
 	}
 	inputs, err := release.NewUnitInputs(declaredUnitInputs(m))
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -144,5 +145,22 @@ func TestASupervisorWhoseLifecycleCannotBeWiredRefusesToStart(t *testing.T) {
 				t.Error("a refused supervisor opened its admin socket")
 			}
 		})
+	}
+}
+
+// Only a refusal the configuration decides ends with EX_CONFIG. The same
+// code from the environment, such as a sandbox network not created yet,
+// ends with a failure `sisf up` starts the supervisor again after.
+func TestOnlyAConfigurationRefusalEndsWithExConfig(t *testing.T) {
+	t.Parallel()
+	networkGone := core.NewError(core.CodeNotSupported, "the sandbox network sisf-sandbox does not exist; it must be an internal Docker network")
+	if got := refusalStatus(networkGone); got != exitFailure {
+		t.Errorf("a missing sandbox network ends with %d, want %d", got, exitFailure)
+	}
+	if got := refusalStatus(core.NewError(core.CodeUnavailable, "the Docker daemon does not answer")); got != exitFailure {
+		t.Errorf("a daemon that does not answer ends with %d, want %d", got, exitFailure)
+	}
+	if got := refusalStatus(stages.Misconfigured(core.NewError(core.CodeNotSupported, "no execution backend is configured to build candidates"))); got != exitConfigRefused {
+		t.Errorf("a configuration refusal ends with %d, want %d", got, exitConfigRefused)
 	}
 }

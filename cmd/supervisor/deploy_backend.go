@@ -7,6 +7,7 @@ import (
 
 	"github.com/bestagentkits/sisf/adapters/deploy/compose"
 	"github.com/bestagentkits/sisf/adapters/deploy/local"
+	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/edge"
 	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -45,7 +46,7 @@ func (l *lifecycleFlags) deployBackend(factory core.FactoryID, ctl edge.Controll
 	switch l.deploy {
 	case "local":
 		if l.localProgram == "" || !filepath.IsAbs(l.localProgram) {
-			return nil, core.NewError(core.CodeInvalidArgument, "deploy local needs an absolute --deploy-local-program")
+			return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "deploy local needs an absolute --deploy-local-program"))
 		}
 		programs := l.programs
 		if programs == nil {

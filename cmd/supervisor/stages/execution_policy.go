@@ -62,18 +62,18 @@ func SelectImageBuilder(ctx context.Context, c ExecutionChoice) (ImageBuilder, e
 		// Without a build command every build would fail; refusing here
 		// keeps a configuration error from being charged to agents' patches.
 		if len(c.BuildArgv) == 0 || c.BuildTimeout <= 0 {
-			return nil, core.NewError(core.CodeInvalidArgument,
-				"candidates are built in a sandbox, which needs a build command (--build-command) and a positive build timeout (--build-timeout)")
+			return nil, Misconfigured(core.NewError(core.CodeInvalidArgument,
+				"candidates are built in a sandbox, which needs a build command (--build-command) and a positive build timeout (--build-timeout)"))
 		}
 		if c.Programs == nil {
-			return nil, unobservedImagesRefused()
+			return nil, Misconfigured(unobservedImagesRefused())
 		}
 		return SandboxImages{Exec: c.Docker, Specs: c.Specs, Argv: c.BuildArgv, Timeout: c.BuildTimeout, Programs: c.Programs}, nil
 	}
 	if c.Local != nil {
-		return nil, untrustedRefused(c.Local.Name())
+		return nil, Misconfigured(untrustedRefused(c.Local.Name()))
 	}
-	return nil, core.NewError(core.CodeNotSupported, "no execution backend is configured to build candidates")
+	return nil, Misconfigured(core.NewError(core.CodeNotSupported, "no execution backend is configured to build candidates"))
 }
 
 // SandboxSpecs builds the sandbox specs of builds. A build never holds a

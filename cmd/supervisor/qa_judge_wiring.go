@@ -72,7 +72,7 @@ func (l *lifecycleFlags) judge(ctx context.Context, d judgeDeps) (qa.Judge, erro
 	switch l.qa.judge {
 	case qaJudgeFake:
 		if !d.sim || l.coderAgent != "fake" {
-			return nil, core.NewError(core.CodePermissionDenied, "the scripted judge is accepted only in the trusted simulation with the scripted coding agent")
+			return nil, stages.Misconfigured(core.NewError(core.CodePermissionDenied, "the scripted judge is accepted only in the trusted simulation with the scripted coding agent"))
 		}
 		return fake.New(fake.Config{Name: "fake-qa", Clock: d.clock, Roles: []agent.Role{agent.RoleQA}})
 	case qaJudgeAgent:
@@ -81,7 +81,7 @@ func (l *lifecycleFlags) judge(ctx context.Context, d judgeDeps) (qa.Judge, erro
 		}
 		return l.qa.agentJudge(ctx, d, l.exec)
 	}
-	return nil, core.NewError(core.CodeInvalidArgument, "--qa-judge must be agent or fake")
+	return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "--qa-judge must be agent or fake"))
 }
 
 // qaSandboxAllowed decides from the execution backend selection whether
@@ -99,15 +99,15 @@ func (l *lifecycleFlags) judge(ctx context.Context, d judgeDeps) (qa.Judge, erro
 // own, is never run there.
 func qaSandboxAllowed(ctx context.Context, agentName, exec string, docker execution.Backend, trustedCodeOnly bool, launcher string) error {
 	if _, known := agentenv.Credentials(agentName); !known {
-		return core.NewError(core.CodeInvalidArgument, "--qa-agent must be claude, codex or pi")
+		return stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "--qa-agent must be claude, codex or pi"))
 	}
 	if launcher != "" && !filepath.IsAbs(launcher) {
-		return core.NewError(core.CodeInvalidArgument, "--qa-agent-binary must be an absolute path")
+		return stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "--qa-agent-binary must be an absolute path"))
 	}
 	switch exec {
 	case "docker":
 		if docker == nil {
-			return core.NewError(core.CodeNotSupported, "no docker execution backend is configured")
+			return stages.Misconfigured(core.NewError(core.CodeNotSupported, "no docker execution backend is configured"))
 		}
 		caps, err := docker.Capabilities(ctx)
 		if err != nil {
@@ -117,16 +117,16 @@ func qaSandboxAllowed(ctx context.Context, agentName, exec string, docker execut
 			return core.NewError(core.CodePermissionDenied, "the docker backend proves neither isolation nor egress enforcement, so no QA agent may read untrusted candidates under it")
 		}
 		if launcher == "" {
-			return core.NewError(core.CodePermissionDenied,
-				"under --exec docker the QA agent would run as the supervisor's own OS user, which can read the trust directory: give --qa-agent-binary a launcher that runs it in a sandbox")
+			return stages.Misconfigured(core.NewError(core.CodePermissionDenied,
+				"under --exec docker the QA agent would run as the supervisor's own OS user, which can read the trust directory: give --qa-agent-binary a launcher that runs it in a sandbox"))
 		}
 	case "local":
 		if !trustedCodeOnly || agentName == "pi" {
-			return core.NewError(core.CodePermissionDenied,
-				"a QA agent runs with --exec local only for claude or codex, in a deployment whose manifest states trusted_code_only")
+			return stages.Misconfigured(core.NewError(core.CodePermissionDenied,
+				"a QA agent runs with --exec local only for claude or codex, in a deployment whose manifest states trusted_code_only"))
 		}
 	default:
-		return core.NewError(core.CodeNotSupported, "the QA agent needs --exec docker, or --exec local under trusted_code_only")
+		return stages.Misconfigured(core.NewError(core.CodeNotSupported, "the QA agent needs --exec docker, or --exec local under trusted_code_only"))
 	}
 	return nil
 }

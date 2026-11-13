@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/observe"
+	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/internal/supervisor/killswitch"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -277,13 +278,13 @@ func printError(w io.Writer, err error) {
 	}
 }
 
-// refusalStatus is the exit status of a lifecycle that cannot be wired: a
-// configuration that chooses what is refused, does not support or is not
-// valid ends with exitConfigRefused; anything else, such as a file not
-// there yet, may pass at the next start.
+// refusalStatus is the exit status of a lifecycle that cannot be wired. A
+// refusal the configuration alone decides (stages.ErrConfiguration) ends
+// with exitConfigRefused; anything else, such as a sandbox network or a
+// file not there yet, whatever its code, may pass at the next start and
+// ends with exitFailure, which `sisf up` restarts after a backoff.
 func refusalStatus(err error) int {
-	switch core.CodeOf(err) {
-	case core.CodePermissionDenied, core.CodeNotSupported, core.CodeInvalidArgument:
+	if errors.Is(err, stages.ErrConfiguration) {
 		return exitConfigRefused
 	}
 	return exitFailure
