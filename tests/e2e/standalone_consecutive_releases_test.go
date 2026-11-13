@@ -80,6 +80,9 @@ func stopUntilTheOwnerApproves(t *testing.T, d *standaloneDeployment) {
 		map[string]any{"merge_method": "merge", "commit_title": "The Owner merges release 4"})
 	ownerMovesBaseline(t, d, gh.mainHead(t))
 	waitStateWithin(t, d, waiting, "Blocked", releaseLimit)
+	// The Owner's merge changed the greeting, so the retry is coded on main
+	// as it stands now.
+	setPatch(t, d, nextGreetingDiff(t, d, 5))
 	// The release is judged on users' traffic, as every release before it.
 	load := startTraffic(t, d)
 	if out, err := d.factoryd("control", "issue", "retry", "--issue", waiting); err != nil {
