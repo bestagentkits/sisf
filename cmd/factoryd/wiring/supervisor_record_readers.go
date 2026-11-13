@@ -5,6 +5,7 @@ import (
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/actions/runactions"
+	iqa "github.com/bestagentkits/sisf/internal/qa"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
 )
@@ -29,6 +30,20 @@ func (s storeQAHolds) QAHold(ctx context.Context, run core.RunID, attempt int) (
 	}
 	return runactions.QAHold{AwaitsApproval: h.Cause == handoff.QAHoldOwnerApproval, Summary: h.Summary(),
 		Ref: handoff.BuildNamespace + ":" + handoff.QAHoldKey(run, attempt), At: h.HeldAt}, nil
+}
+
+// storeQAReceipts reads the supervisor's signed QA receipts for
+// runs.receipt.
+type storeQAReceipts struct{ store state.Store }
+
+func (s storeQAReceipts) QAReceipt(ctx context.Context, run core.RunID, attempt int) (iqa.ReceiptBundle, string, error) {
+	var b iqa.ReceiptBundle
+	err := s.store.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		var err error
+		b, err = handoff.ReadQAReceipt(ctx, tx, run, attempt)
+		return err
+	})
+	return b, handoff.SupervisorNamespace + ":" + handoff.QAResultKey(run, attempt), err
 }
 
 // storeReleaseHolds reads the supervisor's held and refused releases for

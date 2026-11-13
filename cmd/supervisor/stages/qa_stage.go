@@ -9,6 +9,7 @@ import (
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	iqa "github.com/bestagentkits/sisf/internal/qa"
+	"github.com/bestagentkits/sisf/internal/signing/delegation"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 	"github.com/bestagentkits/sisf/pkg/state"
@@ -31,9 +32,12 @@ type QAStage struct {
 	ExtraGates  []string
 	// Budget closes the reservation of a run QA passed or held; nil leaves
 	// it to the dispatcher.
-	Budget   dispatcher.ReservationCloser
-	Clock    core.Clock
-	LeaseTTL time.Duration
+	Budget dispatcher.ReservationCloser
+	// Delegation finds the root-signed delegation of a signing key, which
+	// is stored with each receipt; nil stores none.
+	Delegation func(keyID string) (delegation.SignedDelegation, bool)
+	Clock      core.Clock
+	LeaseTTL   time.Duration
 }
 
 // QAPassResult is what one pass of the stage did, per verdict, with the
@@ -143,6 +147,11 @@ func (s *QAStage) evaluate(ctx context.Context, record core.StateRecord) (QAResu
 // transaction. Every verdict leaves a note the issue's progress shows.
 func (s *QAStage) conclude(ctx context.Context, record core.StateRecord, lease state.Lease, r QAResult) (QAResult, error) {
 	r.At = s.Clock.Now().UTC()
+	if s.Delegation != nil && !r.Receipt.Signature.IsZero() {
+		if d, ok := s.Delegation(r.Receipt.Signature.KeyID); ok {
+			r.Delegation = &d
+		}
+	}
 	hold := handoff.QAHoldOwnerApproval
 	if r.Verdict == VerdictFailed && record.Attempt >= s.MaxAttempts {
 		r.Verdict, r.Reason = VerdictHeld, fmt.Sprintf("attempt %d of %d failed QA: %s", record.Attempt, s.MaxAttempts, r.Reason)

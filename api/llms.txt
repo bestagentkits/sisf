@@ -56,6 +56,8 @@ An agent never acts as the Owner, even through an Owner's browser session.
   roles: owner, maintainer, reporter, viewer, agent; scopes: runs:read; POST /api/v1/actions/runs.explain
 - runs.inspect [read] Show the lifecycle record of an issue and the dispatcher record of its current run.
   roles: owner, maintainer, reporter, viewer, agent; scopes: runs:read; POST /api/v1/actions/runs.inspect
+- runs.receipt [read] Hand out the signed QA receipt of an issue's run with the root-signed delegation of its key, to check offline with the root public key (sisf receipt verify).
+  roles: owner, maintainer, reporter, viewer, agent; scopes: runs:read; POST /api/v1/actions/runs.receipt
 - secrets.list_refs [read] List secret references by provider, name, class and zone; never values.
   roles: owner, maintainer; scopes: secrets:read; POST /api/v1/actions/secrets.list_refs
 - setup.sample_issue [write] Open one small sample issue, labelled ready, that runs through the factory's whole lifecycle; Owner only.

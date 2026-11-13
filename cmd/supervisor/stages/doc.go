@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
+	"github.com/bestagentkits/sisf/internal/signing/delegation"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/qa"
 	"github.com/bestagentkits/sisf/pkg/state"
@@ -21,7 +23,7 @@ import (
 
 // Namespace is where the supervisor keeps what it decided. Only the
 // control zone reads or writes it.
-const Namespace = "supervisor"
+const Namespace = handoff.SupervisorNamespace
 
 // Verdicts of an evaluation.
 const (
@@ -36,9 +38,14 @@ const (
 type QAResult struct {
 	Candidate qa.Candidate   `json:"candidate"`
 	Receipt   core.QAReceipt `json:"receipt,omitzero"`
-	Verdict   string         `json:"verdict"`
-	Reason    string         `json:"reason,omitempty"`
-	At        time.Time      `json:"at"`
+	// Delegation is the root-signed delegation of the key that signed the
+	// receipt, kept with it so that anyone holding the root public key can
+	// check the receipt after the key has been renewed
+	// (handoff.ReadQAReceipt).
+	Delegation *delegation.SignedDelegation `json:"delegation,omitempty"`
+	Verdict    string                       `json:"verdict"`
+	Reason     string                       `json:"reason,omitempty"`
+	At         time.Time                    `json:"at"`
 }
 
 // ReleaseRecord is the outcome of the release of one candidate.
@@ -54,7 +61,7 @@ type ReleaseRecord struct {
 
 // QAResultKey and ReleaseKey name the records of one run's attempt.
 func QAResultKey(run core.RunID, attempt int) string {
-	return "qa/" + string(run) + "/" + itoa(attempt)
+	return handoff.QAResultKey(run, attempt)
 }
 func ReleaseKey(run core.RunID, attempt int) string {
 	return "release/" + string(run) + "/" + itoa(attempt)
