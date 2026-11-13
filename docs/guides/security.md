@@ -29,7 +29,7 @@ What the factory enforces today and where to read the owner of each control. Why
 
 ## Limits to know
 
-- Docker mode has no container sandboxing for untrusted code in this release (`sisf doctor` warns). Standalone is for trusted code only. Neither mode claims `safe_exec`; see the [capability matrix](../capability-matrix.md).
+- Docker mode has no container sandboxing for untrusted code in this release (`sisf doctor` warns). Outside the simulation it builds and releases no agent-written candidate: the supervisor cannot observe an image a sandboxed build reports ([ADR 0024](../adr/0024-a-build-is-accepted-only-on-bytes-the-supervisor-received.md)). Standalone is for trusted code only. Neither mode claims `safe_exec`; see the [capability matrix](../capability-matrix.md).
 - Identity is tested against a fake GitHub and fake OIDC provider. A real GitHub App and real Google SSO are not exercised yet.
 - A `--dev` install signs anyone who can reach 127.0.0.1 on its machine in as the Owner, without a password. It is refused off loopback and in Docker mode, and `init` and `doctor` warn loudly; use it only on a machine you alone use.
 - `--agent-home` and `--qa-home` give an agent your own login under `trusted_code_only`; they are refused near the factory's secrets, state and trust, and the install directory must lie outside that home. Agent-written code is not built on the host: without a Docker build sandbox candidate builds are held in Standalone mode. Once a candidate passed QA its program is released on the host, as your user ([ADR 0022](../adr/0022-standalone-deploys-the-candidates-own-program.md)).

@@ -3,8 +3,10 @@ package acceptance
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -21,7 +23,8 @@ import (
 // reportingSandbox stands in for an isolating execution backend whose build
 // command passes its test and build phases and, in its report phase,
 // reports under the nonce it was given the keys report returns for the
-// commit it was told.
+// commit it was told, and exports the commit's program: the commit's own
+// bytes, whose digest commitDigest is.
 type reportingSandbox struct {
 	buildSandbox
 	report func(commit string) map[string]string
@@ -32,10 +35,16 @@ func (s *reportingSandbox) Exec(_ context.Context, _ execution.SandboxID, cmd ex
 		return execution.ExecResult{}, nil
 	}
 	var out strings.Builder
-	for key, value := range s.report(cmd.Env["SISF_REPORT_COMMIT"]) {
+	commit := cmd.Env["SISF_REPORT_COMMIT"]
+	for key, value := range s.report(commit) {
 		fmt.Fprintf(&out, "sisf-report %s %s: %s\n", cmd.Env["SISF_REPORT_NONCE"], key, value)
 	}
-	return execution.ExecResult{Stdout: []byte(out.String())}, nil
+	fmt.Fprintf(&out, "sisf-report %s program: %s\n", cmd.Env["SISF_REPORT_NONCE"], base64.StdEncoding.EncodeToString([]byte(commit)))
+	if cmd.Stdout == nil {
+		return execution.ExecResult{Stdout: []byte(out.String())}, nil
+	}
+	_, err := io.WriteString(cmd.Stdout, out.String())
+	return execution.ExecResult{}, err
 }
 
 // commitDigest is the image digest the fake builds report for a commit.
@@ -107,7 +116,7 @@ func TestABuildThatReportsItsSBOMAndProvenanceIsReleased(t *testing.T) {
 			report := digestAndImage(commit)
 			report["sbom"], report["provenance"] = "sbom:"+commit, "provenance:"+commit
 			return report
-		}}, Argv: []string{"build"}, Timeout: time.Minute,
+		}}, Argv: []string{"build"}, Timeout: time.Minute, Programs: programStore(t),
 	}
 
 	f.Cycle(6)
@@ -129,7 +138,7 @@ func TestASandboxedBuildReportingNoSBOMOrProvenanceIsHeldNotJudged(t *testing.T)
 	exportedPatch(t, f, number)
 	build := f.Stages.Build
 	build.Builder.Images = stages.SandboxImages{
-		Exec: &reportingSandbox{report: digestAndImage}, Argv: []string{"build"}, Timeout: time.Minute,
+		Exec: &reportingSandbox{report: digestAndImage}, Argv: []string{"build"}, Timeout: time.Minute, Programs: programStore(t),
 	}
 	build.Retry = stages.BuildRetry{First: time.Minute, Max: time.Minute, HoldAfter: 1, RemindEvery: 24 * time.Hour, MaxReminders: 1}
 

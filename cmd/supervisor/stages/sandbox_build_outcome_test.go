@@ -50,13 +50,13 @@ func TestABuildCommandThatRanAndFailedIsTheCandidatesFault(t *testing.T) {
 		"past its timeout": {exec: scriptedSandbox{result: execution.ExecResult{ExitCode: -1, TimedOut: true}}, want: RefusalBuildTimeout,
 			wantCode: core.CodeTimeout},
 	} {
-		_, err := SandboxImages{Exec: c.exec, Argv: []string{"build"}, Timeout: time.Minute}.BuildImage(context.Background(), req)
+		_, err := SandboxImages{Exec: c.exec, Argv: []string{"build"}, Timeout: time.Minute, Programs: newProgramStore(t)}.BuildImage(context.Background(), req)
 		r, ok := RefusalOf(err)
 		if !ok || r.Reason != c.want || !core.HasCode(err, c.wantCode) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	_, err := SandboxImages{Exec: scriptedSandbox{result: execution.ExecResult{ExitCode: 2}}, Argv: []string{"build"}, Timeout: time.Minute}.
+	_, err := SandboxImages{Exec: scriptedSandbox{result: execution.ExecResult{ExitCode: 2}}, Argv: []string{"build"}, Timeout: time.Minute, Programs: newProgramStore(t)}.
 		BuildImage(context.Background(), req)
 	if r, _ := RefusalOf(err); r == nil || r.err.Details["exit_code"] != "2" {
 		t.Errorf("the exit status is not in the refusal: %v", err)
@@ -82,13 +82,13 @@ func TestABuildThatCouldNotRunIsAnOutageNotTheCandidatesFault(t *testing.T) {
 		"the supervisor is stopping": {interrupted,
 			scriptedSandbox{result: execution.ExecResult{ExitCode: -1}, cancel: cancel}, core.CodeUnavailable},
 	} {
-		_, err := SandboxImages{Exec: c.exec, Argv: []string{"build"}, Timeout: time.Minute}.BuildImage(c.ctx, req)
+		_, err := SandboxImages{Exec: c.exec, Argv: []string{"build"}, Timeout: time.Minute, Programs: newProgramStore(t)}.BuildImage(c.ctx, req)
 		if _, refused := RefusalOf(err); refused || !core.HasCode(err, c.want) {
 			t.Errorf("%s: %v, want an outage with %s", name, err, c.want)
 		}
 	}
 	out, err := sandboxBuild(t, &phasedSandbox{phase: map[string]execution.ExecResult{}})
-	if err != nil || out.Image != "registry.local/app@"+reportedDigest || !out.TestsPassed {
+	if err != nil || out.Image != "registry.local/app@"+string(reportedDigest) || !out.TestsPassed {
 		t.Errorf("a successful build: %+v, %v", out, err)
 	}
 }
@@ -97,7 +97,8 @@ func TestAFailedBuildCommandNamesTheCommitItRanOn(t *testing.T) {
 	t.Parallel()
 	repo := &recordingRepo{files: map[string]string{"examples/hello-app/main.go": "a\n"}}
 	b := newTestBuilder(repo)
-	b.Images = SandboxImages{Exec: scriptedSandbox{result: execution.ExecResult{ExitCode: 1}}, Argv: []string{"build"}, Timeout: time.Minute}
+	b.Images = SandboxImages{Exec: scriptedSandbox{result: execution.ExecResult{ExitCode: 1}}, Argv: []string{"build"}, Timeout: time.Minute,
+		Programs: newProgramStore(t)}
 	built, err := b.Build(context.Background(), BuildRequest{RunID: "run-1", Attempt: 2, Base: baseSHA,
 		Diff: "--- a/examples/hello-app/main.go\n+++ b/examples/hello-app/main.go\n@@ -1 +1 @@\n-a\n+b\n"})
 	if r, ok := RefusalOf(err); !ok || r.Reason != RefusalBuildFailed {

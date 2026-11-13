@@ -2,6 +2,8 @@ package acceptance
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
+	"github.com/bestagentkits/sisf/internal/supervisor/programstore"
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/execution"
@@ -18,6 +21,21 @@ import (
 
 // brokenGreetingDiff applies cleanly but leaves code that does not compile.
 var brokenGreetingDiff = strings.Replace(greetingDiff, `println("hello, world") }`, `println("hello, world" }`, 1)
+
+// programStore is where the supervisor keeps the programs sandboxed builds
+// export: it accepts a build only on the bytes it received.
+func programStore(t *testing.T) *programstore.Store {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "trust")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := programstore.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
 
 // buildSandbox stands in for an isolating execution backend. Its sandbox
 // either cannot be created, or runs the build command to the given exit
@@ -91,7 +109,7 @@ func TestAPatchThatDoesNotCompileFailsEvaluationAndIsRetried(t *testing.T) {
 	f.ScriptPatch(number, 0, greetingDiff)
 	sandbox := &buildSandbox{exitCode: 1}
 	f.Stages.Build.Builder.Images = &firstBuildIn{
-		sandbox: stages.SandboxImages{Exec: sandbox, Argv: []string{"make", "image"}, Timeout: time.Minute},
+		sandbox: stages.SandboxImages{Exec: sandbox, Argv: []string{"make", "image"}, Timeout: time.Minute, Programs: programStore(t)},
 		then:    f.Stages.Build.Builder.Images,
 	}
 	first := exportedPatch(t, f, number)
@@ -131,7 +149,7 @@ func TestASandboxThatCannotStartSpendsNoAttempt(t *testing.T) {
 	build := f.Stages.Build
 	working := build.Builder.Images
 	sandbox := &buildSandbox{createErr: core.NewError(core.CodeUnavailable, "the Docker endpoint is unreachable")}
-	build.Builder.Images = stages.SandboxImages{Exec: sandbox, Argv: []string{"make", "image"}, Timeout: time.Minute}
+	build.Builder.Images = stages.SandboxImages{Exec: sandbox, Argv: []string{"make", "image"}, Timeout: time.Minute, Programs: programStore(t)}
 	build.Retry = stages.BuildRetry{First: time.Minute, Max: time.Minute, HoldAfter: 3}
 
 	if res := build.Pass(ctx); len(res.Errors) == 0 || len(res.Unbuildable) != 0 || len(res.Submitted) != 0 {

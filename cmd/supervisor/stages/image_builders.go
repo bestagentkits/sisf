@@ -52,15 +52,13 @@ func (s SimulatedImages) BuildImage(ctx context.Context, req ImageRequest) (Imag
 //     means the tests passed.
 //   - build builds the candidate. Only its exit status is read: anything
 //     but 0 refuses the candidate.
-//   - report runs no code of the candidate. It finds what the build phase
-//     made, such as by asking the registry it was pushed to or by building
-//     the commit again deterministically without running it, and reports
-//     the image, its digest and the references of its SBOM and provenance
-//     on lines "sisf-report <nonce> <key>: <value>", with the keys
+//   - report runs no code of the candidate. It builds the commit again
+//     deterministically without running it, and reports the image, its
+//     digest and the references of its SBOM and provenance on lines
+//     "sisf-report <nonce> <key>: <value>", with the keys
 //     image-digest, image, sbom and provenance, each exactly once.
 //
-// Where the deploy backend runs programs (SandboxImages.Programs), the
-// report phase is also told the supervisor's own operating system and
+// The report phase is also told the supervisor's own operating system and
 // architecture, in SISF_REPORT_TARGET_OS and SISF_REPORT_TARGET_ARCH as Go
 // names them, and exports the unit's one program built for them on lines
 // "sisf-report <nonce> program: <base64>": any number of lines, in order,
@@ -69,6 +67,14 @@ func (s SimulatedImages) BuildImage(ctx context.Context, req ImageRequest) (Imag
 // build record, the QA receipt and the signed artifact carry is then the
 // digest of the program that runs. Nothing else leaves the sandbox: no
 // mount, no archive, no service.
+//
+// A build is accepted only on bytes the supervisor received. An image
+// pushed to a registry or left in a Docker engine is never taken on the
+// report's word: the phases where candidate code ran can push to whatever
+// the sandbox reaches, and neither Docker filter lets the supervisor read
+// an image, so a digest found there is not one the supervisor observed.
+// A sandboxed build without a program store (SandboxImages.Programs) is
+// refused before any phase runs.
 //
 // Candidate code runs in the first two phases and can print anything on
 // their output, so nothing they print is read. The report phase is told the
@@ -93,9 +99,9 @@ type SandboxImages struct {
 	Argv  []string
 	// Timeout bounds the whole build, every phase together.
 	Timeout time.Duration
-	// Programs keeps the program each build exports, for a deploy backend
-	// that runs programs. Nil where the backend runs images or nothing: a
-	// build then exports nothing and is told no target.
+	// Programs keeps the program each build exports. Without it the
+	// supervisor would observe nothing a build made, so every build is
+	// refused (see unobservedImagesRefused).
 	Programs *programstore.Store
 }
 
@@ -114,6 +120,9 @@ func (s SandboxImages) Name() string { return "sandbox:" + s.Exec.Name() }
 func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageResult, error) {
 	if len(s.Argv) == 0 || s.Timeout <= 0 {
 		return ImageResult{}, core.NewError(core.CodeInvalidArgument, "the sandboxed build needs a command and a timeout")
+	}
+	if s.Programs == nil {
+		return ImageResult{}, unobservedImagesRefused()
 	}
 	caps, err := s.Exec.Capabilities(ctx)
 	if err != nil {
@@ -154,29 +163,21 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 		"SISF_REPORT_COMMIT": string(req.Commit), "SISF_REPORT_UNIT": req.Unit, "SISF_REPORT_BRANCH": req.Branch,
 		"SISF_REPORT_NONCE": nonce,
 	}
-	report := newReportReader(nonce, nil)
-	var stream io.Writer
-	if s.Programs != nil {
-		// The program is too large to capture: the report is read as it
-		// is streamed, the program going straight to the store.
-		intake, err := s.Programs.Receive()
-		if err != nil {
-			return ImageResult{}, err
-		}
-		defer intake.Abort()
-		report = newReportReader(nonce, intake)
-		stream = report
-		env["SISF_REPORT_TARGET_OS"], env["SISF_REPORT_TARGET_ARCH"] = runtime.GOOS, runtime.GOARCH
+	// The program is too large to capture: the report is read as it is
+	// streamed, the program going straight to the store.
+	intake, err := s.Programs.Receive()
+	if err != nil {
+		return ImageResult{}, err
 	}
-	reported, err := s.phase(ctx, sandbox.ID, phaseReport, env, deadline, stream)
+	defer intake.Abort()
+	report := newReportReader(nonce, intake)
+	env["SISF_REPORT_TARGET_OS"], env["SISF_REPORT_TARGET_ARCH"] = runtime.GOOS, runtime.GOARCH
+	reported, err := s.phase(ctx, sandbox.ID, phaseReport, env, deadline, report)
 	if err != nil {
 		return ImageResult{}, err
 	}
 	if reported.ExitCode != 0 {
 		return ImageResult{}, reportUnusable("the report phase exited with status " + strconv.Itoa(reported.ExitCode))
-	}
-	if stream == nil {
-		_, _ = report.Write(reported.Stdout) // the reader's Write never fails
 	}
 	out, err := report.result()
 	if err != nil {
@@ -226,6 +227,16 @@ func reportNonce() (string, error) {
 		return "", core.NewError(core.CodeInternal, "a report nonce cannot be made").WithCause(err)
 	}
 	return hex.EncodeToString(raw[:]), nil
+}
+
+// unobservedImagesRefused refuses sandboxed builds where the supervisor
+// keeps no program they export: it would receive nothing of what they made,
+// and an image a report merely names is not evidence. It is the
+// configuration's fault, never a candidate's.
+func unobservedImagesRefused() *core.Error {
+	return core.NewError(core.CodeNotSupported, "a sandboxed build is accepted only on the program the supervisor receives from it, "+
+		"and this factory keeps none (its deploy backend runs images): the supervisor cannot observe an image a build reports, "+
+		"so it builds no candidate; deploy with the local backend, which runs the program a build exports")
 }
 
 // untrustedRefused is the typed refusal to run untrusted code on a backend

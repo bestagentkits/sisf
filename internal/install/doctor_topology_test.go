@@ -83,10 +83,20 @@ func TestTheDoctorWarnsWhenAProductionDockerInstallHasNoQALauncher(t *testing.T)
 	m.Extensions["build_command"] = "make candidate-image"
 	c = collector{}
 	in.checkStages(&c, m)
-	if v := verdictOf(c.report, "lifecycle"); len(v) != 1 || v[0] != VerdictOK {
-		t.Fatalf("with a launcher and a build command, lifecycle = %v", v)
+	// The Compose backend runs images, and the supervisor accepts no build
+	// on an image it cannot observe: the stages stay off, and the doctor
+	// says why.
+	if v := verdictOf(c.report, "build evidence"); len(v) != 1 || v[0] != VerdictWarn || !strings.Contains(detailOf(c.report, "build evidence"), "cannot observe") {
+		t.Fatalf("with a launcher and a build command, build evidence = %v %q", v, detailOf(c.report, "build evidence"))
 	}
-	// The launcher is trusted on the operator's word, and the doctor says so.
+	if v := verdictOf(c.report, "lifecycle"); len(v) != 0 {
+		t.Fatalf("with builds it cannot observe, lifecycle = %v", v)
+	}
+	// Where the stages run, the launcher is trusted on the operator's word,
+	// and the doctor says so.
+	m.Mode = manifest.ModeStandalone
+	c = collector{}
+	in.checkStages(&c, m)
 	if v := verdictOf(c.report, "qa launcher"); len(v) != 1 || v[0] != VerdictWarn ||
 		!strings.Contains(detailOf(c.report, "qa launcher"), "/opt/sisf/qa-launcher") || !strings.Contains(detailOf(c.report, "qa launcher"), "on your word") {
 		t.Fatalf("with a launcher, qa launcher = %v %q", v, detailOf(c.report, "qa launcher"))

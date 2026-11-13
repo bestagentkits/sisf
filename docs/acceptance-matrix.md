@@ -38,6 +38,7 @@ Status meanings: **present** means the file exists in this branch and its packag
 | The local backend starts the store's file for a stored digest, the installed program for the pinned digest, nothing otherwise; a restarted supervisor starts the promoted program | `cmd/supervisor/local_programs_test.go` (with `standalone_build_sandbox_route_test.go` for which factories keep programs) | present |
 | Stored programs that are neither the last known good release nor in flight are removed | `cmd/supervisor/program_retention_test.go` | present |
 | The launcher starts the program it is given; `sisf up` keeps a promotion whose program is in the store | `internal/install/standalone_promoted_program_test.go` | present |
+| A sandboxed build is accepted only on the program the supervisor received; without a program store it is refused before any phase runs, and Docker mode runs no stages outside the simulation (ADR 0024) | `cmd/supervisor/stages/sandbox_build_unobserved_image_test.go`, `cmd/supervisor/standalone_build_sandbox_route_test.go`, `internal/install/zone_isolation_topology_mutations_test.go` | present |
 | The smoke run's build command exports the one program its digest names | `tests/smoke/build_candidate_script_unit_test.go` (build tag `smoke`; needs a local `go` and `git`) | present |
 
 ## Releases, runs and builds that stop (ADR 0023 and related)

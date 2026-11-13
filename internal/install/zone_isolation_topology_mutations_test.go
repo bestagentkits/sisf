@@ -192,9 +192,12 @@ func TestTheReleaseTopologyIsWhatTheSupervisorNeeds(t *testing.T) {
 	}
 }
 
-// A production Docker install runs the stages only with a sandboxing
-// launcher for its QA agent and a command to build candidates with.
-func TestAProductionDockerInstallRunsTheStagesOnlyWithAQALauncherAndABuildCommand(t *testing.T) {
+// A production Docker install runs no stages: without a sandboxing launcher
+// for its QA agent or a command to build candidates with, and even with
+// both, since the Compose backend runs images and the supervisor accepts no
+// build on an image it cannot observe. Its supervisor is started without
+// them rather than refusing to start.
+func TestAProductionDockerInstallRunsNoStages(t *testing.T) {
 	t.Parallel()
 	real := production
 	_, plain := renderCompose(t, real)
@@ -209,13 +212,9 @@ func TestAProductionDockerInstallRunsTheStagesOnlyWithAQALauncherAndABuildComman
 		real(o)
 		o.QAAgent, o.QAAgentBinary, o.BuildCommand = "claude", "/opt/sisf/qa-launcher", "/opt/sisf/build-candidate --push"
 	})
-	for _, want := range []string{"--qa-judge=agent", "--qa-agent=claude", "--qa-agent-binary=/opt/sisf/qa-launcher", "--factory-manifest",
-		`"--build-command=/opt/sisf/build-candidate --push"`} {
-		if !strings.Contains(string(launched), want) {
-			t.Errorf("the production project lacks %s", want)
+	for _, unwanted := range []string{"--factory-manifest", "--qa-judge", "--build-command", "--release-window", "--sim-image"} {
+		if strings.Contains(string(launched), unwanted) {
+			t.Errorf("a production project whose builds cannot be observed carries %s", unwanted)
 		}
-	}
-	if strings.Contains(string(launched), "--release-window") || strings.Contains(string(launched), "--sim-image") {
-		t.Error("a production project carries the simulation's settings")
 	}
 }

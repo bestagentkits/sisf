@@ -35,7 +35,8 @@ type ExecutionChoice struct {
 	BuildArgv    []string
 	BuildTimeout time.Duration
 	// Programs keeps the program each sandboxed build exports, where the
-	// deploy backend runs programs; nil otherwise.
+	// deploy backend runs programs; nil otherwise, and then no candidate is
+	// built in a sandbox at all.
 	Programs *programstore.Store
 	// Suite judges commits in the simulation profile; see SimulatedImages.
 	Suite func(ctx context.Context, req ImageRequest) (bool, string)
@@ -63,6 +64,9 @@ func SelectImageBuilder(ctx context.Context, c ExecutionChoice) (ImageBuilder, e
 		if len(c.BuildArgv) == 0 || c.BuildTimeout <= 0 {
 			return nil, core.NewError(core.CodeInvalidArgument,
 				"candidates are built in a sandbox, which needs a build command (--build-command) and a positive build timeout (--build-timeout)")
+		}
+		if c.Programs == nil {
+			return nil, unobservedImagesRefused()
 		}
 		return SandboxImages{Exec: c.Docker, Specs: c.Specs, Argv: c.BuildArgv, Timeout: c.BuildTimeout, Programs: c.Programs}, nil
 	}
