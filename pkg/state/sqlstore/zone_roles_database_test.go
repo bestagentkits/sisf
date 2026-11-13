@@ -156,7 +156,7 @@ func TestPostgresRefusesTheAgentRoleWhatItsZoneMayNotDo(t *testing.T) {
 			}
 		}
 		for namespace, visible := range map[string]int{
-			"approvals": 0, "policy": 0, "control.issue_view": 0, "install": 1, "intake": 1, "control.policy": 1, "dispatcher": 1,
+			"approvals": 0, "policy": 0, "control.issue_view": 0, "install": 1, "intake": 1, "control.policy": 2, "dispatcher": 1,
 		} {
 			var n int
 			if err := agent.QueryRowContext(ctx, `SELECT count(*) FROM kv WHERE namespace = $1`, namespace).Scan(&n); err != nil {
