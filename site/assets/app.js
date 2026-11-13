@@ -44,19 +44,6 @@
     det.addEventListener('click', function (e) { if (e.target.closest && e.target.closest('.menu-panel a')) close(false); });
   })();
 
-  /* ---------------- Planned controls (Deploy on TOSE): not links; a press points at the explanation ---------------- */
-  $$('[data-tose-deploy]').forEach(function (el) {
-    if (el.tagName !== 'BUTTON') return;
-    el.addEventListener('click', function (e) {
-      e.preventDefault();
-      var note = document.getElementById(el.getAttribute('aria-describedby') || '');
-      if (!note || reduce.matches) return;
-      note.classList.remove('flash');
-      void note.offsetWidth; /* restart the CSS animation */
-      note.classList.add('flash');
-    });
-  });
-
   /* ---------------- Copy the one working command ---------------- */
   $$('[data-copy]').forEach(function (btn) {
     var src = document.getElementById(btn.getAttribute('data-copy'));

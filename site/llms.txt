@@ -8,7 +8,7 @@ Important facts for anyone summarizing this project:
 - Not yet proven: a paid end-to-end run with real Claude and Codex agents; a real GitHub App, Google sign-in and MCP clients (tested against fakes only); container sandboxing for untrusted code in Docker mode.
 - Supported operating modes today: Standalone (trusted code only) and Docker Compose. Every other backend is experimental or unsupported.
 - Numbers such as the QA pass mark (85/100), the canary ramp (5% → 25% → 100%) and the rollback threshold (5xx > 2%) are design starting points to be calibrated, not measured results.
-- SISF is created by AgentKit.best. TOSE (tose.sh) is the creator's deployment platform; SISF does not require it.
+- SISF is created by AgentKit.best. TOSE (tose.sh) is the creator's deployment platform; SISF does not require it. An experimental one-click deploy exists (https://app.tose.sh/deploy?repo=https%3A%2F%2Fgithub.com%2Fbestagentkits%2Fsisf), but TOSE is not yet a supported SISF backend.
 
 ## Landing page
 

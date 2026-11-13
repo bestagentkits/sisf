@@ -11,7 +11,7 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preload" href="/assets/fonts/archivo-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/assets/fonts/ibm-plex-mono-latin-500.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/assets/styles.css?v=20261112">
+<link rel="stylesheet" href="/assets/styles.css?v=20261113">
 <link rel="canonical" href="https://factory.agentkit.best/">
 <link rel="alternate" type="text/markdown" href="https://factory.agentkit.best/index.md" title="This page as Markdown">
 <link rel="alternate" type="text/plain" href="https://factory.agentkit.best/llms.txt" title="llms.txt">
@@ -81,7 +81,7 @@
   try { var t = localStorage.getItem('sisf-theme'); if (t === 'light' || t === 'dark') d.setAttribute('data-theme', t); } catch (e) {}
 })(document.documentElement);
 </script>
-<script src="/assets/app.js?v=20261112" defer></script>
+<script src="/assets/app.js?v=20261113" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -163,8 +163,8 @@
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h11M9 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
           </a>
         </div>
-        <button type="button" class="btn btn--planned" data-tose-deploy aria-disabled="true" aria-describedby="tose-note-hero">Deploy on TOSE <span class="tag-na">Coming soon</span></button>
-        <p class="cta-note" id="tose-note-hero">Not available yet. A dotted outline marks what is not available.</p>
+        <a class="tose-deploy" href="https://app.tose.sh/deploy?repo=https%3A%2F%2Fgithub.com%2Fbestagentkits%2Fsisf" data-tose-deploy aria-describedby="tose-note-hero"><img class="tose-badge tose-badge--light" src="https://tose.sh/button.svg" width="152" height="32" alt="Deploy on TOSE"><img class="tose-badge tose-badge--dark" src="https://tose.sh/button-dark.svg" width="152" height="32" alt="Deploy on TOSE"></a>
+        <p class="cta-note" id="tose-note-hero">Experimental: TOSE is not yet a supported SISF backend. You need a TOSE account.</p>
       </div>
     </section>
 
@@ -187,7 +187,7 @@
             <div class="loop-frame" data-frame role="img" aria-labelledby="loop-t" aria-describedby="loop-d">
               <p class="vh" id="loop-t">Illustration of one SISF factory deployment and its self-improvement loop</p>
               <p class="vh" id="loop-d">Three floors stacked one above another. Bottom, Zone 1 Application: the app behind edge, with a stable and a canary revision. Middle, Zone 2 Agent factory: the dispatcher, and a walled sandbox holding a runner, a separate qa-runner and the egress proxy. Top, Zone 3 Control plane: control, the Decision Layer, approvals, and the supervisor inside a hatched, locked vault. Shared state and artifacts run through all three floors. One ring circles the whole stack, low beside Zone 1 and high beside Zone 3: the self-improvement loop, travelled clockwise by an orange work item. Outside, GitHub and the Owner near the top and users at the bottom right. Illustration of the design, not live data.</p>
-              <img class="loop-poster" data-poster src="/assets/how-it-works-isometric.svg?v=20261112" width="1155" height="902" alt="" loading="lazy" decoding="async">
+              <img class="loop-poster" data-poster src="/assets/how-it-works-isometric.svg?v=20261113" width="1155" height="902" alt="" loading="lazy" decoding="async">
               <div class="loop-labels" aria-hidden="true" data-labels><div class="loop-lbl loop-lbl-z" data-zone="3"><span class="loop-zk">Z<span class="loop-zk-long">one </span>3</span><span class="loop-zn">Control plane</span></div><div class="loop-lbl loop-lbl-z" data-zone="2"><span class="loop-zk">Z<span class="loop-zk-long">one </span>2</span><span class="loop-zn">Agent factory</span></div><div class="loop-lbl loop-lbl-z" data-zone="1"><span class="loop-zk">Z<span class="loop-zk-long">one </span>1</span><span class="loop-zn">Application</span></div><div class="loop-lbl loop-lbl-a" data-actor="github"><svg viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="4.5" cy="3.5" r="1.8"/><circle cx="4.5" cy="12.5" r="1.8"/><circle cx="11.5" cy="5.5" r="1.8"/><path d="M4.5 5.3v5.4M11.5 7.3c0 2.6-2.5 2.9-6 3.6"/></g></svg><span>GitHub</span></div><div class="loop-lbl loop-lbl-a" data-actor="owner"><svg viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="5" r="2.6"/><path d="M2.8 14.2c.6-3.2 2.6-4.8 5.2-4.8s4.6 1.6 5.2 4.8"/><path d="M12.6 1.6l.6 1.3 1.4.2-1 1 .2 1.4-1.2-.7-1.3.7.3-1.4-1-1 1.4-.2z" fill="currentColor" stroke-width=".6"/></g></svg><span>Owner</span></div><div class="loop-lbl loop-lbl-a" data-actor="users"><svg viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="5.5" cy="5.5" r="2.2"/><circle cx="11" cy="6" r="1.8"/><path d="M1.5 13.5c.4-2.6 2-3.9 4-3.9s3.6 1.3 4 3.9M10 9.8c2 0 3.6.9 4.3 3.4"/></g></svg><span>Users</span></div></div>
             </div>
             <div class="loop-note" aria-hidden="true" data-anno><svg class="loop-note-ln" focusable="false"><line data-anno-ln/><circle r="3.5" data-anno-pin/></svg><p class="loop-note-t" data-anno-t><span class="loop-note-k" data-anno-k></span><span class="loop-note-n" data-anno-n></span></p></div>
@@ -1084,8 +1084,8 @@
           <li>The design that the code implements: the <a href="https://github.com/bestagentkits/sisf/blob/main/docs/self-improvement-software-factory-decision-brief.en.md">decision brief</a> and the <a href="https://github.com/bestagentkits/sisf/blob/main/docs/acceptance-matrix.md">acceptance matrix</a>.</li>
         </ul>
         <div class="soon-tose">
-          <button type="button" class="btn btn--planned" data-tose-deploy aria-disabled="true" aria-describedby="tose-note-start">Deploy on TOSE <span class="tag-na">Coming soon</span></button>
-          <p class="cta-note" id="tose-note-start">One-click deployment on <a href="https://tose.sh">TOSE</a>, the creator's deployment platform, is not available yet: TOSE is not a supported SISF backend today. SISF never requires it.</p>
+          <a class="tose-deploy" href="https://app.tose.sh/deploy?repo=https%3A%2F%2Fgithub.com%2Fbestagentkits%2Fsisf" data-tose-deploy aria-describedby="tose-note-start"><img class="tose-badge tose-badge--light" src="https://tose.sh/button.svg" width="152" height="32" alt="Deploy on TOSE"><img class="tose-badge tose-badge--dark" src="https://tose.sh/button-dark.svg" width="152" height="32" alt="Deploy on TOSE"></a>
+          <p class="cta-note" id="tose-note-start">One-click deployment on <a href="https://tose.sh">TOSE</a>, the creator's deployment platform. Experimental: TOSE is not yet a supported SISF backend, so use Standalone or Docker Compose for anything you rely on. You need a TOSE account; SISF never requires it.</p>
         </div>
       </div>
     </div>
@@ -1125,8 +1125,8 @@
             </a>
             <a class="btn" href="https://github.com/bestagentkits/sisf/blob/main/docs/guides/quickstart.md">Read the quickstart</a>
           </div>
-          <button type="button" class="btn btn--planned" data-tose-deploy aria-disabled="true" aria-describedby="tose-note-final">Deploy on TOSE <span class="tag-na">Coming soon</span></button>
-          <p class="cta-note" id="tose-note-final">Not available yet. A dotted outline marks what is not available.</p>
+          <a class="tose-deploy" href="https://app.tose.sh/deploy?repo=https%3A%2F%2Fgithub.com%2Fbestagentkits%2Fsisf" data-tose-deploy aria-describedby="tose-note-final"><img class="tose-badge tose-badge--light" src="https://tose.sh/button.svg" width="152" height="32" alt="Deploy on TOSE"><img class="tose-badge tose-badge--dark" src="https://tose.sh/button-dark.svg" width="152" height="32" alt="Deploy on TOSE"></a>
+          <p class="cta-note" id="tose-note-final">Experimental: TOSE is not yet a supported SISF backend. You need a TOSE account.</p>
         </div>
       </section>
     </div>

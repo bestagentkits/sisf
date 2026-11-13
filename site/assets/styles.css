@@ -231,6 +231,13 @@ b, strong { font-weight: 700; }
 /* planned control: dotted outline = not built yet. Never a link. */
 .btn--planned { border: 2px dotted var(--soft); color: var(--soft); background: transparent; cursor: not-allowed; }
 .btn--planned:hover, .btn--planned:active { transform: none; box-shadow: none; background: transparent; }
+.tose-deploy { display: inline-flex; line-height: 0; border-radius: 16px; }
+.tose-deploy:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+.tose-badge { height: 32px; width: auto; }
+.tose-badge--dark { display: none; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tose-badge--light { display: none; } :root:not([data-theme="light"]) .tose-badge--dark { display: block; } }
+:root[data-theme="dark"] .tose-badge--light { display: none; }
+:root[data-theme="dark"] .tose-badge--dark { display: block; }
 .cta-note, .credit { font: 400 12.5px/1.5 var(--mono); color: var(--soft); }
 .cta-note.flash { animation: flash 1.4s var(--ease); }
 @keyframes flash { 0%, 35% { background: var(--paper-2); color: var(--ink); box-shadow: 0 0 0 6px var(--paper-2); } }

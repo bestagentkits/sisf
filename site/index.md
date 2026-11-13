@@ -167,7 +167,7 @@ Not proven yet:
 - A real GitHub App, real Google sign-in and real MCP clients; all three are tested against fakes.
 - Container sandboxing for untrusted code in Docker mode, and the Standalone program export on platforms other than macOS on Apple silicon.
 
-Not available yet: one-click **Deploy on TOSE**. TOSE is not a supported SISF backend today, and SISF never requires it.
+Experimental: one-click [Deploy on TOSE](https://app.tose.sh/deploy?repo=https%3A%2F%2Fgithub.com%2Fbestagentkits%2Fsisf) on TOSE (tose.sh), the creator's deployment platform. TOSE is not yet a supported SISF backend, so use Standalone or Docker Compose for anything you rely on. It needs a TOSE account, and SISF never requires it.
 
 Found something wrong? [Open an issue](https://github.com/bestagentkits/sisf/issues), or report a vulnerability privately through the [Security tab](https://github.com/bestagentkits/sisf/security/advisories/new).
 
