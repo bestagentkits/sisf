@@ -137,6 +137,22 @@ var releaseMigrations = []migration{
 		file:      "0011_verified_release_unjudged_step.sql",
 		postgres:  recordStepScript,
 	},
+	{
+		// The journal row of a step must keep the record as the step wrote
+		// it, and a record commits only with that row. The agent zone no
+		// longer submits a candidate, the control zone writes no other step
+		// under the agent zone's key prefixes, and the reservations and the
+		// usage ledger refuse what the store refuses. No data moves and no
+		// column changes; the constraints are not checked against existing
+		// rows. The previous release's store journals every step it writes
+		// with the record as written, its claim names no candidate, its
+		// agent zone never submitted a candidate, its control zone keys no
+		// step under an agent prefix and its budget writes are within the
+		// new rules, so it keeps working on the schema.
+		Migration: state.Migration{Version: 12, Name: "the journal, the keys and the budget hold to the store's rules", BackwardCompatible: true},
+		file:      "0012_store_rules_in_the_database.sql",
+		postgres:  storeGatesScript,
+	},
 }
 
 // Migrations lists the migrations this release ships, for callers that must

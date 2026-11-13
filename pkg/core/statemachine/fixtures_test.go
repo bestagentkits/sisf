@@ -113,6 +113,10 @@ func transitionOn(from core.State, event core.Event, to core.State) core.Transit
 	if event == core.EventQAFailed {
 		t.Attempt = 2
 	}
+	// A claim starts a run that has no candidate and no release yet.
+	if event == core.EventClaimed {
+		t.CandidateDigest, t.ReleaseDigest = "", ""
+	}
 	return t
 }
 

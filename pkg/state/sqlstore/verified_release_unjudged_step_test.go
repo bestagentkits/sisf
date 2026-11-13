@@ -111,6 +111,7 @@ func restoreMigration10(t *testing.T, raw *sql.DB) {
 		$migration10$`); err != nil {
 		t.Fatalf("restore the record trigger of migration 10: %v", err)
 	}
+	forgetStoreRules(t, raw)
 	if _, err := raw.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version > 10`); err != nil {
 		t.Fatalf("forget migration 11: %v", err)
 	}

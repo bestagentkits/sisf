@@ -114,6 +114,7 @@ func restoreMigration9(t *testing.T, raw *sql.DB) {
 		$migration9$`); err != nil {
 		t.Fatalf("restore the record trigger of migration 9: %v", err)
 	}
+	forgetStoreRules(t, raw)
 	for _, statement := range []string{
 		`DROP TRIGGER IF EXISTS sisf_lease_step ON leases`,
 		`DROP FUNCTION IF EXISTS sisf_lease_step()`,

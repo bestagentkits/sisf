@@ -144,8 +144,14 @@ func rowRule(table string, command privilege, zone core.Zone, records string) (u
 				check, err = keyedStepCheck(zone, records)
 				return "", check, err
 			}
-			check, err = inList("event", eventNames(zone), false)
-			return "", check, err
+			if check, err = inList("event", eventNames(zone), false); err != nil {
+				return "", "", err
+			}
+			foreign, err := foreignKeyCheck(zone)
+			if err != nil || foreign == "" {
+				return "", check, err
+			}
+			return "", check + " AND " + foreign, nil
 		}
 	case tableUsage:
 		// The ledger is not divided between the zones by row: a zone that
@@ -207,10 +213,19 @@ func stepStates(zone core.Zone) (created, from, to []string) {
 // keyedStepCheck is the condition on a step a zone with keys of its own
 // journals: the step is one of the zone's edges of the lifecycle, taken
 // under the key prefix of its event (zoneStepKeys), and it journals the
-// record as written: the record of the issue stands in the state the step
-// ends in, at the version and under the key of the step. A stolen
-// credential can so neither take a key of another zone, nor journal a step
-// the lifecycle has no edge for, nor one for a record it did not write.
+// record exactly as written (journal): the record of the issue stands in the
+// state the step ends in, at the version, under the key and with the run,
+// lease, fencing token, attempt, candidate, release and time of the step.
+// The candidate and the release the step itself names are none or the
+// record's, which is what CheckRecordBinding admits for every step a keyed
+// zone writes. A stolen credential can so neither take a key of another
+// zone, nor journal a step the lifecycle has no edge for, nor one for a
+// record it did not write, nor one whose replay would return other values
+// than the record holds.
+//
+// The state the step starts from cannot be bound to the record: a policy
+// sees the record only as it stands after the step. The edge binds it
+// instead, since each event and state it ends in belong to one edge.
 func keyedStepCheck(zone core.Zone, records string) (string, error) {
 	var edges []string
 	for _, edge := range statemachine.Edges() {
@@ -252,7 +267,43 @@ func keyedStepCheck(zone core.Zone, records string) (string, error) {
 	return "(" + strings.Join(edges, " OR ") + ") AND EXISTS (SELECT 1 FROM " + records + " AS r" +
 		" WHERE r.factory_id = transitions.factory_id AND r.issue = transitions.issue" +
 		" AND r.state = transitions.to_state AND r.version = transitions.version" +
-		" AND r.idempotency_key = transitions.idempotency_key)", nil
+		" AND r.idempotency_key = transitions.idempotency_key" +
+		" AND r.run_id = transitions.run_id AND r.lease_owner = transitions.lease_owner" +
+		" AND r.fencing_token = transitions.fencing_token AND r.attempt = transitions.attempt" +
+		" AND r.candidate_digest = transitions.record_candidate_digest" +
+		" AND r.release_digest = transitions.record_release_digest" +
+		" AND r.updated_at = transitions.created_at" +
+		" AND transitions.candidate_digest IN ('', r.candidate_digest)" +
+		" AND transitions.release_digest IN ('', r.release_digest))", nil
+}
+
+// foreignKeyCheck is the condition that holds a zone without keys of its own
+// off the key prefixes other zones hold (ownsKey): under such a prefix it
+// journals only the step the prefix is for. It is empty when no other zone
+// holds a prefix.
+func foreignKeyCheck(zone core.Zone) (string, error) {
+	var misuses []string
+	for other, prefixes := range zoneStepKeys {
+		if other == zone {
+			continue
+		}
+		for step, prefix := range prefixes {
+			quotedPrefix, err := literal(prefix, keyPrefixPattern)
+			if err != nil {
+				return "", err
+			}
+			event, err := literal(string(step), literalPattern)
+			if err != nil {
+				return "", err
+			}
+			misuses = append(misuses, fmt.Sprintf("(starts_with(idempotency_key, %s) AND event <> %s)", quotedPrefix, event))
+		}
+	}
+	if len(misuses) == 0 {
+		return "", nil
+	}
+	slices.Sort(misuses)
+	return "NOT (" + strings.Join(misuses, " OR ") + ")", nil
 }
 
 // eventNames lists the events zone may write.

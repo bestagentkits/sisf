@@ -170,3 +170,23 @@ $sisf_migration$;
 	}
 	return script.String(), nil
 }
+
+// storeGatesScript is the PostgreSQL script of the migration that binds the
+// journal row of a step to the record it writes, pairs every record write
+// with that row, takes the submission of a candidate from the agent zone,
+// holds the control zone off the agent zone's key prefixes, and puts the
+// reservations and the usage ledger under budgetRowRules. It writes the
+// record trigger and the zones' policies afresh (recordStepScript), which
+// carries the new conditions on the journal and the agent zone's narrower
+// states.
+func storeGatesScript() (string, error) {
+	steps, err := recordStepScript()
+	if err != nil {
+		return "", err
+	}
+	budget, err := budgetRowRules()
+	if err != nil {
+		return "", err
+	}
+	return steps + recordJournalTrigger() + budget, nil
+}

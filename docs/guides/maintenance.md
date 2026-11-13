@@ -77,7 +77,7 @@ The supervisor records the application process of each slot under `data/trust/lo
 
 Verify: `sisf doctor` reports no failure, its `release manifest` line is `OK`, and `sisf status` answers.
 
-Upgrading to this release applies migrations 7 to 10 to a store that lacks them; each is backward compatible and needs no down migration. A Standalone factory started by an older `sisf` holds no run lock: the new `sisf` refuses to start beside it, names its process and asks you to stop it first ([troubleshooting](troubleshooting.md#installing-and-starting)). A factory started by an older `sisf` names no root key in `/healthz`, so the CLI refuses to send it a token until it is restarted with `sisf up`.
+Upgrading to this release applies migrations 7 to 12 to a store that lacks them; each is backward compatible and needs no down migration. A Standalone factory started by an older `sisf` holds no run lock: the new `sisf` refuses to start beside it, names its process and asks you to stop it first ([troubleshooting](troubleshooting.md#installing-and-starting)). A factory started by an older `sisf` names no root key in `/healthz`, so the CLI refuses to send it a token until it is restarted with `sisf up`.
 
 Undo: there are no down migrations. Stop the factory, [restore](#restore) the backup of step 1, check out the previous commit, `make install`, and `sisf up`.
 

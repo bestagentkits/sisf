@@ -12,8 +12,10 @@ import (
 func TestAWorkerThatLostItsLeaseCannotWriteWithItsOldTokenOrWithNone(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
-		s := db.Open(t, core.ZoneAgent)
-		rec := developing(t, db.Open(t, core.ZoneControl), issue(7))
+		// The build stage submits the candidate of the run under the issue
+		// lease, in the control zone.
+		s := db.Open(t, core.ZoneControl)
+		rec := developing(t, s, issue(7))
 		lost := state.Lease{Owner: rec.LeaseOwner, Token: rec.FencingToken}
 		// The lease of worker-1 lapses and worker-2 takes the issue over.
 		db.Clock.Advance(2 * leaseTTL)
