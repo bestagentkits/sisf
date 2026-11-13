@@ -52,7 +52,8 @@ func TestRunsReceiptHandsOutTheSignedReceipt(t *testing.T) {
 	if got.Attempt != 2 || got.Receipt.EvaluatorAttempt != 2 || got.Delegation == nil || got.Ref != "supervisor:qa/run-7/2" || got.FactoryID != "acme-app" {
 		t.Fatalf("got %+v", got)
 	}
-	for _, want := range []string{"sisf receipt verify", "--factory acme-app", "--issue acme/app#7", "--run run-7"} {
+	for _, want := range []string{"sisf receipt verify", "--root-key-id <", "--factory acme-app", "--issue acme/app#7", "--run run-7",
+		"--commit " + string(got.Receipt.CandidateSHA), "--digest " + string(got.Receipt.CandidateDigest), "--attempt 2"} {
 		if !strings.Contains(got.VerifyWith, want) {
 			t.Errorf("verify_with %q lacks %q", got.VerifyWith, want)
 		}

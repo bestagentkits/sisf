@@ -61,6 +61,7 @@ var trustedGoPackageDirs = []string{
 	"internal/secretbroker/",
 	"internal/signing/",
 	"internal/signing/delegation/",
+	"internal/strictjson/",
 	"internal/supervisor/",
 	"internal/supervisor/killswitch/",
 	"internal/supervisor/programstore/",

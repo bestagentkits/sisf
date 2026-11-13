@@ -2,6 +2,7 @@ package runactions
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/bestagentkits/sisf/internal/actions"
 	iqa "github.com/bestagentkits/sisf/internal/qa"
@@ -68,8 +69,10 @@ func (h handlers) runsReceipt(ctx context.Context, req core.ActionRequest) (core
 	}
 	out := ReceiptExport{ReceiptBundle: bundle, FactoryID: h.FactoryID, Issue: record.IssueID.String(), RunID: record.RunID,
 		Attempt: attempt, Ref: ref,
-		VerifyWith: "sisf receipt verify --root-key <root public key file> --factory " + string(h.FactoryID) +
-			" --issue " + record.IssueID.String() + " --run " + string(record.RunID) + " <this output saved to a file>"}
+		VerifyWith: "sisf receipt verify --root-key <root public key file> --root-key-id <root key fingerprint from the Owner>" +
+			" --factory " + string(h.FactoryID) + " --issue " + record.IssueID.String() + " --run " + string(record.RunID) +
+			" --commit " + string(bundle.Receipt.CandidateSHA) + " --digest " + string(bundle.Receipt.CandidateDigest) +
+			" --attempt " + strconv.Itoa(bundle.Receipt.EvaluatorAttempt) + " <this output saved to a file>"}
 	if bundle.Delegation == nil {
 		out.VerifyWith += " --delegation <delegation-qa_receipt.json of key " + bundle.Receipt.Signature.KeyID + ">"
 	}

@@ -21,13 +21,17 @@ type ReceiptBundle struct {
 }
 
 // ReceiptClaim is what the party checking a receipt expects it to be
-// about. The factory, issue and run are required; a commit is checked only
-// when named.
+// about. The factory, issue and run are required; a commit, a candidate
+// digest and an evaluator attempt are checked only when named, so a
+// passing receipt of one attempt is refused for a release built from
+// another once any of them is named.
 type ReceiptClaim struct {
-	FactoryID    core.FactoryID
-	IssueID      core.IssueRef
-	RunID        core.RunID
-	CandidateSHA core.CommitSHA
+	FactoryID        core.FactoryID
+	IssueID          core.IssueRef
+	RunID            core.RunID
+	CandidateSHA     core.CommitSHA
+	CandidateDigest  core.Digest
+	EvaluatorAttempt int
 }
 
 // ReceiptCheck is a receipt that verified, with the key that signed it and
@@ -58,7 +62,8 @@ type ReceiptCheck struct {
 // name the receipt's signing key for QA receipts; the receipt must be
 // complete, signed by that key while its delegation was valid and not
 // revoked by revocations (a root-signed list, nil when none is at hand),
-// and bound to want's factory, issue, run and, when named, commit.
+// and bound to want's factory, issue, run and, when named, commit,
+// candidate digest and evaluator attempt.
 //
 // The key's window is judged as of the receipt's issue time, so a receipt
 // stays verifiable after its week-long key has expired. A key that leaked
@@ -67,7 +72,8 @@ type ReceiptCheck struct {
 //
 // The errors are INVALID_ARGUMENT for an incomplete receipt, claim or
 // bundle, SIGNATURE_INVALID for a receipt the root key does not vouch for,
-// and GUARD_FAILED for a receipt about another issue, run or commit.
+// and GUARD_FAILED for a receipt about another issue, run, commit, candidate
+// digest or evaluator attempt.
 func VerifyReceiptBundle(ctx context.Context, root ed25519.PublicKey, b ReceiptBundle, want ReceiptClaim,
 	revocations *delegation.SignedRevocationList, now time.Time) (ReceiptCheck, error) {
 	if err := want.FactoryID.Validate(); err != nil {
@@ -114,6 +120,10 @@ func VerifyReceiptBundle(ctx context.Context, root ed25519.PublicKey, b ReceiptB
 		return ReceiptCheck{}, mismatch("another issue or run")
 	case want.CandidateSHA != "" && r.CandidateSHA != want.CandidateSHA:
 		return ReceiptCheck{}, mismatch("another commit")
+	case want.CandidateDigest != "" && r.CandidateDigest != want.CandidateDigest:
+		return ReceiptCheck{}, mismatch("another candidate digest")
+	case want.EvaluatorAttempt != 0 && r.EvaluatorAttempt != want.EvaluatorAttempt:
+		return ReceiptCheck{}, mismatch("another evaluator attempt")
 	}
 	check.KeyID, check.Purpose, check.Holder = d.KeyID, d.Purpose, d.Holder
 	check.KeyNotBefore, check.KeyNotAfter = d.NotBefore, d.NotAfter

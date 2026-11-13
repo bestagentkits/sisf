@@ -93,9 +93,9 @@ func TestReceiptVerifyRefusesAReceiptOfAnotherAttempt(t *testing.T) {
 	t.Parallel()
 	f := writeReceiptFiles(t)
 	for name, extra := range map[string][]string{
-		"commit of attempt 2":  {"--commit", strings.Repeat("e", 40)},
-		"digest of attempt 2":  {"--digest", "sha256:" + strings.Repeat("2", 64)},
-		"attempt 2":            {"--attempt", "2"},
+		"commit of attempt 2": {"--commit", strings.Repeat("e", 40)},
+		"digest of attempt 2": {"--digest", "sha256:" + strings.Repeat("2", 64)},
+		"attempt 2":           {"--attempt", "2"},
 	} {
 		args := append(claimArgs(f, f.rootKey, "run-1"), extra...)
 		status, stdout, stderr := runWithOutput(t, append(args, f.bundle)...)
@@ -133,16 +133,16 @@ func TestReceiptVerifyRefusesMalformedAndUnsignedInput(t *testing.T) {
 		content string
 		says    string
 	}{
-		"duplicate key":    {strings.Replace(text, `"score":28`, `"score":99,"score":28`, 1), "more than once"},
-		"case-variant key": {strings.Replace(text, `"score":28`, `"score":99,"Score":28`, 1), "more than once"},
+		"duplicate key":     {strings.Replace(text, `"score":28`, `"score":99,"score":28`, 1), "more than once"},
+		"case-variant key":  {strings.Replace(text, `"score":28`, `"score":99,"Score":28`, 1), "more than once"},
 		"case-variant only": {strings.Replace(text, `"score":28`, `"Score":28`, 1), "not a field"},
-		"unknown field":    {withField(`"note":"trust me"`), "not a field"},
-		"unknown wrapper":  {`{"output":` + text + `,"extra":1}`, "not a field"},
-		"trailing data":    {text + `{}`, "after the JSON document"},
-		"json array":       {"[" + text + "]", "INVALID_ARGUMENT"},
-		"truncated":        {text[:len(text)/2], "not valid JSON"},
-		"unsigned":         {string(mustJSON(t, iqa.ReceiptBundle{Receipt: unsigned, Delegation: &f.delegation})), "INVALID_ARGUMENT"},
-		"algorithm none":   {string(mustJSON(t, iqa.ReceiptBundle{Receipt: none, Delegation: &f.delegation})), "SIGNATURE_INVALID"},
+		"unknown field":     {withField(`"note":"trust me"`), "not a field"},
+		"unknown wrapper":   {`{"output":` + text + `,"extra":1}`, "not a field"},
+		"trailing data":     {text + `{}`, "after the JSON document"},
+		"json array":        {"[" + text + "]", "INVALID_ARGUMENT"},
+		"truncated":         {text[:len(text)/2], "not valid JSON"},
+		"unsigned":          {string(mustJSON(t, iqa.ReceiptBundle{Receipt: unsigned, Delegation: &f.delegation})), "INVALID_ARGUMENT"},
+		"algorithm none":    {string(mustJSON(t, iqa.ReceiptBundle{Receipt: none, Delegation: &f.delegation})), "SIGNATURE_INVALID"},
 	} {
 		file := f.write(t, strings.ReplaceAll(name, " ", "-")+".json", []byte(c.content))
 		status, stdout, stderr := runWithOutput(t, append(claimArgs(f, f.rootKey, "run-1"), file)...)
