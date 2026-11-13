@@ -2,6 +2,7 @@ package docker_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ func TestACommandRunsInAHardenedRunnerUnderGVisor(t *testing.T) {
 	})
 	caps, err := e.backend.Capabilities(ctx)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v (cause: %v)", err, errors.Unwrap(err))
 	}
 	if !execution.UntrustedCodeAllowed(caps) || !caps.Supports(docker.CapGVisor) || caps.Supports(core.CapExecSnapshot) {
 		t.Fatalf("unexpected capabilities %v", caps)
@@ -31,7 +32,7 @@ func TestACommandRunsInAHardenedRunnerUnderGVisor(t *testing.T) {
 	sb := e.create(t, spec("run-0001", execution.TrustUntrusted))
 	res, err := e.backend.Exec(ctx, sb.ID, execution.Command{Argv: []string{"go", "test", "./..."}, Dir: "app"})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v (cause: %v)", err, errors.Unwrap(err))
 	}
 	if res.ExitCode != 3 || string(res.Stdout) != "built\n" || string(res.Stderr) != "one test failed\n" || res.TimedOut {
 		t.Fatalf("unexpected result %+v", res)
@@ -65,7 +66,7 @@ func TestWithoutGVisorRuncIsUsedAndRequiringGVisorRefusesUntrustedCode(t *testin
 	}
 	sb := e.create(t, spec("run-0001", execution.TrustUntrusted))
 	if _, err := e.backend.Exec(ctx, sb.ID, execution.Command{Argv: []string{"true"}}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v (cause: %v)", err, errors.Unwrap(err))
 	}
 	if rt := e.createdBodies(t)[0].HostConfig.Runtime; rt != "" {
 		t.Fatalf("runtime %q was asked for on a host without gVisor", rt)
@@ -188,7 +189,7 @@ func TestTheBackendPassesTheExecutionConformanceKit(t *testing.T) {
 		Spec: spec("run-0001", execution.TrustUntrusted), Command: execution.Command{Argv: []string{"true"}},
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v (cause: %v)", err, errors.Unwrap(err))
 	}
 	if row.Verdict != conformance.VerdictSupported {
 		t.Fatalf("graded %s: %v", row.Verdict, row.Notes)

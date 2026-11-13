@@ -3,6 +3,7 @@ package docker_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -137,7 +138,7 @@ func (e env) create(t *testing.T, s execution.SandboxSpec) execution.SandboxInfo
 	t.Helper()
 	info, err := e.backend.CreateSandbox(context.Background(), s)
 	if err != nil {
-		t.Fatalf("the sandbox was not created: %v", err)
+		t.Fatalf("the sandbox was not created: %v (cause: %v)", err, errors.Unwrap(err))
 	}
 	return info
 }

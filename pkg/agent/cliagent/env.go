@@ -75,7 +75,7 @@ func probeVersion(ctx context.Context, bin string, env []string, redactor *redac
 	var out bytes.Buffer
 	cmd.Stdout = &limitedWriter{w: &out, left: 4096}
 	if err := cmd.Run(); err != nil {
-		return "", core.NewError(core.CodeUnavailable, "the version of the "+filepath.Base(bin)+" program could not be read")
+		return "", core.NewError(core.CodeUnavailable, "the version of the "+filepath.Base(bin)+" program could not be read").WithCause(err)
 	}
 	for line := range strings.SplitSeq(out.String(), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
