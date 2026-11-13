@@ -125,9 +125,25 @@ end checks
 
 total=$(( $(now) - t0 ))
 mkdir -p "$trial"
-printf '{"cycle":%s,"at":"%s","bundle":"sha256:%s","ms":{"adopt":%s,"bundle":%s,"load":%s,"start":%s,"install":%s,"seed":%s,"verify":%s,"checks":%s,"total":%s},"checks_passed":%s,"load_avg":"%s","counts":%s,"checks":[%s]}\n' \
-	"$cycle" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$digest" "$t_adopt" "$t_bundle" "$t_load" "$t_start" "$t_install" "$t_seed" "$t_verify" "$t_checks" "$total" \
-	"$checks_ok" "$(sysctl -n vm.loadavg | tr -d '{}' | xargs)" "$counts" "$(paste -sd, "$work/checks.jsonl")" >>"$trial/cycles.jsonl"
+# One JSON line per cycle; the check results are whatever app check measured.
+python3 -I - "$work" "$cycle" "$digest" "$checks_ok" "$(sysctl -n vm.loadavg | tr -d '{}' | xargs)" \
+	"adopt=$t_adopt bundle=$t_bundle load=$t_load start=$t_start install=$t_install seed=$t_seed verify=$t_verify checks=$t_checks total=$total" \
+	>>"$trial/cycles.jsonl" <<'PY'
+import json, sys, time
+work, cycle, digest, ok, load, ms = sys.argv[1:]
+counts = json.load(open(work + "/counts.json"))
+counts.pop("order_ids", None)
+text, checks, dec, i = open(work + "/checks.jsonl").read(), [], json.JSONDecoder(), 0
+while True:
+    i += len(text[i:]) - len(text[i:].lstrip())
+    if i >= len(text):
+        break
+    obj, i = dec.raw_decode(text, i)
+    checks.append(obj)
+print(json.dumps({"cycle": int(cycle), "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "bundle": "sha256:" + digest, "ms": {k: int(v) for k, v in (kv.split("=") for kv in ms.split())},
+    "checks_passed": ok == "true", "load_avg": load, "counts": counts, "checks": checks}))
+PY
 echo "total      $total ms, checks passed: $checks_ok"
 
 if [ "$keep" != "--keep" ]; then
