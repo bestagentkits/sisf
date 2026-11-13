@@ -136,8 +136,25 @@ func New(cfg Config) (*Stages, error) {
 	if rc.Commits == nil {
 		rc.Commits = tree
 	}
+	// The commit to build on follows the supervisor's own merges. Moving it
+	// is audited, so without an audit log only the policy revision is built
+	// on, as before.
+	var keeper BaseKeeper
+	if rc.Audit != nil {
+		bases, err := policy.NewBuildBases(policy.BuildBasesConfig{
+			State: cfg.State, Source: tree, Baselines: StoredBaseline{State: cfg.State}, Commits: rc.Commits,
+			OwnerOnly: foundationOrProtected, Audit: rc.Audit, FactoryID: cfg.FactoryID, Clock: cfg.Clock,
+		})
+		if err != nil {
+			return nil, err
+		}
+		keeper = bases
+	}
 	if prs != nil {
 		rc.Lander = prs
+		if keeper != nil && rc.Follower == nil {
+			rc.Follower = mainFollower{keeper: keeper}
+		}
 	}
 	if rc.Policy == nil {
 		rc.Policy = func(ctx context.Context) (core.CommitSHA, error) {
@@ -159,7 +176,7 @@ func New(cfg Config) (*Stages, error) {
 	evaluator, err := iqa.New(iqa.Config{
 		FactoryID: cfg.FactoryID, Identity: cfg.QAIdentity, Workspace: cfg.QAWorkspace,
 		Gates: HardGates(GateSources{State: cfg.State, Files: tree, Redactor: cfg.Redactor, LKG: rc.LKG, Backend: rc.Backend, SupplyChain: supply}),
-		Judge: cfg.Judge, Baselines: Baselines{Workspace: cfg.QAWorkspace, Policy: refs}, Builds: Ledger{State: cfg.State},
+		Judge: cfg.Judge, Baselines: Baselines{Workspace: cfg.QAWorkspace, Policy: refs, Bases: keeper}, Builds: Ledger{State: cfg.State},
 		Review: tree, Routes: cfg.Routes, SameRouteAcknowledged: cfg.SameRouteAcknowledged,
 		Signer: cfg.QASigner, Verifier: cfg.Verifier, Clock: cfg.Clock,
 	})
@@ -175,11 +192,12 @@ func New(cfg Config) (*Stages, error) {
 		CandidatePRs: prs,
 		Build: &BuildStage{
 			Owner: "supervisor-builder", State: cfg.State, QAPolicy: refs, CodingPolicy: stepPolicy(loader, core.StepCoding), Clock: cfg.Clock,
+			Bases: keeper, BaseHasLKG: pipeline.CheckBaseHasLKG,
 			Retry:   cfg.BuildRetry,
 			Builder: &CandidateBuilder{FactoryID: cfg.FactoryID, Repo: cfg.Repo, Git: cfg.GitHub, Images: cfg.Images, Units: UnitRouter{Inputs: cfg.Release.UnitInputs}, Clock: cfg.Clock},
 		},
 		QA: &QAStage{
-			FactoryID: cfg.FactoryID, Owner: "supervisor-qa", State: cfg.State, Evaluator: evaluator, Tree: tree, Policy: refs,
+			FactoryID: cfg.FactoryID, Owner: "supervisor-qa", State: cfg.State, Evaluator: evaluator, Tree: tree, Policy: refs, Bases: keeper,
 			MaxAttempts: cfg.MaxAttempts, PassScore: passScore(rc.PassScore), ExtraGates: rc.ExtraGates, Budget: cfg.Budget, Clock: cfg.Clock,
 			Delegation: cfg.Delegation,
 		},

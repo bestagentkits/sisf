@@ -123,14 +123,17 @@ func (s *BuildStage) recordOutage(ctx context.Context, j buildJob, cause error, 
 		next.LastCode, next.UpdatedAt = core.CodeOf(cause), now
 		next.NextTryAt = now.Add(r.backoff(next.Failures))
 		next.Reason = ""
-		if policySuperseded(cause) {
+		switch {
+		case policySuperseded(cause):
 			// Trying again changes nothing until the Owner acts.
 			next.Reason = handoff.HeldPolicySuperseded
+		case baseLacksLKG(cause):
+			next.Reason = handoff.HeldBaseLacksRelease
 		}
 		if (r.held(next) || next.Reason != "") && !cur.Held {
 			next.Held, next.HeldAt, next.Reminders = true, now, 0
 			next.Holds++
-			if next.Reason == handoff.HeldPolicySuperseded {
+			if handoff.HeldEndsRun(next.Reason) {
 				// The run is over: its patch is never built, and the
 				// control zone blocks the issue. Its reservation is closed.
 				if err := putCloseDue(ctx, tx, j.record.RunID); err != nil {

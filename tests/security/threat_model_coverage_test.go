@@ -51,6 +51,14 @@ var coverage = map[string][]proof{
 		}},
 		{"internal/supervisor/release/config_rules_test.go", []string{"TestAPipelineRefusesParametersThatWeakenTheReleaseRules"}},
 		{"internal/supervisor/digest_self_check_test.go", []string{"TestSupervisorRefusesToStartWhenItsDigestDiffersFromTheSignedManifest"}},
+		{"internal/policy/build_base_test.go", []string{
+			"TestAChangeToFoundationContentStopsTheFactoryUntilTheOwnerApproves",
+			"TestOnlyTheSupervisorMovesTheCommitToBuildOn",
+			"TestATamperedProofOfUnchangedContentIsRefused",
+		}},
+		{"tests/acceptance/base_contains_last_known_good_test.go", []string{
+			"TestASecondReleaseOfAUnitOnABaselineWithoutTheFirstIsStoppedBeforeQA",
+		}},
 	},
 	// A manipulated agent exfiltrates data through a network call.
 	"TM-03": {

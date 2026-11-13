@@ -48,23 +48,37 @@ func stepPolicy(loader *policy.Loader, step core.StepKind) PolicyRefs {
 	}
 }
 
-// Baselines is the evaluator's read-only baseline: the approved policy
-// commit, checked out in the evaluator's own workspace, with the suite the
-// review criteria at that commit define. It changes only when the Owner
-// approves another policy revision.
+// Baselines is the evaluator's read-only baseline: the commit the candidate
+// was built on, checked out in the evaluator's own workspace, with the
+// suite the review criteria of the approved policy define. It is the
+// approved policy revision, or a merge of a verified release the supervisor
+// followed from it while the content the Owner approved is unchanged.
 type Baselines struct {
 	Workspace string
 	Policy    PolicyRefs
+	// Bases accepts the commit the candidate was built on; nil accepts the
+	// policy revision only.
+	Bases BaseKeeper
 }
 
-// Baseline returns the baseline in force; the candidate plays no part in it.
-func (b Baselines) Baseline(ctx context.Context, _ qa.Candidate) (qa.Baseline, error) {
+// Baseline returns the baseline of the candidate: the commit it was built
+// on, once accepted again as the policy revision in force or a merge the
+// supervisor followed from it with the approved content unchanged. What
+// the candidate claims decides nothing else.
+func (b Baselines) Baseline(ctx context.Context, c qa.Candidate) (qa.Baseline, error) {
 	refs, err := b.Policy(ctx)
 	if err != nil {
 		return qa.Baseline{}, err
 	}
+	base := c.BaselineSHA
+	if base == "" {
+		base = refs.PolicySHA
+	}
+	if err := acceptBase(ctx, b.Bases, refs, base); err != nil {
+		return qa.Baseline{}, err
+	}
 	return qa.Baseline{
-		CommitSHA: refs.PolicySHA, PolicySHA: refs.PolicySHA, SuiteDigest: handoff.SuiteDigest(refs),
+		CommitSHA: base, PolicySHA: refs.PolicySHA, SuiteDigest: handoff.SuiteDigest(refs),
 		WorkspaceID: b.Workspace, ReadOnly: true,
 	}, nil
 }
