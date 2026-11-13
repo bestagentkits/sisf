@@ -74,7 +74,8 @@ func (b Baselines) Baseline(ctx context.Context, c qa.Candidate) (qa.Baseline, e
 	if base == "" {
 		base = refs.PolicySHA
 	}
-	if err := acceptBase(ctx, b.Bases, refs, base); err != nil {
+	base, err = acceptBase(ctx, b.Bases, refs, base)
+	if err != nil {
 		return qa.Baseline{}, err
 	}
 	return qa.Baseline{

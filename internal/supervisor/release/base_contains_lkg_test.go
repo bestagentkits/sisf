@@ -222,3 +222,37 @@ func TestAReleaseWhoseLKGCannotBeReadNowWaits(t *testing.T) {
 		t.Fatalf("%v was deployed", staged)
 	}
 }
+
+// refusingBases accepts no base, as the keeper of the commit to build on
+// answers while the factory stopped building on main.
+type refusingBases struct{ asked int }
+
+func (b *refusingBases) Accept(context.Context, core.CommitSHA) error {
+	b.asked++
+	return core.NewError(core.CodePolicyHold, "the factory stopped building on main at 1111111111111111111111111111111111111111 (main changes AGENTS.md)")
+}
+
+// The release stage accepts the candidate's base again, as the build and
+// QA stages do: while the factory stopped building on main, a verified
+// candidate is refused for the Owner before anything is deployed.
+func TestACandidateIsNotReleasedOnABaseTheSupervisorNoLongerAccepts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := newWorld(t)
+	bases := &refusingBases{}
+	w.cfg.Bases = bases
+	issue, run := issueRef(271), core.RunID("run-271")
+	w.seedReleaseCandidate(issue, run, firstBuild)
+
+	out, err := w.pipeline().Release(ctx, w.request(issue, run, firstBuild))
+	if !core.HasCode(err, core.CodeApprovalRequired) || out.Result != ResultRefused || out.Cause != statemachine.BlockReleaseRefused {
+		t.Fatalf("Release = %+v, %v; want refused for the Owner", out, err)
+	}
+	if bases.asked == 0 || !strings.Contains(out.Reason, "AGENTS.md") || !strings.Contains(out.Reason, string(commitSHA)) {
+		t.Fatalf("the refusal %q does not name the base and why it is not accepted (asked %d)", out.Reason, bases.asked)
+	}
+	w.requireState(issue, core.StateBlocked)
+	if _, _, staged, _ := w.backend.snapshot(); len(staged) != 0 {
+		t.Fatalf("%v was deployed", staged)
+	}
+}

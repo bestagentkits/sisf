@@ -52,8 +52,9 @@ func judgedUnhealthy(reason string) *undo {
 // is deployed: a request that does not hold together, a change GitHub may
 // list only part of, a change of the trusted control surface, a unit the
 // factory may not publish by itself, a receipt or artifact that does not
-// verify, an expired one included, and a base that does not contain the
-// LKG release of the unit (checkBaseHasLKG).
+// verify, an expired one included, a base the supervisor does not accept
+// now (checkBaseAccepted), and a base that does not contain the LKG
+// release of the unit (checkBaseHasLKG).
 func (p *Pipeline) refusal(ctx context.Context, req Request, record core.StateRecord) (verifiedRelease, error) {
 	if err := req.validate(); err != nil {
 		return verifiedRelease{}, err
@@ -70,6 +71,9 @@ func (p *Pipeline) refusal(ctx context.Context, req Request, record core.StateRe
 	v, err := p.verify(ctx, req, record)
 	if err != nil {
 		_ = p.audit(ctx, &holding{record: record}, "release.verify", core.OutcomeDenied, map[string]string{"code": string(core.CodeOf(err))})
+		return v, err
+	}
+	if err := p.checkBaseAccepted(ctx, v); err != nil {
 		return v, err
 	}
 	return v, p.checkBaseHasLKG(ctx, v)

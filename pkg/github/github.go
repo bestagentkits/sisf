@@ -137,14 +137,17 @@ type Comment struct {
 // how it is treated: a pull request from a fork or an outsider runs sandboxed
 // with no secrets and no write access until a Maintainer accepts it.
 type PullRequest struct {
-	Repo              RepoRef           `json:"repo"`
-	Number            int               `json:"number"`
-	URL               string            `json:"url,omitempty"`
-	Title             string            `json:"title"`
-	Body              string            `json:"body"`
-	State             IssueState        `json:"state"`
-	Draft             bool              `json:"draft,omitempty"`
-	Merged            bool              `json:"merged,omitempty"`
+	Repo   RepoRef    `json:"repo"`
+	Number int        `json:"number"`
+	URL    string     `json:"url,omitempty"`
+	Title  string     `json:"title"`
+	Body   string     `json:"body"`
+	State  IssueState `json:"state"`
+	Draft  bool       `json:"draft,omitempty"`
+	Merged bool       `json:"merged,omitempty"`
+	// MergeCommit is the commit a merged pull request made on its base
+	// branch, as GitHub names it; empty while it is not merged.
+	MergeCommit       core.CommitSHA    `json:"merge_commit,omitempty"`
 	HeadRef           string            `json:"head_ref"`
 	HeadSHA           core.CommitSHA    `json:"head_sha"`
 	BaseRef           string            `json:"base_ref"`

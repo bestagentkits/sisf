@@ -75,9 +75,11 @@ type QAProof struct {
 	// PolicyRevision is the policy commit in force now. A receipt issued
 	// under a policy that has since been replaced releases nothing.
 	PolicyRevision core.CommitSHA
-	// BaselineSHA is the commit of the read-only QA baseline in force now,
-	// and SuiteDigest the digest of the test suite in force now. A receipt
-	// judged against an older baseline or another suite releases nothing.
+	// BaselineSHA is the commit the supervisor accepts now as the base of
+	// the run: the value the keeper of the commit to build on returned when
+	// it accepted the receipt's base again, never the receipt's own claim.
+	// SuiteDigest is the digest of the test suite in force now. A receipt
+	// judged on another base or another suite releases nothing.
 	BaselineSHA core.CommitSHA
 	SuiteDigest core.Digest
 	// RequiredGates names every hard gate the review criteria demand. It must

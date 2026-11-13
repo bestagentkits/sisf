@@ -95,6 +95,7 @@ type jPull struct {
 	// carry merged_at alone, as GitHub's do.
 	Merged            *bool      `json:"merged,omitempty"`
 	MergedAt          *time.Time `json:"merged_at"`
+	MergeCommitSHA    *string    `json:"merge_commit_sha"`
 	Head              jBranch    `json:"head"`
 	Base              jBranch    `json:"base"`
 	User              jUser      `json:"user"`
@@ -110,6 +111,7 @@ type pull struct {
 	headSHA, baseSHA    string
 	draft, merged       bool
 	mergedAt            time.Time
+	mergeCommit         string
 }
 
 type issue struct {

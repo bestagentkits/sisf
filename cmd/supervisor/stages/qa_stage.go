@@ -236,16 +236,19 @@ func (s *QAStage) proof(ctx context.Context, receipt core.QAReceipt) (statemachi
 	if err != nil {
 		return statemachine.QAProof{}, err
 	}
-	// The baseline is the commit the candidate was built and judged on,
-	// accepted again now: the policy revision or a merge the supervisor
-	// followed from it with the approved content unchanged.
-	if err := acceptBase(ctx, s.Bases, refs, receipt.BaselineSHA); err != nil {
+	// The baseline is the commit the supervisor accepts now as the one the
+	// candidate was built and judged on: the policy revision or a merge it
+	// followed from it with the approved content unchanged. The proof names
+	// that accepted commit, never the receipt's claim, so the guard compares
+	// the receipt with what the supervisor accepted.
+	accepted, err := acceptBase(ctx, s.Bases, refs, receipt.BaselineSHA)
+	if err != nil {
 		return statemachine.QAProof{}, err
 	}
 	gates := slices.Concat(core.RequiredHardGates(), s.ExtraGates)
 	return statemachine.QAProof{
 		Receipt: receipt, FactoryID: s.FactoryID, PolicyRevision: refs.PolicySHA,
-		BaselineSHA: receipt.BaselineSHA, SuiteDigest: handoff.SuiteDigest(refs), RequiredGates: gates, PassScore: s.PassScore,
+		BaselineSHA: accepted, SuiteDigest: handoff.SuiteDigest(refs), RequiredGates: gates, PassScore: s.PassScore,
 	}, nil
 }
 
