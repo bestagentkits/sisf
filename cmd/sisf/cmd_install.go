@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"os"
 	"os/signal"
@@ -187,7 +188,13 @@ func runUp(ctx context.Context, env *Env, args []string) error {
 	}
 	o, err := upOptions(env, in, f, dir)
 	if err != nil {
-		return asUsage(err)
+		// A wrong flag refuses on every start, so it ends like any other
+		// refusal, with the status the service units do not restart on.
+		var usage *usageError
+		if err = asUsage(err); errors.As(err, &usage) {
+			return refusal{err: err, status: refusalStatus}
+		}
+		return err
 	}
 	// SIGHUP asks a running Standalone factory to restart its units.
 	hup := make(chan os.Signal, 1)

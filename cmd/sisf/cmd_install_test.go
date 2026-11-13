@@ -162,9 +162,18 @@ func TestDebugOutsideDockerModeIsRefused(t *testing.T) {
 func TestUpKeepsTheModeOfAnExistingInstall(t *testing.T) {
 	t.Parallel()
 	dir := initSim(t, "standalone")
-	status, _, stderr := runWithOutput(t, "up", "--dir", dir, "--mode", "docker")
+	status, _, stderr := runRefused(t, "up", "--dir", dir, "--mode", "docker")
 	if status != exitUsage || !strings.Contains(stderr, "fixed") {
 		t.Fatalf("up in the other mode = %d %q, want a refusal with status %d", status, stderr, exitUsage)
+	}
+	// A wrong flag on the command line of a service unit refuses on every
+	// start, so it ends with the status --refusal-status chose, as any
+	// refusal does: the launchd agent passes 0 and is not started again.
+	for _, refusalStatus := range []string{"0", "2"} {
+		status, _, stderr = runRefused(t, "up", "--dir", dir, "--profile", "prod", "--refusal-status", refusalStatus)
+		if strconv.Itoa(status) != refusalStatus || !strings.Contains(stderr, "--profile") || !strings.Contains(stderr, "Usage:") {
+			t.Fatalf("up with a wrong flag and --refusal-status %s = %d %q, want the usage refusal with that status", refusalStatus, status, stderr)
+		}
 	}
 }
 

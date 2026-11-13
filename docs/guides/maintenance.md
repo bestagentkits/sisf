@@ -72,8 +72,9 @@ The supervisor records the application process of each slot under `data/trust/lo
 
 1. [Back up](#back-up) (the factory is stopped after step 1 of it).
 2. Update the checkout the install recorded in `$D/source.json` to the build you want, and rebuild the command line: `git pull` (or `git checkout <tag or commit>`), then `make install`. `sisf version` names the new build.
-3. `sisf up --dir "$D"`. Expected: `building ...` lines, then `factory <id> is up: control http://127.0.0.1:7463, app via edge http://127.0.0.1:7460`.
-4. `sisf doctor --dir "$D"`.
+3. For a Standalone install run as a service, write its units again with `sisf service units --dir "$D"` and load them again ([service units](install.md#running-standalone-as-a-service)). Units written by an older `sisf` restart `sisf up` after a refusal too: launchd keeps the agent alive whatever the exit status and systemd lacks `RestartPreventExitStatus`, so an up that can never start is refused again every few seconds.
+4. `sisf up --dir "$D"`. Expected: `building ...` lines, then `factory <id> is up: control http://127.0.0.1:7463, app via edge http://127.0.0.1:7460`.
+5. `sisf doctor --dir "$D"`.
 
 Verify: `sisf doctor` reports no failure, its `release manifest` line is `OK`, and `sisf status` answers.
 

@@ -377,6 +377,10 @@ func report(env *Env, cmd Command, err error) int {
 		return exitOK
 	case errors.As(err, &usage):
 		say(env.Stderr, "%s %s: %s\nUsage: %s\n", program, cmd.name(), usage.message, cmd.synopsis())
+		// A usage error a command refuses with carries its own status.
+		if coded, ok := err.(exitCoder); ok {
+			return coded.ExitCode()
+		}
 		return exitUsage
 	}
 	var quiet silent
