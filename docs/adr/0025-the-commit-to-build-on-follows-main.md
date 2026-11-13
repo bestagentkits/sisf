@@ -1,4 +1,4 @@
-# ADR 0024: The commit to build on follows main while the approved content is unchanged
+# ADR 0025: The commit to build on follows main while the approved content is unchanged
 
 ## Status
 
