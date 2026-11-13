@@ -88,6 +88,23 @@ func (f *Filter) serve(w http.ResponseWriter, r *http.Request) *denial {
 			return d
 		}
 		return f.network(w, r, rt)
+	case endpointVolumeCreate:
+		return f.createVolume(w, r, rt)
+	case endpointVolumeInspect:
+		if d := noBody(r); d != nil {
+			return d
+		}
+		return f.inspectVolume(w, r, rt)
+	case endpointVolumeRemove:
+		if d := noBody(r); d != nil {
+			return d
+		}
+		return f.removeVolume(w, r, rt)
+	case endpointArchive:
+		if d := f.checkArchive(r, rt); d != nil {
+			return d
+		}
+		return f.containerAction(w, r, rt)
 	default:
 		if d := noBody(r); d != nil {
 			return d

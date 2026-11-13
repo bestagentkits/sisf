@@ -3,6 +3,7 @@ package compose
 import (
 	"log/slog"
 	"net/http"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -16,7 +17,17 @@ const (
 	LabelFactory = "sisf.factory"
 	LabelUnit    = "sisf.unit"
 	LabelDigest  = "sisf.digest"
+	// LabelLoader marks the container that loads a bundle volume; it is
+	// never started.
+	LabelLoader = "sisf.loader"
+	// LabelBundle names the bundle digest a loader or a bundle volume holds.
+	LabelBundle = "sisf.bundle"
 )
+
+// LoaderTarget is where a loader mounts the bundle volume it fills, and the
+// only path a bundle is uploaded at. The deploy role of the Docker request
+// filter allows no other.
+const LoaderTarget = "/sisf-bundle"
 
 // RevisionEnv is the variable that tells the application which revision it
 // was started as. The backend sets it; configuration cannot.
@@ -60,6 +71,14 @@ type Config struct {
 	Env []string
 	// Volumes are mounted into every revision.
 	Volumes []VolumeMount
+	// User is the numeric uid:gid every revision runs as, neither of them
+	// 0; the image's user when empty.
+	User string
+	// BundleTarget is where a revision of a bundle artifact mounts its
+	// content bundle, read-only. BundleSource yields the verified tar of a
+	// bundle. A backend without both refuses a bundle artifact.
+	BundleTarget string
+	BundleSource BundleSource
 	// Limits bound each revision's container; DefaultResourceLimits fills
 	// a zero field.
 	Limits ResourceLimits
@@ -83,7 +102,13 @@ var (
 	unitPattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,30}$`)
 	networkPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 	envPattern     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+	userPattern    = regexp.MustCompile(`^[1-9][0-9]{0,9}:[1-9][0-9]{0,9}$`)
 )
+
+// cleanTarget is a clean absolute path below the root.
+func cleanTarget(p string) bool {
+	return path.IsAbs(p) && path.Clean(p) == p && p != "/"
+}
 
 // withDefaults fills the optional fields and checks the required ones.
 func (c Config) withDefaults() (Config, error) {
@@ -110,6 +135,15 @@ func (c Config) withDefaults() (Config, error) {
 		if !networkPattern.MatchString(v.Name) || !strings.HasPrefix(v.Target, "/") || v.Target == "/" || strings.Contains(v.Target, "..") {
 			return bad("a volume needs a named volume and an absolute target path")
 		}
+		if strings.HasPrefix(v.Name, string(c.Factory)+"-bundle-") || v.Target == c.BundleTarget {
+			return bad("a data volume may not be named like a bundle volume or take the bundle's place")
+		}
+	}
+	if c.User != "" && !userPattern.MatchString(c.User) {
+		return bad("a revision runs as a numeric uid:gid other than root")
+	}
+	if c.BundleTarget != "" && (!cleanTarget(c.BundleTarget) || c.BundleTarget == LoaderTarget) {
+		return bad("the bundle target must be a clean absolute path below / other than the loader's")
 	}
 	if c.Limits.MemoryBytes < 0 || c.Limits.NanoCPUs < 0 || c.Limits.Pids < 0 {
 		return bad("the resource limits of a revision must be positive")

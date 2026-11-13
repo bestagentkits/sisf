@@ -12,11 +12,21 @@ package dockerfilter
 //     sisf.factory, sisf.unit and sisf.digest for that name, from an
 //     allowed unit image, on the deploy network alone, read-only, with every
 //     capability dropped, no-new-privileges, memory (with swap equal to it),
-//     CPU and process limits within the configured maxima, and as its only
-//     environment the revision it is started as. No mount, volume, device,
-//     port, privilege, host namespace or other setting can be sent.
+//     CPU and process limits within the configured maxima, as its
+//     environment the revision it is started as followed by exactly the
+//     configured DeployEnv, as its image's user or a numeric uid:gid other
+//     than root, and as its only mounts the volumes deploy_bundle_mounts.go
+//     allows: at most one bundle volume, read-only, at the configured
+//     BundleTarget, and the configured data volumes at their targets. No
+//     bind, other volume, command, device, port, privilege, host namespace
+//     or other setting can be sent.
+//   - POST /vX/containers/create of a bundle loader (see
+//     deploy_bundle_mounts.go), which is never started.
 //   - inspect, start, stop, logs and remove of a container that carries the
-//     factory's unit labels and is not a runner.
+//     factory's unit labels and is neither a runner nor a loader.
+//   - inspect, remove and archive upload of a bundle loader, and the
+//     create, inspect and remove of a bundle volume (see
+//     deploy_bundle_volumes.go).
 //
 // Everything else, and every endpoint of the runner role that a deployment
 // does not need (wait, info), is refused.
@@ -121,6 +131,12 @@ func (c Config) settledDeploy() (Config, error) {
 			return c, invalid("a simulated image must name a unit and one of the allowed images")
 		}
 	}
+	if c.MaxArchiveBytes == 0 {
+		c.MaxArchiveBytes = DefaultMaxArchiveBytes
+	}
+	if err := c.checkBundleSettings(); err != nil {
+		return c, err
+	}
 	return c, c.checkLists()
 }
 
@@ -141,6 +157,7 @@ type deployHostConfig struct {
 	CapDrop        []string          `json:"CapDrop"`
 	SecurityOpt    []string          `json:"SecurityOpt"`
 	Tmpfs          map[string]string `json:"Tmpfs,omitempty"`
+	Mounts         []deployMount     `json:"Mounts,omitempty"`
 	Memory         int64             `json:"Memory"`
 	MemorySwap     int64             `json:"MemorySwap"`
 	NanoCpus       int64             `json:"NanoCpus"`
@@ -154,7 +171,7 @@ type restartPolicy struct {
 var (
 	deployCreateKeys = []string{"Image", "Env", "Labels", "User", "HostConfig"}
 	deployHostKeys   = []string{"NetworkMode", "RestartPolicy", "ReadonlyRootfs", "CapDrop", "SecurityOpt", "Tmpfs",
-		"Memory", "MemorySwap", "NanoCpus", "PidsLimit"}
+		"Mounts", "Memory", "MemorySwap", "NanoCpus", "PidsLimit"}
 )
 
 // createDeploy checks a create request of the deploy role and forwards the
@@ -192,13 +209,22 @@ func (f *Filter) checkDeployCreate(name string, raw []byte) ([]byte, error) {
 			return nil, err
 		}
 	}
+	if mounts, ok := host["Mounts"]; ok {
+		if err := checkMountKeys(mounts); err != nil {
+			return nil, err
+		}
+	}
 	var req deployCreateRequest
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		return nil, errors.New("the container configuration has a field of the wrong type")
 	}
-	if err := f.checkDeployRequest(name, &req); err != nil {
+	check := f.checkDeployRequest
+	if _, loader := req.Labels[DeployLabelLoader]; loader {
+		check = f.checkLoaderRequest
+	}
+	if err := check(name, &req); err != nil {
 		return nil, err
 	}
 	return json.Marshal(req)
@@ -216,10 +242,10 @@ func (f *Filter) checkDeployRequest(name string, req *deployCreateRequest) error
 		return errors.New("the unit or digest label is malformed")
 	case name != string(f.cfg.RunnerValue)+"-"+unit+"-"+hex[1][:12]:
 		return errors.New("the container name must be the factory, the unit and the digest of the revision")
-	case !slices.Equal(req.Env, []string{DeployRevisionEnv + "=" + digest}):
-		return errors.New("a deployed revision's only environment is the revision it is started as")
-	case req.User != "" && checkUser(req.User) != nil:
-		return errors.New("a deployed revision runs as its image's user or a numeric user other than root")
+	case !slices.Equal(req.Env, append([]string{DeployRevisionEnv + "=" + digest}, f.cfg.DeployEnv...)):
+		return errors.New("a deployed revision's environment is the revision it is started as and the configured environment")
+	case req.User != "" && !deployUser.MatchString(req.User):
+		return errors.New("a deployed revision runs as its image's user or a numeric uid:gid other than root")
 	}
 	if sim, ok := f.cfg.SimulatedImages[unit]; ok && req.Image == "sim.local/"+string(f.cfg.RunnerValue)+"/"+unit+"@"+digest {
 		f.log.Info("simulated candidate runs as its unit's image", "unit", unit, "digest", digest)
@@ -234,6 +260,18 @@ func (f *Filter) checkDeployRequest(name string, req *deployCreateRequest) error
 		return fmt.Errorf("network mode %q is not the deploy network", h.NetworkMode)
 	case !slices.Contains(restartPolicies, h.RestartPolicy.Name):
 		return fmt.Errorf("restart policy %q is not allowed", h.RestartPolicy.Name)
+	}
+	if err := f.checkRevisionMounts(h.Mounts); err != nil {
+		return err
+	}
+	return f.checkDeployHost(h)
+}
+
+// checkDeployHost judges what a revision and a loader share: a read-only
+// root file system, every capability dropped, no-new-privileges, bounded
+// resources and plain scratch file systems.
+func (f *Filter) checkDeployHost(h deployHostConfig) error {
+	switch {
 	case !h.ReadonlyRootfs:
 		return errors.New("a deployed revision needs a read-only root file system")
 	case !slices.ContainsFunc(h.CapDrop, func(c string) bool { return strings.EqualFold(c, "ALL") }):
@@ -272,9 +310,11 @@ func (f *Filter) checkDeployLimits(h deployHostConfig) error {
 }
 
 // deployed reports whether labels mark a revision of this factory's units.
+// A loader is never a revision, whatever else it carries.
 func (f *Filter) deployed(labels map[string]string) bool {
 	_, runner := labels[DefaultRunnerLabel]
-	return !runner && labels[DeployLabelFactory] == string(f.cfg.RunnerValue) &&
+	_, loader := labels[DeployLabelLoader]
+	return !runner && !loader && labels[DeployLabelFactory] == string(f.cfg.RunnerValue) &&
 		deployUnitPattern.MatchString(labels[DeployLabelUnit]) && deployDigestPattern.MatchString(labels[DeployLabelDigest])
 }
 
@@ -316,12 +356,14 @@ var deployQueryRules = map[endpoint]queryRule{
 	endpointInspect: {"size": isFalse},
 	endpointStop:    {"t": isSmallCount},
 	endpointLogs:    {"stdout": isBool, "stderr": isBool, "timestamps": isBool, "tail": isTail, "since": isSinceTime},
-	endpointRemove:  {"force": isBool, "v": isFalse},
+	endpointRemove:  {"force": isBool, "v": isBool},                                // v only for a loader; see deployAction
 	endpointList:    {"all": isBool, "filters": func(string) bool { return true }}, // checked by list
+	endpointArchive: {"path": func(v string) bool { return v == DeployLoaderTarget }},
 }
 
 // deployEndpoints are the endpoints the deploy role serves.
 var deployEndpoints = map[endpoint]bool{
 	endpointPing: true, endpointCreate: true, endpointInspect: true, endpointStart: true,
 	endpointStop: true, endpointLogs: true, endpointRemove: true, endpointList: true,
+	endpointArchive: true, endpointVolumeCreate: true, endpointVolumeInspect: true, endpointVolumeRemove: true,
 }

@@ -139,6 +139,7 @@ var artifactMutations = map[string]func(*deploy.Artifact){
 	"Image":         func(a *deploy.Artifact) { a.Image = "ghcr.io/acme/other@" + string(digest) },
 	"SBOMRef":       func(a *deploy.Artifact) { a.SBOMRef = "artifact:sbom-2" },
 	"ProvenanceRef": func(a *deploy.Artifact) { a.ProvenanceRef = "" },
+	"Bundle":        func(a *deploy.Artifact) { a.Bundle = string(otherDigest) },
 }
 
 func TestChangingAnyBoundArtifactFieldChangesTheSigningPayload(t *testing.T) {
@@ -176,9 +177,10 @@ func TestTheArtifactPayloadIsStableAndLeavesTheSignatureOut(t *testing.T) {
 	if !bytes.Equal(base, signedArtifact().SigningPayload()) {
 		t.Fatal("two equal artifacts produced different payloads")
 	}
-	// The field list changed when the factory was bound, so the version did
-	// too: a signature made over the earlier list never verifies.
-	if !strings.HasPrefix(string(base), "sisf-signed-record\ndomain=20:sisf.deploy_artifact\nversion=1:2\nfactory_id=8:acme-app\n") {
+	// The field list changed when the factory and then the bundle were
+	// bound, so the version did too: a signature made over an earlier list
+	// never verifies.
+	if !strings.HasPrefix(string(base), "sisf-signed-record\ndomain=20:sisf.deploy_artifact\nversion=1:3\nfactory_id=8:acme-app\n") {
 		t.Fatalf("payload does not open with the artifact domain and version: %q", base)
 	}
 	artifact.Signature = core.Signature{KeyID: "another-key", Algorithm: "ed25519", Value: []byte{9}}
@@ -187,6 +189,67 @@ func TestTheArtifactPayloadIsStableAndLeavesTheSignatureOut(t *testing.T) {
 	}
 	if bytes.Equal(base, core.QAReceipt{}.SigningPayload()) {
 		t.Fatal("an artifact payload equals a receipt payload")
+	}
+}
+
+func TestTheBundleIsBoundLastAndEmptyForAnImageOnlyArtifact(t *testing.T) {
+	t.Parallel()
+	base := string(signedArtifact().SigningPayload())
+	if !strings.HasSuffix(base, "provenance_ref=21:artifact:provenance-1\nbundle=0:\n") {
+		t.Fatalf("an image-only artifact must bind an empty bundle last: %q", base)
+	}
+}
+
+// bundleArtifact is a managed application's revision: the runtime image the
+// Owner pinned and the content bundle, named by the digest of the pair.
+func bundleArtifact() deploy.Artifact {
+	a := signedArtifact()
+	a.Image = "wordpress:7.0-php8.3-apache@sha256:" + strings.Repeat("e", 64)
+	a.Bundle = "sha256:" + strings.Repeat("f", 64)
+	a.Digest = deploy.PairDigest(a.Image, a.Bundle)
+	return a
+}
+
+func TestThePairDigestNamesTheImageAndTheBundleTogether(t *testing.T) {
+	t.Parallel()
+	a := bundleArtifact()
+	// sha256("sisf.pair.v1\n" + image + "\n" + bundle), pinned so every
+	// caller derives the same name for the same pair.
+	const want = core.ReleaseDigest("sha256:85c04b1d5afdd866bb124ceedf4256b72b6421cdc4651d2a6c1f96535b9a1f21")
+	if got := deploy.PairDigest(a.Image, a.Bundle); got != want {
+		t.Fatalf("PairDigest = %q, want %q", got, want)
+	}
+	if deploy.PairDigest(a.Image+"x", a.Bundle) == want || deploy.PairDigest(a.Image, string(otherDigest)) == want {
+		t.Fatal("changing either half of the pair must change its digest")
+	}
+}
+
+func TestABundleArtifactIsNamedByItsPair(t *testing.T) {
+	t.Parallel()
+	if err := bundleArtifact().ValidateFor("acme-app"); err != nil {
+		t.Fatalf("a valid bundle artifact was refused: %v", err)
+	}
+	cases := map[string]func(*deploy.Artifact){
+		"bundle is not a digest":      func(a *deploy.Artifact) { a.Bundle = "bundle.tar" },
+		"bundle digest is short":      func(a *deploy.Artifact) { a.Bundle = "sha256:" + strings.Repeat("f", 63) },
+		"bundle digest is sha512":     func(a *deploy.Artifact) { a.Bundle = "sha512:" + strings.Repeat("f", 128) },
+		"digest names another bundle": func(a *deploy.Artifact) { a.Bundle = string(otherDigest) },
+		"digest names another image":  func(a *deploy.Artifact) { a.Image = "wordpress@sha256:" + strings.Repeat("2", 64) },
+		"digest is the bundle digest": func(a *deploy.Artifact) { a.Digest = core.ReleaseDigest(a.Bundle) },
+		"digest is the image digest":  func(a *deploy.Artifact) { a.Digest = core.ReleaseDigest("sha256:" + strings.Repeat("e", 64)) },
+		// A line break would let text move between the two halves of the
+		// pair and name another pair by the same digest.
+		"image spans two lines": func(a *deploy.Artifact) {
+			a.Image = "wordpress\n@sha256:" + strings.Repeat("e", 64)
+			a.Digest = deploy.PairDigest(a.Image, a.Bundle)
+		},
+	}
+	for name, mutate := range cases {
+		a := bundleArtifact()
+		mutate(&a)
+		if err := a.ValidateFor("acme-app"); !core.HasCode(err, core.CodeInvalidArgument) {
+			t.Errorf("%s: want %s, got %v", name, core.CodeInvalidArgument, err)
+		}
 	}
 }
 

@@ -26,6 +26,13 @@ const (
 	// endpointNetwork inspects the sandbox network, in the runner role only,
 	// so the execution backend can prove the network is internal.
 	endpointNetwork
+	// endpointArchive uploads a tar stream into a bundle loader, and the
+	// volume endpoints create, inspect and remove bundle volumes; all four
+	// are of the deploy role only. See deploy_bundle_volumes.go.
+	endpointArchive
+	endpointVolumeCreate
+	endpointVolumeInspect
+	endpointVolumeRemove
 )
 
 // route is a request the filter recognised: the endpoint, the API version
@@ -40,8 +47,9 @@ type route struct {
 var (
 	versionedPath = regexp.MustCompile(`^/v(1\.[0-9]{1,2})(/[A-Za-z0-9_./-]*)$`)
 	containerRef  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
-	containerPath = regexp.MustCompile(`^/containers/([^/]+)/(json|start|stop|wait|logs)$`)
+	containerPath = regexp.MustCompile(`^/containers/([^/]+)/(json|start|stop|wait|logs|archive)$`)
 	removePath    = regexp.MustCompile(`^/containers/([^/]+)$`)
+	volumePath    = regexp.MustCompile(`^/volumes/([^/]+)$`)
 )
 
 // queryRule says which parameters an endpoint accepts and checks a value.
@@ -102,12 +110,22 @@ func (f *Filter) parseRoute(r *http.Request) (route, *denial) {
 			return route{}, deny(http.StatusForbidden, "only the sandbox network may be inspected")
 		}
 		rt.endpoint = endpointNetwork
+	case strings.HasPrefix(rest, "/volumes/"):
+		if f.cfg.Role != RoleDeploy {
+			return route{}, deny(http.StatusForbidden, "endpoint "+r.Method+" "+rest+" is not allowed")
+		}
+		if d := rt.volumeEndpoint(r.Method, rest); d != nil {
+			return route{}, d
+		}
 	default:
 		if d := rt.containerEndpoint(r.Method, rest); d != nil {
 			return route{}, d
 		}
 	}
 	rules := queryRules[rt.endpoint]
+	if f.cfg.Role != RoleDeploy && rt.endpoint == endpointArchive {
+		return route{}, deny(http.StatusForbidden, "endpoint "+r.Method+" "+rest+" is not allowed")
+	}
 	if f.cfg.Role == RoleDeploy {
 		if !deployEndpoints[rt.endpoint] {
 			return route{}, deny(http.StatusForbidden, "endpoint "+r.Method+" "+rest+" is not allowed")
@@ -143,12 +161,13 @@ func (rt *route) containerEndpoint(method, rest string) *denial {
 		method   string
 		endpoint endpoint
 	}{
-		"json":   {http.MethodGet, endpointInspect},
-		"start":  {http.MethodPost, endpointStart},
-		"stop":   {http.MethodPost, endpointStop},
-		"wait":   {http.MethodPost, endpointWait},
-		"logs":   {http.MethodGet, endpointLogs},
-		"remove": {http.MethodDelete, endpointRemove},
+		"json":    {http.MethodGet, endpointInspect},
+		"start":   {http.MethodPost, endpointStart},
+		"stop":    {http.MethodPost, endpointStop},
+		"wait":    {http.MethodPost, endpointWait},
+		"logs":    {http.MethodGet, endpointLogs},
+		"remove":  {http.MethodDelete, endpointRemove},
+		"archive": {http.MethodPut, endpointArchive},
 	}[action]
 	if method != want.method {
 		return deny(http.StatusForbidden, "endpoint "+method+" "+rest+" is not allowed")
@@ -157,6 +176,34 @@ func (rt *route) containerEndpoint(method, rest string) *denial {
 		return deny(http.StatusBadRequest, "the container reference is malformed")
 	}
 	rt.endpoint, rt.container = want.endpoint, id
+	return nil
+}
+
+// volumeEndpoint recognises a request on named volumes: a create, or an
+// inspect or remove of one volume. Which volume may be named is judged by
+// the handler.
+func (rt *route) volumeEndpoint(method, rest string) *denial {
+	switch {
+	case rest == "/volumes/create" && method == http.MethodPost:
+		rt.endpoint = endpointVolumeCreate
+		return nil
+	case rest == "/volumes/create":
+		return deny(http.StatusForbidden, "endpoint "+method+" "+rest+" is not allowed")
+	}
+	m := volumePath.FindStringSubmatch(rest)
+	switch {
+	case m == nil:
+		return deny(http.StatusForbidden, "endpoint "+method+" "+rest+" is not allowed")
+	case !containerRef.MatchString(m[1]):
+		return deny(http.StatusBadRequest, "the volume name is malformed")
+	case method == http.MethodGet:
+		rt.endpoint = endpointVolumeInspect
+	case method == http.MethodDelete:
+		rt.endpoint = endpointVolumeRemove
+	default:
+		return deny(http.StatusForbidden, "endpoint "+method+" "+rest+" is not allowed")
+	}
+	rt.container = m[1]
 	return nil
 }
 
