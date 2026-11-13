@@ -197,9 +197,20 @@ func TestInitGeneratesServiceUnitsOnlyForStandalone(t *testing.T) {
 	// The unit builds from the recorded checkout, starts in it, finds Go,
 	// and quotes every path.
 	for _, want := range []string{`up --mode standalone --dir "` + in.Layout.Dir + `" --source "` + in.SourceDir + `"`,
-		"WorkingDirectory=" + in.SourceDir, `Environment="PATH=/usr/local/go/bin:`, `ExecStart="/usr/local/bin/sisf" up`, "UMask=0077"} {
+		"WorkingDirectory=" + in.SourceDir, `Environment="PATH=/usr/local/go/bin:`, `ExecStart="/usr/local/bin/sisf" up`, "UMask=0077",
+		// An up that can never succeed exits 2 and is not started again.
+		"Restart=on-failure", "RestartPreventExitStatus=2"} {
 		if !strings.Contains(string(unit), want) {
 			t.Errorf("systemd unit lacks %q:\n%s", want, unit)
+		}
+	}
+	// launchd only tells success from failure, so the agent's up ends a
+	// refusal with 0 and launchd starts it again only after a failure.
+	plist, _ := os.ReadFile(filepath.Join(in.Layout.ServiceDir(), "sh.sisf.sisf-hello-app.plist"))
+	for _, want := range []string{"<string>--refusal-status</string>\n    <string>0</string>",
+		"<key>KeepAlive</key>\n  <dict>\n    <key>SuccessfulExit</key><false/>"} {
+		if !strings.Contains(string(plist), want) {
+			t.Errorf("launchd agent lacks %q:\n%s", want, plist)
 		}
 	}
 	docker, _, _ := newTestInstaller(t)

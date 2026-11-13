@@ -173,7 +173,7 @@ func (o Options) refuseDockerBuildFlags(mode manifest.Mode) error {
 	if mode != manifest.ModeDocker || (o.BuildCommand == "" && o.QAAgentBinary == "") {
 		return nil
 	}
-	return invalidf("--build-command and --qa-agent-binary have no effect in Docker mode, which builds and releases nothing " +
+	return refusedf("--build-command and --qa-agent-binary have no effect in Docker mode, which builds and releases nothing " +
 		"because the supervisor cannot observe an image a sandboxed build reports; " +
 		"a Standalone install with --exec docker builds candidates in a sandbox and deploys the program each build exports")
 }

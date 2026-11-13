@@ -72,6 +72,7 @@ func (in *Installer) superviseUnits(ctx context.Context, lock *runLock, units []
 	}
 	g := newGroup(in.Exec, in.Clock, units, in.say)
 	g.record = in.recordUnit
+	g.logTail = in.unitLogTail
 	if reload != nil {
 		go func() {
 			for {

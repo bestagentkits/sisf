@@ -1,6 +1,7 @@
 package install
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -38,10 +39,21 @@ func TestAStandaloneInstallWithoutABuildSandboxIsRefusedOnceAtUp(t *testing.T) {
 	}) {
 		t.Errorf("init did not say up will refuse the install and name the build sandbox flags: %q", res.Warnings)
 	}
+	if strings.Contains(res.Next, "sisf up") || !strings.Contains(res.Next, "sisf init") {
+		t.Errorf("init names %q as the next step of an install that cannot start", res.Next)
+	}
+	// No service unit is written that would only restart a refused up, and
+	// none can be written later.
+	if entries, _ := os.ReadDir(in.Layout.ServiceDir()); len(entries) != 0 {
+		t.Errorf("init wrote service units for an install that cannot start: %v", entries)
+	}
+	if err := in.WriteServiceUnits(); !Refused(err) || !strings.Contains(err.Error(), "--exec docker") {
+		t.Errorf("service units of an install that cannot start: %v, want the refusal naming the sandbox flags", err)
+	}
 	before := len(exec.lines())
 	err := in.Up(t.Context(), UpOptions{})
-	if !core.HasCode(err, core.CodeInvalidArgument) || !strings.Contains(err.Error(), "--exec docker") {
-		t.Fatalf("up of a Standalone install without a build sandbox: %v, want INVALID_ARGUMENT naming the sandbox flags", err)
+	if !core.HasCode(err, core.CodeInvalidArgument) || !Refused(err) || !strings.Contains(err.Error(), "--exec docker") {
+		t.Fatalf("up of a Standalone install without a build sandbox: %v, want a refusal naming the sandbox flags", err)
 	}
 	if ran := exec.lines()[before:]; len(ran) != 0 {
 		t.Fatalf("the refused up ran %v", ran)
@@ -55,6 +67,25 @@ func TestAStandaloneInstallWithoutABuildSandboxIsRefusedOnceAtUp(t *testing.T) {
 	}
 }
 
+// An up of an empty directory does not create an install that could never
+// start: it refuses before it writes anything.
+func TestAnUpThatWouldCreateAStandaloneInstallWithoutABuildSandboxCreatesNothing(t *testing.T) {
+	t.Parallel()
+	in, exec, _ := newTestInstaller(t)
+	o := initOptions(in, manifest.ModeStandalone)
+	production(&o)
+	err := in.Up(t.Context(), UpOptions{Init: o})
+	if !Refused(err) || !strings.Contains(err.Error(), "--exec docker") {
+		t.Fatalf("up = %v, want the refusal naming the sandbox flags", err)
+	}
+	if entries, _ := os.ReadDir(in.Layout.Dir); len(entries) != 0 {
+		t.Fatalf("the refused up wrote %v", entries)
+	}
+	if ran := exec.lines(); len(ran) != 0 {
+		t.Fatalf("the refused up ran %v", ran)
+	}
+}
+
 // The simulation builds nothing an agent wrote, so it needs no sandbox.
 func TestASimulatedStandaloneInstallNeedsNoBuildSandbox(t *testing.T) {
 	t.Parallel()
@@ -65,6 +96,9 @@ func TestASimulatedStandaloneInstallNeedsNoBuildSandbox(t *testing.T) {
 	}
 	if slices.ContainsFunc(res.Warnings, func(w string) bool { return strings.Contains(w, "--exec docker") }) {
 		t.Errorf("init asks a simulation for a build sandbox: %q", res.Warnings)
+	}
+	if res.Next != "sisf up --dir "+in.Layout.Dir {
+		t.Errorf("next step = %q", res.Next)
 	}
 	m, err := in.Layout.LoadManifest()
 	must(t, err)

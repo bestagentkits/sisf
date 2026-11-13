@@ -93,6 +93,9 @@ func (in *Installer) unitSearchPath() string {
 // no unit could start the factory, none is written and the note says why
 // and what to do.
 func (in *Installer) writeServiceUnits(o Options) (note string, err error) {
+	if needsBuildSandbox(o, o.Mode) {
+		return "Service units were not written: this install cannot start, and a service manager would only run a `sisf up` that refuses it.", nil
+	}
 	if why := in.ServiceUnitsBlocker(); why != "" {
 		return "Service units were not written: " + why + ".", nil
 	}
@@ -135,6 +138,9 @@ func (in *Installer) WriteServiceUnits() error {
 	}
 	if o.Mode != "standalone" {
 		return invalidf("the install in %s runs in %s mode; only a Standalone install has service units, Compose restarts the containers itself", in.Layout.Dir, o.Mode)
+	}
+	if needsBuildSandbox(o, o.Mode) {
+		return refusedf("no service unit was written: %s", noBuildSandbox)
 	}
 	if err := in.checkSource(); err != nil {
 		return err

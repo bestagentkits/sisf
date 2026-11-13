@@ -140,8 +140,33 @@ func TestUpKeepsTheModeOfAnExistingInstall(t *testing.T) {
 	t.Parallel()
 	dir := initSim(t, "standalone")
 	status, _, stderr := runWithOutput(t, "up", "--dir", dir, "--mode", "docker")
-	if status != exitFailure || !strings.Contains(stderr, "fixed") {
-		t.Fatalf("up in the other mode = %d %q, want a refusal", status, stderr)
+	if status != exitUsage || !strings.Contains(stderr, "fixed") {
+		t.Fatalf("up in the other mode = %d %q, want a refusal with status %d", status, stderr, exitUsage)
+	}
+}
+
+// The build flags reach the installer from `sisf up` of an existing Docker
+// install, which refuses them instead of building images that ignore them.
+// The refusal exits 2, a status the systemd unit does not restart on, or
+// what --refusal-status chose, which the launchd agent sets to 0.
+func TestUpOfAnExistingDockerInstallRefusesTheBuildFlagsAndExitsWithTheRefusalStatus(t *testing.T) {
+	t.Parallel()
+	dir := initSim(t, "docker")
+	for _, flag := range []string{"--build-command", "--qa-agent-binary"} {
+		status, stdout, stderr := runWithOutput(t, "up", "--dir", dir, flag, "/usr/local/bin/x")
+		if status != exitUsage || !strings.Contains(stderr, "no effect in Docker mode") || strings.Contains(stdout, "built") {
+			t.Fatalf("up %s = %d %q %q, want the refusal with status %d", flag, status, stdout, stderr, exitUsage)
+		}
+	}
+	status, _, stderr := runWithOutput(t, "up", "--dir", dir, "--build-command", "make", "--refusal-status", "0")
+	if status != exitOK || !strings.Contains(stderr, "no effect in Docker mode") {
+		t.Fatalf("up --refusal-status 0 = %d %q, want the refusal reported with status 0", status, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "compose.yaml")); err == nil {
+		t.Fatal("the refused up rendered the Compose file")
+	}
+	if status, _, _ := runWithOutput(t, "up", "--dir", dir, "--refusal-status", "-1"); status != exitUsage {
+		t.Fatalf("a negative --refusal-status was accepted: %d", status)
 	}
 }
 

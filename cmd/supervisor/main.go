@@ -44,6 +44,10 @@ const (
 	exitOK      = 0
 	exitFailure = 1
 	exitUsage   = 2
+	// exitConfigRefused ends a start the configuration refuses, sysexits'
+	// EX_CONFIG: starting again with the same configuration refuses again,
+	// so `sisf up` does not start the supervisor again after it.
+	exitConfigRefused = 78
 )
 
 // program is the name the binary is invoked by.
@@ -175,7 +179,7 @@ func runSupervisor(ctx context.Context, args []string, e env) int {
 	if err != nil {
 		say(e.stderr, "%s: refusing to start: the lifecycle cannot be wired\n", program)
 		printError(e.stderr, err)
-		return exitFailure
+		return refusalStatus(err)
 	}
 	sup, err := supervisor.Start(ctx, cfg, opts)
 	if err != nil {
@@ -271,4 +275,16 @@ func printError(w io.Writer, err error) {
 	if cause := typed.Unwrap(); cause != nil {
 		say(w, "  cause: %v\n", cause)
 	}
+}
+
+// refusalStatus is the exit status of a lifecycle that cannot be wired: a
+// configuration that chooses what is refused, does not support or is not
+// valid ends with exitConfigRefused; anything else, such as a file not
+// there yet, may pass at the next start.
+func refusalStatus(err error) int {
+	switch core.CodeOf(err) {
+	case core.CodePermissionDenied, core.CodeNotSupported, core.CodeInvalidArgument:
+		return exitConfigRefused
+	}
+	return exitFailure
 }

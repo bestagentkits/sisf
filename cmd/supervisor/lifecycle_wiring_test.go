@@ -107,7 +107,9 @@ func TestASupervisorGivenTheFactoryManifestRunsTheLifecycle(t *testing.T) {
 }
 
 // A lifecycle that cannot be wired refuses the start instead of running a
-// supervisor that cannot release.
+// supervisor that cannot release. A refusal of the configuration itself
+// ends with EX_CONFIG, which `sisf up` does not restart on; a missing file
+// may be there at the next start.
 func TestASupervisorWhoseLifecycleCannotBeWiredRefusesToStart(t *testing.T) {
 	t.Parallel()
 	type refusal struct {
@@ -131,8 +133,12 @@ func TestASupervisorWhoseLifecycleCannotBeWiredRefusesToStart(t *testing.T) {
 			t.Parallel()
 			inst, args := lifecycleInstall(t)
 			status, _, stderr := invoke(inst.lookupEnv, c.change(inst, args)...)
-			if status != exitFailure || !strings.Contains(stderr, "lifecycle") || !strings.Contains(stderr, string(c.want)) {
-				t.Fatalf("status %d, stderr %q, want a %s refusal naming the lifecycle", status, stderr, c.want)
+			wantStatus := exitConfigRefused
+			if c.want == core.CodeNotFound {
+				wantStatus = exitFailure
+			}
+			if status != wantStatus || !strings.Contains(stderr, "lifecycle") || !strings.Contains(stderr, string(c.want)) {
+				t.Fatalf("status %d, stderr %q, want status %d and a %s refusal naming the lifecycle", status, stderr, wantStatus, c.want)
 			}
 			if inst.socketExists() {
 				t.Error("a refused supervisor opened its admin socket")

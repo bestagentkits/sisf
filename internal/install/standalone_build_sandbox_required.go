@@ -27,7 +27,7 @@ func (in *Installer) standaloneRunnable(m *manifest.Manifest) error {
 		return err
 	}
 	if needsBuildSandbox(o, m.Mode) {
-		return invalidf("%s", noBuildSandbox)
+		return refusedf("%s", noBuildSandbox)
 	}
 	return nil
 }

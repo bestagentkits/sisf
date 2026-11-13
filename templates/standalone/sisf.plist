@@ -23,6 +23,8 @@
     <string>{{ .Dir }}</string>
     <string>--source</string>
     <string>{{ .Source }}</string>
+    <string>--refusal-status</string>
+    <string>0</string>
   </array>
   <key>WorkingDirectory</key><string>{{ .Source }}</string>
   <key>EnvironmentVariables</key>
@@ -30,7 +32,15 @@
     <key>PATH</key><string>{{ .Path }}</string>
   </dict>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <!--
+    launchd starts the agent again only after a failure. An up that can
+    never succeed as configured ends with status 0 (refusal-status above)
+    after writing why to the log, so it is not started again and again.
+  -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key><false/>
+  </dict>
   <key>Umask</key><integer>63</integer>
   <key>StandardOutPath</key><string>{{ .Dir }}/logs/service.log</string>
   <key>StandardErrorPath</key><string>{{ .Dir }}/logs/service.log</string>
