@@ -170,6 +170,22 @@ func TestASandboxedBuildIsReleasedOnTheDocumentsTheSupervisorMade(t *testing.T) 
 	if !strings.Contains(string(rec.SBOM), "unknown: the program carries no Go build information") {
 		t.Fatalf("the SBOM of a program without build information does not say so:\n%s", rec.SBOM)
 	}
+	// The receipt says so too: a passed observed-build gate does not read as
+	// a full list of modules.
+	if detail := checkDetail(r.Receipt, string(qa.GateObservedBuild)); !strings.Contains(detail, "modules are unknown") ||
+		!strings.Contains(detail, "no Go build information") {
+		t.Fatalf("the receipt's observed-build check does not say the modules are unknown: %q", detail)
+	}
+}
+
+// checkDetail returns the detail the receipt records for the named hard gate.
+func checkDetail(receipt core.QAReceipt, gate string) string {
+	for _, c := range receipt.Checks {
+		if c.Kind == core.CheckHardGate && c.Name == gate {
+			return c.Detail
+		}
+	}
+	return ""
 }
 
 // A sandboxed build command whose report still names an SBOM and a

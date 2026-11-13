@@ -1,4 +1,4 @@
-# ADR 0025: Release evidence is what the supervisor measured and made
+# ADR 0026: Release evidence is what the supervisor measured and made
 
 ## Status
 
@@ -24,7 +24,7 @@ Two checks of a release read as verification but compared a claim with itself.
   - the SBOM describes this program;
   - the provenance covers its digest, names its commit and records that SBOM.
 
-  A reference that names no held document fails the gate.
+  A reference that names no held document fails the gate. An SBOM that lists no module passes, and the gate's detail, which the QA receipt records, says the modules are unknown and why (`supplychain.ModulesUnknown`), so a passed gate never reads as a full list of modules.
 - **The report phase names no SBOM and no provenance.** `sbom` and `provenance` leave the protocol, and a report that still names them is an outage of the build command, held for the Owner.
 
 ## Consequences
@@ -49,6 +49,6 @@ Two checks of a release read as verification but compared a claim with itself.
 
 - `internal/supervisor/release/artifact_observed_bytes_test.go`: a replaced or missing program is never staged; a verified release whose program was replaced never becomes the LKG; a pipeline without an observer is refused.
 - `cmd/supervisor/local_programs_test.go`: the observer measures the store's bytes, and only programs or the simulation observe.
-- `internal/supplychain/build_documents_test.go`: the documents hold only for the build they describe, and the SBOM lists only modules the supervisor read.
-- `cmd/supervisor/stages/observed_build_gate_documents_test.go`: bare references fail the gate, and the supervisor's own documents pass it once stored.
-- `tests/acceptance/candidate_build_supply_chain_documents_test.go`: a record without documents fails the gate whatever the score, a sandboxed build is released on the supervisor's documents, and a report that still claims an SBOM and provenance is held.
+- `internal/supplychain/build_documents_test.go`: the documents hold only for the build they describe, the SBOM lists only modules the supervisor read, and an SBOM that does not say where its modules came from counts as unknown.
+- `cmd/supervisor/stages/observed_build_gate_documents_test.go`: bare references fail the gate, and the supervisor's own documents pass it once stored, with a detail that says when the modules are unknown.
+- `tests/acceptance/candidate_build_supply_chain_documents_test.go`: a record without documents fails the gate whatever the score, a sandboxed build is released on the supervisor's documents and its receipt says its modules are unknown, and a report that still claims an SBOM and provenance is held.

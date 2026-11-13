@@ -103,6 +103,12 @@ func TestTheSBOMListsOnlyModulesTheSupervisorRead(t *testing.T) {
 	if len(bom.Components) != 0 || !hasProperty(bom.Metadata.Component, propModules, "unknown: the program carries no Go build information") {
 		t.Errorf("an SBOM without build information lists %d components and %v", len(bom.Components), bom.Metadata.Component.Properties)
 	}
+	if why, unknown := ModulesUnknown(unread.SBOM); !unknown || why != "the program carries no Go build information" {
+		t.Errorf("ModulesUnknown of an SBOM without build information = %q, %v", why, unknown)
+	}
+	if why, unknown := ModulesUnknown([]byte("{}")); !unknown || why == "" {
+		t.Errorf("an SBOM that does not say where its modules came from counts as listing them: %q, %v", why, unknown)
+	}
 
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
@@ -120,6 +126,9 @@ func TestTheSBOMListsOnlyModulesTheSupervisorRead(t *testing.T) {
 	}
 	if len(bom.Components) == 0 || !hasProperty(bom.Metadata.Component, propModules, modulesFromBinary) {
 		t.Errorf("an SBOM from build information lists %d components and %v", len(bom.Components), bom.Metadata.Component.Properties)
+	}
+	if why, unknown := ModulesUnknown(read.SBOM); unknown {
+		t.Errorf("the modules of an SBOM from build information count as unknown: %q", why)
 	}
 }
 

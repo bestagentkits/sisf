@@ -2,6 +2,7 @@ package stages
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
@@ -77,8 +78,14 @@ func TestABuildRecordedWithTheSupervisorsDocumentsPassesTheObservedBuildGate(t *
 			t.Fatal(err)
 		}
 		gates := GateSources{State: store}
-		if passed, detail, err := gates.observedBuild(ctx, qa.Candidate{CommitSHA: rec.Commit, Digest: rec.Digest}); err != nil || !passed {
+		passed, detail, err := gates.observedBuild(ctx, qa.Candidate{CommitSHA: rec.Commit, Digest: rec.Digest})
+		if err != nil || !passed {
 			t.Fatalf("the supervisor's own build failed the gate once stored: %s, %v", detail, err)
+		}
+		// The simulation builds no program, so its SBOM lists no module, and
+		// the gate's detail, which the receipt records, says so.
+		if !strings.Contains(detail, "modules are unknown") {
+			t.Fatalf("the gate passed a build whose modules are unknown without saying so: %q", detail)
 		}
 		if passed, _, err := gates.observedBuild(ctx, qa.Candidate{CommitSHA: rec.Commit, Digest: reportedDigest}); err != nil || passed {
 			t.Fatalf("the build passed the gate for another candidate's digest: %v", err)

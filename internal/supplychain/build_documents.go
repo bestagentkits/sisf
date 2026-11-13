@@ -128,6 +128,28 @@ func CheckBuildDocuments(digest core.Digest, commit core.CommitSHA, d BuildDocum
 	return invalid("the build's provenance does not record its SBOM")
 }
 
+// ModulesUnknown reports whether an SBOM lists no module the supervisor
+// read, and why. An SBOM that does not say where its modules came from
+// counts as one whose modules are unknown, never as a full list.
+func ModulesUnknown(sbom []byte) (why string, unknown bool) {
+	var bom cdxBOM
+	if err := json.Unmarshal(sbom, &bom); err != nil {
+		return "the SBOM cannot be read", true
+	}
+	for _, p := range bom.Metadata.Component.Properties {
+		if p.Name != propModules {
+			continue
+		}
+		if p.Value == modulesFromBinary {
+			return "", false
+		}
+		if why, ok := strings.CutPrefix(p.Value, "unknown: "); ok && why != "" {
+			return why, true
+		}
+	}
+	return "the SBOM does not say where its modules came from", true
+}
+
 // digestOf is the sha256 digest of data.
 func digestOf(data []byte) core.Digest {
 	sum := sha256.Sum256(data)
