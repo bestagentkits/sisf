@@ -1,7 +1,9 @@
 # TOSE template manifest of the SISF trial factory (tose.dev/v1).
 # Replace the image digest with the digest of the pushed image of
 # deploy/tose/Dockerfile before storing it as a draft; see
-# docs/guides/deploy-tose-trial.md. The image holds no secret.
+# docs/guides/deploy-tose-trial.md. The image holds no secret, and the
+# manifest declares none: with GH_TOKEN set the factory cannot become ready
+# on a host without Docker, so the trial runs the simulation profile.
 apiVersion: tose.dev/v1
 metadata:
   name: sisf-trial
@@ -18,10 +20,6 @@ services:
     port: 8080
     cpu: "2"
     memory: 4Gi
-    variables:
-      - name: GH_TOKEN
-        secret: true
-        required: false
     storage:
       - mountPath: /data
         size: 10Gi

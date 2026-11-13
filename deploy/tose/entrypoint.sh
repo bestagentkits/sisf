@@ -21,6 +21,11 @@ fi
 
 echo "trial: $(sisf version)"
 echo "trial: $(uname -sm), docker CLI: $(command -v docker || echo absent), docker socket: $([[ -S /var/run/docker.sock ]] && echo present || echo absent)"
+data_dir="$(dirname "$SISF_HOME")"
+if [[ ! -w "$data_dir" ]]; then
+  echo "trial: $data_dir is not writable by uid $(id -u); give the volume to uid 10001 (or group 10001) and start again" >&2
+  exit 1
+fi
 mkdir -p "$GOCACHE"
 
 if [[ ! -f "$SISF_HOME/factory.yaml" ]]; then

@@ -2,6 +2,8 @@
 
 How to host a trial SISF factory on TOSE, a container platform that runs each workload as a hardened Kubernetes pod. This trial proves that the factory installs, starts and answers its health check on Linux. It is not a production install, and in this release it cannot process real issues on TOSE; see [What TOSE cannot provide](#what-tose-cannot-provide). The trial serves only `bestagentkits/sisf-sandbox`.
 
+**Status, 2026-11-13: not yet run on TOSE.** No TOSE installation exists. Only step 1 below was executed, on Linux (arm64) in a local container under the limits of an unprivileged pod (`--cap-drop ALL --security-opt no-new-privileges`, `--cpus 2 --memory 4g`). Steps 2 to 5 were not run: pushing the image was refused because no registry credential with `write:packages` was available. The plan's blockers on TOSE (image scan, wallet, pulling a private image) are unchecked. The manifest was only validated by TOSE.
+
 The deploy configuration is in [`deploy/tose/`](../../deploy/tose/): the image (`Dockerfile`), its entry point (`entrypoint.sh`), the proxy that publishes the health answer (`nginx.conf`) and the TOSE template manifest (`template.yaml`).
 
 ## Mode chosen and why
@@ -19,9 +21,9 @@ The entry point creates the install once, on the persistent volume at `/data/fac
 | `GH_TOKEN` | Install | Result |
 |---|---|---|
 | not set | `sisf init --profile sim` for `bestagentkits/sisf-sandbox`: fake GitHub, fake sign-in, scripted agent | healthy; `sisf doctor` 22 OK, 2 WARN, 0 FAIL |
-| set | `sisf init --dev --github-credential gh-cli` for `bestagentkits/sisf-sandbox`: the factory acts as the token's account | degraded: the supervisor refuses to start, see below |
+| set | `sisf init --dev --github-credential gh-cli` for `bestagentkits/sisf-sandbox`: the factory acts as the token's account | degraded: the supervisor refuses to start, see below; kept only to reproduce that locally |
 
-The entry point refuses any `SISF_REPO` other than `bestagentkits/sisf-sandbox`. The profile is fixed when the install is created; to change it, remove the install (below) and start again.
+The TOSE manifest declares no `GH_TOKEN`, so a TOSE installation always runs the simulation profile: with the token set, `/healthz`, which is the readiness check, answers 503 and the installation would never become ready. The entry point refuses any `SISF_REPO` other than `bestagentkits/sisf-sandbox`. The profile is fixed when the install is created; to change it, remove the install (below) and start again.
 
 ## What TOSE cannot provide
 
@@ -30,8 +32,9 @@ Measured in the trial image on Linux with no Docker and all capabilities dropped
 - **No real run on TOSE.** Outside the simulation the supervisor builds an agent's code only in a sandbox of an isolating backend. With only the local backend it refuses to start, and `sisf up` restarts it about once a second ([#67](https://github.com/bestagentkits/sisf/issues/67)). Its log says `PERMISSION_DENIED: the local execution backend cannot isolate untrusted code; configure the docker execution backend`; `sisf doctor` fails `zone application`, `edge to app` and `rollback`, and `/healthz` answers 503 `"status":"degraded"`. So a factory on TOSE cannot handle real issues of the sandbox repository in this release. Real runs need a host with Docker (a VM), where the [Standalone build sandbox](install.md#building-in-a-docker-sandbox) or Docker mode works.
 - **No shell on the factory.** Putting a policy in force and retrying a Blocked issue run only through `factoryd` on the factory's host ([policy](policy-and-approvals.md#putting-the-first-policy-in-force)). The TOSE tools used here (MCP and the `tose` CLI 0.1.2) offer no command execution in the pod.
 - **No reachable dashboard.** Every factory port is bound to 127.0.0.1. nginx publishes only `GET /healthz` of the control zone on port 8080; every other path answers 404 and other methods 403. Signing in, the REST API, MCP, webhooks and the public report route are not reachable from outside. This is deliberate: a development install signs the Owner in through the fake identity provider, which must never be public.
-- **Slow start.** `sisf up` compiles the factory on every start: about 5 minutes on a 4-core arm64 machine with an empty build cache. The build cache is kept on the volume (`GOCACHE=/data/cache/go-build`), so later starts are faster. The template gives the pod 1200 seconds to become ready.
-- **Image or root Dockerfile required.** TOSE installs a template from an image pinned by digest, or builds a GitHub repository from the `Dockerfile` at its root, at a commit on its default branch. This repository has no root Dockerfile, so the image of `deploy/tose/Dockerfile` must be pushed to a registry TOSE can pull from.
+- **Slow start.** `sisf up` compiles the factory on every start: with an empty build cache and the manifest's limits (2 CPUs, 4 GiB), `/healthz` answered 200 after 279 seconds on arm64, without running out of memory. The build cache is kept on the volume (`GOCACHE=/data/cache/go-build`), so later starts are faster. The template gives the pod 1200 seconds to become ready.
+- **An image pinned by digest.** The TOSE template takes its source as an image pinned by digest or a GitHub repository at a pinned commit. This repository keeps its trial Dockerfile under `deploy/tose/`, so the trial uses the image route: the image must be pushed to a registry TOSE can pull from.
+- **A volume the container's user can write.** The entry point runs as uid 10001 and refuses to start when `/data` is not writable by it (`trial: /data is not writable by uid 10001`); a disk owned by root with mode 0755 is refused this way.
 
 ## Before you start
 
@@ -40,9 +43,7 @@ You need:
 - Docker with `buildx` on the machine that builds the image.
 - A registry credential that may push the image, for example a GitHub token with `write:packages` for `ghcr.io/bestagentkits`, and either a public package or a registry credential added to the TOSE workspace for a private one.
 - An owner or admin of the TOSE workspace to approve the plan in the TOSE dashboard. Every TOSE change is approved there by a person.
-- Optional, and only for the degraded development profile: a GitHub token that may write to `bestagentkits/sisf-sandbox`, entered as the secret `GH_TOKEN` on the approval page. Leave it empty for a healthy trial.
-
-No Claude or Codex credential is used: no agent runs on TOSE in this release.
+No GitHub, Claude or Codex credential is used: no agent runs on TOSE in this release. On a host with Docker, a Standalone factory uses an existing Claude or Codex CLI login through `--agent-home` and `--qa-home` ([real agents](install.md#real-agents-in-standalone)).
 
 ## Steps
 
@@ -71,11 +72,11 @@ No Claude or Codex credential is used: no agent runs on TOSE in this release.
 
 4. **Store, publish and plan the template** with the TOSE tools: `validate_template`, `create_template_draft`, `publish_template` with the reviewed manifest hash, then `plan_template_deployment` with `definition: sisf-trial` and the name `sisf-trial`. The plan creates nothing; read its blockers and its hourly cost ceiling.
 
-5. **Approve.** A workspace owner or admin opens the plan's approval URL, reviews it, leaves `GH_TOKEN` empty (or enters it for the development profile) and approves. Then `deploy_template` with the plan's id and hash installs it. Follow it with `get_template_deployment` and its `installation_id`.
+5. **Approve.** A workspace owner or admin opens the plan's approval URL, reviews it and approves. Then `deploy_template` with the plan's id and hash installs it. Follow it with `get_template_deployment` and its `installation_id`.
 
 ## Check health
 
-- The installation is ready when its readiness check passes: `GET <installation URL>/healthz` answers 200 with `"status":"ok"` and every zone `ok`. A 503 with `"status":"degraded"` means a zone is down; with `GH_TOKEN` set this is the expected supervisor refusal above.
+- The installation is ready when its readiness check passes: `GET <installation URL>/healthz` answers 200 with `"status":"ok"` and every zone `ok`. A 503 with `"status":"degraded"` means a zone is down; with `GH_TOKEN` set, in a local run, this is the expected supervisor refusal above.
 - The pod log shows the entry point's `trial:` lines (version, platform, whether Docker is present, which profile was created), one `building ...` line per program and `factory sisf-sisf-sandbox is up`. Read it with `read_logs` or `get_template_deployment` with `log_lines`.
 - `sisf doctor` needs a shell in the pod, which TOSE does not offer; run it in the local container of step 1.
 
