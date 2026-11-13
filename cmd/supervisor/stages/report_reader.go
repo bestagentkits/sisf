@@ -15,7 +15,9 @@ import (
 const reportPrefix = "sisf-report"
 
 // reportKeys are the keys of a report, each reported exactly once.
-var reportKeys = []string{"image-digest", "image", "sbom", "provenance"}
+// The SBOM and provenance are not among them: the supervisor makes those of
+// the program it received, and a report that still names them is refused.
+var reportKeys = []string{"image-digest", "image"}
 
 // programKey is the key of the lines that export the unit's program: any
 // number of them, in order, each holding standard base64 that decodes by
@@ -120,8 +122,8 @@ func (r *reportReader) addProgram(encoded string) {
 }
 
 // result reads what the report said once the phase has ended. Every key
-// must be reported exactly once, the digest must be valid, the image pinned
-// to it and the SBOM and provenance named. The report must have exported a
+// must be reported exactly once, the digest must be valid and the image
+// pinned to it. The report must have exported a
 // program and the digest it names must be the sha256 of exactly the bytes
 // received: only then is the program kept, under that digest.
 func (r *reportReader) result() (ImageResult, error) {
@@ -157,7 +159,7 @@ func (r *reportReader) result() (ImageResult, error) {
 	if _, err := r.program.Commit(); err != nil {
 		return ImageResult{}, err
 	}
-	return ImageResult{Digest: digest, Image: r.values["image"], SBOMRef: r.values["sbom"], ProvenanceRef: r.values["provenance"]}, nil
+	return ImageResult{Digest: digest, Image: r.values["image"]}, nil
 }
 
 // reportUnusable is the outage of a build command whose report phase did

@@ -141,8 +141,7 @@ func TestAStandaloneInstallWithABuildSandboxGetsPastTheSupervisorsStartChecks(t 
 			return dockerfiltertest.Outcome{}
 		}
 		report := ""
-		for key, value := range map[string]string{"image-digest": digest, "image": "local/hello-app@" + digest,
-			"sbom": "sbom:local", "provenance": "provenance:local"} {
+		for key, value := range map[string]string{"image-digest": digest, "image": "local/hello-app@" + digest} {
 			report += "sisf-report " + env["SISF_REPORT_NONCE"] + " " + key + ": " + value + "\n"
 		}
 		report += "sisf-report " + env["SISF_REPORT_NONCE"] + " program: " + base64.StdEncoding.EncodeToString(program) + "\n"

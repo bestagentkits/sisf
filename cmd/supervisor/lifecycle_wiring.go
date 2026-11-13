@@ -135,6 +135,10 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
+	observer, err := l.artifactObserver(sim)
+	if err != nil {
+		return nil, err
+	}
 	repo := github.RepoRef{Owner: m.Repository.Owner, Name: m.Repository.Repo}
 	judge, err := l.judge(ctx, judgeDeps{
 		manifest: m, sim: sim, docker: docker, local: local, protected: l.protectedDirs(d.cfg.TrustDir, d.dsnEnv, d.lookupEnv), dsnEnv: d.dsnEnv, rootKeyEnv: l.rootPrivateKeyEnv,
@@ -157,7 +161,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 		QASigner: keys.QA, ArtifactSigner: keys.Artifact, Delegation: keys.Delegation, Verifier: keys.Verifier, ApprovalVerifier: approvalVerifier,
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
 		BuildRetry: stages.BuildRetry{HoldAfter: l.buildOutageLimit}, Budget: spend,
-		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor, Synthetic: synthetic,
+		Release: release.Config{Backend: backend, Observer: observer, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor, Synthetic: synthetic,
 			SelfPublishable: selfPublishableUnits(m), UnitInputs: inputs, VerifierAt: keys.VerifierAt,
 			// A rollback reserves through the rollback reserve and records
 			// its spend; an exhausted budget never blocks it.

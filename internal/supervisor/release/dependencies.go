@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/bestagentkits/sisf/internal/catalog"
+	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/deploy"
 )
 
@@ -41,4 +42,13 @@ type SyntheticSuite interface {
 // judged by the suite holds before anything is deployed when it cannot.
 type SyntheticReadiness interface {
 	Ready(ctx context.Context) error
+}
+
+// ArtifactObserver measures what the deployment backend would start for a
+// release. ObserveArtifact returns the digest of those bytes, hashed by the
+// supervisor at the call: NOT_FOUND when it holds nothing for the artifact,
+// TAMPERED when what it holds cannot be what was received. It never returns
+// the digest the artifact carries without having measured it.
+type ArtifactObserver interface {
+	ObserveArtifact(ctx context.Context, a deploy.Artifact) (core.ReleaseDigest, error)
 }

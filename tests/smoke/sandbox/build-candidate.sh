@@ -11,8 +11,9 @@
 #           and architecture (SISF_REPORT_TARGET_OS, SISF_REPORT_TARGET_ARCH),
 #           which runs none of its code, and reports on lines
 #           "sisf-report <nonce> <key>: <value>" the sha256 of that program
-#           as the image digest, the digests of the SBOM and provenance it
-#           wrote, and the program itself, in base64 on "program" lines.
+#           as the image digest, and the program itself, in base64 on
+#           "program" lines. It reports no SBOM or provenance: the
+#           supervisor makes both from the program it receives.
 #
 # The program is what a Standalone factory deploys: the supervisor keeps
 # the bytes it receives, checks them against the digest and its local
@@ -49,8 +50,7 @@ mirror=${SISF_SMOKE_MIRROR:?}
 work=${SISF_SMOKE_WORKDIR:-/tmp}
 src=$work/src
 out=$work/out
-meta=$work/meta
-mkdir -p "$src" "$out" "$meta"
+mkdir -p "$src" "$out"
 cd "$src"
 git init -q
 # The mirror follows GitHub every few seconds; a candidate pushed a moment
@@ -119,18 +119,8 @@ if [ ${#digest} -ne 64 ]; then
 	echo "the program's digest cannot be computed" >&2
 	exit 1
 fi
-# The SBOM is the module list Go recorded in the program; the provenance
-# names the commit, the toolchain, the target and this builder. Each is
-# referenced by the digest of what was written.
-go version -m "$out/program" >"$meta/sbom.txt"
-printf 'commit %s\nbuilder sisf-smoke-build\ntoolchain %s\ntarget %s/%s\nimage-digest sha256:%s\n' \
-	"$commit" "$(go env GOVERSION)" "$target_os" "$target_arch" "$digest" >"$meta/provenance.txt"
-sbom=$(sha256sum "$meta/sbom.txt" | cut -d' ' -f1)
-provenance=$(sha256sum "$meta/provenance.txt" | cut -d' ' -f1)
 echo "sisf-report $nonce image-digest: sha256:$digest"
 echo "sisf-report $nonce image: smoke.local/sisf-sandbox@sha256:$digest"
-echo "sisf-report $nonce sbom: go-version-m:sha256:$sbom"
-echo "sisf-report $nonce provenance: sisf-smoke-build:sha256:$provenance"
 # The program, in lines of base64 that each decode by themselves (4096 is
 # a multiple of four).
 base64 <"$out/program" | tr -d '\n' | fold -w 4096 |

@@ -22,8 +22,7 @@ func TestAnImageTheSupervisorDidNotObserveIsNeverTakenAsTheBuildsResult(t *testi
 	req := ImageRequest{RunID: "run-1", Unit: "app", Commit: baseSHA, Branch: "sisf/f1/run-1-1", Untrusted: true}
 	out, err := SandboxImages{Exec: s, Argv: []string{"build"}, Timeout: time.Minute}.BuildImage(context.Background(), req)
 	if err == nil {
-		t.Fatalf("a build the supervisor observed nothing of was taken as %s with SBOM %q and provenance %q",
-			out.Image, out.SBOMRef, out.ProvenanceRef)
+		t.Fatalf("a build the supervisor observed nothing of was taken as %s", out.Image)
 	}
 	if _, refused := RefusalOf(err); refused {
 		t.Errorf("the refusal is charged to the candidate: %v", err)

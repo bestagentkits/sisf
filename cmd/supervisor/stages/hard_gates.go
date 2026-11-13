@@ -8,6 +8,7 @@ import (
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/redact"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
+	"github.com/bestagentkits/sisf/internal/supplychain"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/deploy"
 	"github.com/bestagentkits/sisf/pkg/qa"
@@ -82,14 +83,22 @@ func (src GateSources) testsContract(ctx context.Context, c qa.Candidate) (bool,
 }
 
 // observedBuild passes when the build ledger holds this exact build, with
-// its SBOM and provenance.
+// the SBOM and provenance the supervisor made of it: each reference the
+// digest of a document the record holds, describing this program and this
+// commit (supplychain.CheckBuildDocuments). A reference that names no
+// document held with the build is a claim, and fails the gate.
 func (src GateSources) observedBuild(ctx context.Context, c qa.Candidate) (bool, string, error) {
 	rec, err := src.build(ctx, c.CommitSHA)
 	if err != nil {
 		return false, "", err
 	}
-	if rec.Digest != c.Digest || rec.SBOMRef == "" || rec.ProvenanceRef == "" {
-		return false, "the recorded build is not this candidate's, or lacks its SBOM and provenance", nil
+	if rec.Digest != c.Digest {
+		return false, "the recorded build is not this candidate's", nil
+	}
+	if err := supplychain.CheckBuildDocuments(rec.Digest, rec.Commit, supplychain.BuildDocuments{
+		SBOM: rec.SBOM, SBOMRef: rec.SBOMRef, Provenance: rec.Provenance, ProvenanceRef: rec.ProvenanceRef,
+	}); err != nil {
+		return false, "the recorded build has no SBOM and provenance the supervisor made of it: " + err.Error(), nil
 	}
 	return true, "built by " + rec.Builder, nil
 }

@@ -192,7 +192,7 @@ func verifiedLater(seq int64, at time.Time, thanSeq int64, thanAt time.Time) boo
 // verifier that judges the delegated keys as of then, so that a receipt or
 // key that expired since does not hold the release for good; and its
 // artifact, which the supervisor signs again on every pass with the key it
-// holds, as of now.
+// holds, as of now, and the bytes kept for it, measured now.
 func (p *Pipeline) verifyAsOf(ctx context.Context, req Request, record core.StateRecord, at time.Time) (verifiedRelease, error) {
 	if record.CandidateDigest != req.Candidate.Digest {
 		return verifiedRelease{}, core.NewError(core.CodeGuardFailed, "the candidate is not the one the issue's run submitted")
@@ -214,7 +214,16 @@ func (p *Pipeline) verifyAsOf(ctx context.Context, req Request, record core.Stat
 	if req.Artifact.Digest != core.ReleaseDigest(req.Candidate.Digest) || req.Artifact.Digest != record.ReleaseDigest {
 		return verifiedRelease{}, core.NewError(core.CodeGuardFailed, "the artifact is another build than the release the record names")
 	}
-	if err := supplychain.VerifyArtifact(ctx, p.cfg.Verifier, req.Artifact, p.cfg.FactoryID, req.Artifact.Digest); err != nil {
+	observed, err := p.cfg.Observer.ObserveArtifact(ctx, req.Artifact)
+	if err != nil {
+		return verifiedRelease{}, err
+	}
+	if err := supplychain.VerifyArtifact(ctx, p.cfg.Verifier, req.Artifact, p.cfg.FactoryID, observed); err != nil {
+		if core.HasCode(err, core.CodeTampered) {
+			// The program kept for the release is not the build: no wait
+			// puts that right.
+			return verifiedRelease{}, err
+		}
 		// The supervisor's own signature, made now: a key it cannot use
 		// now is put right by the Owner, so the release waits for it.
 		return verifiedRelease{}, core.NewError(core.CodeReleaseHold, "the supervisor's signature of the build does not verify now").WithCause(err)

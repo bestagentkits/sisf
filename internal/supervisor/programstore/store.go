@@ -204,40 +204,64 @@ func (in *Intake) Abort() {
 // again: NOT_FOUND when the store holds no such program, TAMPERED when what
 // it holds under that name is not a plain file with exactly those bytes.
 func (s *Store) Path(digest core.Digest) (string, error) {
-	file, err := name(digest)
+	path, measured, err := s.measure(digest)
 	if err != nil {
 		return "", err
 	}
+	if measured != digest {
+		return "", tampered(digest)
+	}
+	return path, nil
+}
+
+// Measure returns the sha256 of the bytes the store holds under digest,
+// hashed at this call: NOT_FOUND when it holds no such program, TAMPERED
+// when what it holds under that name is not a plain file. A result other
+// than digest means the program kept under that name is not the one that
+// was received.
+func (s *Store) Measure(digest core.Digest) (core.Digest, error) {
+	_, measured, err := s.measure(digest)
+	return measured, err
+}
+
+// measure hashes the file kept under digest.
+func (s *Store) measure(digest core.Digest) (string, core.Digest, error) {
+	file, err := name(digest)
+	if err != nil {
+		return "", "", err
+	}
 	dir, err := s.dir(false)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	path := filepath.Join(dir, file)
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", core.NewError(core.CodeNotFound, "the program store holds no program "+string(digest))
+		return "", "", core.NewError(core.CodeNotFound, "the program store holds no program "+string(digest))
 	}
 	if err != nil {
-		return "", core.NewError(core.CodeUnavailable, "the program "+string(digest)+" cannot be inspected").WithCause(err)
+		return "", "", core.NewError(core.CodeUnavailable, "the program "+string(digest)+" cannot be inspected").WithCause(err)
 	}
-	tampered := core.NewError(core.CodeTampered,
-		"the program store's file for "+string(digest)+" is not the program that was received; it is not run")
 	if !info.Mode().IsRegular() {
-		return "", tampered
+		return "", "", tampered(digest)
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return "", core.NewError(core.CodeUnavailable, "the program "+string(digest)+" cannot be read").WithCause(err)
+		return "", "", core.NewError(core.CodeUnavailable, "the program "+string(digest)+" cannot be read").WithCause(err)
 	}
 	defer func() { _ = f.Close() }() // read-only: a failed close loses nothing
 	sum := sha256.New()
 	if _, err := io.Copy(sum, f); err != nil {
-		return "", core.NewError(core.CodeUnavailable, "the program "+string(digest)+" cannot be read").WithCause(err)
+		return "", "", core.NewError(core.CodeUnavailable, "the program "+string(digest)+" cannot be read").WithCause(err)
 	}
-	if "sha256:"+hex.EncodeToString(sum.Sum(nil)) != string(digest) {
-		return "", tampered
-	}
-	return path, nil
+	return path, core.Digest("sha256:" + hex.EncodeToString(sum.Sum(nil))), nil
+}
+
+// tampered is the error of a file kept under digest that is not the program
+// that was received.
+func tampered(digest core.Digest) *core.Error {
+	return core.NewError(core.CodeTampered,
+		"the program store's file for "+string(digest)+" is not the program that was received; it is not run")
 }
 
 // Retain removes everything in the store but the programs named in keep,

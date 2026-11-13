@@ -94,7 +94,7 @@ func (f *Factory) startLifecycle(client *github.RESTClient) {
 		Redactor: redact.New(redact.Config{}), MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: clock,
 		Budget: budget.NewGate(budget.Config{Clock: f.Clock}),
 		Release: release.Config{
-			Backend: f.Deploy, LKG: f.Trust.LKG, Freeze: f.Freeze,
+			Backend: f.Deploy, Observer: stages.SimulatedArtifacts{}, LKG: f.Trust.LKG, Freeze: f.Freeze,
 			SelfPublishable: unitNames(m.Release.Units), UnitInputs: inputs,
 			Monitor: release.MonitorConfig{Window: ReleaseWindow, MinSamples: minSamples},
 		},
