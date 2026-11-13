@@ -134,7 +134,8 @@ func holdSuperseded(t *testing.T, f *harness.Factory, run dispatcher.RunRecord, 
 // The block of a run whose policy was superseded closes the run's own
 // reservation, derived from the run's ID on the lifecycle record, whether
 // or not the dispatcher's record of the run is there and names that run:
-// the record is the agent zone's and cannot keep the reservation held.
+// the record is the agent zone's and cannot keep the reservation held, nor,
+// by going missing, release it at what the ledger shows.
 func TestASupersededRunsReservationClosesWithoutItsRunRecord(t *testing.T) {
 	t.Parallel()
 	// rewrite replaces the stored record of run, as the agent zone, which
@@ -183,8 +184,11 @@ func TestASupersededRunsReservationClosesWithoutItsRunRecord(t *testing.T) {
 			if got := f.Record(number).State; got != core.StateBlocked {
 				t.Fatalf("the issue of a superseded run is %s, want Blocked", got)
 			}
-			if r := reservationOf(t, f, run.ReservationID); r.Status == core.ReservationHeld || r.Status == core.ReservationSuspended {
-				t.Fatalf("the reservation of the blocked run is still %s", r.Status)
+			// Without a record of the run, what it ran is unknown, so its
+			// reservation is charged in full rather than released.
+			if r := reservationOf(t, f, run.ReservationID); r.Status != core.ReservationSettled {
+				t.Fatalf("the reservation of the blocked run is %s, want %s: a run with no record of its own is charged in full",
+					r.Status, core.ReservationSettled)
 			}
 		})
 	}

@@ -174,6 +174,10 @@ type RunUsage struct {
 	CostUnreported bool `json:"cost_unreported"`
 	// Entries counts the usage records of the run.
 	Entries int64 `json:"entries"`
+	// CostTampered is set when some usage of the run has a negative cost,
+	// which no store writes: such a row counts for nothing in Cost, and a
+	// close charges the run as if its usage were unpriced.
+	CostTampered bool `json:"cost_tampered"`
 }
 
 // BudgetGate decides whether a run may spend. It is consulted before a claim

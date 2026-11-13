@@ -7,6 +7,7 @@ import (
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
+	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
 
@@ -146,6 +147,71 @@ func TestHugeCostsAreBoundedAndSummedSafely(t *testing.T) {
 		}
 		if run.Cost <= 0 || run.Entries != 3 {
 			t.Fatalf("RunUsage over a BIGINT = %+v, want a large positive sum of 3 entries", run)
+		}
+	})
+}
+
+// dropUsageChecks takes away the database's check that usage has no
+// negative cost, standing for a ledger an earlier release left without it
+// or a check that was never validated against existing rows.
+func dropUsageChecks(t *testing.T, db *sqlstoretest.Database) {
+	t.Helper()
+	if db.Dialect != sqlstore.DialectPostgres {
+		return
+	}
+	if _, err := db.Raw(t).ExecContext(ctx, `ALTER TABLE usage_ledger DROP CONSTRAINT IF EXISTS "sisf_usage_values"`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A negative cost, which no store writes, counts for nothing in a sum and
+// marks the run's usage as tampered: a row of -1e18 neither frees budget
+// headroom nor lowers a run's charge, and sums of such rows never fail.
+func TestNegativeCostsCountForNothingAndMarkTheRun(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		dropUsageChecks(t, db)
+		control := db.Open(t, core.ZoneControl)
+		since := db.Clock.Now()
+		rawUsage(t, db, "run-1", 700, false, since)
+		rawUsage(t, db, "run-1", -1e18, false, since)
+		rawUsage(t, db, "run-1", -5e18, false, since)
+		rawUsage(t, db, "run-1", -5e18, false, since)
+		if got := totals(t, control, since); got.SpentUnverified != 700 {
+			t.Fatalf("totals with negative rows = %+v, want 700 unverified", got)
+		}
+		var run core.RunUsage
+		if err := view(control, func(tx state.Tx) (err error) {
+			run, err = tx.RunUsage(ctx, "run-1", since)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if want := (core.RunUsage{Cost: 700, Entries: 4, CostTampered: true}); run != want {
+			t.Fatalf("RunUsage = %+v, want %+v", run, want)
+		}
+	})
+}
+
+// A reservation the agent zone makes is dated by the store's own clock,
+// whatever instant the writer gave: a reservation dated long ago would let
+// rows dated before the budget period count for its run's close.
+func TestTheAgentZoneCannotBackdateAReservation(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		agent := db.Open(t, core.ZoneAgent)
+		r := reservation("r-1", 1_000_000)
+		r.CreatedAt = time.Date(1999, 1, 1, 0, 0, 0, 0, time.UTC)
+		mustUpdate(t, agent, func(tx state.Tx) error { return tx.PutReservation(ctx, r) })
+		var got core.Reservation
+		if err := view(agent, func(tx state.Tx) (err error) {
+			got, err = tx.GetReservation(ctx, "r-1")
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !got.CreatedAt.Equal(db.Clock.Now()) {
+			t.Fatalf("the agent zone's reservation is dated %s, want the store's clock %s", got.CreatedAt, db.Clock.Now())
 		}
 	})
 }

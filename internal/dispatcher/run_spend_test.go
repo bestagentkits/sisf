@@ -2,6 +2,7 @@ package dispatcher_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/bestagentkits/sisf/pkg/agent"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
+	"github.com/bestagentkits/sisf/pkg/state/sqlstore"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
 
@@ -117,7 +119,8 @@ func TestClosingARunsReservation(t *testing.T) {
 		"record says some work unpriced": {core.ReservationHeld, []booked{{"run-1", 300_000, true, false}}, true, core.ReservationSettled, amount},
 		"ledger shows work unpriced, record hides it": {core.ReservationHeld,
 			[]booked{{"run-1", 300_000, true, false}, {"run-1", 0, true, false}}, false, core.ReservationSettled, amount},
-		"no record, priced usage booked": {core.ReservationHeld, []booked{{"run-1", 300_000, true, false}}, false, core.ReservationReleased, 300_000},
+		"no record, priced usage booked (the caller claims unpriced)": {core.ReservationHeld,
+			[]booked{{"run-1", 300_000, true, false}}, true, core.ReservationSettled, amount},
 		"no record, part of the usage unpriced": {core.ReservationHeld,
 			[]booked{{"run-1", 300_000, true, false}, {"run-1", 0, true, false}}, false, core.ReservationSettled, amount},
 		"unpriced but booked in full": {core.ReservationHeld,
@@ -130,6 +133,8 @@ func TestClosingARunsReservation(t *testing.T) {
 		"nothing booked, record says priced": {core.ReservationHeld, nil, false, core.ReservationSettled, amount},
 		"a row dated before the reservation counts for nothing": {core.ReservationHeld,
 			[]booked{{"run-1", 1_200_000, true, true}, {"run-1", 100, true, false}}, true, core.ReservationSettled, 1_200_000 + amount},
+		"a negative row, written past the store, is tampering": {core.ReservationHeld,
+			[]booked{{"run-1", 900_000, true, false}, {"run-1", -1e18, true, false}}, false, core.ReservationSettled, 900_000 + amount},
 		"already settled":                {core.ReservationSettled, nil, true, core.ReservationSettled, 0},
 		"already released, still priced": {core.ReservationReleased, nil, false, core.ReservationReleased, 0},
 	} {
@@ -150,6 +155,13 @@ func TestClosingARunsReservation(t *testing.T) {
 						u.At = f.clock.Now().Add(-time.Hour)
 					}
 					return u
+				}
+				// No store writes a negative cost; such a row is written past
+				// it, with the database's own check taken away.
+				for _, row := range c.rows {
+					if row.cost < 0 {
+						writeNegativeUsage(t, db, row.run, row.cost, f.clock.Now())
+					}
 				}
 				// The control plane and the supervisor close a run's
 				// reservation; the agent zone changes none.
@@ -185,7 +197,7 @@ func TestClosingARunsReservation(t *testing.T) {
 						}
 					}
 					for _, row := range c.rows {
-						if !row.before {
+						if !row.before && row.cost >= 0 {
 							if err := tx.AppendUsage(ctx, usage(row)); err != nil {
 								return err
 							}
@@ -204,6 +216,23 @@ func TestClosingARunsReservation(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// writeNegativeUsage writes a usage row of a negative cost with plain SQL,
+// taking away the database's check that refuses one on PostgreSQL.
+func writeNegativeUsage(t *testing.T, db *sqlstoretest.Database, run core.RunID, cost core.Micros, at time.Time) {
+	t.Helper()
+	raw := db.Raw(t)
+	if db.Dialect == sqlstore.DialectPostgres {
+		if _, err := raw.ExecContext(context.Background(), `ALTER TABLE usage_ledger DROP CONSTRAINT IF EXISTS "sisf_usage_values"`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := raw.ExecContext(context.Background(), fmt.Sprintf(`INSERT INTO usage_ledger (factory_id, issue, run_id, reservation_id,
+		step, model_route, input_tokens, output_tokens, cost, verified, recorded_at)
+		VALUES ('%s', 'acme/app#1', '%s', '', 'coding', '{}', 1, 1, %d, false, %d)`, sqlstoretest.Factory, run, cost, at.UnixNano())); err != nil {
+		t.Fatal(err)
 	}
 }
 
