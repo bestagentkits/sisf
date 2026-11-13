@@ -135,6 +135,12 @@ func TestClosingARunsReservation(t *testing.T) {
 			[]booked{{"run-1", 1_200_000, true, true}, {"run-1", 100, true, false}}, true, core.ReservationSettled, 1_200_000 + amount},
 		"a negative row, written past the store, is tampering": {core.ReservationHeld,
 			[]booked{{"run-1", 900_000, true, false}, {"run-1", -1e18, true, false}}, false, core.ReservationSettled, 900_000 + amount},
+		"an empty row prices nothing": {core.ReservationHeld,
+			[]booked{{"run-1", 0, false, false}}, false, core.ReservationSettled, amount},
+		// The limit of a ledger the agent zone writes: a run that books any
+		// cost at all, however small, is taken at its word.
+		"one micro booked is taken at its word": {core.ReservationHeld,
+			[]booked{{"run-1", 1, true, false}}, false, core.ReservationReleased, 1},
 		"already settled":                {core.ReservationSettled, nil, true, core.ReservationSettled, 0},
 		"already released, still priced": {core.ReservationReleased, nil, false, core.ReservationReleased, 0},
 	} {

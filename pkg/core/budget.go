@@ -169,8 +169,9 @@ type RunUsage struct {
 	// Cost sums the costs booked for the run, capped far above any amount a
 	// run reserves rather than overflowing.
 	Cost Micros `json:"cost"`
-	// CostUnreported is set when some usage of the run counted tokens and
-	// stated no cost (see Usage.CostUnreported).
+	// CostUnreported is set when some unverified usage of the run stated no
+	// cost, with or without tokens: a row that prices nothing never proves
+	// that the run spent nothing.
 	CostUnreported bool `json:"cost_unreported"`
 	// Entries counts the usage records of the run.
 	Entries int64 `json:"entries"`

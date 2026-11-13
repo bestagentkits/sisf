@@ -10,9 +10,9 @@ import (
 )
 
 // RunUsage asked from the beginning of time sums every cost booked for one
-// run, counts its entries and says whether some of them counted tokens
-// without a cost. Usage of another run is left out, usage without tokens
-// and without a cost is not cost-unreported, and token counts too large to
+// run, counts its entries and says whether some of them stated no cost,
+// with tokens or without: a row that prices nothing proves nothing was
+// spent. Usage of another run is left out, and token counts too large to
 // add up in the database do not break the read. Both zones that close a
 // run's reservation can ask.
 func TestRunUsageSumsTheLedgerOfThatRun(t *testing.T) {
@@ -24,7 +24,7 @@ func TestRunUsageSumsTheLedgerOfThatRun(t *testing.T) {
 			u.RunID, u.ReservationID = run, ""
 			return u
 		}
-		noTokens := forRun("run-priced", spend(0, false, now))
+		noTokens := forRun("run-empty", spend(0, false, now))
 		noTokens.InputTokens, noTokens.OutputTokens = 0, 0
 		huge := forRun("run-huge", spend(0, false, now))
 		huge.InputTokens, huge.OutputTokens = 1<<62, 1<<62
@@ -46,7 +46,8 @@ func TestRunUsageSumsTheLedgerOfThatRun(t *testing.T) {
 		want := map[core.RunID]core.RunUsage{
 			"run-old":    {Cost: 40, CostUnreported: true, Entries: 2},
 			"run-huge":   {Cost: 0, CostUnreported: true, Entries: 1},
-			"run-priced": {Cost: 85, CostUnreported: false, Entries: 3},
+			"run-priced": {Cost: 85, CostUnreported: false, Entries: 2},
+			"run-empty":  {Cost: 0, CostUnreported: true, Entries: 1},
 			"run-none":   {},
 		}
 		for _, zone := range []core.Zone{core.ZoneControl, core.ZoneAgent} {
