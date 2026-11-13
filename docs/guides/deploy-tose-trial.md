@@ -33,7 +33,7 @@ Measured in the trial image on Linux with no Docker and all capabilities dropped
 - **No shell on the factory.** Putting a policy in force and retrying a Blocked issue run only through `factoryd` on the factory's host ([policy](policy-and-approvals.md#putting-the-first-policy-in-force)). The TOSE tools used here (MCP and the `tose` CLI 0.1.2) offer no command execution in the pod.
 - **No reachable dashboard.** Every factory port is bound to 127.0.0.1. nginx publishes only `GET /healthz` of the control zone on port 8080; every other path answers 404 and other methods 403. Signing in, the REST API, MCP, webhooks and the public report route are not reachable from outside. This is deliberate: a development install signs the Owner in through the fake identity provider, which must never be public.
 - **Slow start.** `sisf up` compiles the factory on every start: with an empty build cache and the manifest's limits (2 CPUs, 4 GiB), `/healthz` answered 200 after 279 seconds on arm64, without running out of memory. The build cache is kept on the volume (`GOCACHE=/data/cache/go-build`), so later starts are faster. The template gives the pod 1200 seconds to become ready.
-- **An image pinned by digest.** The TOSE template takes its source as an image pinned by digest or a GitHub repository at a pinned commit. This repository keeps its trial Dockerfile under `deploy/tose/`, so the trial uses the image route: the image must be pushed to a registry TOSE can pull from.
+- **A public image pinned by digest.** The TOSE template takes its source as an image pinned by digest or a GitHub repository at a pinned commit. On 2026-11-13 a plan of the Git route was blocked by the platform (`BUILD_SANDBOX_NOT_HARDENED`, `PUSH_CREDENTIALS_NOT_SCOPED`: TOSE refuses to build untrusted source until its build sandbox is hardened), while a plan of a public image had no blocker. A template names no registry credential, so the image of `deploy/tose/Dockerfile` must be pushed to a registry TOSE can pull from without one.
 - **A volume the container's user can write.** The entry point runs as uid 10001 and refuses to start when `/data` is not writable by it (`trial: /data is not writable by uid 10001`); a disk owned by root with mode 0755 is refused this way.
 
 ## Before you start
@@ -59,7 +59,7 @@ No GitHub, Claude or Codex credential is used: no agent runs on TOSE in this rel
 
    Pass `--build-arg SISF_VERSION=<version> --build-arg SISF_COMMIT=$(git rev-parse HEAD)` to stamp `sisf version`; the build context carries no git metadata.
 
-2. **Build and push the image for the cluster's platform**, then note its digest:
+2. **Build and push the image for the cluster's platform** to a public repository, then note its digest:
 
    ```sh
    docker buildx build --platform linux/amd64 -f deploy/tose/Dockerfile \
