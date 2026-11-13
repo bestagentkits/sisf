@@ -71,10 +71,13 @@ func stopUntilTheOwnerApproves(t *testing.T, d *standaloneDeployment) {
 
 	ownerMovesBaseline(t, d, gh.mainHead(t))
 	waitStateWithin(t, d, issue, "Blocked", releaseLimit)
+	// The release is judged on users' traffic, as every release before it.
+	load := startTraffic(t, d)
 	if out, err := d.factoryd("control", "issue", "retry", "--issue", issue); err != nil {
 		t.Fatalf("the Owner's retry of %s: %v\n%s", issue, err, out)
 	}
 	waitStateWithin(t, d, issue, "Closed", releaseLimit)
+	load.halt()
 	if released := awaitRelease(t, d, issue); released.Result != "closed" {
 		t.Fatalf("the release after the Owner's approval ended %+v", released)
 	}

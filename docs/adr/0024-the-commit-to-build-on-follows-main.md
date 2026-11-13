@@ -28,6 +28,8 @@ The policy revision is also the subject of every approval, the `PolicyRevision` 
 - Releases of the same unit follow one another without the Owner while main changes only paths the factory may change by itself.
 - A merge that touches a foundation file, an ADR or another protected path, made by anyone, stops all new runs until the Owner approves a policy revision. Ready issues pinned to the earlier revision are then superseded at build, as after any policy change, and the Owner retries them.
 - While the factory is stopped the dispatcher logs the refused brief on each tick.
+- A second issue of a unit coded while the release before it is still under way is built on the commit before that release's merge. It is held before QA as `base_lacks_release`, and a plain retry codes it on the followed commit ([#71](https://github.com/bestagentkits/sisf/issues/71)).
+- The record is in the control zone's namespace, which factoryd shares with the supervisor; the threat model states what a compromised factoryd could do with it ([#72](https://github.com/bestagentkits/sisf/issues/72)).
 - A merge whose commit the supervisor does not know, for example after a restart between the merge and the follow, stops the factory rather than guessing.
 
 ## Alternatives considered

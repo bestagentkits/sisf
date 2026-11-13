@@ -79,6 +79,15 @@ func baseLacksLKG(err error) bool {
 	return errors.As(err, &e) && e.Code == core.CodeApprovalRequired && e.Details["reason"] == release.BaseLacksLKG
 }
 
+// messageOf is the message of the core error err carries, or err's text.
+func messageOf(err error) string {
+	var e *core.Error
+	if errors.As(err, &e) {
+		return e.Message
+	}
+	return err.Error()
+}
+
 // policySuperseded reports whether err is runPolicyInForce's refusal.
 func policySuperseded(err error) bool {
 	var e *core.Error

@@ -41,7 +41,7 @@ func TestAProtectedFileMovedIntoTheApplicationIsRefused(t *testing.T) {
 	}
 	stored := qa.Candidate{ChangedPaths: []string{"examples/hello-app/approval.html"}}
 	candidate, err := changedPathsFromGitHub(context.Background(), Tree{GitHub: client, Repo: github.RepoRef{Owner: "acme", Name: "app"}},
-		core.QAReceipt{PolicySHA: base, CandidateSHA: head}, stored)
+		core.QAReceipt{PolicySHA: base, BaselineSHA: base, CandidateSHA: head}, stored)
 	if err != nil || candidate.ChangedPathsIncomplete {
 		t.Fatalf("changedPathsFromGitHub = %+v, %v", candidate, err)
 	}
