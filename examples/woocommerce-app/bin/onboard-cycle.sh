@@ -86,13 +86,13 @@ wp() {
 		-e WORDPRESS_DB_PASSWORD_FILE=/run/secrets/db_password -e WORDPRESS_SECRET_FILE=/run/secrets/wp_secret \
 		-v "$work/secrets:/run/secrets:ro" -v "$bundle_vol:/var/www/html:ro" \
 		-v "$uploads:/var/www/html/wp-content/uploads" -v "$app/seed:/seed:ro" \
-		"$cli" "$@"
+		"$cli" wp "$@"
 }
 
 begin start
 compose up -d --quiet-pull >/dev/null 2>&1 || fail "compose up"
 i=0
-until curl -fsS -o /dev/null --max-time 10 "$url/healthz"; do
+until curl -fs -o /dev/null --max-time 10 "$url/healthz"; do
 	i=$((i + 1))
 	[ $i -lt 120 ] || fail "the shop did not become healthy"
 	sleep 2
