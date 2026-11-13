@@ -139,7 +139,7 @@ func (e *Exporter) export(ctx context.Context, w work, res *PassResult) (*[]core
 	}
 	doc := handoff.PatchDoc{
 		IssueID: w.record.IssueID, RunID: w.record.RunID, Attempt: w.record.Attempt, AgentAttempt: w.run.Attempt,
-		Diff: string(diff), Digest: w.run.Artifacts[i].Digest, CoderIdentity: identity, Policy: w.run.Brief.Policy,
+		Diff: string(diff), Digest: w.run.Artifacts[i].Digest, CoderIdentity: identity, Policy: w.run.Brief.Policy, Base: w.run.Brief.Base,
 		Summary: summaryOf(w.run), ExportedAt: e.Clock.Now().UTC(),
 	}
 	return &res.Exported, e.underLease(ctx, w, func(ctx context.Context, tx state.Tx) error {

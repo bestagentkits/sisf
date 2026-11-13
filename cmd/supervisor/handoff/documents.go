@@ -52,8 +52,12 @@ type PatchDoc struct {
 	// informational only; see TrustedCoderIdentity.
 	CoderIdentity string          `json:"coder_identity"`
 	Policy        core.PolicyRefs `json:"policy"`
-	Summary       string          `json:"summary,omitempty"`
-	ExportedAt    time.Time       `json:"exported_at"`
+	// Base is the commit the run was coded on, as its brief was pinned;
+	// empty means the policy revision. It is the agent zone's claim: the
+	// supervisor builds on it only once it accepts it again.
+	Base       core.CommitSHA `json:"base,omitempty"`
+	Summary    string         `json:"summary,omitempty"`
+	ExportedAt time.Time      `json:"exported_at"`
 }
 
 // PatchKey is the key of the patch of one evaluator attempt.

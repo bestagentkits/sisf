@@ -42,7 +42,10 @@ type RunStop struct {
 	RestoredTo  core.ReleaseDigest `json:"restored_to,omitempty"`
 	// Verified is set when the release was verified before it could no
 	// longer be judged; it was not finished and its change not merged.
-	Verified  bool      `json:"verified,omitempty"`
+	Verified bool `json:"verified,omitempty"`
+	// Held is the reason the supervisor held the run's build with when
+	// that ended the run (HeldEndsRun); "" otherwise.
+	Held      string    `json:"held,omitempty"`
 	BlockedAt time.Time `json:"blocked_at"`
 }
 
@@ -81,6 +84,10 @@ func (s RunStop) Summary() string {
 		return fmt.Sprintf("Run %s used all %d coding attempts it was allowed without a candidate; the last one failed with %s.",
 			s.RunID, s.Attempts, code)
 	case statemachine.BlockPolicySuperseded:
+		if s.Held == HeldBaseLacksRelease {
+			return fmt.Sprintf("Run %s was coded on a commit that lacks the last known good release of its unit, so its candidate "+
+				"could not be released and was not judged.", s.RunID)
+		}
 		return fmt.Sprintf("Run %s was coded under a policy that is no longer in force, so its patch is not built, judged or released.", s.RunID)
 	case statemachine.BlockReleaseRefused:
 		return fmt.Sprintf("The release of run %s was refused before anything was deployed: %s.", s.RunID, s.refusal())
@@ -137,6 +144,10 @@ func (s RunStop) WayOut() string {
 	retry := fmt.Sprintf("as the Owner on the factory's host, run `factoryd issue retry --issue %s`", s.IssueID)
 	switch s.Cause {
 	case statemachine.BlockPolicySuperseded:
+		if s.Held == HeldBaseLacksRelease {
+			return "Put a policy revision in force that contains the last known good release of the unit; then, " + retry +
+				": a new run codes the scope on the commit the supervisor builds on then."
+		}
 		return "A" + retry[1:] + ": the scope is judged under the policy in force and, once it is permitted or approved under it, " +
 			"the issue returns to Ready and a new run codes it under that policy."
 	case statemachine.BlockReleaseRefused:

@@ -306,7 +306,8 @@ func (c *CandidatePRs) put(ctx context.Context, pr handoff.CandidatePR) error {
 func landingOf(pr handoff.CandidatePR) release.Landing {
 	ref := handoff.BuildNamespace + ":" + handoff.CandidatePRKey(pr.RunID)
 	if pr.State == handoff.LandingMerged {
-		return release.Landing{Merged: true, Ref: ref, Summary: fmt.Sprintf("the change is merged on %s by pull request #%d", pr.Base, pr.Number)}
+		return release.Landing{Merged: true, Ref: ref, Commit: pr.MergeCommit,
+			Summary: fmt.Sprintf("the change is merged on %s by pull request #%d", pr.Base, pr.Number)}
 	}
 	if pr.Number == 0 {
 		return release.Landing{Ref: ref, Summary: fmt.Sprintf("the change is NOT merged: the factory opened no pull request for it, left for the Owner (%s)", pr.Reason)}

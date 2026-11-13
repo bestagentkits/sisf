@@ -276,9 +276,6 @@ func (b *BuildBases) Follow(ctx context.Context, actor core.Actor, proof FollowP
 		_ = b.audit(ctx, actor, proof, "", core.OutcomeDenied, err)
 		return BuildBase{}, err
 	}
-	if err := proof.Merge.Validate(); err != nil {
-		return BuildBase{}, err
-	}
 	if err := proof.Candidate.Validate(); err != nil {
 		return BuildBase{}, err
 	}
@@ -292,20 +289,22 @@ func (b *BuildBases) Follow(ctx context.Context, actor core.Actor, proof FollowP
 		_ = b.audit(ctx, actor, proof, baseline.Revision, core.OutcomeDenied, err)
 		return record, err
 	}
-	if proof.Merge == record.Commit || record.followed(proof.Merge) {
-		return record, nil
-	}
-	changed, err := b.cfg.Commits.ChangedPaths(ctx, record.Commit, proof.Merge)
-	switch {
-	case err != nil && unanswered(err):
-		return BuildBase{}, err
-	case err == nil && len(changed) == 0:
-		// A later merge was followed first: this one is already in it.
-		return record, nil
-	}
-	why, err := b.judge(ctx, baseline, record, proof, changed, err)
-	if err != nil {
-		return BuildBase{}, err
+	why := "the merge commit of the release is not known"
+	if proof.Merge.Validate() == nil {
+		if proof.Merge == record.Commit || record.followed(proof.Merge) {
+			return record, nil
+		}
+		changed, err := b.cfg.Commits.ChangedPaths(ctx, record.Commit, proof.Merge)
+		switch {
+		case err != nil && unanswered(err):
+			return BuildBase{}, err
+		case err == nil && len(changed) == 0:
+			// A later merge was followed first: this one is already in it.
+			return record, nil
+		}
+		if why, err = b.judge(ctx, baseline, record, proof, changed, err); err != nil {
+			return BuildBase{}, err
+		}
 	}
 	next := record
 	if why != "" {

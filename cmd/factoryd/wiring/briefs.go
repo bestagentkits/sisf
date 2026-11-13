@@ -83,7 +83,21 @@ func StoreBriefs(store state.Store) dispatcher.BriefSource {
 			if err != nil {
 				return err
 			}
+			base, _, err := policy.ReadBuildBase(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if stop := base.StopFor(scope.PolicyRevision); stop != nil {
+				// Nothing is coded that could not be released: the
+				// supervisor did not follow a merge, so a run on this policy
+				// would be built on a commit without that release.
+				return core.NewError(core.CodeApprovalRequired, "the factory stopped building on main at "+string(stop.Merge)+
+					" ("+stop.Reason+"); no run is started until the Owner approves a policy revision that contains it")
+			}
 			brief = BriefOf(scope, refs)
+			if commit := base.BaseFor(scope.PolicyRevision); commit != scope.PolicyRevision {
+				brief.Base = commit
+			}
 			return nil
 		})
 		return brief, err

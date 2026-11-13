@@ -29,7 +29,7 @@ type BuildOutage struct {
 	LastCode  core.ErrorCode `json:"last_code"`
 	NextTryAt time.Time      `json:"next_try_at"`
 	// Reason is why the build was held when it was not a run of outages:
-	// HeldPolicySuperseded; "" otherwise.
+	// HeldPolicySuperseded or HeldBaseLacksRelease; "" otherwise.
 	Reason string `json:"reason,omitempty"`
 	// Held is set once the failures reach the supervisor's limit; Holds
 	// counts how often that happened.
@@ -49,6 +49,19 @@ type BuildOutage struct {
 // force is no longer the one its run was coded against. Such a hold is
 // never resumed: the control zone blocks the issue and removes it.
 const HeldPolicySuperseded = "policy_superseded"
+
+// HeldBaseLacksRelease is the reason of a build held because the commit its
+// run was coded on lacks the last known good release of the candidate's
+// unit, so the candidate could not be released: it is not submitted to QA.
+// Like HeldPolicySuperseded it is never resumed: the issue is blocked and
+// the Owner's retry codes it again on the commit to build on then.
+const HeldBaseLacksRelease = "base_lacks_release"
+
+// HeldEndsRun reports whether a build held for reason ends its run: the
+// control zone blocks the issue instead of resuming the build.
+func HeldEndsRun(reason string) bool {
+	return reason == HeldPolicySuperseded || reason == HeldBaseLacksRelease
+}
 
 // BuildHeldNotice is the payload of a TopicBuildHeld message.
 type BuildHeldNotice struct {

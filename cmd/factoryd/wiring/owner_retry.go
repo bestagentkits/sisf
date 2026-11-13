@@ -330,9 +330,10 @@ func (c *Control) resumeHeldBuild(ctx context.Context, issue core.IssueRef, acto
 			held = true
 			return err
 		}
-		if !outage.Held || outage.Reason == handoff.HeldPolicySuperseded {
-			// A build held over a superseded policy is never resumed: its
-			// issue is blocked instead.
+		if !outage.Held || handoff.HeldEndsRun(outage.Reason) {
+			// A build held over a superseded policy, or over a base that
+			// lacks its unit's release, is never resumed: its issue is
+			// blocked instead.
 			return nil
 		}
 		held = true

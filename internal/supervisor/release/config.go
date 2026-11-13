@@ -111,6 +111,10 @@ type Config struct {
 	// Lander is optional; with it a verified release's change is landed on
 	// the default branch before the issue closes.
 	Lander Lander
+	// Follower is optional; with it the commit to build on follows the
+	// merge of each verified release whose foundation content is unchanged,
+	// so the next release of the unit is built on it without the Owner.
+	Follower Follower
 	// Synthetic is optional; without it a low-traffic release holds.
 	Synthetic SyntheticSuite
 	// Approvals and Policy are optional; without them OwnerRollback is
