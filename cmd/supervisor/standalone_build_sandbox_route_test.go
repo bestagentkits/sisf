@@ -4,6 +4,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"flag"
 	"io"
 	"log/slog"
@@ -107,6 +110,10 @@ func TestAStandaloneInstallWithABuildSandboxGetsPastTheSupervisorsStartChecks(t 
 	if err != nil || docker == nil || local != nil {
 		t.Fatalf("execution backends: docker %v, local %v, %v", docker, local, err)
 	}
+	// The supervisor opens its program store before it selects the build
+	// backend, as a factory that deploys locally does.
+	store, _ := trustStore(t)
+	lf.programs = &localPrograms{launcher: launcherPath, store: store}
 	images, err := lf.imageBuilder(ctx, route.manifest, false, nil, docker, local)
 	if err != nil {
 		t.Fatalf("the build backend selection refused the sandbox: %v", err)
@@ -117,7 +124,9 @@ func TestAStandaloneInstallWithABuildSandboxGetsPastTheSupervisorsStartChecks(t 
 
 	// A build runs through the real filter and backend; the fake daemon
 	// stands in for the runner image's build script.
-	digest := "sha256:" + strings.Repeat("1", 64)
+	program := []byte("the candidate's program")
+	sum := sha256.Sum256(program)
+	digest := "sha256:" + hex.EncodeToString(sum[:])
 	route.daemon.OnStart(func(c dockerfiltertest.Container) dockerfiltertest.Outcome {
 		if c.Image != routeImage || strings.Join(c.Cmd, " ") != "/usr/local/bin/sisf-smoke-build" {
 			return dockerfiltertest.Outcome{ExitCode: 97}
@@ -136,6 +145,7 @@ func TestAStandaloneInstallWithABuildSandboxGetsPastTheSupervisorsStartChecks(t 
 			"sbom": "sbom:local", "provenance": "provenance:local"} {
 			report += "sisf-report " + env["SISF_REPORT_NONCE"] + " " + key + ": " + value + "\n"
 		}
+		report += "sisf-report " + env["SISF_REPORT_NONCE"] + " program: " + base64.StdEncoding.EncodeToString(program) + "\n"
 		return dockerfiltertest.Outcome{Stdout: report}
 	})
 	built, err := images.BuildImage(ctx, stages.ImageRequest{FactoryID: routeFactory, RunID: "run-0001", Unit: "app",
@@ -193,7 +203,9 @@ func TestTheSupervisorRefusesABuildSandboxOnANetworkThatIsNotInternal(t *testing
 }
 
 // The image builder of a factory that keeps programs is given the store,
-// so its builds export; one that keeps none builds as before.
+// so its builds export; one that keeps none, whose deploy backend runs
+// images, builds no candidate at all: the supervisor would observe nothing
+// of what a build made.
 func TestTheSandboxedBuilderExportsOnlyWhereProgramsAreKept(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -203,16 +215,12 @@ func TestTheSandboxedBuilderExportsOnlyWhereProgramsAreKept(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	images, err := lf.imageBuilder(ctx, route.manifest, false, nil, docker, local)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sandbox, ok := images.(stages.SandboxImages); !ok || sandbox.Programs != nil {
-		t.Fatalf("a factory that keeps no programs builds with %+v", images)
+	if images, err := lf.imageBuilder(ctx, route.manifest, false, nil, docker, local); !core.HasCode(err, core.CodeNotSupported) {
+		t.Fatalf("a factory that keeps no programs builds with %+v, %v; want NOT_SUPPORTED", images, err)
 	}
 	store, _ := trustStore(t)
 	lf.programs = &localPrograms{launcher: launcherPath, store: store}
-	images, err = lf.imageBuilder(ctx, route.manifest, false, nil, docker, local)
+	images, err := lf.imageBuilder(ctx, route.manifest, false, nil, docker, local)
 	if err != nil {
 		t.Fatal(err)
 	}

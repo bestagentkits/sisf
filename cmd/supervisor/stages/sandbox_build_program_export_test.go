@@ -161,23 +161,3 @@ func TestAnExportThatIsNotTheReportedProgramIsAnOutageAndKeepsNothing(t *testing
 		}
 	}
 }
-
-// Without a program store, as where the deploy backend runs images, the
-// protocol is as it was: the report phase is told no target, needs to
-// export nothing, and a program it exports anyway is not kept.
-func TestWithoutAProgramStoreABuildExportsNothing(t *testing.T) {
-	t.Parallel()
-	s := &phasedSandbox{phase: map[string]execution.ExecResult{}}
-	out, err := sandboxBuild(t, s)
-	if err != nil || out.Digest != reportedDigest {
-		t.Fatalf("a report without a program: %+v, %v", out, err)
-	}
-	if _, told := s.envs["report"]["SISF_REPORT_TARGET_OS"]; told {
-		t.Error("a build whose program is not kept was told a target")
-	}
-	s = &phasedSandbox{phase: map[string]execution.ExecResult{}}
-	s.report = func(env map[string]string) string { return exportReport(env, reportedDigest, exportedProgram) }
-	if out, err := sandboxBuild(t, s); err != nil || out.Digest != reportedDigest {
-		t.Fatalf("a report with a program nobody keeps: %+v, %v", out, err)
-	}
-}

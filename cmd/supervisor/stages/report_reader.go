@@ -40,7 +40,7 @@ type reportReader struct {
 	long bool
 	// values are the keys reported once.
 	values map[string]string
-	// program receives the exported program; nil where none is kept.
+	// program receives the exported program.
 	program  *programstore.Intake
 	exported bool
 	// fault is the first thing wrong with the report; failed is the first
@@ -106,9 +106,6 @@ func (r *reportReader) endLine() {
 // addProgram decodes one line of the program into the store.
 func (r *reportReader) addProgram(encoded string) {
 	r.exported = true
-	if r.program == nil {
-		return // nothing here runs a program, so it is not kept
-	}
 	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		r.fault = "the exported program is not base64, line by line"
@@ -124,10 +121,9 @@ func (r *reportReader) addProgram(encoded string) {
 
 // result reads what the report said once the phase has ended. Every key
 // must be reported exactly once, the digest must be valid, the image pinned
-// to it and the SBOM and provenance named. Where the program is kept, the
-// report must have exported one and the digest it names must be the sha256
-// of exactly the bytes received: only then is the program kept, under that
-// digest.
+// to it and the SBOM and provenance named. The report must have exported a
+// program and the digest it names must be the sha256 of exactly the bytes
+// received: only then is the program kept, under that digest.
 func (r *reportReader) result() (ImageResult, error) {
 	if len(r.line) > 0 {
 		r.endLine()
@@ -150,18 +146,16 @@ func (r *reportReader) result() (ImageResult, error) {
 	case !strings.HasSuffix(r.values["image"], "@"+string(digest)):
 		return ImageResult{}, reportUnusable("the reported image is not pinned to the reported digest")
 	}
-	if r.program != nil {
-		if !r.exported {
-			return ImageResult{}, reportUnusable("the report exports no program (key " + programKey + "); this factory's deploy backend runs " +
-				"the program a build exports for SISF_REPORT_TARGET_OS and SISF_REPORT_TARGET_ARCH, never another one")
-		}
-		if received := r.program.Digest(); received != digest {
-			return ImageResult{}, reportUnusable("the report names the image digest " + string(digest) +
-				" but the program it exported has digest " + string(received))
-		}
-		if _, err := r.program.Commit(); err != nil {
-			return ImageResult{}, err
-		}
+	if !r.exported {
+		return ImageResult{}, reportUnusable("the report exports no program (key " + programKey + "); the supervisor accepts a build " +
+			"only on the program it exports for SISF_REPORT_TARGET_OS and SISF_REPORT_TARGET_ARCH, never on an image it names")
+	}
+	if received := r.program.Digest(); received != digest {
+		return ImageResult{}, reportUnusable("the report names the image digest " + string(digest) +
+			" but the program it exported has digest " + string(received))
+	}
+	if _, err := r.program.Commit(); err != nil {
+		return ImageResult{}, err
 	}
 	return ImageResult{Digest: digest, Image: r.values["image"], SBOMRef: r.values["sbom"], ProvenanceRef: r.values["provenance"]}, nil
 }

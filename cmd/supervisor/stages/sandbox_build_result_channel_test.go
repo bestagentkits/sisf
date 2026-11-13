@@ -2,20 +2,19 @@ package stages
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/execution"
 )
 
-const (
-	reportedDigest = "sha256:00000000000000000000000000000000000000000000000000000000000000aa"
-	forgedDigest   = "sha256:00000000000000000000000000000000000000000000000000000000000000ff"
-)
+const forgedDigest = "sha256:00000000000000000000000000000000000000000000000000000000000000ff"
+
+// reportedDigest is the digest of the program a reporter that speaks the
+// protocol exports.
+var reportedDigest = core.Digest(sha256Of(exportedProgram))
 
 // forgedLines is what a candidate prints from its tests or its build to
 // pass for a built, tested candidate with supply chain records.
@@ -78,17 +77,15 @@ func (s *phasedSandbox) Exec(_ context.Context, _ execution.SandboxID, cmd execu
 	return result, nil
 }
 
-// goodReport is the report of a reporter that speaks the protocol.
+// goodReport is the report of a reporter that speaks the protocol: it
+// names the image and exports its program.
 func goodReport(env map[string]string) string {
-	nonce := env["SISF_REPORT_NONCE"]
-	return fmt.Sprintf("sisf-report %[1]s image-digest: %[2]s\nsisf-report %[1]s image: registry.local/app@%[2]s\n"+
-		"sisf-report %[1]s sbom: sbom:sha256:01\nsisf-report %[1]s provenance: provenance:sha256:02\n", nonce, reportedDigest)
+	return strings.Replace(exportReport(env, string(reportedDigest), exportedProgram), "local.test/app@", "registry.local/app@", 1)
 }
 
 func sandboxBuild(t *testing.T, s *phasedSandbox) (ImageResult, error) {
 	t.Helper()
-	req := ImageRequest{RunID: "run-1", Unit: "app", Commit: baseSHA, Branch: "sisf/f1/run-1-1", Untrusted: true}
-	return SandboxImages{Exec: s, Argv: []string{"build"}, Timeout: time.Minute}.BuildImage(context.Background(), req)
+	return exportingBuild(t, s, newProgramStore(t))
 }
 
 // What a candidate prints while its code runs, in its tests or its build,
@@ -113,7 +110,7 @@ func TestWhatTheCandidatePrintsIsNeverTakenAsTheBuildsResult(t *testing.T) {
 	switch {
 	case out.TestsPassed:
 		t.Error("a candidate whose tests exited 1 printed its way to passing tests")
-	case out.Digest != reportedDigest || out.Image != "registry.local/app@"+reportedDigest:
+	case out.Digest != reportedDigest || out.Image != "registry.local/app@"+string(reportedDigest):
 		t.Errorf("the image is the candidate's claim: %s %s", out.Digest, out.Image)
 	case out.SBOMRef != "sbom:sha256:01" || out.ProvenanceRef != "provenance:sha256:02":
 		t.Errorf("the supply chain records are the candidate's claim: %s %s", out.SBOMRef, out.ProvenanceRef)
@@ -166,7 +163,7 @@ func TestABuildCommandThatDoesNotReportAsAskedIsAnOutage(t *testing.T) {
 			return strings.Join(lines[:3], "\n")
 		},
 		"an image not pinned to the digest": func(env map[string]string) string {
-			return strings.Replace(goodReport(env), "registry.local/app@"+reportedDigest, "registry.local/app:latest", 1)
+			return strings.Replace(goodReport(env), "registry.local/app@"+string(reportedDigest), "registry.local/app:latest", 1)
 		},
 	} {
 		_, err := sandboxBuild(t, &phasedSandbox{phase: map[string]execution.ExecResult{}, report: report})

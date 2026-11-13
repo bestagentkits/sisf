@@ -47,7 +47,9 @@ const defaultQAAgent = "codex"
 // LifecycleChoice is how the supervisor runs the stages after development.
 // The simulation runs the scripted judge; a production install runs the
 // agent judge, which in Docker mode needs a sandboxing launcher for the QA
-// agent. Without one the stages are off and the doctor says why.
+// agent. Without one the stages are off and the doctor says why. Docker
+// mode outside the simulation runs no stages at all: its builds would be
+// accepted only on images the supervisor cannot observe.
 type LifecycleChoice struct {
 	Enabled bool
 	// Off says why the stages are off, and OffCheck names the doctor check
@@ -100,6 +102,14 @@ func lifecycleChoice(o Options, mode manifest.Mode) LifecycleChoice {
 		// to an agent's patch.
 		c.Enabled, c.OffCheck = false, "build command"
 		c.Off = "no command to build candidates in the runner sandbox is configured (build_command), so the supervisor builds, evaluates and releases nothing"
+	default:
+		// The Compose backend runs images, and the supervisor can observe
+		// no image a sandboxed build reports: it would start a supervisor
+		// that refuses to build (cmd/supervisor/stages/image_builders.go).
+		c.Enabled, c.OffCheck = false, "build evidence"
+		c.Off = "Docker mode deploys images, and the supervisor cannot observe an image a sandboxed build reports, " +
+			"only a program it receives; it accepts no build on a report's word, so it builds, evaluates and releases nothing " +
+			"(a Standalone install with a build sandbox deploys the program its build exports)"
 	}
 	return c
 }

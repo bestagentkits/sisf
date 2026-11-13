@@ -46,7 +46,7 @@ func TestUntrustedCodeIsBuiltOnlyInAnIsolatingSandbox(t *testing.T) {
 		t.Fatalf("the trusted simulation: %v, %v", b, err)
 	}
 	b, err = SelectImageBuilder(ctx, ExecutionChoice{Profile: ProfileProduction, Agent: "claude", Local: local, Docker: isolating{},
-		BuildArgv: []string{"build"}, BuildTimeout: time.Minute})
+		BuildArgv: []string{"build"}, BuildTimeout: time.Minute, Programs: newProgramStore(t)})
 	if err != nil || b.Name() != "sandbox:docker" {
 		t.Fatalf("with the docker backend: %v, %v", b, err)
 	}
@@ -61,7 +61,7 @@ func TestUntrustedCodeIsBuiltOnlyInAnIsolatingSandbox(t *testing.T) {
 		}
 	}
 	// The local backend cannot be passed off as the isolating one.
-	if _, err := (SandboxImages{Exec: local, Argv: []string{"x"}, Timeout: time.Minute}).BuildImage(ctx, ImageRequest{Untrusted: true}); !core.HasCode(err, core.CodePermissionDenied) {
+	if _, err := (SandboxImages{Exec: local, Argv: []string{"x"}, Timeout: time.Minute, Programs: newProgramStore(t)}).BuildImage(ctx, ImageRequest{Untrusted: true}); !core.HasCode(err, core.CodePermissionDenied) {
 		t.Fatalf("an untrusted build on the local backend: %v", err)
 	}
 }
