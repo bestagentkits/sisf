@@ -45,6 +45,10 @@ type Env struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
+	// Exec runs the programs an install command starts, such as go build
+	// and docker; nil means the programs of this machine. A test sets it so
+	// that a command it expects to refuse can never run a real build.
+	Exec install.Exec
 }
 
 // Printf writes a command's result to standard output. A result that cannot

@@ -133,6 +133,9 @@ volume, which -v removes with the other volumes.`,
 // the install, else the checkout that holds the current directory.
 func newInstaller(env *Env, dir, source string, debug bool) (*install.Installer, error) {
 	in := install.New(dir, env.Stdout)
+	if env.Exec != nil {
+		in.Exec = env.Exec
+	}
 	in.Debug = debug
 	if source != "" {
 		abs, err := filepath.Abs(source)

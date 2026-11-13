@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,28 @@ func runWithOutput(t *testing.T, args ...string) (status int, stdout, stderr str
 	t.Helper()
 	var out, errOut bytes.Buffer
 	status = commands.run(context.Background(), &Env{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut}, args)
+	return status, out.String(), errOut.String()
+}
+
+// noExec fails the test on any program an install command would run, so a
+// command that must refuse can never reach a real docker or go build.
+type noExec struct{ t *testing.T }
+
+func (e noExec) Run(_ context.Context, c install.Cmd) ([]byte, error) {
+	e.t.Errorf("the command ran %s %v", c.Name, c.Args)
+	return nil, errors.New("no program may run")
+}
+
+func (e noExec) Start(_ context.Context, c install.Cmd) (install.Process, error) {
+	e.t.Errorf("the command started %s %v", c.Name, c.Args)
+	return nil, errors.New("no program may start")
+}
+
+// runRefused runs a command line that must refuse before it runs any program.
+func runRefused(t *testing.T, args ...string) (status int, stdout, stderr string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	status = commands.run(context.Background(), &Env{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut, Exec: noExec{t}}, args)
 	return status, out.String(), errOut.String()
 }
 
@@ -153,19 +176,19 @@ func TestUpOfAnExistingDockerInstallRefusesTheBuildFlagsAndExitsWithTheRefusalSt
 	t.Parallel()
 	dir := initSim(t, "docker")
 	for _, flag := range []string{"--build-command", "--qa-agent-binary"} {
-		status, stdout, stderr := runWithOutput(t, "up", "--dir", dir, flag, "/usr/local/bin/x")
+		status, stdout, stderr := runRefused(t, "up", "--dir", dir, flag, "/usr/local/bin/x")
 		if status != exitUsage || !strings.Contains(stderr, "no effect in Docker mode") || strings.Contains(stdout, "built") {
 			t.Fatalf("up %s = %d %q %q, want the refusal with status %d", flag, status, stdout, stderr, exitUsage)
 		}
 	}
-	status, _, stderr := runWithOutput(t, "up", "--dir", dir, "--build-command", "make", "--refusal-status", "0")
+	status, _, stderr := runRefused(t, "up", "--dir", dir, "--build-command", "make", "--refusal-status", "0")
 	if status != exitOK || !strings.Contains(stderr, "no effect in Docker mode") {
 		t.Fatalf("up --refusal-status 0 = %d %q, want the refusal reported with status 0", status, stderr)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "compose.yaml")); err == nil {
 		t.Fatal("the refused up rendered the Compose file")
 	}
-	if status, _, _ := runWithOutput(t, "up", "--dir", dir, "--refusal-status", "-1"); status != exitUsage {
+	if status, _, _ := runRefused(t, "up", "--dir", dir, "--refusal-status", "-1"); status != exitUsage {
 		t.Fatalf("a negative --refusal-status was accepted: %d", status)
 	}
 }
