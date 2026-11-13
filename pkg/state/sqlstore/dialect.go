@@ -123,13 +123,15 @@ func sqliteBusyError(err error) bool {
 // exactly representable as a SQLite REAL.
 const sumCap = 1 << 62
 
-// cappedSum is an SQL expression summing a BIGINT column of money, never
-// above sumCap and never failing on overflow: rows written with plain SQL
-// can hold any value a BIGINT does. PostgreSQL sums a BIGINT as NUMERIC;
-// SQLite's TOTAL sums as REAL, exact for every sum below 2^53.
+// cappedSum is an SQL expression summing a BIGINT column of money, counting
+// a negative value as 0, never above sumCap and never failing on overflow:
+// rows written with plain SQL can hold any value a BIGINT does, and no store
+// writes a negative amount. PostgreSQL sums a BIGINT as NUMERIC; SQLite's
+// TOTAL sums as REAL, exact for every sum below 2^53.
 func (d Dialect) cappedSum(column string) string {
+	positive := "CASE WHEN " + column + " > 0 THEN " + column + " ELSE 0 END"
 	if d == DialectPostgres {
-		return "CAST(LEAST(COALESCE(SUM(" + column + "), 0), " + strconv.Itoa(sumCap) + ") AS BIGINT)"
+		return "CAST(LEAST(COALESCE(SUM(" + positive + "), 0), " + strconv.Itoa(sumCap) + ") AS BIGINT)"
 	}
-	return "CAST(MIN(TOTAL(" + column + "), " + strconv.Itoa(sumCap) + ".0) AS INTEGER)"
+	return "CAST(MIN(TOTAL(" + positive + "), " + strconv.Itoa(sumCap) + ".0) AS INTEGER)"
 }

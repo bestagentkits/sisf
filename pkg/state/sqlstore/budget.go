@@ -101,12 +101,19 @@ func (t *tx) makeReservation(ctx context.Context, r core.Reservation) error {
 	if r.Status != core.ReservationHeld {
 		return invalid("a reservation is made %s, not %s", core.ReservationHeld, r.Status)
 	}
+	// The agent zone's reservation is dated by the store: one dated long ago
+	// would let rows dated before the budget period count for its run's
+	// close (RunUsage counts a run's rows from its reservation's making).
+	created := timeOr(r.CreatedAt, t.store.now())
+	if t.store.zone == core.ZoneAgent {
+		created = t.store.now()
+	}
 	changed, err := t.q.exec(ctx, "write reservation", `INSERT INTO reservations
 		(factory_id, id, issue, run_id, budget_mode, amount, status, hard_cap_enforced, idempotency_key, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (factory_id, id) DO NOTHING`,
 		string(r.FactoryID), r.ID, r.IssueID.String(), string(r.RunID), string(r.Mode), int64(r.Amount),
-		string(r.Status), r.HardCapEnforced, r.IdempotencyKey, toNanos(timeOr(r.CreatedAt, t.store.now())))
+		string(r.Status), r.HardCapEnforced, r.IdempotencyKey, toNanos(created))
 	if err != nil {
 		return err
 	}
@@ -276,16 +283,18 @@ func (t *tx) RunUsage(ctx context.Context, run core.RunID, since time.Time) (cor
 		u              core.RunUsage
 		cost           int64
 		costUnreported int64
+		negative       int64
 	)
 	// The token counts are compared one by one: their sum may not fit in a
 	// BIGINT, which PostgreSQL refuses to compute.
 	if err := t.q.row(ctx, `SELECT CAST(COUNT(*) AS BIGINT), `+t.store.dialect.cappedSum("cost")+`,
-		CAST(COALESCE(SUM(CASE WHEN verified = ? AND cost = 0 AND (input_tokens > 0 OR output_tokens > 0) THEN 1 ELSE 0 END), 0) AS BIGINT)
+		CAST(COALESCE(SUM(CASE WHEN verified = ? AND cost = 0 AND (input_tokens > 0 OR output_tokens > 0) THEN 1 ELSE 0 END), 0) AS BIGINT),
+		CAST(COALESCE(SUM(CASE WHEN cost < 0 THEN 1 ELSE 0 END), 0) AS BIGINT)
 		FROM usage_ledger WHERE factory_id = ? AND run_id = ? AND recorded_at >= ?`,
-		false, string(t.store.factory), string(run), toNanos(since)).Scan(&u.Entries, &cost, &costUnreported); err != nil {
+		false, string(t.store.factory), string(run), toNanos(since)).Scan(&u.Entries, &cost, &costUnreported, &negative); err != nil {
 		return core.RunUsage{}, t.store.dialect.failure("sum the usage of a run", err)
 	}
-	u.Cost, u.CostUnreported = core.Micros(cost), costUnreported > 0
+	u.Cost, u.CostUnreported, u.CostTampered = core.Micros(cost), costUnreported > 0, negative > 0
 	return u, nil
 }
 

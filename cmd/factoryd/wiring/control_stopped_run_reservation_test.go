@@ -176,9 +176,17 @@ func TestASupersededRunsReservationClosesWithoutItsRunRecord(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			f := harness.New(t, harness.Options{})
+			f := harness.New(t, harness.Options{Estimate: 1_000_000})
 			number, run := codedRun(t, f, "Greet the world")
 			holdSuperseded(t, f, run, f.Record(number).Attempt)
+			// One priced row of the run, which alone would release the
+			// reservation at its cost.
+			if err := f.ControlStore.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
+				return tx.AppendUsage(ctx, core.Usage{IssueID: run.Issue, RunID: run.RunID, ReservationID: run.ReservationID,
+					Step: core.StepCoding, InputTokens: 10, OutputTokens: 10, Cost: 300_000})
+			}); err != nil {
+				t.Fatal(err)
+			}
 			rewrite(t, f, run, value(t, run))
 			f.Pass()
 			if got := f.Record(number).State; got != core.StateBlocked {

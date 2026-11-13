@@ -70,6 +70,9 @@ type Options struct {
 	Unconfirmed bool
 	// NoPolicy leaves the policy unapproved, so intake holds.
 	NoPolicy bool
+	// Estimate is what each run sets aside; zero, the default, suits the
+	// unlimited budget the harness confirms.
+	Estimate core.Micros
 	// FactoryID gives the factory its own ID; with it the factory serves
 	// its own repository, "<factory id>/hello-app".
 	FactoryID core.FactoryID
@@ -325,7 +328,7 @@ func (f *Factory) newDispatcher(store state.Store) *dispatcher.Dispatcher {
 	d, err := wiring.NewDispatcher(wiring.DispatcherConfig{
 		Manifest: f.Manifest, Store: store, Agent: f.coder(), Clock: f.Clock,
 		Owner:        fmt.Sprintf("dispatcher@harness#%d", f.dispatchers.Add(1)),
-		PollInterval: PollInterval, LeaseTTL: LeaseTTL,
+		PollInterval: PollInterval, LeaseTTL: LeaseTTL, Estimate: f.opts.Estimate,
 		NewRunID: func() core.RunID { return core.RunID(fmt.Sprintf("run-%04d", f.runs.Add(1))) },
 	})
 	if err != nil {

@@ -90,8 +90,12 @@ type ReservationCloser interface {
 // reservation is settled. A run without a row is charged in full because
 // what it ran is unknown; over-charging a run stopped before its first
 // attempt is the safe side. unpricedClaimed comes from the run's records
-// and can only raise the charge. Booking at most the amount keeps a capped
-// reservation from being suspended by its own close. Otherwise the
+// and can only raise the charge; a caller with no record of the run passes
+// true. Booking at most the amount keeps a capped
+// reservation from being suspended by its own close. A row of the run
+// with a negative cost, which no store writes, means the rows were written
+// past the store: the whole amount is booked on top of what they show and
+// the reservation is settled. Otherwise the
 // reservation is released. A reservation of no amount is released without
 // reading the ledger. A ledger the caller may not read counts as no booked
 // cost with work unpriced, so the whole amount is charged as an unverified
@@ -125,7 +129,12 @@ func CloseReservationOfRun(ctx context.Context, gate ReservationCloser, ledger c
 		return err
 	}
 	estimate := r.Amount - booked.Cost
-	unpriced := unpricedClaimed || booked.CostUnreported || booked.Entries == 0
+	if booked.CostTampered {
+		// A negative cost no store writes: the run's rows were written past
+		// the store, so none of them lowers the charge.
+		estimate = r.Amount
+	}
+	unpriced := unpricedClaimed || booked.CostUnreported || booked.CostTampered || booked.Entries == 0
 	if !unpriced || estimate <= 0 {
 		return gate.Release(ctx, ledger, reservationID)
 	}

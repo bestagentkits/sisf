@@ -206,14 +206,17 @@ func runRecordOf(ctx context.Context, tx state.Tx, record core.StateRecord) (*di
 // trusted, and it may be missing or name another run. What the run spent is
 // read from its rows in the ledger (see dispatcher.CloseReservationOfRun);
 // the dispatcher's record of runID, when there is one, only says whether an
-// attempt stated no cost, which can raise the charge and never lower it.
+// attempt stated no cost, which can raise the charge and never lower it, and
+// a run with no record of its own is charged its whole reservation.
 // A record naming another reservation is returned as
 // refused, and so is a missing reservation the record claims; the block
 // still goes on. Any other failure fails the block, which the next pass
 // retries.
 func (c *Control) closeStoppedReservation(ctx context.Context, tx state.Tx, runID core.RunID, run *dispatcher.RunRecord) (refused error, err error) {
 	own := budget.RunReservationID(runID)
-	unpriced, claimed := false, ""
+	// Without a record of runID what the run did is unknown, so it is charged
+	// in full, as if its usage were unpriced.
+	unpriced, claimed := true, ""
 	if run != nil && run.RunID == runID {
 		unpriced, claimed = run.Spend.Unpriced, run.ReservationID
 	}
