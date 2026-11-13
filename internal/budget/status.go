@@ -51,7 +51,7 @@ func ReadStatus(ctx context.Context, src dispatcher.ConfirmationSource, ledger L
 	}
 	st.ReservedMicros, st.SpentVerifiedMicros, st.SpentUnverifiedMicros = totals.Reserved, totals.SpentVerified, totals.SpentUnverified
 	if settings.Mode == core.BudgetCapped {
-		available := settings.CapMicros - settings.RollbackReserveMicros - totals.Reserved - totals.SpentVerified - totals.SpentUnverified
+		available := settings.CapMicros - settings.RollbackReserveMicros - usedIn(totals)
 		st.AvailableMicros = &available
 	}
 	if totals.SpentUnverified > 0 {

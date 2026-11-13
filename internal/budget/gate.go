@@ -142,7 +142,7 @@ func (g *Gate) fits(ctx context.Context, ledger core.BudgetLedger, s Settings, e
 	if rollback {
 		limit = s.CapMicros
 	}
-	if used := totals.Reserved + totals.SpentVerified + totals.SpentUnverified; used+estimate > limit {
+	if addMicros(usedIn(totals), estimate) > limit {
 		return core.NewError(core.CodeBudgetExceeded, "the reservation would pass the budget cap of the period",
 			core.NextAction{Action: "budget.get", Description: "see what is spent and what remains"})
 	}
