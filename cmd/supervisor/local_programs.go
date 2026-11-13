@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
+	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/internal/supervisor/programstore"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -35,6 +36,10 @@ type localPrograms struct {
 	// installed is the digest of the installed program, from the release
 	// manifest the Owner's root key signed.
 	installed core.Digest
+	// installedProgram is --deploy-local-installed-program: the file the
+	// launcher starts for the installed release, which is measured, not
+	// taken as the manifest's digest.
+	installedProgram string
 }
 
 // openLocalPrograms sets what the local deploy backend runs. A factory
@@ -42,7 +47,7 @@ type localPrograms struct {
 // sandbox: every one but the simulation with its scripted agent, whose
 // image builder runs nothing.
 func (l *lifecycleFlags) openLocalPrograms(ctx context.Context, trustDir string, sim bool, book *release.LKGBook) error {
-	l.programs = &localPrograms{launcher: l.localProgram}
+	l.programs = &localPrograms{launcher: l.localProgram, installedProgram: l.installedProgram}
 	if l.deploy != "local" || (sim && l.coderAgent == "fake") {
 		return nil
 	}
@@ -104,9 +109,9 @@ func (p *localPrograms) command(image string) (string, []string, error) {
 // release, so the release pipeline verifies the bytes and not the digest
 // the artifact carries: for a program of the store, the sha256 of the file
 // it holds now; for the release the root-signed release manifest pins, the
-// installed program, whose digest that manifest gives. Anything else is
-// NOT_FOUND, as command starts nothing for it. A factory that keeps no
-// programs observes nothing and says so.
+// sha256 of the installed program's file now, or NOT_FOUND when that file
+// was not given. Anything else is NOT_FOUND, as command starts nothing for
+// it. A factory that keeps no programs observes nothing and says so.
 func (p *localPrograms) ObserveArtifact(_ context.Context, a deploy.Artifact) (core.ReleaseDigest, error) {
 	if p == nil || p.store == nil {
 		return "", core.NewError(core.CodeNotSupported, "this factory keeps no programs, so the bytes a release would run cannot be observed")
@@ -119,9 +124,21 @@ func (p *localPrograms) ObserveArtifact(_ context.Context, a deploy.Artifact) (c
 	case !core.HasCode(err, core.CodeNotFound):
 		return "", err
 	case digest == p.installed:
-		return core.ReleaseDigest(p.installed), nil
+		return p.measureInstalled()
 	}
 	return "", err
+}
+
+// measureInstalled hashes the installed program's file now.
+func (p *localPrograms) measureInstalled() (core.ReleaseDigest, error) {
+	if p.installedProgram == "" || !filepath.IsAbs(p.installedProgram) {
+		return "", core.NewError(core.CodeNotFound, "the installed program's file is not known (--deploy-local-installed-program), so its bytes cannot be measured")
+	}
+	measured, err := supervisor.DigestFile(p.installedProgram)
+	if err != nil {
+		return "", core.NewError(core.CodeNotFound, "the installed program cannot be measured").WithCause(err)
+	}
+	return core.ReleaseDigest(measured), nil
 }
 
 // artifactObserver is what the release pipeline measures releases with:

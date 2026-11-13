@@ -226,16 +226,21 @@ func TestARestartedSupervisorStartsThePromotedProgram(t *testing.T) {
 
 // The release pipeline verifies what the local backend would start, hashed
 // now: a kept program measures as its bytes, so one swapped after it was
-// received is not the signed build; the installed release is the digest the
-// root-signed manifest gives; anything else is not found, and a factory that
-// keeps no programs observes nothing.
+// received is not the signed build; the installed release measures as the
+// installed program's file, and as nothing when that file is not known;
+// anything else is not found, and a factory that keeps no programs observes
+// nothing.
 func TestTheBytesOfAReleaseAreMeasuredNotTakenFromTheArtifact(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	store, _ := trustStore(t)
 	candidate := exported(t, store, "the candidate's own build")
 	installed := digestOfText("the installed program")
-	p := &localPrograms{launcher: launcherPath, store: store, installed: installed}
+	installedFile := filepath.Join(t.TempDir(), "hello-app")
+	if err := os.WriteFile(installedFile, []byte("the installed program"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := &localPrograms{launcher: launcherPath, store: store, installed: installed, installedProgram: installedFile}
 	artifact := func(d core.Digest) deploy.Artifact {
 		return deploy.Artifact{Unit: "app", Digest: core.ReleaseDigest(d), Image: "smoke.local/app@" + string(d)}
 	}
@@ -245,6 +250,16 @@ func TestTheBytesOfAReleaseAreMeasuredNotTakenFromTheArtifact(t *testing.T) {
 	}
 	if got, err := p.ObserveArtifact(ctx, artifact(installed)); err != nil || got != core.ReleaseDigest(installed) {
 		t.Errorf("the installed release: %s, %v", got, err)
+	}
+	if err := os.WriteFile(installedFile, []byte("an installed program replaced"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := p.ObserveArtifact(ctx, artifact(installed)); err != nil || got != core.ReleaseDigest(digestOfText("an installed program replaced")) {
+		t.Errorf("a replaced installed program measures as %s, %v; want the bytes installed now", got, err)
+	}
+	unknown := &localPrograms{launcher: launcherPath, store: store, installed: installed}
+	if got, err := unknown.ObserveArtifact(ctx, artifact(installed)); !core.HasCode(err, core.CodeNotFound) {
+		t.Errorf("the installed release without its file: %s, %v; want NOT_FOUND, never the manifest's digest", got, err)
 	}
 	if _, err := p.ObserveArtifact(ctx, artifact(digestOfText("never received"))); !core.HasCode(err, core.CodeNotFound) {
 		t.Errorf("a release neither kept nor installed: %v, want NOT_FOUND", err)

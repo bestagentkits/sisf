@@ -48,7 +48,8 @@ type SyntheticReadiness interface {
 // release. ObserveArtifact returns the digest of those bytes, hashed by the
 // supervisor at the call: NOT_FOUND when it holds nothing for the artifact,
 // TAMPERED when what it holds cannot be what was received. It never returns
-// the digest the artifact carries without having measured it.
+// a digest it did not measure: not the one the artifact carries, and not the
+// one a release manifest gives for the installed release.
 type ArtifactObserver interface {
 	ObserveArtifact(ctx context.Context, a deploy.Artifact) (core.ReleaseDigest, error)
 }

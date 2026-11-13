@@ -216,6 +216,12 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 	return out, nil
 }
 
+// maxBuildInfoBytes bounds the Go build information of a candidate's
+// program that goes into its SBOM, which the build record and the state
+// store keep. The program was built from the candidate's code, so what it
+// carries is untrusted in size as well as content.
+const maxBuildInfoBytes = 1 << 20
+
 // programBuildInfo reads the Go build information of the program the store
 // keeps under digest, hashed again as it is opened. A program that carries
 // none, or none that can be read, is described without it: unread says
@@ -232,11 +238,21 @@ func (s SandboxImages) programBuildInfo(digest core.Digest) (info *debug.BuildIn
 			info, unread, err = nil, "the program's Go build information cannot be read", nil
 		}
 	}()
-	info, readErr := buildinfo.ReadFile(path)
-	if readErr != nil || info.Main.Path == "" {
-		return nil, "the program carries no Go build information that names its main module", nil
+	info, unread = usableBuildInfo(buildinfo.ReadFile(path))
+	return info, unread, nil
+}
+
+// usableBuildInfo keeps build information that names its main module and
+// fits maxBuildInfoBytes; otherwise it says why the program is described
+// without it.
+func usableBuildInfo(info *debug.BuildInfo, readErr error) (*debug.BuildInfo, string) {
+	if readErr != nil || info == nil || info.Main.Path == "" {
+		return nil, "the program carries no Go build information that names its main module"
 	}
-	return info, "", nil
+	if len(info.String()) > maxBuildInfoBytes {
+		return nil, "the program's Go build information is larger than " + strconv.Itoa(maxBuildInfoBytes) + " bytes"
+	}
+	return info, ""
 }
 
 // phase runs the build command for one phase within what is left of the
