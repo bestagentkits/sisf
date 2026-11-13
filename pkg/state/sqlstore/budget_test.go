@@ -132,9 +132,6 @@ func TestBudgetTotalsCountHeldReservationsAndUsageSinceTheInstant(t *testing.T) 
 				}
 			}
 			for _, u := range []core.Usage{
-				spend(700, true, periodStart.Add(-time.Hour)), // before the period
-				spend(300, true, periodStart),
-				spend(200, true, periodStart.Add(time.Minute)),
 				spend(50, false, periodStart.Add(time.Minute)),
 				spend(40, false, time.Time{}), // stamped with the instant of the write
 			} {
@@ -144,6 +141,11 @@ func TestBudgetTotalsCountHeldReservationsAndUsageSinceTheInstant(t *testing.T) 
 			}
 			return nil
 		})
+		// No zone books verified usage; rows a past writer left are still
+		// counted apart.
+		rawUsage(t, db, "run-1", 700, true, periodStart.Add(-time.Hour)) // before the period
+		rawUsage(t, db, "run-1", 300, true, periodStart)
+		rawUsage(t, db, "run-1", 200, true, periodStart.Add(time.Minute))
 		want := core.BudgetTotals{Reserved: 6_000_000, SpentVerified: 500, SpentUnverified: 90}
 		if got := totals(t, s, periodStart); got != want {
 			t.Fatalf("totals since the period start = %+v, want %+v", got, want)
@@ -181,7 +183,6 @@ func TestBudgetTotalsCountUsageWithoutACost(t *testing.T) {
 				spend(0, false, periodStart),                  // its run reserved 5,000,000
 				forRun("run-2", spend(0, false, periodStart)), // its run reserved nothing
 				forRun("run-3", spend(0, false, periodStart)), // its run reserved 0
-				spend(0, true, periodStart),                   // verified
 				spend(60, false, periodStart),                 // priced
 				noTokens,                                      // nothing to price
 			} {
@@ -191,6 +192,7 @@ func TestBudgetTotalsCountUsageWithoutACost(t *testing.T) {
 			}
 			return nil
 		})
+		rawUsage(t, db, "run-1", 0, true, periodStart) // verified
 		want := core.BudgetTotals{Reserved: 5_000_000, SpentUnverified: 60, Unpriced: 3}
 		if got := totals(t, s, periodStart); got != want {
 			t.Fatalf("totals since the period start = %+v, want %+v", got, want)
@@ -233,7 +235,7 @@ func TestUsageThatWouldLowerSpendingIsRefused(t *testing.T) {
 			"malformed issue": func(u *core.Usage) { u.IssueID = core.IssueRef{Owner: "acme"} },
 			"other factory":   func(u *core.Usage) { u.FactoryID = "another-factory" },
 		} {
-			u := spend(100, true, db.Clock.Now())
+			u := spend(100, false, db.Clock.Now())
 			change(&u)
 			err := update(s, func(tx state.Tx) error { return tx.AppendUsage(ctx, u) })
 			if !core.HasCode(err, core.CodeInvalidArgument) {
@@ -250,7 +252,7 @@ func TestRecordedUsageCannotBeEditedOrDeleted(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		s := db.Open(t, core.ZoneControl)
-		mustUpdate(t, s, func(tx state.Tx) error { return tx.AppendUsage(ctx, spend(900, true, db.Clock.Now())) })
+		mustUpdate(t, s, func(tx state.Tx) error { return tx.AppendUsage(ctx, spend(900, false, db.Clock.Now())) })
 		raw := db.Raw(t)
 		if _, err := raw.ExecContext(ctx, `UPDATE usage_ledger SET cost = 0`); err == nil {
 			t.Error("the database let recorded usage be edited")
@@ -258,7 +260,7 @@ func TestRecordedUsageCannotBeEditedOrDeleted(t *testing.T) {
 		if _, err := raw.ExecContext(ctx, `DELETE FROM usage_ledger`); err == nil {
 			t.Error("the database let recorded usage be deleted")
 		}
-		if got := totals(t, s, time.Time{}); got.SpentVerified != 900 {
+		if got := totals(t, s, time.Time{}); got.SpentUnverified != 900 {
 			t.Fatalf("usage after the refused changes = %+v", got)
 		}
 	})

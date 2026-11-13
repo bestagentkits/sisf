@@ -62,12 +62,12 @@ func (l *memLedger) AppendUsage(_ context.Context, u core.Usage) error {
 	return nil
 }
 
-func (l *memLedger) RunUsage(_ context.Context, run core.RunID) (core.RunUsage, error) {
+func (l *memLedger) RunUsage(_ context.Context, run core.RunID, since time.Time) (core.RunUsage, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var sum core.RunUsage
 	for _, u := range l.usage {
-		if u.RunID == run {
+		if u.RunID == run && !u.At.Before(since) {
 			sum.Cost += u.Cost
 			sum.CostUnreported = sum.CostUnreported || u.CostUnreported()
 			sum.Entries++

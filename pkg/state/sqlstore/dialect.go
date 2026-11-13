@@ -118,3 +118,18 @@ func sqliteBusyError(err error) bool {
 	primary := sqliteErr.Code() & 0xff
 	return primary == sqliteBusy || primary == sqliteLocked
 }
+
+// sumCap is where the store's sums of money stop: far above any budget, and
+// exactly representable as a SQLite REAL.
+const sumCap = 1 << 62
+
+// cappedSum is an SQL expression summing a BIGINT column of money, never
+// above sumCap and never failing on overflow: rows written with plain SQL
+// can hold any value a BIGINT does. PostgreSQL sums a BIGINT as NUMERIC;
+// SQLite's TOTAL sums as REAL, exact for every sum below 2^53.
+func (d Dialect) cappedSum(column string) string {
+	if d == DialectPostgres {
+		return "CAST(LEAST(COALESCE(SUM(" + column + "), 0), " + strconv.Itoa(sumCap) + ") AS BIGINT)"
+	}
+	return "CAST(MIN(TOTAL(" + column + "), " + strconv.Itoa(sumCap) + ".0) AS INTEGER)"
+}

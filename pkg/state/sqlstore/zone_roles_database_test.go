@@ -69,7 +69,7 @@ func TestEachZoneWorksOverItsOwnRole(t *testing.T) {
 			if _, err := tx.GetReservation(ctx, "r-1"); err != nil {
 				return err
 			}
-			if err := tx.AppendUsage(ctx, spend(1, true, db.Clock.Now())); err != nil {
+			if err := tx.AppendUsage(ctx, spend(1, false, db.Clock.Now())); err != nil {
 				return err
 			}
 			return tx.ReleaseLease(ctx, state.Lease{Resource: state.IssueLeaseResource(issue(3)), Owner: "worker-1", Token: evaluating.FencingToken})

@@ -75,7 +75,7 @@ func TestGateWorksAcrossZonesOnTheRealStore(t *testing.T) {
 		// Usage of another factory sharing the database is not this
 		// factory's spending.
 		if err := db.OpenFactory(t, "another-factory", core.ZoneControl).Update(ctx, func(ctx context.Context, tx state.Tx) error {
-			theirs := usage(1, 100*million, true)
+			theirs := usage(1, 100*million, false)
 			theirs.FactoryID = "another-factory"
 			return tx.AppendUsage(ctx, theirs)
 		}); err != nil {
@@ -86,7 +86,7 @@ func TestGateWorksAcrossZonesOnTheRealStore(t *testing.T) {
 			t.Fatalf("the agent zone could not reserve under the cap: %+v, %v", first, err)
 		}
 		if err := agent.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-			spent := usage(6, million, true)
+			spent := usage(6, million, false)
 			spent.FactoryID = factory
 			return gate.Settle(ctx, tx, first.ID, spent)
 		}); err != nil {

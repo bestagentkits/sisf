@@ -18,9 +18,8 @@ import (
 func TestAgentZoneTotalsTheUsageOfItsOwnFactoryOnly(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
-		mustUpdate(t, db.Open(t, core.ZoneControl), func(tx state.Tx) error {
-			return tx.AppendUsage(ctx, spend(5, true, db.Clock.Now()))
-		})
+		rawUsage(t, db, "run-1", 5, true, db.Clock.Now())
+		mustUpdate(t, db.Open(t, core.ZoneControl), func(tx state.Tx) error { return tx.PutReservation(ctx, reservation("r-1", 1)) })
 		mustUpdate(t, db.OpenFactory(t, "another-factory", core.ZoneControl), func(tx state.Tx) error {
 			return tx.AppendUsage(ctx, spend(100, false, db.Clock.Now()))
 		})
@@ -30,7 +29,7 @@ func TestAgentZoneTotalsTheUsageOfItsOwnFactoryOnly(t *testing.T) {
 			t.Fatalf("the agent zone totals %+v, want 5 verified and 2 unverified of its own factory", got)
 		}
 		// Usage is still recorded only for the store's own factory.
-		other := spend(1, true, db.Clock.Now())
+		other := spend(1, false, db.Clock.Now())
 		other.FactoryID = "another-factory"
 		wantCode(t, update(agent, func(tx state.Tx) error { return tx.AppendUsage(ctx, other) }), core.CodeInvalidArgument)
 	})
@@ -99,12 +98,15 @@ func TestPostgresMigrationLetsTheAgentRoleOfAGrantedStoreReadTheUsageLedger(t *t
 func assertUsageLedgerRoles(t *testing.T, db *sqlstoretest.Database, logins sqlstoretest.ZoneLogins) {
 	t.Helper()
 	mustUpdate(t, db.OpenWith(t, logins.DSN[core.ZoneControl], core.ZoneControl), func(tx state.Tx) error {
-		return tx.AppendUsage(ctx, spend(7, true, db.Clock.Now()))
+		if err := tx.PutReservation(ctx, reservation("r-1", 1)); err != nil {
+			return err
+		}
+		return tx.AppendUsage(ctx, spend(7, false, db.Clock.Now()))
 	})
 	agentStore := db.OpenWith(t, logins.DSN[core.ZoneAgent], core.ZoneAgent)
 	mustUpdate(t, agentStore, func(tx state.Tx) error { return tx.AppendUsage(ctx, spend(3, false, db.Clock.Now())) })
-	if got := totals(t, agentStore, db.Clock.Now().Add(-1)); got.SpentVerified != 7 || got.SpentUnverified != 3 {
-		t.Fatalf("the agent role totals %+v, want 7 verified and 3 unverified", got)
+	if got := totals(t, agentStore, db.Clock.Now().Add(-1)); got.SpentVerified != 0 || got.SpentUnverified != 10 {
+		t.Fatalf("the agent role totals %+v, want 10 unverified", got)
 	}
 
 	agent := rawLogin(t, logins.DSN[core.ZoneAgent])

@@ -18,7 +18,8 @@ import (
 // in the ledger. The dispatcher's record is the agent zone's: a record that
 // claims a cost far above what was booked, and hides that the usage stated
 // none, does not release the reservation, and a run with no record at all
-// is closed from the ledger alone.
+// is charged the Owner's estimate in full, priced usage or not: what it
+// ran is unknown, so its reservation is never given back for free.
 func TestARunIsClosedWithTheCostTheLedgerShows(t *testing.T) {
 	t.Parallel()
 	const estimate = core.Micros(1_000_000)
@@ -30,7 +31,7 @@ func TestARunIsClosedWithTheCostTheLedgerShows(t *testing.T) {
 	}{
 		"inflated record, unpriced usage": {&dispatcher.RunRecord{Status: dispatcher.RunSucceeded,
 			Spend: dispatcher.RunSpend{ReportedCost: 50 * estimate}}, false, core.ReservationSettled, estimate},
-		"no record, priced usage":   {nil, true, core.ReservationReleased, 200_000},
+		"no record, priced usage":   {nil, true, core.ReservationSettled, estimate},
 		"no record, unpriced usage": {nil, false, core.ReservationSettled, estimate},
 	} {
 		t.Run(name, func(t *testing.T) {

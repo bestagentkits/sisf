@@ -81,11 +81,14 @@ func TestAnAttemptThatReportsNoCostLeavesTheRunUnpriced(t *testing.T) {
 	}
 }
 
-// booked is one usage row of a run in the ledger before its close.
+// booked is one usage row of a run in the ledger before its close. A row
+// dated before the reservation was made is written by the control zone,
+// which may date its rows, standing for one written with plain SQL.
 type booked struct {
 	run    core.RunID
 	cost   core.Micros
 	tokens bool
+	before bool
 }
 
 // A run that will start no more coding attempts gives its reservation up.
@@ -110,20 +113,23 @@ func TestClosingARunsReservation(t *testing.T) {
 		wantStatus core.ReservationStatus
 		wantSpent  core.Micros
 	}{
-		"every attempt priced":           {core.ReservationHeld, []booked{{"run-1", 300_000, true}}, false, core.ReservationReleased, 300_000},
-		"record says some work unpriced": {core.ReservationHeld, []booked{{"run-1", 300_000, true}}, true, core.ReservationSettled, amount},
+		"every attempt priced":           {core.ReservationHeld, []booked{{"run-1", 300_000, true, false}}, false, core.ReservationReleased, 300_000},
+		"record says some work unpriced": {core.ReservationHeld, []booked{{"run-1", 300_000, true, false}}, true, core.ReservationSettled, amount},
 		"ledger shows work unpriced, record hides it": {core.ReservationHeld,
-			[]booked{{"run-1", 300_000, true}, {"run-1", 0, true}}, false, core.ReservationSettled, amount},
-		"no record, priced usage booked": {core.ReservationHeld, []booked{{"run-1", 300_000, true}}, false, core.ReservationReleased, 300_000},
+			[]booked{{"run-1", 300_000, true, false}, {"run-1", 0, true, false}}, false, core.ReservationSettled, amount},
+		"no record, priced usage booked": {core.ReservationHeld, []booked{{"run-1", 300_000, true, false}}, false, core.ReservationReleased, 300_000},
 		"no record, part of the usage unpriced": {core.ReservationHeld,
-			[]booked{{"run-1", 300_000, true}, {"run-1", 0, true}}, false, core.ReservationSettled, amount},
+			[]booked{{"run-1", 300_000, true, false}, {"run-1", 0, true, false}}, false, core.ReservationSettled, amount},
 		"unpriced but booked in full": {core.ReservationHeld,
-			[]booked{{"run-1", 1_200_000, true}, {"run-1", 0, true}}, true, core.ReservationReleased, 1_200_000},
+			[]booked{{"run-1", 1_200_000, true, false}, {"run-1", 0, true, false}}, true, core.ReservationReleased, 1_200_000},
 		"nothing booked, record says unpriced": {core.ReservationHeld, nil, true, core.ReservationSettled, amount},
 		"another run's usage counts for nothing": {core.ReservationHeld,
-			[]booked{{"run-2", 1_200_000, true}}, true, core.ReservationSettled, 1_200_000 + amount},
+			[]booked{{"run-2", 1_200_000, true, false}}, true, core.ReservationSettled, 1_200_000 + amount},
 		"another run's unpriced usage counts for nothing": {core.ReservationHeld,
-			[]booked{{"run-2", 0, true}}, false, core.ReservationReleased, 0},
+			[]booked{{"run-2", 0, true, false}}, false, core.ReservationSettled, amount},
+		"nothing booked, record says priced": {core.ReservationHeld, nil, false, core.ReservationSettled, amount},
+		"a row dated before the reservation counts for nothing": {core.ReservationHeld,
+			[]booked{{"run-1", 1_200_000, true, true}, {"run-1", 100, true, false}}, true, core.ReservationSettled, 1_200_000 + amount},
 		"already settled":                {core.ReservationSettled, nil, true, core.ReservationSettled, 0},
 		"already released, still priced": {core.ReservationReleased, nil, false, core.ReservationReleased, 0},
 	} {
@@ -134,18 +140,47 @@ func TestClosingARunsReservation(t *testing.T) {
 				issue := core.IssueRef{Owner: "acme", Repo: "app", Number: 1}
 				gate := budget.NewGate(budget.Config{Clock: f.clock})
 				ctx := context.Background()
-				err := f.store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-					if err := tx.PutReservation(ctx, core.Reservation{ID: "res-1", FactoryID: sqlstoretest.Factory, IssueID: issue, RunID: "run-1",
-						Mode: core.BudgetCapped, Amount: amount, Status: c.status, IdempotencyKey: "claim/run-1", CreatedAt: f.clock.Now()}); err != nil {
-						return err
+				usage := func(row booked) core.Usage {
+					u := core.Usage{FactoryID: sqlstoretest.Factory, IssueID: issue, RunID: row.run, ReservationID: "res-" + string(row.run[len("run-"):]),
+						Step: core.StepCoding, Cost: row.cost}
+					if row.tokens {
+						u.InputTokens, u.OutputTokens = 100, 20
+					}
+					if row.before {
+						u.At = f.clock.Now().Add(-time.Hour)
+					}
+					return u
+				}
+				err := f.db.Open(t, core.ZoneControl).Update(ctx, func(ctx context.Context, tx state.Tx) error {
+					for _, row := range c.rows {
+						if row.before {
+							if err := tx.AppendUsage(ctx, usage(row)); err != nil {
+								return err
+							}
+						}
+					}
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = f.store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+					for _, run := range []core.RunID{"run-1", "run-2"} {
+						status := core.ReservationHeld
+						if run == "run-1" {
+							status = c.status
+						}
+						if err := tx.PutReservation(ctx, core.Reservation{ID: "res-" + string(run[len("run-"):]), FactoryID: sqlstoretest.Factory,
+							IssueID: issue, RunID: run, Mode: core.BudgetCapped, Amount: amount, Status: status,
+							IdempotencyKey: "claim/" + string(run), CreatedAt: f.clock.Now()}); err != nil {
+							return err
+						}
 					}
 					for _, row := range c.rows {
-						u := core.Usage{FactoryID: sqlstoretest.Factory, IssueID: issue, RunID: row.run, Step: core.StepCoding, Cost: row.cost}
-						if row.tokens {
-							u.InputTokens, u.OutputTokens = 100, 20
-						}
-						if err := tx.AppendUsage(ctx, u); err != nil {
-							return err
+						if !row.before {
+							if err := tx.AppendUsage(ctx, usage(row)); err != nil {
+								return err
+							}
 						}
 					}
 					return dispatcher.CloseReservationOfRun(ctx, gate, tx, "run-1", "res-1", c.claimed)
@@ -171,7 +206,7 @@ type unreadableLedger struct {
 	reads *int
 }
 
-func (l unreadableLedger) RunUsage(context.Context, core.RunID) (core.RunUsage, error) {
+func (l unreadableLedger) RunUsage(context.Context, core.RunID, time.Time) (core.RunUsage, error) {
 	*l.reads++
 	return core.RunUsage{}, core.NewError(core.CodePermissionDenied, "this zone may not read the ledger")
 }

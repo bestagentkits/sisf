@@ -88,9 +88,16 @@ func (t *tx) GetReservation(ctx context.Context, id string) (core.Reservation, e
 }
 
 // AppendUsage adds one metered cost to the ledger. Entries are never changed
-// or removed afterwards. Usage that would lower the totals is refused; usage
-// is otherwise taken as reported, with or without a run, because spending
-// that was not recorded is worse than spending that is loosely attributed.
+// or removed afterwards. Usage that would lower the totals is refused, and
+// so is usage booked as verified: nothing in the factory confirms a cost
+// with its provider, so that claim could only be the writer's. A cost above
+// core.MaxUsageCost is booked at that bound.
+//
+// The agent zone meters its own runs, so its rows are held closer: the
+// store dates them with its own clock, whatever instant the writer gave,
+// and books them only against an existing reservation of the run and issue
+// the row names. The control zone's rows keep the instant given, or the
+// store's clock without one.
 func (t *tx) AppendUsage(ctx context.Context, u core.Usage) error {
 	if err := t.writes(tableUsage, canInsert); err != nil {
 		return err
@@ -113,6 +120,17 @@ func (t *tx) AppendUsage(ctx context.Context, u core.Usage) error {
 	if u.Cost < 0 || u.InputTokens < 0 || u.OutputTokens < 0 {
 		return invalid("usage must not be negative: cost %d, tokens %d in and %d out", u.Cost, u.InputTokens, u.OutputTokens)
 	}
+	if u.Verified {
+		return invalid("usage cannot be booked as verified: nothing confirms a cost with its provider")
+	}
+	u.Cost = min(u.Cost, core.MaxUsageCost)
+	at := timeOr(u.At, t.store.now())
+	if t.store.zone == core.ZoneAgent {
+		if err := t.agentBooksAgainstItsRun(ctx, u); err != nil {
+			return err
+		}
+		at = t.store.now()
+	}
 	route, err := json.Marshal(u.ModelRoute)
 	if err != nil {
 		return invalid("the model route cannot be stored")
@@ -121,8 +139,29 @@ func (t *tx) AppendUsage(ctx context.Context, u core.Usage) error {
 		(factory_id, issue, run_id, reservation_id, step, model_route, input_tokens, output_tokens, cost, verified, recorded_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		string(u.FactoryID), issue, string(u.RunID), cleanText(u.ReservationID), cleanText(string(u.Step)), string(route),
-		u.InputTokens, u.OutputTokens, int64(u.Cost), u.Verified, toNanos(timeOr(u.At, t.store.now())))
+		u.InputTokens, u.OutputTokens, int64(u.Cost), u.Verified, toNanos(at))
 	return err
+}
+
+// agentBooksAgainstItsRun refuses an agent-zone row that names no run, or
+// no reservation of that run and issue.
+func (t *tx) agentBooksAgainstItsRun(ctx context.Context, u core.Usage) error {
+	refused := func(why string) error {
+		return core.NewError(core.CodePermissionDenied, "the agent zone books usage only against a reservation of its run: "+why)
+	}
+	if u.RunID == "" || u.ReservationID == "" {
+		return refused("the usage names no run or no reservation")
+	}
+	r, err := t.GetReservation(ctx, u.ReservationID)
+	switch {
+	case core.HasCode(err, core.CodeNotFound):
+		return refused("reservation " + cleanText(u.ReservationID) + " does not exist")
+	case err != nil:
+		return err
+	case r.RunID != u.RunID || r.IssueID != u.IssueID:
+		return refused("reservation " + r.ID + " belongs to another run or issue")
+	}
+	return nil
 }
 
 // BudgetTotals sums the reservations held now and the usage recorded at or
@@ -133,12 +172,12 @@ func (t *tx) BudgetTotals(ctx context.Context, since time.Time) (core.BudgetTota
 	}
 	var totals core.BudgetTotals
 	var reserved int64
-	if err := t.q.row(ctx, `SELECT CAST(COALESCE(SUM(amount), 0) AS BIGINT) FROM reservations
+	if err := t.q.row(ctx, `SELECT `+t.store.dialect.cappedSum("amount")+` FROM reservations
 		WHERE factory_id = ? AND status = ?`, string(t.store.factory), string(core.ReservationHeld)).Scan(&reserved); err != nil {
 		return core.BudgetTotals{}, t.store.dialect.failure("sum reservations", err)
 	}
 	totals.Reserved = core.Micros(reserved)
-	err := t.q.each(ctx, "sum usage", `SELECT verified, CAST(COALESCE(SUM(cost), 0) AS BIGINT) FROM usage_ledger
+	err := t.q.each(ctx, "sum usage", `SELECT verified, `+t.store.dialect.cappedSum("cost")+` FROM usage_ledger
 		WHERE factory_id = ? AND recorded_at >= ? GROUP BY verified`,
 		[]any{string(t.store.factory), toNanos(since)}, func(rows *sql.Rows) error {
 			var (
@@ -169,10 +208,11 @@ func (t *tx) BudgetTotals(ctx context.Context, since time.Time) (core.BudgetTota
 	return totals, nil
 }
 
-// RunUsage sums the usage of run in the ledger, whenever it was recorded.
+// RunUsage sums the usage of run in the ledger recorded at or after since.
 // A store whose zone may not read the ledger refuses before any statement
-// runs, so a PostgreSQL transaction is never aborted by the read.
-func (t *tx) RunUsage(ctx context.Context, run core.RunID) (core.RunUsage, error) {
+// runs, so a PostgreSQL transaction is never aborted by the read, and the
+// sum is capped rather than overflowing, for the same reason.
+func (t *tx) RunUsage(ctx context.Context, run core.RunID, since time.Time) (core.RunUsage, error) {
 	if err := t.reads(tableUsage); err != nil {
 		return core.RunUsage{}, err
 	}
@@ -183,10 +223,10 @@ func (t *tx) RunUsage(ctx context.Context, run core.RunID) (core.RunUsage, error
 	)
 	// The token counts are compared one by one: their sum may not fit in a
 	// BIGINT, which PostgreSQL refuses to compute.
-	if err := t.q.row(ctx, `SELECT CAST(COUNT(*) AS BIGINT), CAST(COALESCE(SUM(cost), 0) AS BIGINT),
+	if err := t.q.row(ctx, `SELECT CAST(COUNT(*) AS BIGINT), `+t.store.dialect.cappedSum("cost")+`,
 		CAST(COALESCE(SUM(CASE WHEN verified = ? AND cost = 0 AND (input_tokens > 0 OR output_tokens > 0) THEN 1 ELSE 0 END), 0) AS BIGINT)
-		FROM usage_ledger WHERE factory_id = ? AND run_id = ?`,
-		false, string(t.store.factory), string(run)).Scan(&u.Entries, &cost, &costUnreported); err != nil {
+		FROM usage_ledger WHERE factory_id = ? AND run_id = ? AND recorded_at >= ?`,
+		false, string(t.store.factory), string(run), toNanos(since)).Scan(&u.Entries, &cost, &costUnreported); err != nil {
 		return core.RunUsage{}, t.store.dialect.failure("sum the usage of a run", err)
 	}
 	u.Cost, u.CostUnreported = core.Micros(cost), costUnreported > 0

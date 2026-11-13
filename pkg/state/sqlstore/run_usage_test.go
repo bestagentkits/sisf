@@ -9,8 +9,8 @@ import (
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
 
-// RunUsage sums every cost booked for one run, verified or not and however
-// long ago, counts its entries and says whether some of them counted tokens
+// RunUsage asked from the beginning of time sums every cost booked for one
+// run, counts its entries and says whether some of them counted tokens
 // without a cost. Usage of another run is left out, usage without tokens
 // and without a cost is not cost-unreported, and token counts too large to
 // add up in the database do not break the read. Both zones that close a
@@ -33,7 +33,7 @@ func TestRunUsageSumsTheLedgerOfThatRun(t *testing.T) {
 				forRun("run-old", spend(0, false, now.Add(-24*365*time.Hour))),
 				forRun("run-old", spend(40, false, now)),
 				forRun("run-priced", spend(60, false, now)),
-				forRun("run-priced", spend(25, true, now)),
+				forRun("run-priced", spend(25, false, now)),
 				noTokens,
 				huge,
 			} {
@@ -54,7 +54,7 @@ func TestRunUsageSumsTheLedgerOfThatRun(t *testing.T) {
 			for run, w := range want {
 				var got core.RunUsage
 				if err := view(s, func(tx state.Tx) (err error) {
-					got, err = tx.RunUsage(ctx, run)
+					got, err = tx.RunUsage(ctx, run, time.Time{})
 					return err
 				}); err != nil {
 					t.Fatalf("%s zone, run %s: %v", zone, run, err)

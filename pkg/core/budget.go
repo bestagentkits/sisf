@@ -24,9 +24,17 @@ func (m BudgetMode) Valid() bool { return m == BudgetUnlimited || m == BudgetCap
 // units keep ledger arithmetic exact.
 type Micros int64
 
+// MaxUsageCost bounds the cost of one usage entry: one million in the
+// ledger currency. A cost an agent reports above it is booked at the bound,
+// which is still more than any run reserves, so sums of the ledger stay far
+// from overflowing and a run is never charged less for it.
+const MaxUsageCost Micros = 1_000_000 * 1_000_000
+
 // Usage is one metered piece of spending. Verified is false when the amount
 // was estimated or the provider could not confirm it; such usage is shown as
-// unverified and never presented as a guarantee.
+// unverified and never presented as a guarantee. Nothing in the factory
+// confirms a cost with its provider yet, so the store refuses usage booked
+// as verified.
 type Usage struct {
 	FactoryID     FactoryID  `json:"factory_id"`
 	IssueID       IssueRef   `json:"issue_id"`
@@ -137,19 +145,23 @@ type BudgetLedger interface {
 	AppendUsage(ctx context.Context, u Usage) error
 	// BudgetTotals sums reservations still held and usage recorded since the instant.
 	BudgetTotals(ctx context.Context, since time.Time) (BudgetTotals, error)
-	// RunUsage sums the usage recorded for one run, whenever it was
-	// recorded. A ledger the caller may append to but not read returns
+	// RunUsage sums the usage of one run recorded at or after since. A
+	// ledger the caller may append to but not read returns
 	// PERMISSION_DENIED.
-	RunUsage(ctx context.Context, run RunID) (RunUsage, error)
+	RunUsage(ctx context.Context, run RunID, since time.Time) (RunUsage, error)
 }
 
-// RunUsage is what the ledger holds for one run. It is the only spend a run
-// is closed with: the ledger is append-only, so whatever lowers what is
-// still charged at the close is itself booked spending, while the
-// dispatcher's record of the run belongs to the agent zone and can be
-// rewritten.
+// RunUsage is what the ledger holds for one run since its reservation was
+// made. A run's reservation is closed with it, never with the dispatcher's
+// record of the run, which the agent zone can rewrite. It is still the agent
+// zone's metering: the dispatcher books what its agents reported, so it can
+// under-report what a run cost. What the store enforces is narrower: rows
+// are append-only, an agent-zone row is dated by the store and booked
+// against a reservation of its own run, and rows dated before the
+// reservation do not count.
 type RunUsage struct {
-	// Cost sums every cost booked for the run, verified or not.
+	// Cost sums the costs booked for the run, capped far above any amount a
+	// run reserves rather than overflowing.
 	Cost Micros `json:"cost"`
 	// CostUnreported is set when some usage of the run counted tokens and
 	// stated no cost (see Usage.CostUnreported).

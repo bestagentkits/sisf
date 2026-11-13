@@ -55,7 +55,8 @@ func judgeSpend(ctx context.Context, kv state.KV, run core.RunID) (dispatcher.Ru
 // coding attempts and its judgments alike; the dispatcher's record and the
 // judgments' tally only say whether some work stated no cost, which can
 // raise the charge and never lower it. A run the dispatcher holds no record
-// of is closed from the ledger alone. The run's close-due record, at
+// of is charged as unpriced: the estimate stands for what its booked cost
+// does not cover, so its reservation is never given back for free. The run's close-due record, at
 // version due, is deleted with it.
 func (s *QAStage) closeRun(ctx context.Context, run core.RunID, due int64) error {
 	return s.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
@@ -66,7 +67,8 @@ func (s *QAStage) closeRun(ctx context.Context, run core.RunID, due int64) error
 		entry, err := tx.GetKV(ctx, handoff.Namespace, "run/"+string(run))
 		switch {
 		case core.HasCode(err, core.CodeNotFound):
-			record.RunID = run
+			// What the run did is unknown: its reservation is charged.
+			record.RunID, record.Spend.Unpriced = run, true
 		case err != nil:
 			return err
 		case json.Unmarshal(entry.Value, &record) != nil || record.RunID != run:
