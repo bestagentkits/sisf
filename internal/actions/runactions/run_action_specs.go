@@ -1,5 +1,6 @@
 // Package runactions serves the read actions about the factory, its issues
-// and their runs: factory.status, issues.list, runs.inspect and runs.explain.
+// and their runs: factory.status, issues.list, runs.inspect, runs.explain
+// and runs.receipt.
 // They read the operational store, the dispatcher's run records and the
 // approval inbox, and change nothing.
 package runactions
@@ -15,6 +16,7 @@ const (
 	ActionIssuesList    = "issues.list"
 	ActionRunsInspect   = "runs.inspect"
 	ActionRunsExplain   = "runs.explain"
+	ActionRunsReceipt   = "runs.receipt"
 )
 
 var readers = []core.Role{core.RoleOwner, core.RoleMaintainer, core.RoleReporter, core.RoleViewer, core.RoleAgent}
@@ -66,5 +68,16 @@ func Specs() []core.ActionSpec {
 "stopped":{"type":"boolean"},"cause":{"type":"string","enum":["blocked","rolled_back","awaiting_approval","awaiting_information","attempts_exhausted","release_held","release_refused","finished","in_progress"]},
 "reason":{"type":"string"},"evidence":{"type":"array","items":{"type":"object","properties":{"kind":{"type":"string"},"ref":{"type":"string"},"summary":{"type":"string"},"at":{"type":"string","format":"date-time"}}}},
 "next_actions":{"type":"array","items":{"type":"object"}}}}`)},
+		{Name: ActionRunsReceipt, Summary: "Hand out the signed QA receipt of an issue's run with the root-signed delegation of its key, to check offline with the root public key (sisf receipt verify).",
+			Sensitivity: core.SensitivityRead, Scopes: []string{"runs:read"}, Roles: readers,
+			Input: actions.Schema(`{"type":"object","additionalProperties":false,
+"description":"Exactly one of issue and run_id; attempt defaults to the issue's current evaluator attempt.",
+"properties":{"issue":{"type":"string","description":"Issue reference owner/repo#number."},
+"run_id":{"type":"string","description":"Run identifier."},
+"attempt":{"type":"integer","minimum":1,"description":"Evaluator attempt of the run."}}}`),
+			Output: actions.Schema(`{"type":"object","properties":{"factory_id":{"type":"string"},"issue":{"type":"string"},"run_id":{"type":"string"},"attempt":{"type":"integer"},
+"receipt":{"type":"object","description":"The QA receipt as the evaluator signed it."},
+"delegation":{"type":"object","description":"The root-signed delegation of the key that signed the receipt; absent for a receipt stored before delegations were kept."},
+"ref":{"type":"string"},"verify_with":{"type":"string","description":"The command that checks this output offline with the root public key."}}}`)},
 	}
 }

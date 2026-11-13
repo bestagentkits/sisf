@@ -172,3 +172,31 @@ func TestARevokedKeyIsRefusedAsOfAnEarlierInstant(t *testing.T) {
 		t.Fatalf("a signature by a revoked key verifies as of before the revocation: %v", err)
 	}
 }
+
+// The supervisor hands out the root-signed delegation of the key that signed
+// a QA receipt, so the receipt can be checked with the root key alone, and
+// none for a key it never trusted.
+func TestTheDelegationOfAQAKeyIsHandedOut(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	clock := sqlstoretest.NewClock(time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC))
+	dir, pub, root := trustVolume(t)
+	keys, err := loadSupervisorKeys(ctx, dir, testFactory, pub, root, clock, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := keys.Delegation(keys.QA.KeyID())
+	if !ok || d.Delegation.KeyID != keys.QA.KeyID() || d.Delegation.Purpose != delegation.PurposeQAReceipt {
+		t.Fatalf("the QA key's delegation: %+v, %t", d.Delegation, ok)
+	}
+	verifier, err := delegation.NewChainVerifier(delegation.VerifierConfig{FactoryID: testFactory, Root: pub, Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.Trust(ctx, d); err != nil {
+		t.Fatalf("the handed-out delegation is not vouched for by the root key: %v", err)
+	}
+	if _, ok := keys.Delegation("ed25519:unknown"); ok {
+		t.Fatal("a delegation was handed out for a key the supervisor never trusted")
+	}
+}

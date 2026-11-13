@@ -63,6 +63,7 @@ These commands call the running factory's REST surface (`cmd/sisf/cmd_call.go`).
 | `sisf issues [--state s]... [--limit n]` | `sisf call issues.list` | `--state` takes a lifecycle state such as `Blocked` (repeatable) |
 | `sisf runs inspect <issue\|run-id>` | `sisf call runs.inspect` | an issue is `owner/repo#N`; anything else is a run id |
 | `sisf runs explain <issue\|run-id>` | `sisf call runs.explain` | why the run is stopped, with evidence and next steps |
+| `sisf call runs.receipt --input '{"issue":"owner/repo#N"}'` | | the run's signed QA receipt and the root-signed delegation of the key that signed it, for [`sisf receipt verify`](#checking-a-qa-receipt-offline); also takes `run_id` and `attempt` (default: the run's current attempt) |
 | `sisf approvals list [--status s]... [--limit n]` | `sisf call approvals.list` | |
 | `sisf approvals get <id>` | `sisf call approvals.get` | shows the nonce, subject digest and policy revision a decision must name |
 | `sisf approvals decide <id> --decision d --nonce n --subject-digest d --policy-revision r [--reason text] [--dry-run]` | `sisf call approvals.decide` | Also takes `--budget-cap` (micros) and `--expires-at` (RFC 3339) as conditions, and `--idempotency-key`. Without `--dry-run` it answers `STEP_UP_REQUIRED`: a decision runs only from the dashboard form. See [approvals](policy-and-approvals.md#deciding-an-approval). |
@@ -70,6 +71,64 @@ These commands call the running factory's REST surface (`cmd/sisf/cmd_call.go`).
 | `sisf call --list [--json]` | | Lists every action this `sisf` knows, with its guard (`read`, `write`, `sensitive`, `step-up`) and summary, without a running factory. |
 
 Actions without a shortcut, such as `budget.get` or `setup.sample_issue`, are called with `sisf call`; `sisf call --list` names them all.
+
+## Checking a QA receipt offline
+
+`sisf receipt verify` checks a QA receipt with nothing but the Owner's root public key (`cmd/sisf/cmd_receipt.go`, `internal/qa/receipt_bundle.go`). It connects to no factory, so an auditor who was handed the receipt can run it anywhere.
+
+| Flag | Meaning |
+|---|---|
+| `--root-key file` | the Owner's root public key, PEM or one line of base64; required |
+| `--factory id`, `--issue owner/repo#n`, `--run id` | what the receipt must be about; required |
+| `--commit sha` | the candidate commit the receipt must name; not checked when empty |
+| `--delegation file` | the signed delegation of the receipt's key, when the input carries none |
+| `--revocations file` | the Owner's latest root-signed revocation list |
+| `--json` | print the result as JSON |
+
+The input (a file, or `-` for standard input) is what `sisf call runs.receipt` prints, its `output` object, or a bare receipt with `--delegation`. The receipt is accepted only when the delegation is signed by the root key for that factory and names the receipt's key as the supervisor's QA-receipt key, the signature covers every field, the key was inside its delegated window at the receipt's issue time and is not on the revocation list, and the receipt names the factory, issue, run and (when given) commit asked for. It exits 0 on success and 1 on any refusal. The verdict, reason and candidate factoryd stores beside the receipt are not signed and are not shown.
+
+The key is judged as of the receipt's issue time, so a receipt stays verifiable after its week-long key has expired. A key that leaked could then sign a receipt dated inside its old window; pass the Owner's latest revocation list with `--revocations` to rule that out. Without one the report says the check was not made.
+
+On a factory, the Owner fetches the bundle with `sisf call runs.receipt --input '{"issue":"owner/repo#N"}' > receipt.json` and hands it to the auditor with the root public key. The example below was run for real, on a receipt and keys made fresh by the test helper of `cmd/sisf/cmd_receipt_test.go` rather than by a factory:
+
+```text
+$ sisf receipt verify --root-key root.pub --factory acme-app --issue 'acme/app#7' --run run-1 receipt.json
+QA receipt verified: signed by a key the root key delegated, and about the run named.
+
+  root key:              ed25519:3d74518671b176003424cc61b636dee0688f8b8f7af89d62ecd6b1dffa59056e
+  signing key:           ed25519:61435a4ad692488de98cd6e489f1becff426839b6ee7c52b5986ea6d83c9416b
+  key delegation:        qa_receipt held by supervisor, valid 2026-11-13T07:04:14Z to 2026-11-20T07:04:14Z
+  key judged at:         2026-11-13T07:05:14Z (the receipt's issue time)
+  revocations:           not checked (no --revocations list given)
+
+Signed fields:
+  factory:               acme-app
+  issue:                 acme/app#7
+  run:                   run-1
+  evaluator attempt:     1
+  candidate commit:      cccccccccccccccccccccccccccccccccccccccc
+  candidate digest:      sha256:1111111111111111111111111111111111111111111111111111111111111111
+  suite digest:          sha256:3333333333333333333333333333333333333333333333333333333333333333
+  baseline commit:       bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  policy commit:         dddddddddddddddddddddddddddddddddddddddd
+  qa agent:              agent:qa on openai/mid
+  coding agent:          agent:coder on anthropic/mid
+  same model route:      false
+  issued:                2026-11-13T07:05:14Z
+  expires:               2026-11-14T07:05:14Z (still valid)
+  hard gates:            all passed
+  score:                 28
+
+Checks:
+  hard_gate  tests                        passed
+  rubric     correctness                  passed 28/30
+$ sisf receipt verify --root-key root.pub --factory acme-app --issue 'acme/app#7' --run run-2 receipt.json
+sisf: GUARD_FAILED: the QA receipt was issued for another issue or run
+$ sisf receipt verify --root-key root.pub --factory acme-app --issue 'acme/app#7' --run run-1 tampered.json
+sisf: SIGNATURE_INVALID: the signature does not match the payload
+```
+
+`tampered.json` is `receipt.json` with its score changed. The root public key is the one `sisf init` made, in `secrets/control/root-public-key` under the install; it is public and may be handed out, unlike `root-key.pem` beside it. A receipt stored before the supervisor kept delegations beside receipts carries none: give the delegation of its key (`delegation-qa_receipt.json` on the supervisor's trust volume, while that key has not been replaced since) with `--delegation`.
 
 ## Emergency stop
 

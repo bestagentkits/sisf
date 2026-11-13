@@ -99,6 +99,14 @@ Status meanings: **present** means the file exists in this branch and its packag
 | A flood of sign-ins, device logins or client registrations from one source pushes out its own entries, never another source's, and never locks out a new one | `internal/auth/sign_in_exhaustion_negative_test.go`, `internal/control/api/device_start_exhaustion_negative_test.go`, `internal/oauthas/client_registration_exhaustion_negative_test.go` | present |
 | When every source holds one entry, a one-per-source flood rarely evicts a person's sign-in, login request or client, because the entry dropped is picked at random among the unprotected ones | `internal/auth/login_flow_eviction_test.go` (`TestAOnePerSourceFloodRarelyEvictsAPersonsSignIn`), `internal/control/api/device_grants_eviction_test.go` (`TestAOnePerSourceFloodRarelyDropsAPersonsLoginRequest`), `internal/oauthas/dynamic_client_eviction_test.go` (`TestAOnePerSourceFloodRarelyDropsAPersonsClient`) | present |
 
+## QA receipts checked outside the factory
+
+| Behaviour | Test file | Status |
+|---|---|---|
+| A QA receipt and the root-signed delegation of its key verify with the Owner's root public key alone; a tampered receipt, another root or delegated key, a key for another purpose or factory, a revoked key, a missing delegation and a receipt for another factory, issue, run or commit are refused | `internal/qa/receipt_bundle_test.go` | present |
+| `sisf receipt verify` accepts a genuine receipt in each input form and refuses a tampered one, another root key and another run, exiting 1 | `cmd/sisf/cmd_receipt_test.go` | present |
+| The receipt the supervisor stores for a run carries its key's delegation, `runs.receipt` hands both out, and they verify with the root key alone | `tests/acceptance/qa_receipt_outside_verification_test.go`, `cmd/supervisor/delegated_keys_test.go` (`TestTheDelegationOfAQAKeyIsHandedOut`), `internal/actions/runactions/run_receipt_test.go` | present |
+
 ## Additional security requirements (brief §7)
 
 | # | Requirement | Test file | Status |
