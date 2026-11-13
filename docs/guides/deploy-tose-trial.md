@@ -2,7 +2,7 @@
 
 How to host a trial SISF factory on TOSE, a container platform that runs each workload as a hardened Kubernetes pod. This trial proves that the factory installs, starts and answers its health check on Linux. It is not a production install, and in this release it cannot process real issues on TOSE; see [What TOSE cannot provide](#what-tose-cannot-provide). The trial serves only `bestagentkits/sisf-sandbox`.
 
-**Status, 2026-11-13: not yet run on TOSE.** No TOSE installation exists. Only step 1 below was executed, on Linux (arm64) in a local container under the limits of an unprivileged pod (`--cap-drop ALL --security-opt no-new-privileges`, `--cpus 2 --memory 4g`). Steps 2 to 5 were not run: pushing the image was refused because no registry credential with `write:packages` was available. The plan's blockers on TOSE (image scan, wallet, pulling a private image) are unchecked. The manifest was only validated by TOSE.
+**Status, 2026-11-13: not yet running on TOSE.** No TOSE installation exists. Step 1 was run on Linux (arm64) in a local container under the limits of an unprivileged pod (`--cap-drop ALL --security-opt no-new-privileges`, `--cpus 2 --memory 4g`). Step 2 was run: the image was built for `linux/amd64` from a clean export of `origin/main` at `f02dbf8`, audited (below) and pushed as `docker.io/digitop/sisf-trial:trial-f02dbf8`, digest `sha256:fde6452f916cd2c067b2703e078c4d557e3757be1825e7d5605df38281b6f172`, which `template.yaml` pins. Docker Hub created that repository as private, and an anonymous pull is refused (401), so TOSE cannot pull it yet. Steps 4 and 5 wait until the repository is made public.
 
 The deploy configuration is in [`deploy/tose/`](../../deploy/tose/): the image (`Dockerfile`), its entry point (`entrypoint.sh`), the proxy that publishes the health answer (`nginx.conf`) and the TOSE template manifest (`template.yaml`).
 
@@ -41,7 +41,7 @@ Measured in the trial image on Linux with no Docker and all capabilities dropped
 You need:
 
 - Docker with `buildx` on the machine that builds the image.
-- A registry credential that may push the image, for example a GitHub token with `write:packages` for `ghcr.io/bestagentkits`, and either a public package or a registry credential added to the TOSE workspace for a private one.
+- A registry login that may push the image, and a **public** repository for it: a template names no registry credential, so TOSE pulls anonymously. A new Docker Hub or GitHub Container Registry repository is private by default; make it public before planning, and check with an anonymous pull. Pushing to `ghcr.io` needs a token with `write:packages`.
 - An owner or admin of the TOSE workspace to approve the plan in the TOSE dashboard. Every TOSE change is approved there by a person.
 No GitHub, Claude or Codex credential is used: no agent runs on TOSE in this release. On a host with Docker, a Standalone factory uses an existing Claude or Codex CLI login through `--agent-home` and `--qa-home` ([real agents](install.md#real-agents-in-standalone)).
 
@@ -62,13 +62,16 @@ No GitHub, Claude or Codex credential is used: no agent runs on TOSE in this rel
 2. **Build and push the image for the cluster's platform** to a public repository, then note its digest:
 
    ```sh
+   git archive origin/main | tar -x -C <empty dir>    # clean context: no VCS data, no local files
    docker buildx build --platform linux/amd64 -f deploy/tose/Dockerfile \
-     --build-arg SISF_COMMIT=$(git rev-parse HEAD) \
-     -t ghcr.io/bestagentkits/sisf-trial:<commit> --push .
-   docker buildx imagetools inspect ghcr.io/bestagentkits/sisf-trial:<commit>
+     --build-arg SISF_VERSION=trial-<commit> --build-arg SISF_COMMIT=<full commit> \
+     -t <registry>/<namespace>/sisf-trial:trial-<commit> --load <empty dir>
+   docker push <registry>/<namespace>/sisf-trial:trial-<commit>   # prints the digest
    ```
 
-3. **Pin the digest in the manifest.** Replace the placeholder digest in `deploy/tose/template.yaml` with the pushed one. The manifest asks for 2 cores, 4 GiB, a 10 GiB volume at `/data`, a readiness check `GET /healthz` on port 8080 and the optional secret `GH_TOKEN`.
+   Tag it as a trial, never `latest` or a release tag. Before pushing, check that the image holds no dotenv file, `.claude` directory, VCS directory, git or registry credential, private key or host-specific path. On 2026-11-13 the only matches in the image were test fixtures and plan notes of the public source tree; the home directory held only the Go build cache.
+
+3. **Pin the digest in the manifest.** Put the image reference and the pushed digest in `deploy/tose/template.yaml`. The manifest asks for 2 cores, 4 GiB, a 10 GiB volume at `/data` and a readiness check `GET /healthz` on port 8080, and declares no secret.
 
 4. **Store, publish and plan the template** with the TOSE tools: `validate_template`, `create_template_draft`, `publish_template` with the reviewed manifest hash, then `plan_template_deployment` with `definition: sisf-trial` and the name `sisf-trial`. The plan creates nothing; read its blockers and its hourly cost ceiling.
 
@@ -89,5 +92,5 @@ No GitHub, Claude or Codex credential is used: no agent runs on TOSE in this rel
 
 1. Delete the installation in the TOSE dashboard (or `tose template delete sisf-trial` with a valid API key). This removes the workload, its volume and the install on it, including its secrets and signing keys.
 2. Delete the `sisf-trial` template definition from the workspace registry, if it is no longer wanted.
-3. Delete the image package `sisf-trial` from the registry.
+3. Delete the image repository `sisf-trial` from the registry (`docker.io/digitop/sisf-trial` for the 2026-11-13 trial).
 4. Locally: `docker rm -f sisf-trial && docker volume rm sisf-trial-data`.
