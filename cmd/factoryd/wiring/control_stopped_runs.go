@@ -203,24 +203,24 @@ func runRecordOf(ctx context.Context, tx state.Tx, record core.StateRecord) (*di
 // lifecycle record whose issue is being blocked. The reservation is the one
 // the run's claim made, derived from that run's ID, never the one the
 // dispatcher's record names: that record is the agent zone's, so it is not
-// trusted, and it may be missing or name another run. Whether the run had
-// usage without a reported cost, and its reported cost, are read from the
-// dispatcher's record of runID, when there is one; without one the run
-// counts as having neither. A record naming another reservation is returned as
+// trusted, and it may be missing or name another run. What the run spent is
+// read from its rows in the ledger (see dispatcher.CloseReservationOfRun);
+// the dispatcher's record of runID, when there is one, only says whether an
+// attempt stated no cost, which can raise the charge and never lower it.
+// A record naming another reservation is returned as
 // refused, and so is a missing reservation the record claims; the block
 // still goes on. Any other failure fails the block, which the next pass
 // retries.
 func (c *Control) closeStoppedReservation(ctx context.Context, tx state.Tx, runID core.RunID, run *dispatcher.RunRecord) (refused error, err error) {
 	own := budget.RunReservationID(runID)
-	var spend dispatcher.RunSpend
-	claimed := ""
+	unpriced, claimed := false, ""
 	if run != nil && run.RunID == runID {
-		spend, claimed = run.Spend, run.ReservationID
+		unpriced, claimed = run.Spend.Unpriced, run.ReservationID
 	}
 	if claimed != "" && claimed != own {
 		refused = core.NewError(core.CodeTampered, "the record of run "+string(runID)+" names reservation "+claimed+", not its own "+own)
 	}
-	err = dispatcher.CloseReservationOfRun(ctx, c.budget, tx, runID, own, spend)
+	err = dispatcher.CloseReservationOfRun(ctx, c.budget, tx, runID, own, unpriced)
 	switch {
 	case core.HasCode(err, core.CodeNotFound):
 		if refused == nil && claimed != "" {

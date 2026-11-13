@@ -169,6 +169,30 @@ func (t *tx) BudgetTotals(ctx context.Context, since time.Time) (core.BudgetTota
 	return totals, nil
 }
 
+// RunUsage sums the usage of run in the ledger, whenever it was recorded.
+// A store whose zone may not read the ledger refuses before any statement
+// runs, so a PostgreSQL transaction is never aborted by the read.
+func (t *tx) RunUsage(ctx context.Context, run core.RunID) (core.RunUsage, error) {
+	if err := t.reads(tableUsage); err != nil {
+		return core.RunUsage{}, err
+	}
+	var (
+		u              core.RunUsage
+		cost           int64
+		costUnreported int64
+	)
+	// The token counts are compared one by one: their sum may not fit in a
+	// BIGINT, which PostgreSQL refuses to compute.
+	if err := t.q.row(ctx, `SELECT CAST(COUNT(*) AS BIGINT), CAST(COALESCE(SUM(cost), 0) AS BIGINT),
+		CAST(COALESCE(SUM(CASE WHEN verified = ? AND cost = 0 AND (input_tokens > 0 OR output_tokens > 0) THEN 1 ELSE 0 END), 0) AS BIGINT)
+		FROM usage_ledger WHERE factory_id = ? AND run_id = ?`,
+		false, string(t.store.factory), string(run)).Scan(&u.Entries, &cost, &costUnreported); err != nil {
+		return core.RunUsage{}, t.store.dialect.failure("sum the usage of a run", err)
+	}
+	u.Cost, u.CostUnreported = core.Micros(cost), costUnreported > 0
+	return u, nil
+}
+
 // ownFactory fills in the factory of the store when the caller left it out
 // and refuses a row that names another factory.
 func (t *tx) ownFactory(id *core.FactoryID) error {

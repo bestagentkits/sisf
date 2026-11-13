@@ -54,7 +54,8 @@ func statusAfter(t *testing.T, db *sqlstoretest.Database, settings budget.Settin
 
 // bookRunWithoutACost reserves estimate for run 1, books an attempt whose
 // agent reported tokens and no cost as the dispatcher books one, and closes
-// the run's reservation as the factory closes it.
+// the run's reservation as the factory closes it. The run's record claims
+// nothing: the ledger alone shows that the usage stated no cost.
 func bookRunWithoutACost(ctx context.Context, gate *budget.Gate, tx state.Tx, estimate core.Micros) error {
 	req := request(1, estimate)
 	req.FactoryID = sqlstoretest.Factory
@@ -67,9 +68,7 @@ func bookRunWithoutACost(ctx context.Context, gate *budget.Gate, tx state.Tx, es
 	if err := tx.AppendUsage(ctx, u); err != nil {
 		return err
 	}
-	var spend dispatcher.RunSpend
-	spend.Add([]core.Usage{u}, true)
-	return dispatcher.CloseReservationOfRun(ctx, gate, tx, r.RunID, r.ID, spend)
+	return dispatcher.CloseReservationOfRun(ctx, gate, tx, r.RunID, r.ID, false)
 }
 
 // unpricedWarning is the one warning about usage without a reported cost.

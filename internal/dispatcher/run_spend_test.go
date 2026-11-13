@@ -81,28 +81,51 @@ func TestAnAttemptThatReportsNoCostLeavesTheRunUnpriced(t *testing.T) {
 	}
 }
 
+// booked is one usage row of a run in the ledger before its close.
+type booked struct {
+	run    core.RunID
+	cost   core.Micros
+	tokens bool
+}
+
 // A run that will start no more coding attempts gives its reservation up.
-// When all of its work was priced the reservation is released and the
-// booked usage stands; when some was not, the part of the Owner's estimate
-// the reported cost does not cover is booked as an unverified estimate and
-// the reservation is settled. A capped reservation is never pushed over its
-// amount, so closing never suspends it. A reservation already closed is
-// left as it is.
+// What it spent is read from its rows in the ledger, never from the agent
+// zone's record. When all of its work was priced the reservation is
+// released and the booked usage stands; when some was not, as the ledger
+// shows or as the run's records claim, the part of the Owner's estimate the
+// booked cost does not cover is booked as an unverified estimate and the
+// reservation is settled. A claim can only raise the charge: a run whose
+// record is missing or says nothing is still charged for the unpriced usage
+// the ledger shows, and only for what its booked cost does not cover. Usage
+// of another run counts for nothing. A capped reservation is never pushed
+// over its amount, so closing never suspends it. A reservation already
+// closed is left as it is.
 func TestClosingARunsReservation(t *testing.T) {
 	t.Parallel()
 	const amount = core.Micros(1_000_000)
 	for name, c := range map[string]struct {
 		status     core.ReservationStatus
-		reported   core.Micros
-		unpriced   bool
+		rows       []booked
+		claimed    bool
 		wantStatus core.ReservationStatus
-		wantBooked core.Micros
+		wantSpent  core.Micros
 	}{
-		"every attempt priced":           {core.ReservationHeld, 300_000, false, core.ReservationReleased, 0},
-		"some work unpriced":             {core.ReservationHeld, 300_000, true, core.ReservationSettled, 700_000},
-		"unpriced but reported in full":  {core.ReservationHeld, 1_200_000, true, core.ReservationReleased, 0},
-		"already settled":                {core.ReservationSettled, 0, true, core.ReservationSettled, 0},
-		"already released, still priced": {core.ReservationReleased, 0, false, core.ReservationReleased, 0},
+		"every attempt priced":           {core.ReservationHeld, []booked{{"run-1", 300_000, true}}, false, core.ReservationReleased, 300_000},
+		"record says some work unpriced": {core.ReservationHeld, []booked{{"run-1", 300_000, true}}, true, core.ReservationSettled, amount},
+		"ledger shows work unpriced, record hides it": {core.ReservationHeld,
+			[]booked{{"run-1", 300_000, true}, {"run-1", 0, true}}, false, core.ReservationSettled, amount},
+		"no record, priced usage booked": {core.ReservationHeld, []booked{{"run-1", 300_000, true}}, false, core.ReservationReleased, 300_000},
+		"no record, part of the usage unpriced": {core.ReservationHeld,
+			[]booked{{"run-1", 300_000, true}, {"run-1", 0, true}}, false, core.ReservationSettled, amount},
+		"unpriced but booked in full": {core.ReservationHeld,
+			[]booked{{"run-1", 1_200_000, true}, {"run-1", 0, true}}, true, core.ReservationReleased, 1_200_000},
+		"nothing booked, record says unpriced": {core.ReservationHeld, nil, true, core.ReservationSettled, amount},
+		"another run's usage counts for nothing": {core.ReservationHeld,
+			[]booked{{"run-2", 1_200_000, true}}, true, core.ReservationSettled, 1_200_000 + amount},
+		"another run's unpriced usage counts for nothing": {core.ReservationHeld,
+			[]booked{{"run-2", 0, true}}, false, core.ReservationReleased, 0},
+		"already settled":                {core.ReservationSettled, nil, true, core.ReservationSettled, 0},
+		"already released, still priced": {core.ReservationReleased, nil, false, core.ReservationReleased, 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -116,7 +139,16 @@ func TestClosingARunsReservation(t *testing.T) {
 						Mode: core.BudgetCapped, Amount: amount, Status: c.status, IdempotencyKey: "claim/run-1", CreatedAt: f.clock.Now()}); err != nil {
 						return err
 					}
-					return dispatcher.CloseReservationOfRun(ctx, gate, tx, "run-1", "res-1", dispatcher.RunSpend{ReportedCost: c.reported, Unpriced: c.unpriced})
+					for _, row := range c.rows {
+						u := core.Usage{FactoryID: sqlstoretest.Factory, IssueID: issue, RunID: row.run, Step: core.StepCoding, Cost: row.cost}
+						if row.tokens {
+							u.InputTokens, u.OutputTokens = 100, 20
+						}
+						if err := tx.AppendUsage(ctx, u); err != nil {
+							return err
+						}
+					}
+					return dispatcher.CloseReservationOfRun(ctx, gate, tx, "run-1", "res-1", c.claimed)
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -124,8 +156,66 @@ func TestClosingARunsReservation(t *testing.T) {
 				if got := f.reservation("res-1").Status; got != c.wantStatus {
 					t.Errorf("the reservation is %s, want %s", got, c.wantStatus)
 				}
-				if totals := f.totals(); totals.SpentUnverified != c.wantBooked || totals.SpentVerified != 0 {
-					t.Errorf("closing booked %+v, want %d unverified", totals, c.wantBooked)
+				if totals := f.totals(); totals.SpentUnverified != c.wantSpent || totals.SpentVerified != 0 {
+					t.Errorf("the ledger shows %+v after the close, want %d unverified", totals, c.wantSpent)
+				}
+			})
+		})
+	}
+}
+
+// unreadableLedger is a transaction whose zone may append to the ledger but
+// not read it; reads counts how often the run's usage was asked for.
+type unreadableLedger struct {
+	state.Tx
+	reads *int
+}
+
+func (l unreadableLedger) RunUsage(context.Context, core.RunID) (core.RunUsage, error) {
+	*l.reads++
+	return core.RunUsage{}, core.NewError(core.CodePermissionDenied, "this zone may not read the ledger")
+}
+
+// A reservation of no amount is released without reading the ledger. A
+// ledger the closing zone may not read does not fail the close and never
+// lets the agent zone's figure decide: the whole amount is charged as an
+// unverified estimate.
+func TestClosingARunsReservationWithoutReadingTheLedger(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]struct {
+		amount     core.Micros
+		wantReads  int
+		wantStatus core.ReservationStatus
+		wantSpent  core.Micros
+	}{
+		"nothing reserved":  {0, 0, core.ReservationReleased, 0},
+		"ledger unreadable": {1_000_000, 1, core.ReservationSettled, 1_000_000},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+				f := newFixture(t, db)
+				issue := core.IssueRef{Owner: "acme", Repo: "app", Number: 1}
+				gate := budget.NewGate(budget.Config{Clock: f.clock})
+				reads := 0
+				err := f.store.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
+					if err := tx.PutReservation(ctx, core.Reservation{ID: "res-1", FactoryID: sqlstoretest.Factory, IssueID: issue, RunID: "run-1",
+						Mode: core.BudgetUnlimited, Amount: c.amount, Status: core.ReservationHeld, IdempotencyKey: "claim/run-1", CreatedAt: f.clock.Now()}); err != nil {
+						return err
+					}
+					return dispatcher.CloseReservationOfRun(ctx, gate, unreadableLedger{Tx: tx, reads: &reads}, "run-1", "res-1", false)
+				})
+				if err != nil {
+					t.Fatalf("closing failed: %v", err)
+				}
+				if reads != c.wantReads {
+					t.Errorf("the ledger was read %d times, want %d", reads, c.wantReads)
+				}
+				if got := f.reservation("res-1").Status; got != c.wantStatus {
+					t.Errorf("the reservation is %s, want %s", got, c.wantStatus)
+				}
+				if totals := f.totals(); totals.SpentUnverified != c.wantSpent {
+					t.Errorf("the ledger shows %+v, want %d unverified", totals, c.wantSpent)
 				}
 			})
 		})

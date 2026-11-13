@@ -258,7 +258,7 @@ func (d *Dispatcher) exhaust(ctx context.Context, r *activeRun, version int64, r
 // spend nothing more, and gives up its issue lease.
 func (d *Dispatcher) stopRun(ctx context.Context, tx state.Tx, run *RunRecord, lease state.Lease) error {
 	run.Status, run.Agent = RunExhausted, nil
-	if err := CloseReservationOfRun(ctx, d.cfg.Budget, tx, run.RunID, run.ReservationID, run.Spend); err != nil {
+	if err := CloseReservationOfRun(ctx, d.cfg.Budget, tx, run.RunID, run.ReservationID, run.Spend.Unpriced); err != nil {
 		return err
 	}
 	return releaseIssueLease(ctx, tx, lease)

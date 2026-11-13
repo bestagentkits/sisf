@@ -137,6 +137,25 @@ type BudgetLedger interface {
 	AppendUsage(ctx context.Context, u Usage) error
 	// BudgetTotals sums reservations still held and usage recorded since the instant.
 	BudgetTotals(ctx context.Context, since time.Time) (BudgetTotals, error)
+	// RunUsage sums the usage recorded for one run, whenever it was
+	// recorded. A ledger the caller may append to but not read returns
+	// PERMISSION_DENIED.
+	RunUsage(ctx context.Context, run RunID) (RunUsage, error)
+}
+
+// RunUsage is what the ledger holds for one run. It is the only spend a run
+// is closed with: the ledger is append-only, so whatever lowers what is
+// still charged at the close is itself booked spending, while the
+// dispatcher's record of the run belongs to the agent zone and can be
+// rewritten.
+type RunUsage struct {
+	// Cost sums every cost booked for the run, verified or not.
+	Cost Micros `json:"cost"`
+	// CostUnreported is set when some usage of the run counted tokens and
+	// stated no cost (see Usage.CostUnreported).
+	CostUnreported bool `json:"cost_unreported"`
+	// Entries counts the usage records of the run.
+	Entries int64 `json:"entries"`
 }
 
 // BudgetGate decides whether a run may spend. It is consulted before a claim
