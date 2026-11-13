@@ -6,3 +6,4 @@ og-source.html
 .gitignore
 .DS_Store
 ._*
+https-redirect-worker.js
