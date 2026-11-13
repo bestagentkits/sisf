@@ -1,0 +1,5 @@
+# Pinned advisory snapshot for the trial: kind slug first-fixed-version id severity.
+# Every pinned version below first-fixed-version is reported. Refreshed by
+# the Owner, never by a candidate; WPSCAN_API_TOKEN was not available, so this
+# is a hand-pinned snapshot of public advisories.
+plugin contact-form-7 5.3.2 CVE-2020-35489 critical
