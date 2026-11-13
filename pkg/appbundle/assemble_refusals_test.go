@@ -157,8 +157,10 @@ func TestAssembleRefusesBadInput(t *testing.T) {
 		"source from absolute": {func(in *Input) {
 			in.Bundle.Sources = []managedapp.Source{{From: "/etc/passwd", To: "x"}}
 		}, "absolute"},
-		"missing archive": {func(in *Input) { in.Fetcher = &fakeFetcher{} }, "no archive"},
-		"lock is a dir":   {func(in *Input) { in.Bundle.Lock = "plugins" }, "not a regular file"},
+		"mountpoint climbs":   {func(in *Input) { in.Mountpoints = []string{"../uploads"} }, "clean relative"},
+		"mountpoint absolute": {func(in *Input) { in.Mountpoints = []string{"/var/www/html/x"} }, "clean relative"},
+		"missing archive":     {func(in *Input) { in.Fetcher = &fakeFetcher{} }, "no archive"},
+		"lock is a dir":       {func(in *Input) { in.Bundle.Lock = "plugins" }, "not a regular file"},
 		"oversized download": {func(in *Input) {
 			f := in.Fetcher.(*fakeFetcher)
 			f.files["https://downloads.wordpress.org/release/wordpress-7.0.4.zip"] = make([]byte, in.Limits.MaxTotalBytes+1)

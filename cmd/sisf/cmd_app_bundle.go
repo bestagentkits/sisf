@@ -83,6 +83,8 @@ func runAppBundle(ctx context.Context, env *Env, args []string) error {
 		CacheDir:   cache,
 		OutputPath: f.out,
 		Limits:     bundleLimits,
+		// Data volumes mounted inside the bundle need their mountpoints in it.
+		Mountpoints: spec.BundleMountpoints(),
 	})
 	if err != nil {
 		return err

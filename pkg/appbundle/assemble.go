@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/bestagentkits/sisf/pkg/managedapp"
@@ -26,6 +27,10 @@ type Input struct {
 	// OutputPath is where the bundle tar is written.
 	OutputPath string
 	Limits     Limits
+	// Mountpoints are directories, relative to the bundle root, that a data
+	// volume is mounted on. The bundle is mounted read-only, so the runtime
+	// cannot create them; each is made empty if no archive or source did.
+	Mountpoints []string
 }
 
 // Result describes a bundle tar Assemble wrote.
@@ -111,6 +116,14 @@ func buildTree(ctx context.Context, in Input, repo, stage *os.Root, lock Lock) e
 		}
 		if err := copySource(repo, stage, src, b); err != nil {
 			return err
+		}
+	}
+	for _, m := range in.Mountpoints {
+		if !filepath.IsLocal(m) || path.Clean(m) != m {
+			return fmt.Errorf("mountpoint %q is not a clean relative path", m)
+		}
+		if err := stage.MkdirAll(m, 0o755); err != nil {
+			return fmt.Errorf("mountpoint %s: %w", m, err)
 		}
 	}
 	return nil

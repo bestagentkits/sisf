@@ -37,6 +37,9 @@ func TestTheWooCommerceExampleAdoptsAsAManagedApplication(t *testing.T) {
 	if len(s.Data) != 1 || s.Data[0].Name != "uploads" || s.Data[0].Owner != "33:33" {
 		t.Fatalf("data: %+v", s.Data)
 	}
+	if m := s.BundleMountpoints(); len(m) != 1 || m[0] != "wp-content/uploads" {
+		t.Fatalf("mountpoints: %v", m)
+	}
 	if len(s.Dependencies) != 1 || s.Dependencies[0].Name != "db" || len(s.Dependencies[0].Backup) == 0 {
 		t.Fatalf("dependencies: %+v", s.Dependencies)
 	}

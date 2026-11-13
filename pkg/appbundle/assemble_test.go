@@ -1,6 +1,7 @@
 package appbundle
 
 import (
+	"archive/tar"
 	"context"
 	"errors"
 	"os"
@@ -163,4 +164,19 @@ func TestAssembleHonoursCancellation(t *testing.T) {
 	if _, err := Assemble(ctx, s.in); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want a deadline error", err)
 	}
+}
+
+// A data volume mounted inside the read-only bundle needs its mountpoint
+// in the bundle: the runtime cannot create it.
+func TestAssembleMakesTheMountpointsOfDataVolumes(t *testing.T) {
+	t.Parallel()
+	s := newScenario(t)
+	s.in.Mountpoints = []string{"wp-content/uploads"}
+	assemble(t, s)
+	for _, h := range tarHeaders(t, s.in.OutputPath) {
+		if h.Name == "wp-content/uploads/" && h.Typeflag == tar.TypeDir {
+			return
+		}
+	}
+	t.Fatal("the bundle has no wp-content/uploads/ directory")
 }

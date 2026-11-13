@@ -259,3 +259,17 @@ func compact(sorted []string) []string {
 	}
 	return out
 }
+
+// BundleMountpoints are the data volume targets inside the bundle's mount,
+// relative to it: the bundle must hold these directories, since it is
+// mounted read-only and the runtime cannot create them.
+func (s *Spec) BundleMountpoints() []string {
+	var out []string
+	mount := strings.TrimRight(s.Bundle.Mount, "/") + "/"
+	for _, v := range s.Data {
+		if rel, ok := strings.CutPrefix(v.Target, mount); ok && rel != "" {
+			out = append(out, strings.TrimRight(rel, "/"))
+		}
+	}
+	return out
+}
