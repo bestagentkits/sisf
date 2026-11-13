@@ -104,8 +104,10 @@ func TestTheAttemptLimitStopsARunWithAnUnlimitedBudget(t *testing.T) {
 			t.Fatalf("the run was not stopped after three attempts: %+v", record)
 		case record.Failures[1].Code != core.CodeUnavailable:
 			t.Errorf("the crashed attempt was recorded as %s", record.Failures[1].Code)
-		case f.reservation(record.ReservationID).Status != core.ReservationReleased:
-			t.Errorf("the stopped run kept its reservation")
+		case f.reservation(record.ReservationID).Status != core.ReservationHeld:
+			// The control plane closes it when it blocks the issue; the agent
+			// zone changes no reservation.
+			t.Errorf("the dispatcher closed the stopped run's reservation itself")
 		case !f.issueLeaseIsFree(issue):
 			t.Errorf("the stopped run kept its issue lease")
 		}

@@ -32,12 +32,12 @@ const reservationFunction = "sisf_reservation_run"
 // does. The constraints are added NOT VALID: they hold every row written from
 // now on, and a row an earlier release let in does not stop the migration.
 //
-// What the database does not hold: a zone role that may write reservations
-// may still settle, suspend or release a held one along reservationMoves,
-// whether or not its run has ended. The agent zone needs the move: its
-// dispatcher closes the reservation of a run that used every attempt
-// (Dispatcher.stopRun in internal/dispatcher/supervise.go). A released or settled reservation is no longer counted as
-// held. Binding that move to the end of the run is not done here.
+// The agent zone's role is granted no update of a reservation at all
+// (zonePrivileges): it makes the reservation of its claim and the control
+// plane and the supervisor close it, so a stolen agent credential cannot
+// close a live run's reservation early. A role that may update one, the
+// control zone's, may still close a held reservation along
+// reservationMoves whether or not its run has ended.
 //
 // The database scopes no table by factory, since a zone role is granted per
 // schema and not per factory; the store reads and writes only the rows of

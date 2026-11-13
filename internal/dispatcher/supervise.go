@@ -254,13 +254,12 @@ func (d *Dispatcher) exhaust(ctx context.Context, r *activeRun, version int64, r
 	return nil
 }
 
-// stopRun marks a run exhausted, closes its reservation, since it will
-// spend nothing more, and gives up its issue lease.
+// stopRun marks a run exhausted and gives up its issue lease. It leaves the
+// run's reservation held: the agent zone changes no reservation, and the
+// control plane closes it in the step that blocks the stopped run's issue
+// (blockStoppedRuns in cmd/factoryd/wiring).
 func (d *Dispatcher) stopRun(ctx context.Context, tx state.Tx, run *RunRecord, lease state.Lease) error {
 	run.Status, run.Agent = RunExhausted, nil
-	if err := CloseReservationOfRun(ctx, d.cfg.Budget, tx, run.RunID, run.ReservationID, run.Spend); err != nil {
-		return err
-	}
 	return releaseIssueLease(ctx, tx, lease)
 }
 

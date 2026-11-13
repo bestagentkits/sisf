@@ -175,7 +175,8 @@ $sisf_migration$;
 // journal row of a step to the record it writes, pairs every record write
 // with that row, takes the submission of a candidate from the agent zone,
 // holds the control zone off the agent zone's key prefixes, and puts the
-// reservations and the usage ledger under budgetRowRules. It writes the
+// reservations and the usage ledger under budgetRowRules, and takes from the
+// agent zone's role the update of a reservation. It writes the
 // record trigger and the zones' policies afresh (recordStepScript), which
 // carries the new conditions on the journal and the agent zone's narrower
 // states.
@@ -188,5 +189,46 @@ func storeGatesScript() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return steps + recordJournalTrigger() + budget, nil
+	revokes, err := withdrawnPrivilegesScript(tableReservations)
+	if err != nil {
+		return "", err
+	}
+	return steps + recordJournalTrigger() + budget + revokes, nil
+}
+
+// withdrawnPrivilegesScript is the PostgreSQL script that takes from each
+// zone's role the privileges on table that zonePrivileges no longer grants
+// it, as the agent zone's update of a reservation, which an earlier release
+// granted. As in usageLedgerPolicyScript, it finds a zone's role as the one
+// its read policy on the records names, and leaves a zone whose role was
+// never granted as it is; granting revokes every privilege before it grants.
+func withdrawnPrivilegesScript(table string) (string, error) {
+	var script strings.Builder
+	for _, zone := range core.Zones() {
+		granted := zonePrivileges[zone][table]
+		withdrawn := (canSelect | canInsert | canUpdate | canDelete) &^ granted
+		if granted == 0 || withdrawn == 0 {
+			continue
+		}
+		if zonePrivileges[zone][tableRecords]&canSelect == 0 {
+			return "", core.NewError(core.CodeInternal,
+				"the role of the "+string(zone)+" zone cannot be found from a policy on the records")
+		}
+		script.WriteString(`DO $sisf_migration$
+DECLARE
+	holders text;
+BEGIN
+	SELECT string_agg(quote_ident(holder::text), ', ') INTO holders
+	FROM pg_policies, unnest(roles) AS holder
+	WHERE schemaname = current_schema() AND tablename = '` + tableRecords + `'
+		AND policyname = '` + policyName(zone, "SELECT") + `' AND holder <> 'public';
+	IF holders IS NULL THEN
+		RETURN;
+	END IF;
+	EXECUTE 'REVOKE ` + strings.Join(withdrawn.names(), ", ") + ` ON ` + quote(table) + ` FROM ' || holders;
+END
+$sisf_migration$;
+`)
+	}
+	return script.String(), nil
 }

@@ -30,8 +30,12 @@ var reservationMoves = map[core.ReservationStatus][]core.ReservationStatus{
 // mode, amount and provider hard cap, so a rewrite cannot lower what the
 // budget counts as set aside. A change of terms and a move the list does not
 // have are refused with CONFLICT.
+//
+// Making a reservation needs the privilege to insert one and moving one the
+// privilege to update one (zonePrivileges): the agent zone makes the
+// reservation of its claim and moves none.
 func (t *tx) PutReservation(ctx context.Context, r core.Reservation) error {
-	if err := t.writes(tableReservations, canInsert|canUpdate); err != nil {
+	if err := t.writes(tableReservations, canInsert); err != nil {
 		return err
 	}
 	if err := t.ownFactory(&r.FactoryID); err != nil {
@@ -61,6 +65,9 @@ func (t *tx) PutReservation(ctx context.Context, r core.Reservation) error {
 		return t.makeReservation(ctx, r)
 	}
 	if err != nil {
+		return err
+	}
+	if err := t.writes(tableReservations, canUpdate); err != nil {
 		return err
 	}
 	switch {

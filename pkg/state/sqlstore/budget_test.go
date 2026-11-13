@@ -43,7 +43,7 @@ func totals(t *testing.T, s *sqlstore.Store, since time.Time) core.BudgetTotals 
 func TestReservationIsStoredAndUpdatedByID(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
-		s := db.Open(t, core.ZoneAgent)
+		s := db.Open(t, core.ZoneControl)
 		held := reservation("r-1", 5_000_000)
 		mustUpdate(t, s, func(tx state.Tx) error { return tx.PutReservation(ctx, held) })
 
@@ -122,7 +122,7 @@ func TestReservationCannotBeMalformedOrMovedToAnotherRun(t *testing.T) {
 func TestReservationKeepsItsTermsAndItsStatusOnlyMovesOn(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
-		s := db.Open(t, core.ZoneAgent)
+		s := db.Open(t, core.ZoneControl)
 		put := func(r core.Reservation) error {
 			return update(s, func(tx state.Tx) error { return tx.PutReservation(ctx, r) })
 		}
@@ -181,6 +181,25 @@ func TestReservationKeepsItsTermsAndItsStatusOnlyMovesOn(t *testing.T) {
 			if step.want != "" && !core.HasCode(err, step.want) {
 				t.Errorf("%s to %s: want %s, got %v", step.id, step.to, step.want, err)
 			}
+		}
+	})
+}
+
+// The agent zone makes the reservation of its claim and changes none:
+// closing a run's reservation is the control plane's and the supervisor's,
+// so a stolen agent credential cannot free money a live run set aside.
+func TestAgentZoneMakesAReservationAndChangesNone(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		agent := db.Open(t, core.ZoneAgent)
+		mustUpdate(t, agent, func(tx state.Tx) error { return tx.PutReservation(ctx, reservation("r-1", 5_000_000)) })
+		for _, status := range []core.ReservationStatus{core.ReservationSettled, core.ReservationSuspended, core.ReservationReleased} {
+			r := reservation("r-1", 5_000_000)
+			r.Status = status
+			wantCode(t, update(agent, func(tx state.Tx) error { return tx.PutReservation(ctx, r) }), core.CodePermissionDenied)
+		}
+		if got := totals(t, agent, time.Time{}); got.Reserved != 5_000_000 {
+			t.Fatalf("the agent zone changed its reservation: %+v", got)
 		}
 	})
 }

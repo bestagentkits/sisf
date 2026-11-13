@@ -147,15 +147,19 @@ func TestPostgresCommitsARecordStepOnlyWithItsJournalRow(t *testing.T) {
 	})
 }
 
-// A reservation stays the money of the run it was made for, and neither a
-// reservation nor metered usage can lower what the budget counts.
-func TestPostgresHoldsTheAgentRoleToTheReservationsAndUsageItMayWrite(t *testing.T) {
+// The agent role makes a reservation, held, and changes none: closing a
+// run's reservation is the control plane's and the supervisor's. A zone role
+// that may change a reservation keeps it the money of the run it was made
+// for, on the terms it was made with, and only moves its status on; and
+// neither a reservation nor metered usage can lower what the budget counts.
+func TestPostgresHoldsTheZoneRolesToTheReservationsAndUsageTheyMayWrite(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		logins := db.ZoneLogins(t)
 		agentStore := db.OpenWith(t, logins.DSN[core.ZoneAgent], core.ZoneAgent)
 		mustUpdate(t, agentStore, func(tx state.Tx) error { return tx.PutReservation(ctx, reservation("r-1", 500)) })
 		agent := rawLogin(t, logins.DSN[core.ZoneAgent])
+		control := rawLogin(t, logins.DSN[core.ZoneControl])
 		reservationOf := func(set string) string {
 			return `UPDATE reservations SET ` + set + ` WHERE factory_id = '` + string(sqlstoretest.Factory) + `' AND id = 'r-1'`
 		}
@@ -169,26 +173,38 @@ func TestPostgresHoldsTheAgentRoleToTheReservationsAndUsageItMayWrite(t *testing
 				idempotency_key, created_at) VALUES ('` + string(sqlstoretest.Factory) + `', '` + id + `', 'acme/app#7', 'run-1',
 				'` + mode + `', ` + amount + `, '` + status + `', true, '` + key + `', 1)`
 		}
-		// A reservation that changes hands or terms, one made other than
-		// held, and one whose status goes back are refused as a privilege
-		// the role does not have.
+		// The agent role closes no reservation and changes none.
 		for name, statement := range map[string]string{
-			"a reservation made settled":                     newReservation("r-5", "1", "claim-r-5", "capped", "settled"),
-			"a reservation made released":                    newReservation("r-6", "1", "claim-r-6", "capped", "released"),
-			"a reservation lowered":                          reservationOf(`amount = 0`),
-			"a negative reservation":                         reservationOf(`amount = -1`),
-			"a reservation made unlimited":                   reservationOf(`budget_mode = 'unlimited'`),
-			"a reservation that drops the provider hard cap": reservationOf(`hard_cap_enforced = false`),
-			"a reservation in no known status":               reservationOf(`status = 'forgotten'`),
-			"a reservation in no known budget mode":          reservationOf(`budget_mode = 'free'`),
-			"a reservation handed to another run":            reservationOf(`run_id = 'run-9'`),
-			"a reservation handed to another issue":          reservationOf(`issue = 'acme/app#9'`),
-			"a reservation handed to another claim":          reservationOf(`idempotency_key = 'claim-other'`),
-			"a reservation moved to another factory":         reservationOf(`factory_id = 'other'`),
-			"a reservation renamed":                          reservationOf(`id = 'r-2'`),
-			"a reservation backdated":                        reservationOf(`created_at = 0`),
+			"a reservation released by the agent role": reservationOf(`status = 'released'`),
+			"a reservation settled by the agent role":  reservationOf(`status = 'settled'`),
+			"a reservation lowered by the agent role":  reservationOf(`amount = 0`),
 		} {
 			refusedRow(t, agent, name, statement)
+		}
+		// A reservation made other than held is refused to every zone role
+		// that may make one, and a change of hands or terms or a status that
+		// goes back to the one that may change one.
+		for name, check := range map[string]struct {
+			role      *sql.DB
+			statement string
+		}{
+			"a reservation made settled":                     {agent, newReservation("r-5", "1", "claim-r-5", "capped", "settled")},
+			"a reservation made released":                    {agent, newReservation("r-6", "1", "claim-r-6", "capped", "released")},
+			"a reservation made released by control":         {control, newReservation("r-8", "1", "claim-r-8", "capped", "released")},
+			"a reservation lowered":                          {control, reservationOf(`amount = 0`)},
+			"a negative reservation":                         {control, reservationOf(`amount = -1`)},
+			"a reservation made unlimited":                   {control, reservationOf(`budget_mode = 'unlimited'`)},
+			"a reservation that drops the provider hard cap": {control, reservationOf(`hard_cap_enforced = false`)},
+			"a reservation in no known status":               {control, reservationOf(`status = 'forgotten'`)},
+			"a reservation in no known budget mode":          {control, reservationOf(`budget_mode = 'free'`)},
+			"a reservation handed to another run":            {control, reservationOf(`run_id = 'run-9'`)},
+			"a reservation handed to another issue":          {control, reservationOf(`issue = 'acme/app#9'`)},
+			"a reservation handed to another claim":          {control, reservationOf(`idempotency_key = 'claim-other'`)},
+			"a reservation moved to another factory":         {control, reservationOf(`factory_id = 'other'`)},
+			"a reservation renamed":                          {control, reservationOf(`id = 'r-2'`)},
+			"a reservation backdated":                        {control, reservationOf(`created_at = 0`)},
+		} {
+			refusedRow(t, check.role, name, check.statement)
 		}
 		// A value no store writes is refused by a constraint, for every
 		// session, the owner's as well.
@@ -212,13 +228,17 @@ func TestPostgresHoldsTheAgentRoleToTheReservationsAndUsageItMayWrite(t *testing
 				t.Errorf("the database must refuse %s by a constraint, got %v", name, err)
 			}
 		}
-		for _, allowed := range []struct{ name, statement string }{
-			{"a reservation the run is suspended on", reservationOf(`status = 'suspended'`)},
-			{"a reservation the run gives up", reservationOf(`status = 'released'`)},
-			{"usage the run reports", usage("3", "10", "20")},
+		for _, allowed := range []struct {
+			name      string
+			role      *sql.DB
+			statement string
+		}{
+			{"a reservation the run is suspended on", control, reservationOf(`status = 'suspended'`)},
+			{"a reservation the run gives up", control, reservationOf(`status = 'released'`)},
+			{"usage the run reports", agent, usage("3", "10", "20")},
 		} {
-			if _, err := agent.ExecContext(ctx, allowed.statement); err != nil {
-				t.Errorf("the agent role must be allowed %s: %v", allowed.name, err)
+			if _, err := allowed.role.ExecContext(ctx, allowed.statement); err != nil {
+				t.Errorf("the zone role must be allowed %s: %v", allowed.name, err)
 			}
 		}
 		for name, statement := range map[string]string{
@@ -226,7 +246,7 @@ func TestPostgresHoldsTheAgentRoleToTheReservationsAndUsageItMayWrite(t *testing
 			"a released reservation settled":    reservationOf(`status = 'settled'`),
 			"a released reservation suspended":  reservationOf(`status = 'suspended'`),
 		} {
-			refusedRow(t, agent, name, statement)
+			refusedRow(t, control, name, statement)
 		}
 		if got := totals(t, agentStore, time.Unix(0, 0)); got.Reserved != 0 || got.SpentUnverified != 3 {
 			t.Errorf("after the refused changes the budget counts %+v, want nothing reserved and 3 spent", got)
@@ -308,11 +328,16 @@ func TestPostgresStoreRulesMigrationUpgradesAGrantedStore(t *testing.T) {
 				USING (state IN ('Claimed', 'Developing', 'Ready'))
 				WITH CHECK (state IN ('Claimed', 'Developing', 'QAEvaluation'))`,
 			`DELETE FROM schema_migrations WHERE version > 11`,
+			`GRANT UPDATE ON reservations TO "` + agentRole + `"`,
+			`INSERT INTO reservations (factory_id, id, issue, run_id, budget_mode, amount, status, hard_cap_enforced,
+				idempotency_key, created_at) VALUES ('` + string(sqlstoretest.Factory) + `', 'r-up', 'acme/app#7', 'run-1',
+				'capped', 5, 'held', true, 'claim-r-up', 1)`,
 		} {
 			if _, err := raw.ExecContext(ctx, statement); err != nil {
 				t.Fatalf("restore the schema of migration 11: %v", err)
 			}
 		}
+		suspend := `UPDATE reservations SET status = 'suspended' WHERE factory_id = '` + string(sqlstoretest.Factory) + `' AND id = 'r-up'`
 		agent := rawLogin(t, logins.DSN[core.ZoneAgent])
 		control := rawLogin(t, logins.DSN[core.ZoneControl])
 		// The premise: the earlier schema lets forged rows in.
@@ -322,6 +347,7 @@ func TestPostgresStoreRulesMigrationUpgradesAGrantedStore(t *testing.T) {
 		}{
 			"a journal row for no record":              {agent, journalRow("acme/app#404", "Ready", "claimed", "Claimed", 1, "claim/run-1").sql()},
 			"an intake step under the agent claim key": {control, journalRow("acme/app#405", "", "issue_received", "Intake", 1, "claim/run-1").sql()},
+			"a reservation the agent role suspends":    {agent, suspend},
 			"a negative cost":                          {agent, `INSERT INTO usage_ledger (factory_id, issue, run_id, reservation_id, step, model_route, input_tokens, output_tokens, cost, verified, recorded_at) VALUES ('` + string(sqlstoretest.Factory) + `', 'acme/app#7', 'run-1', 'r-1', 'coding', '{}', 0, 0, -1, false, 1)`},
 		} {
 			if _, err := statement.role.ExecContext(ctx, statement.sql); err != nil {
@@ -345,6 +371,7 @@ func TestPostgresStoreRulesMigrationUpgradesAGrantedStore(t *testing.T) {
 		}
 		assertAgentJournalRules(t, db, agent)
 		assertControlJournalRules(t, db, control)
+		refusedRow(t, agent, "a reservation changed by the agent role after the migration", suspend)
 		owner := db.Open(t, core.ZoneControl)
 		claimed := claim(t, owner, readyRecord(t, owner, issue(61)), "worker-1", "run-1")
 		refusedAtCommit(t, agent, "a record step with no journal row",
