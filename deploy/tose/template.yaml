@@ -1,0 +1,34 @@
+# TOSE template manifest of the SISF trial factory (tose.dev/v1).
+# Replace the image digest with the digest of the pushed image of
+# deploy/tose/Dockerfile before storing it as a draft; see
+# docs/guides/deploy-tose-trial.md. The image holds no secret.
+apiVersion: tose.dev/v1
+metadata:
+  name: sisf-trial
+  version: 0.1.0
+  description: Trial SISF factory in Standalone mode; serves only bestagentkits/sisf-sandbox and publishes only its health answer.
+  category: developer-tools
+  tags: [sisf, trial]
+  license: Apache-2.0
+source:
+  oci:
+    image: ghcr.io/bestagentkits/sisf-trial@sha256:0000000000000000000000000000000000000000000000000000000000000000
+services:
+  - name: factory
+    port: 8080
+    cpu: "2"
+    memory: 4Gi
+    variables:
+      - name: GH_TOKEN
+        secret: true
+        required: false
+    storage:
+      - mountPath: /data
+        size: 10Gi
+    health:
+      readiness:
+        http:
+          path: /healthz
+      liveness:
+        tcp: {}
+      startupSeconds: 1200
