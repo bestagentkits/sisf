@@ -33,9 +33,14 @@ func insertReservation(db *sql.DB, id string, run core.RunID, amount int64, at t
 }
 
 func insertUsage(db *sql.DB, reservation string, run core.RunID, cost int64, verified bool, at time.Time) error {
+	return insertUsageOf(db, sqlstoretest.Factory, "acme/app#7", reservation, run, cost, verified, at)
+}
+
+// insertUsageOf writes a usage row of the given factory and issue.
+func insertUsageOf(db *sql.DB, factory core.FactoryID, issue, reservation string, run core.RunID, cost int64, verified bool, at time.Time) error {
 	_, err := db.ExecContext(ctx, fmt.Sprintf(`INSERT INTO usage_ledger (factory_id, issue, run_id, reservation_id, step, model_route,
-		input_tokens, output_tokens, cost, verified, recorded_at) VALUES ('%s', 'acme/app#7', '%s', '%s', 'coding', '{}', 1, 1, %d, %t, %d)`,
-		sqlstoretest.Factory, run, reservation, cost, verified, at.UnixNano()))
+		input_tokens, output_tokens, cost, verified, recorded_at) VALUES ('%s', '%s', '%s', '%s', 'coding', '{}', 1, 1, %d, %t, %d)`,
+		factory, issue, run, reservation, cost, verified, at.UnixNano()))
 	return err
 }
 
@@ -115,7 +120,15 @@ func assertBudgetRowRules(t *testing.T, db *sqlstoretest.Database, logins sqlsto
 		"the agent role books usage against another run's":  func() error { return insertUsage(agent, "r-probe", "run-2", 5, false, then) },
 		"the agent role books usage against an unknown one": func() error { return insertUsage(agent, "r-none", "run-1", 5, false, then) },
 		"the agent role books a negative cost":              func() error { return insertUsage(agent, "r-probe", "run-1", -1e18, false, then) },
-		"the control role books verified usage":             func() error { return insertUsage(control, "", "run-1", 5, true, then) },
+		// Each names the probe's reservation and run and differs in one
+		// column only, so each clause of the agent role's policy is tried.
+		"the agent role books usage of another issue": func() error {
+			return insertUsageOf(agent, sqlstoretest.Factory, "acme/app#8", "r-probe", "run-1", 5, false, then)
+		},
+		"the agent role books usage of another factory": func() error {
+			return insertUsageOf(agent, "another-factory", "acme/app#7", "r-probe", "run-1", 5, false, then)
+		},
+		"the control role books verified usage": func() error { return insertUsage(control, "", "run-1", 5, true, then) },
 	} {
 		if err := write(); err == nil {
 			t.Errorf("%s: the database let it through", name)
