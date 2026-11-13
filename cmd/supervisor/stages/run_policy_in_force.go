@@ -63,11 +63,11 @@ func (s *BuildStage) runBase(ctx context.Context, patch handoff.PatchDoc, inForc
 	if base == "" {
 		base = inForce.PolicySHA
 	}
-	err := acceptBase(ctx, s.Bases, inForce, base)
+	accepted, err := acceptBase(ctx, s.Bases, inForce, base)
 	if !core.HasCode(err, core.CodePolicyHold) {
-		return base, err
+		return accepted, err
 	}
-	superseded := core.NewError(core.CodePolicyHold, "the commit the run was coded on is not one the supervisor builds on")
+	superseded := core.NewError(core.CodePolicyHold, "the commit the run was coded on is not one the supervisor builds on now: "+messageOf(err))
 	superseded.Details = map[string]string{"reason": "policy_superseded", "base": string(base), "policy_in_force": string(inForce.PolicySHA)}
 	return "", superseded.WithCause(err)
 }

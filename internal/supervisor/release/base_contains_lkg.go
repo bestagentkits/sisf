@@ -74,6 +74,35 @@ func (p *Pipeline) CheckBaseHasLKG(ctx context.Context, unit string, base core.C
 	return refused("GitHub's comparison cannot show contains")
 }
 
+// BaseAccepter accepts the commit a verified candidate was built and
+// judged on as one it may be released on: policy.BuildBases. A base it
+// does not accept is POLICY_HOLD.
+type BaseAccepter interface {
+	Accept(ctx context.Context, base core.CommitSHA) error
+}
+
+// checkBaseAccepted refuses, for the Owner, a verified candidate whose base
+// the supervisor no longer accepts: the factory stopped building on main,
+// or the base is neither the policy revision nor a merge it followed with
+// the approved content unchanged. Nothing is deployed. One that cannot be
+// decided now waits.
+func (p *Pipeline) checkBaseAccepted(ctx context.Context, v verifiedRelease) error {
+	if p.cfg.Bases == nil {
+		return nil
+	}
+	err := p.cfg.Bases.Accept(ctx, v.receipt.BaselineSHA)
+	if !core.HasCode(err, core.CodePolicyHold) {
+		return err
+	}
+	refused := core.NewError(core.CodeApprovalRequired, "the candidate is built on "+string(v.receipt.BaselineSHA)+
+		", which the supervisor does not release on now: "+messageOf(err))
+	refused.Details = map[string]string{"base": string(v.receipt.BaselineSHA), "reason": BaseNotAccepted}
+	return refused
+}
+
+// BaseNotAccepted is the reason detail of checkBaseAccepted's refusal.
+const BaseNotAccepted = "base_not_accepted"
+
 // BaseLacksLKG is the reason detail of CheckBaseHasLKG's refusal.
 const BaseLacksLKG = "base_lacks_lkg"
 

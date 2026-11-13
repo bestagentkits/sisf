@@ -47,6 +47,11 @@ func TestALandingIsDecidedByWhatGitHubDidNotByItsAnswer(t *testing.T) {
 			if pr.State != handoff.LandingMerged || notes(w, pr) != 0 {
 				t.Fatalf("recorded %+v with %d notes", pr, notes(w, pr))
 			}
+			// The merge commit is read back from the pull request, so the
+			// commit to build on can follow it.
+			if head := mainHeadOf(t, w); landing.Commit != head || pr.MergeCommit != head {
+				t.Fatalf("the merge commit after a lost answer is %q (recorded %q), main is at %s", landing.Commit, pr.MergeCommit, head)
+			}
 		})
 		t.Run("merged before a restart, then the policy changed", func(t *testing.T) {
 			w := landingFactory(t, db, "merged then policy")
@@ -58,8 +63,12 @@ func TestALandingIsDecidedByWhatGitHubDidNotByItsAnswer(t *testing.T) {
 				t.Fatal("an unanswered merge was decided")
 			}
 			w.inForce = "3333333333333333333333333333333333333333"
-			if landing, err := w.prs.Land(ctx, w.req); err != nil || !landing.Merged || w.data.Merges() != 1 {
+			landing, err := w.prs.Land(ctx, w.req)
+			if err != nil || !landing.Merged || w.data.Merges() != 1 {
 				t.Fatalf("Land = %+v, %v after %d merges", landing, err, w.data.Merges())
+			}
+			if head := mainHeadOf(t, w); landing.Commit != head {
+				t.Fatalf("the merge commit after a restart is %q, main is at %s", landing.Commit, head)
 			}
 		})
 		t.Run("the base branch was modified", func(t *testing.T) {
@@ -267,4 +276,15 @@ func TestTheChangedPathsAreThePatchsAndGitHubsTogether(t *testing.T) {
 	if strings.Join(got, ",") != "a.go,b.go,c.go" {
 		t.Fatalf("unionPaths = %v", got)
 	}
+}
+
+// mainHeadOf is the commit the default branch of the landing world's
+// repository points at.
+func mainHeadOf(t *testing.T, w *landingWorld) core.CommitSHA {
+	t.Helper()
+	head, err := w.prs.GitHub.BranchHead(context.Background(), w.prs.Repo, w.prs.Base)
+	if err != nil || head.Validate() != nil {
+		t.Fatalf("main has no head: %q, %v", head, err)
+	}
+	return head
 }

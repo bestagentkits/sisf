@@ -102,7 +102,12 @@ type Config struct {
 	// receipt names contains the commit of its unit's LKG release; without
 	// Commits that cannot be shown, and such a candidate is refused.
 	Commits CommitComparer
-	Freeze  FreezeCheck
+	// Bases is optional; with it a candidate is released only on a base
+	// the supervisor accepts again now, the policy revision or a merge it
+	// followed with the approved content unchanged, and none while the
+	// factory stopped building on main.
+	Bases  BaseAccepter
+	Freeze FreezeCheck
 	// Publisher writes the changelog and the catalog before an issue closes.
 	Publisher Publisher
 	// Blocks keeps the record of why the pipeline blocked an issue, which

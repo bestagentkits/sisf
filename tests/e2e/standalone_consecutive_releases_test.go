@@ -20,7 +20,7 @@ const greetingPath = "examples/hello-app/main.go"
 // them: each run is built on the merge of the release before it, which the
 // supervisor followed while the foundation files stayed as approved. The
 // policy in force never moves.
-func releaseInARowWithoutTheOwner(t *testing.T, d *standaloneDeployment) {
+func releaseInARowWithoutTheOwner(t *testing.T, d releaseDeployment) {
 	t.Helper()
 	approved := policyInForce(t, d)
 	for n := 2; n <= 3; n++ {
@@ -38,57 +38,88 @@ func releaseInARowWithoutTheOwner(t *testing.T, d *standaloneDeployment) {
 }
 
 // stopUntilTheOwnerApproves changes a foundation file on main outside the
-// factory. The next release still serves and merges, but the supervisor
-// does not follow its merge: the factory stops, and an issue opened then is
-// not even claimed, so nothing is coded that could not be released. Once
-// the Owner approves a revision that contains the change, the waiting
-// issue's run is superseded as after any policy change, and the Owner's
-// retry releases it.
+// factory. The next release still serves, but the supervisor does not merge
+// it into a main whose content the Owner has not approved: its pull request
+// is left for the Owner and the factory stops. An issue opened then is not
+// even claimed, so nothing is coded that could not be released. Once the
+// Owner merged the release and approved a revision that contains the
+// change, the waiting issue's run is superseded as after any policy change,
+// and the Owner's retry releases it.
 func stopUntilTheOwnerApproves(t *testing.T, d *standaloneDeployment) {
 	t.Helper()
 	gh := d.github()
 	agents := gh.fileAt(t, gh.mainHead(t), "AGENTS.md")
-	gh.commitOnMainKeeping(t, map[string]string{"AGENTS.md": agents + "\n- Changed on main, outside the factory.\n"},
+	changed := gh.commitOnMainKeeping(t, map[string]string{"AGENTS.md": agents + "\n- Changed on main, outside the factory.\n"},
 		"Change the execution guidance outside the factory")
-	releaseNext(t, d, 4)
+	number, issue := releaseNext(t, d, 4)
+	if merged := gh.mergedCandidates(t, number); len(merged) != 0 {
+		t.Fatalf("%s was merged into a main whose foundation content the Owner has not approved: %v", issue, merged)
+	}
 	base := buildBaseOf(t, d)
-	if base.Stopped == nil || base.Stopped.Merge != gh.mainHead(t) || !strings.Contains(base.Stopped.Reason, "AGENTS.md") {
-		t.Fatalf("after a merge that carries a foundation change the commit to build on is %+v", base)
+	if base.Stopped == nil || base.Stopped.Merge != changed || !strings.Contains(base.Stopped.Reason, "AGENTS.md") {
+		t.Fatalf("after a release with an unapproved main the commit to build on is %+v", base)
 	}
 
 	setPatch(t, d, nextGreetingDiff(t, d, 5))
-	_, issue := openBug(t, d, "Greet the world once the Owner approved")
-	waitStateWithin(t, d, issue, "Ready", releaseLimit)
+	_, waiting := openBug(t, d, "Greet the world once the Owner approved")
+	waitStateWithin(t, d, waiting, "Ready", releaseLimit)
 	// The dispatcher claims a Ready issue within a few ticks; this one it
 	// must not claim while the factory is stopped.
 	quiet := time.Now().Add(20 * time.Second)
 	for time.Now().Before(quiet) {
-		if r := recordOf(t, d, issue); r.State != "Ready" || r.RunID != "" {
-			t.Fatalf("%s was taken up while the factory was stopped: %+v", issue, r)
+		if r := recordOf(t, d, waiting); r.State != "Ready" || r.RunID != "" {
+			t.Fatalf("%s was taken up while the factory was stopped: %+v", waiting, r)
 		}
 		time.Sleep(time.Second)
 	}
 
+	// The Owner merges the release the factory left open, then approves
+	// main as it stands.
+	pr := gh.openCandidate(t, number)
+	gh.must(t, http.StatusOK, "PUT", fmt.Sprintf("/repos/%s/pulls/%d/merge", gh.repo, pr), maintainer,
+		map[string]any{"merge_method": "merge", "commit_title": "The Owner merges release 4"})
 	ownerMovesBaseline(t, d, gh.mainHead(t))
-	waitStateWithin(t, d, issue, "Blocked", releaseLimit)
+	waitStateWithin(t, d, waiting, "Blocked", releaseLimit)
 	// The release is judged on users' traffic, as every release before it.
 	load := startTraffic(t, d)
-	if out, err := d.factoryd("control", "issue", "retry", "--issue", issue); err != nil {
-		t.Fatalf("the Owner's retry of %s: %v\n%s", issue, err, out)
+	if out, err := d.factoryd("control", "issue", "retry", "--issue", waiting); err != nil {
+		t.Fatalf("the Owner's retry of %s: %v\n%s", waiting, err, out)
 	}
-	waitStateWithin(t, d, issue, "Closed", releaseLimit)
+	waitStateWithin(t, d, waiting, "Closed", releaseLimit)
 	load.halt()
-	if released := awaitRelease(t, d, issue); released.Result != "closed" {
+	if released := awaitRelease(t, d, waiting); released.Result != "closed" {
 		t.Fatalf("the release after the Owner's approval ended %+v", released)
 	}
-	if got := d.candidateDigest(t, issue); servedRevision(t, d) != got {
+	if got := d.candidateDigest(t, waiting); servedRevision(t, d) != got {
 		t.Fatalf("the application does not serve %s, released after the Owner's approval", got)
 	}
 }
 
+// openCandidate is the open candidate pull request of issue number.
+func (s simGitHub) openCandidate(t *testing.T, number int) int {
+	t.Helper()
+	var pulls []struct {
+		Number int
+		Body   string
+		State  string
+		Head   struct{ Ref string }
+	}
+	out := s.must(t, http.StatusOK, "GET", "/repos/"+s.repo+"/pulls?state=open&per_page=100", "", nil)
+	if err := json.Unmarshal(out, &pulls); err != nil {
+		t.Fatal(err)
+	}
+	for _, pr := range pulls {
+		if strings.HasPrefix(pr.Head.Ref, "sisf/") && strings.Contains(pr.Body, fmt.Sprintf("Refs #%d\n", number)) {
+			return pr.Number
+		}
+	}
+	t.Fatalf("no open candidate pull request of #%d: %+v", number, pulls)
+	return 0
+}
+
 // releaseNext opens the n-th issue of the scenario and waits until it is
 // released and closed, under load, without anyone acting.
-func releaseNext(t *testing.T, d *standaloneDeployment, n int) (int, string) {
+func releaseNext(t *testing.T, d releaseDeployment, n int) (int, string) {
 	t.Helper()
 	serving := servedRevision(t, d)
 	setPatch(t, d, nextGreetingDiff(t, d, n))
@@ -117,7 +148,7 @@ func releaseNext(t *testing.T, d *standaloneDeployment, n int) (int, string) {
 
 // nextGreetingDiff is a patch of the greeting as main holds it now, so it
 // applies to the merge of the release before it.
-func nextGreetingDiff(t *testing.T, d *standaloneDeployment, n int) string {
+func nextGreetingDiff(t *testing.T, d releaseDeployment, n int) string {
 	t.Helper()
 	gh := d.github()
 	lines := strings.Split(strings.TrimSuffix(gh.fileAt(t, gh.mainHead(t), greetingPath), "\n"), "\n")
@@ -138,7 +169,7 @@ type buildBase struct {
 	} `json:"stopped"`
 }
 
-func buildBaseOf(t *testing.T, d *standaloneDeployment) buildBase {
+func buildBaseOf(t *testing.T, d deployment) buildBase {
 	t.Helper()
 	var base buildBase
 	raw := d.kv(t, "control.policy", "build-base")

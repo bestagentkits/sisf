@@ -41,11 +41,15 @@ func (g *GitData) getCommit(w http.ResponseWriter, r *http.Request) {
 	}
 	g.mu.Lock()
 	tree, ok := g.commitTree[strings.ToLower(repoName(r))+"@"+sha]
+	parents := make([]map[string]string, 0, 2)
+	for _, p := range g.parents[strings.ToLower(repoName(r))+"@"+sha] {
+		parents = append(parents, map[string]string{"sha": p})
+	}
 	g.mu.Unlock()
 	if !ok {
 		tree = sha
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sha": sha, "tree": jObject{SHA: tree}})
+	writeJSON(w, http.StatusOK, map[string]any{"sha": sha, "tree": jObject{SHA: tree}, "parents": parents})
 }
 
 // createTree answers POST /git/trees with inline file contents on top of

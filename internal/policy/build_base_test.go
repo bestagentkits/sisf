@@ -84,6 +84,20 @@ func (h *history) ChangedPaths(_ context.Context, base, head core.CommitSHA) ([]
 	return h.paths(base, head, map[core.CommitSHA]bool{}), nil
 }
 
+// CommitParents names commit's parents in the order they were added.
+func (h *history) CommitParents(_ context.Context, commit core.CommitSHA) ([]core.CommitSHA, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.down {
+		return nil, core.NewError(core.CodeUnavailable, "GitHub cannot be reached")
+	}
+	parents, ok := h.contains[commit]
+	if !ok {
+		return nil, core.NewError(core.CodeNotFound, "no such commit")
+	}
+	return parents, nil
+}
+
 // ownerOnly is the rule of the paths only the Owner merges, as the
 // supervisor passes it.
 func ownerOnly(p string) bool {
@@ -106,7 +120,7 @@ func newBaseWorld(t *testing.T) *baseWorld {
 	w.history.add(revA, nil)
 	var err error
 	w.bases, err = policy.NewBuildBases(policy.BuildBasesConfig{
-		State: w.state, Source: w.repo, Baselines: w.baselines, Commits: w.history, OwnerOnly: ownerOnly,
+		State: w.state, Source: w.repo, Baselines: w.baselines, Commits: w.history, Parents: w.history, OwnerOnly: ownerOnly,
 		Audit: w.audit, FactoryID: factory, Clock: w.clock,
 	})
 	if err != nil {
@@ -164,13 +178,13 @@ func TestTheSupervisorFollowsThreeReleasesInARowWithoutTheOwner(t *testing.T) {
 		if got := base.BaseFor(revA); got != step.merge {
 			t.Fatalf("a run of revA is pinned to %s after release %d, want %s", got, i+1, step.merge)
 		}
-		if err := w.bases.Accept(ctx, step.merge); err != nil {
+		if got, err := w.bases.Accept(ctx, step.merge); err != nil || got != step.merge {
 			t.Fatalf("the followed merge %s is not accepted to build on: %v", step.merge, err)
 		}
 	}
 	// A run pinned to an earlier merge of the chain is still judged on it.
 	for _, commit := range []core.CommitSHA{revA, merge1, merge2} {
-		if err := w.bases.Accept(ctx, commit); err != nil {
+		if got, err := w.bases.Accept(ctx, commit); err != nil || got != commit {
 			t.Fatalf("%s, coded on before the latest merge, is no longer accepted: %v", commit, err)
 		}
 	}
@@ -212,7 +226,7 @@ func TestAChangeToFoundationContentStopsTheFactoryUntilTheOwnerApproves(t *testi
 	if stop := base.StopFor(revA); stop == nil {
 		t.Fatal("runs pinned to the policy in force are not held by the stop")
 	}
-	if err := w.bases.Accept(ctx, merge2); !core.HasCode(err, core.CodePolicyHold) {
+	if _, err := w.bases.Accept(ctx, merge2); !core.HasCode(err, core.CodePolicyHold) {
 		t.Fatalf("the merge that was not followed is accepted to build on: %v", err)
 	}
 	// Nothing else moves it while stopped, not even a clean merge.
@@ -241,29 +255,6 @@ func TestAChangeToFoundationContentStopsTheFactoryUntilTheOwnerApproves(t *testi
 	base, err = w.follow(merge3, cand3, "run-3")
 	if err != nil || base.Revision != merge2 || base.Commit != merge3 || base.Stopped != nil {
 		t.Fatalf("following after the Owner's approval = %+v, %v", base, err)
-	}
-}
-
-func TestOnlyTheSupervisorMovesTheCommitToBuildOn(t *testing.T) {
-	t.Parallel()
-	w := newBaseWorld(t)
-	w.release(cand1, merge1, revA, revA, []string{"examples/hello-app/main.go"}, nil)
-	impostors := map[string]core.Actor{
-		"an agent":                 {ID: policy.SupervisorActorID, Kind: core.ActorAgent},
-		"the Owner":                w.owner(),
-		"another service":          {ID: "service:publisher", Kind: core.ActorService},
-		"a service with no name":   {Kind: core.ActorService},
-		"an agent of the run name": {ID: "agent:claude/coder", Kind: core.ActorAgent, Roles: []core.Role{core.RoleOwner}},
-	}
-	for name, actor := range impostors {
-		_, err := w.bases.Follow(context.Background(), actor, policy.FollowProof{Merge: merge1, Candidate: cand1, Run: "run-1"})
-		wantCode(t, err, core.CodePermissionDenied, name+" moving the commit to build on")
-	}
-	if _, found := w.stored(t); found {
-		t.Fatal("a refused follow wrote the commit to build on")
-	}
-	if got := len(w.audit.Find(policy.ActionFollowMain, core.OutcomeDenied)); got != len(impostors) {
-		t.Fatalf("%d refused follows were audited, want %d", got, len(impostors))
 	}
 }
 
@@ -311,7 +302,7 @@ func TestATamperedProofOfUnchangedContentIsRefused(t *testing.T) {
 		w := newBaseWorld(t)
 		w.history.add(stray, []string{"examples/hello-app/backdoor.go"}, revA)
 		w.repo.commit(stray, nil)
-		if err := w.bases.Accept(ctx, stray); !core.HasCode(err, core.CodePolicyHold) {
+		if _, err := w.bases.Accept(ctx, stray); !core.HasCode(err, core.CodePolicyHold) {
 			t.Fatalf("a commit an agent names is accepted to build on: %v", err)
 		}
 	})
@@ -329,7 +320,7 @@ func TestATamperedProofOfUnchangedContentIsRefused(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := w.bases.Accept(ctx, stray); !core.HasCode(err, core.CodePolicyHold) {
+		if _, err := w.bases.Accept(ctx, stray); !core.HasCode(err, core.CodePolicyHold) {
 			t.Fatalf("a forged record makes a commit with other foundation files acceptable: %v", err)
 		}
 	})
@@ -342,8 +333,9 @@ func TestATamperedProofOfUnchangedContentIsRefused(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		wantCode(t, w.bases.Accept(ctx, merge1), core.CodeTampered, "accepting with an unreadable record")
-		_, err := w.follow(merge1, cand1, "run-1")
+		_, err := w.bases.Accept(ctx, merge1)
+		wantCode(t, err, core.CodeTampered, "accepting with an unreadable record")
+		_, err = w.follow(merge1, cand1, "run-1")
 		wantCode(t, err, core.CodeTampered, "following with an unreadable record")
 	})
 }
@@ -367,13 +359,14 @@ func TestAGitHubThatCannotAnswerDecidesNothing(t *testing.T) {
 func TestTheCommitToBuildOnIsNotKeptWithoutItsParts(t *testing.T) {
 	t.Parallel()
 	w := newBaseWorld(t)
-	full := policy.BuildBasesConfig{State: w.state, Source: w.repo, Baselines: w.baselines, Commits: w.history,
+	full := policy.BuildBasesConfig{State: w.state, Source: w.repo, Baselines: w.baselines, Commits: w.history, Parents: w.history,
 		OwnerOnly: ownerOnly, Audit: w.audit, FactoryID: factory}
 	cases := map[string]func(*policy.BuildBasesConfig){
 		"no state":      func(c *policy.BuildBasesConfig) { c.State = nil },
 		"no source":     func(c *policy.BuildBasesConfig) { c.Source = nil },
 		"no baseline":   func(c *policy.BuildBasesConfig) { c.Baselines = nil },
 		"no comparer":   func(c *policy.BuildBasesConfig) { c.Commits = nil },
+		"no parents":    func(c *policy.BuildBasesConfig) { c.Parents = nil },
 		"no owner rule": func(c *policy.BuildBasesConfig) { c.OwnerOnly = nil },
 		"no audit log":  func(c *policy.BuildBasesConfig) { c.Audit = nil },
 		"no factory id": func(c *policy.BuildBasesConfig) { c.FactoryID = "" },

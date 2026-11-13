@@ -41,6 +41,10 @@ type CandidatePRs struct {
 	// the candidate by; a merge applies the same rule again.
 	UnitInputs release.UnitInputs
 	Clock      core.Clock
+	// Bases, when set, checks main before every merge: the supervisor
+	// merges into no default branch whose content the Owner has not
+	// approved, and none while the factory stopped building on main.
+	Bases BaseKeeper
 
 	selfMu sync.Mutex
 	self   github.User // the factory's own account, as the install names it or learned once

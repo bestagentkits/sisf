@@ -10,7 +10,9 @@ import "testing"
 // through the edge under real load, observed, verified, published and
 // closed. The supervisor runs every revision through its deploy filter, and
 // keeps nothing of the application but the release and the way back to the
-// revision it replaced.
+// revision it replaced. Two more issues of the same unit are then released
+// one after the other with no Owner action, each built on the merge of the
+// release before it.
 func TestComposeReleasesAnIssueTheWholeWay(t *testing.T) {
 	d := newComposeRelease(t)
 	before := servedRevision(t, d)
@@ -30,4 +32,5 @@ func TestComposeReleasesAnIssueTheWholeWay(t *testing.T) {
 	if !found {
 		t.Fatalf("after the release no container runs %s: %v", released, running)
 	}
+	releaseInARowWithoutTheOwner(t, d)
 }

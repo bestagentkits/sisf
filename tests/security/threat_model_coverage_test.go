@@ -53,8 +53,17 @@ var coverage = map[string][]proof{
 		{"internal/supervisor/digest_self_check_test.go", []string{"TestSupervisorRefusesToStartWhenItsDigestDiffersFromTheSignedManifest"}},
 		{"internal/policy/build_base_test.go", []string{
 			"TestAChangeToFoundationContentStopsTheFactoryUntilTheOwnerApproves",
-			"TestOnlyTheSupervisorMovesTheCommitToBuildOn",
 			"TestATamperedProofOfUnchangedContentIsRefused",
+		}},
+		{"internal/policy/build_base_guards_test.go", []string{
+			"TestOnlyTheSupervisorMovesTheCommitToBuildOn",
+			"TestTheFactoryFollowsOnlyTheCandidateItJudged",
+			"TestNothingIsFollowedOrAcceptedWhileTheFactoryIsStopped",
+			"TestAForgedRecordCannotMakeABaseAcceptable",
+		}},
+		{"cmd/supervisor/stages/candidate_landing_main_check_test.go", []string{
+			"TestNoReleaseMergesIntoAMainTheOwnerHasNotApproved",
+			"TestTheBuildStageBuildsNothingWhileTheFactoryIsStopped",
 		}},
 		{"tests/acceptance/base_contains_last_known_good_test.go", []string{
 			"TestASecondReleaseOfAUnitOnABaselineWithoutTheFirstIsStoppedBeforeQA",
