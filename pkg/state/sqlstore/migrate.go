@@ -62,7 +62,7 @@ func (s *Store) Pending(ctx context.Context) ([]state.Migration, error) {
 // either every one of them is applied or the schema stays where it was. On
 // SQLite a migrator that finds the write lock held past its busy timeout
 // tries again, for up to migrateBusyWait, and then finds the schema as the
-// other migrator left it. A
+// other migrator left it. Unless the database holds no store yet, a
 // pending migration that is not backward compatible needs
 // opts.AllowIncompatible, else APPROVAL_REQUIRED and nothing is applied.
 // Only a store opened for the control zone migrates.
@@ -134,7 +134,13 @@ func (s *Store) migrate(ctx context.Context, opts state.MigrateOptions, known []
 		}
 		pending := s.migrations[len(applied):]
 		if blocked := state.Incompatible(known[len(applied):]); len(blocked) > 0 && !opts.AllowIncompatible {
-			return approvalRequired(blocked)
+			fresh, err := s.fresh(ctx, q, applied)
+			if err != nil {
+				return err
+			}
+			if !fresh {
+				return approvalRequired(blocked)
+			}
 		}
 		if err := q.script(ctx, "prepare migrations", createMigrationsTable); err != nil {
 			return err
@@ -165,9 +171,27 @@ func approvalRequired(blocked []state.Migration) *core.Error {
 		versions[i] = strconv.Itoa(m.Version)
 	}
 	refusal := core.NewError(core.CodeApprovalRequired,
-		"a pending migration is not backward compatible and needs the Owner's approval")
+		"a pending migration is not backward compatible and needs the Owner's approval, which this release cannot take yet; "+
+			"keep the store on the release it runs, or back it up and install this release on a new state store")
 	refusal.Details = map[string]string{"migrations": strings.Join(versions, ",")}
 	return refusal
+}
+
+// fresh reports whether the database holds no store yet: no migration is
+// recorded and the table of the lifecycle records does not exist. No release
+// runs on such a database and a rollback has no data to keep, so it takes
+// every migration of the release, compatible or not. Both facts are the
+// owner role's: the zone roles may read the bookkeeping but not write it, and
+// may not drop a table.
+func (s *Store) fresh(ctx context.Context, q *querier, applied []state.Migration) (bool, error) {
+	if len(applied) > 0 {
+		return false, nil
+	}
+	var tables int64
+	if err := q.row(ctx, s.dialect.tableExists(), tableRecords).Scan(&tables); err != nil {
+		return false, s.dialect.failure("read schema version", err)
+	}
+	return tables == 0, nil
 }
 
 // applied reads the migrations recorded in the database, in order. A

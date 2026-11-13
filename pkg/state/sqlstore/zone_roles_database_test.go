@@ -43,7 +43,9 @@ func TestEachZoneWorksOverItsOwnRole(t *testing.T) {
 
 		// The run, as the dispatcher drives it.
 		claimed := claim(t, agent, ready, "worker-1", "run-1")
-		evaluating := along(t, agent, claimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted)
+		developed := along(t, agent, claimed, core.EventDevelopmentStarted)
+		// The trusted build submits the candidate, over the control role.
+		evaluating := advance(t, control, developed, core.EventCandidateSubmitted, nil)
 		// The verdict of QA is the control zone's, over its own role.
 		evaluating = advance(t, control, evaluating, core.EventQAFailed, nil)
 		mustUpdate(t, agent, func(tx state.Tx) error {
@@ -102,7 +104,7 @@ func TestPostgresRefusesTheAgentRoleWhatItsZoneMayNotDo(t *testing.T) {
 		mustTransition(t, owner, received(ref))
 		mustTransition(t, owner, step(ref, core.StateIntake, core.EventInfoSufficient, core.StateScopeDraft, 1, "scoped"))
 		mustTransition(t, owner, step(ref, core.StateScopeDraft, core.EventApprovalRequired, core.StateApprovalPending, 2, "asked"))
-		developing(t, owner, issue(2))
+		claim(t, owner, readyRecord(t, owner, issue(2)), "worker-1", "run-1")
 
 		agent, err := sql.Open("pgx", logins.DSN[core.ZoneAgent])
 		if err != nil {
@@ -174,8 +176,8 @@ func TestPostgresRefusesTheAgentRoleWhatItsZoneMayNotDo(t *testing.T) {
 		if got := record(t, owner, ref); got.State != core.StateApprovalPending {
 			t.Errorf("the issue awaiting approval is now %s", got.State)
 		}
-		if got := record(t, owner, issue(2)); got.State != core.StateDeveloping {
-			t.Errorf("the issue in development is now %s", got.State)
+		if got := record(t, owner, issue(2)); got.State != core.StateClaimed {
+			t.Errorf("the claimed issue is now %s", got.State)
 		}
 	})
 }

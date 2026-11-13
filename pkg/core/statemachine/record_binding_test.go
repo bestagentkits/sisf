@@ -87,6 +87,18 @@ func TestAClaimStartsARunTheIssueHasNotHad(t *testing.T) {
 	if err := CheckRecordBinding(first, unnamed); !core.HasCode(err, core.CodeConflict) {
 		t.Fatalf("a claim that names no run: want %s, got %v", core.CodeConflict, err)
 	}
+	// A new run has built nothing and released nothing, so a claim that
+	// names a candidate or a release names what another run made.
+	for name, change := range map[string]func(*core.Transition){
+		"a claim that names a candidate": func(c *core.Transition) { c.CandidateDigest = testDigest },
+		"a claim that names a release":   func(c *core.Transition) { c.ReleaseDigest = released },
+	} {
+		named := fresh
+		change(&named)
+		if err := CheckRecordBinding(ready, named); !core.HasCode(err, core.CodeConflict) {
+			t.Errorf("%s: want %s, got %v", name, core.CodeConflict, err)
+		}
+	}
 }
 
 func TestAStepAboutAnotherCandidateOrReleaseThanTheStoredOneIsRefused(t *testing.T) {

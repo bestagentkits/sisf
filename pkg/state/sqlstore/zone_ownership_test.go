@@ -154,9 +154,7 @@ func TestAgentZoneWritesNoStepOutsideTheRunItWorksOn(t *testing.T) {
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		agent := db.Open(t, core.ZoneAgent)
 		application := db.Open(t, core.ZoneApplication)
-		run := map[core.Event]bool{
-			core.EventClaimed: true, core.EventDevelopmentStarted: true, core.EventCandidateSubmitted: true,
-		}
+		run := map[core.Event]bool{core.EventClaimed: true, core.EventDevelopmentStarted: true}
 		for i, edge := range statemachine.Edges() {
 			write := step(issue(100+i), edge.From, edge.Event, edge.To, 1, "forged")
 			if edge.From == "" {
@@ -175,7 +173,7 @@ func TestAgentZoneWritesNoStepOutsideTheRunItWorksOn(t *testing.T) {
 	})
 }
 
-func TestAgentZoneDrivesTheRunFromClaimToEvaluation(t *testing.T) {
+func TestAgentZoneDrivesTheRunFromClaimToDevelopment(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		control := db.Open(t, core.ZoneControl)
@@ -183,12 +181,16 @@ func TestAgentZoneDrivesTheRunFromClaimToEvaluation(t *testing.T) {
 		ready := readyRecord(t, control, issue(3))
 
 		claimed := claim(t, agent, ready, "worker-1", "run-1")
-		submitted := along(t, agent, claimed, core.EventDevelopmentStarted, core.EventCandidateSubmitted)
+		developed := along(t, agent, claimed, core.EventDevelopmentStarted)
+		// The trusted build in the control zone submits the candidate it
+		// built from the run's patch.
+		submitted := advance(t, control, developed, core.EventCandidateSubmitted, nil)
 		// The independent QA fails the candidate; its verdict is written in
-		// the control zone, and the run goes on with its next attempt.
+		// the control zone, and the run goes on with its next attempt, whose
+		// candidate the build submits again.
 		retried := advance(t, control, submitted, core.EventQAFailed, nil)
-		evaluating := advance(t, agent, retried, core.EventCandidateSubmitted, func(tr *core.Transition) {
-			tr.IdempotencyKey = "candidate/resubmitted"
+		evaluating := advance(t, control, retried, core.EventCandidateSubmitted, func(tr *core.Transition) {
+			tr.IdempotencyKey = "candidate/run-1/2"
 		})
 		if evaluating.State != core.StateQAEvaluation || evaluating.Attempt != 2 {
 			t.Fatalf("record after the run = %+v", evaluating)

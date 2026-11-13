@@ -151,7 +151,10 @@ func TestClosingARunsReservation(t *testing.T) {
 					}
 					return u
 				}
-				err := f.db.Open(t, core.ZoneControl).Update(ctx, func(ctx context.Context, tx state.Tx) error {
+				// The control plane and the supervisor close a run's
+				// reservation; the agent zone changes none.
+				control := db.Open(t, core.ZoneControl)
+				err := control.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 					for _, row := range c.rows {
 						if row.before {
 							if err := tx.AppendUsage(ctx, usage(row)); err != nil {
@@ -164,16 +167,21 @@ func TestClosingARunsReservation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				err = f.store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+				err = control.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 					for _, run := range []core.RunID{"run-1", "run-2"} {
-						status := core.ReservationHeld
+						// A reservation is made held and moved on from there.
+						r := core.Reservation{ID: "res-" + string(run[len("run-"):]), FactoryID: sqlstoretest.Factory,
+							IssueID: issue, RunID: run, Mode: core.BudgetCapped, Amount: amount, Status: core.ReservationHeld,
+							IdempotencyKey: "claim/" + string(run), CreatedAt: f.clock.Now()}
+						statuses := []core.ReservationStatus{core.ReservationHeld}
 						if run == "run-1" {
-							status = c.status
+							statuses = append(statuses, c.status)
 						}
-						if err := tx.PutReservation(ctx, core.Reservation{ID: "res-" + string(run[len("run-"):]), FactoryID: sqlstoretest.Factory,
-							IssueID: issue, RunID: run, Mode: core.BudgetCapped, Amount: amount, Status: status,
-							IdempotencyKey: "claim/" + string(run), CreatedAt: f.clock.Now()}); err != nil {
-							return err
+						for _, status := range statuses {
+							r.Status = status
+							if err := tx.PutReservation(ctx, r); err != nil {
+								return err
+							}
 						}
 					}
 					for _, row := range c.rows {

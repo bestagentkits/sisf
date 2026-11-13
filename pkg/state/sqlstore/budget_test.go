@@ -43,7 +43,7 @@ func totals(t *testing.T, s *sqlstore.Store, since time.Time) core.BudgetTotals 
 func TestReservationIsStoredAndUpdatedByID(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
-		s := db.Open(t, core.ZoneAgent)
+		s := db.Open(t, core.ZoneControl)
 		held := reservation("r-1", 5_000_000)
 		mustUpdate(t, s, func(tx state.Tx) error { return tx.PutReservation(ctx, held) })
 
@@ -60,10 +60,10 @@ func TestReservationIsStoredAndUpdatedByID(t *testing.T) {
 			t.Fatalf("stored reservation = %+v, want %+v", stored, held)
 		}
 
-		// Settling changes the status and amount of the same reservation.
+		// Settling changes the status of the same reservation.
 		db.Clock.Advance(time.Minute)
 		settled := held
-		settled.Status, settled.Amount = core.ReservationSettled, 4_200_000
+		settled.Status = core.ReservationSettled
 		mustUpdate(t, s, func(tx state.Tx) error { return tx.PutReservation(ctx, settled) })
 		if err := view(s, get); err != nil {
 			t.Fatal(err)
@@ -115,6 +115,95 @@ func TestReservationCannotBeMalformedOrMovedToAnotherRun(t *testing.T) {
 	})
 }
 
+// A reservation is made held, keeps the terms it was made on, and its status
+// only moves on: settled and released are final, and a suspended run's money
+// is never held again. So no zone can free money a run set aside by
+// rewriting the reservation, nor bring back a reservation already closed.
+func TestReservationKeepsItsTermsAndItsStatusOnlyMovesOn(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		s := db.Open(t, core.ZoneControl)
+		put := func(r core.Reservation) error {
+			return update(s, func(tx state.Tx) error { return tx.PutReservation(ctx, r) })
+		}
+		with := func(id string, change func(*core.Reservation)) core.Reservation {
+			r := reservation(id, 5_000_000)
+			change(&r)
+			return r
+		}
+		for _, status := range []core.ReservationStatus{core.ReservationSettled, core.ReservationReleased, core.ReservationSuspended} {
+			wantCode(t, put(with("r-new-"+string(status), func(r *core.Reservation) { r.Status = status })), core.CodeInvalidArgument)
+		}
+
+		if err := put(reservation("r-1", 5_000_000)); err != nil {
+			t.Fatal(err)
+		}
+		for name, change := range map[string]func(*core.Reservation){
+			"a lower amount":         func(r *core.Reservation) { r.Amount = 0 },
+			"another budget mode":    func(r *core.Reservation) { r.Mode = core.BudgetUnlimited },
+			"no provider hard cap":   func(r *core.Reservation) { r.HardCapEnforced = false },
+			"a lower amount, closed": func(r *core.Reservation) { r.Amount, r.Status = 1, core.ReservationSettled },
+		} {
+			if err := put(with("r-1", change)); !core.HasCode(err, core.CodeConflict) {
+				t.Errorf("a reservation rewritten with %s: want %s, got %v", name, core.CodeConflict, err)
+			}
+		}
+		if got := totals(t, s, time.Time{}); got.Reserved != 5_000_000 {
+			t.Fatalf("refused rewrites changed the reserved amount: %+v", got)
+		}
+
+		status := func(id string, to core.ReservationStatus) error {
+			return put(with(id, func(r *core.Reservation) { r.Status = to }))
+		}
+		for _, step := range []struct {
+			id   string
+			to   core.ReservationStatus
+			want core.ErrorCode
+		}{
+			{"r-1", core.ReservationSuspended, ""},
+			{"r-1", core.ReservationSuspended, ""},
+			{"r-1", core.ReservationHeld, core.CodeConflict},
+			{"r-1", core.ReservationReleased, ""},
+			{"r-1", core.ReservationReleased, ""},
+			{"r-1", core.ReservationHeld, core.CodeConflict},
+			{"r-1", core.ReservationSettled, core.CodeConflict},
+			{"r-1", core.ReservationSuspended, core.CodeConflict},
+			{"r-2", core.ReservationHeld, ""},
+			{"r-2", core.ReservationSettled, ""},
+			{"r-2", core.ReservationHeld, core.CodeConflict},
+			{"r-2", core.ReservationReleased, core.CodeConflict},
+			{"r-2", core.ReservationSuspended, core.CodeConflict},
+		} {
+			err := status(step.id, step.to)
+			if step.want == "" && err != nil {
+				t.Errorf("%s to %s must be allowed: %v", step.id, step.to, err)
+			}
+			if step.want != "" && !core.HasCode(err, step.want) {
+				t.Errorf("%s to %s: want %s, got %v", step.id, step.to, step.want, err)
+			}
+		}
+	})
+}
+
+// The agent zone makes the reservation of its claim and changes none:
+// closing a run's reservation is the control plane's and the supervisor's,
+// so a stolen agent credential cannot free money a live run set aside.
+func TestAgentZoneMakesAReservationAndChangesNone(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		agent := db.Open(t, core.ZoneAgent)
+		mustUpdate(t, agent, func(tx state.Tx) error { return tx.PutReservation(ctx, reservation("r-1", 5_000_000)) })
+		for _, status := range []core.ReservationStatus{core.ReservationSettled, core.ReservationSuspended, core.ReservationReleased} {
+			r := reservation("r-1", 5_000_000)
+			r.Status = status
+			wantCode(t, update(agent, func(tx state.Tx) error { return tx.PutReservation(ctx, r) }), core.CodePermissionDenied)
+		}
+		if got := totals(t, agent, time.Time{}); got.Reserved != 5_000_000 {
+			t.Fatalf("the agent zone changed its reservation: %+v", got)
+		}
+	})
+}
+
 func TestBudgetTotalsCountHeldReservationsAndUsageSinceTheInstant(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
@@ -126,7 +215,8 @@ func TestBudgetTotalsCountHeldReservationsAndUsageSinceTheInstant(t *testing.T) 
 		released := reservation("r-3", 9_000_000)
 		released.Status = core.ReservationReleased
 		mustUpdate(t, s, func(tx state.Tx) error {
-			for _, r := range []core.Reservation{reservation("r-1", 5_000_000), reservation("r-2", 1_000_000), released} {
+			// r-3 is made held and then released, as a run that gives it up does.
+			for _, r := range []core.Reservation{reservation("r-1", 5_000_000), reservation("r-2", 1_000_000), reservation("r-3", 9_000_000), released} {
 				if err := tx.PutReservation(ctx, r); err != nil {
 					return err
 				}

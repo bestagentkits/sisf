@@ -45,16 +45,19 @@ func developingAtAttempt2(t *testing.T, s *sqlstore.Store, ref core.IssueRef) co
 	return again
 }
 
-// A stolen agent-zone credential used with plain SQL takes a step of its
-// own only as the store writes it: it cannot reset or skip the attempt count
-// the attempt limit is judged against, bring back a run the issue had
-// before, swap the run, the candidate or the release a step is bound to, or
-// write under a fencing token that is not the issue lease's latest.
+// A stolen zone credential used with plain SQL takes a step of its own only
+// as the store writes it: it cannot reset or skip the attempt count the
+// attempt limit is judged against, bring back a run the issue had before,
+// swap the run, the candidate or the release a step is bound to, or write
+// under a fencing token that is not the issue lease's latest. The agent role
+// is tried on the steps of the run it takes, the control role on the
+// submission of a candidate, which the trusted build writes.
 func TestPostgresRefusesAStepThatRewritesWhatTheRecordIsAbout(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
 		logins := db.ZoneLogins(t)
 		agent := rawLogin(t, logins.DSN[core.ZoneAgent])
+		controlRole := rawLogin(t, logins.DSN[core.ZoneControl])
 		owner := db.Open(t, core.ZoneControl)
 
 		claimed := claim(t, owner, readyRecord(t, owner, issue(81)), "worker-1", "run-1")
@@ -64,8 +67,8 @@ func TestPostgresRefusesAStepThatRewritesWhatTheRecordIsAbout(t *testing.T) {
 		lease := leaseOn(t, owner, ready.IssueID, "worker-1")
 		releasing := along(t, owner, developing(t, owner, issue(84)), core.EventCandidateSubmitted, core.EventQAPassed)
 
-		toDeveloping := `state = 'Developing', version = version + 1`
-		toEvaluation := `state = 'QAEvaluation', version = version + 1, candidate_digest = '` + string(otherCandidate) + `'`
+		toDeveloping := `state = 'Developing', version = version + 1, idempotency_key = 'develop/run-1'`
+		toEvaluation := `state = 'QAEvaluation', version = version + 1, idempotency_key = 'candidate/run-1/2', candidate_digest = '` + string(otherCandidate) + `'`
 		// toClaimed is the claim of run, at attempt, naming candidate, under
 		// token of the lease worker-1 holds.
 		toClaimed := func(run core.RunID, attempt int, candidate core.Digest, token core.FencingToken) string {
@@ -76,14 +79,9 @@ func TestPostgresRefusesAStepThatRewritesWhatTheRecordIsAbout(t *testing.T) {
 		for name, statement := range map[string]string{
 			"a start of development that lowers the attempt":  recordUpdate(toDeveloping+`, attempt = 0`, claimed.IssueID),
 			"a start of development that skips an attempt":    recordUpdate(toDeveloping+`, attempt = attempt + 1`, claimed.IssueID),
-			"a submission that resets the attempt":            recordUpdate(toEvaluation+`, attempt = 1`, retrying.IssueID),
-			"a submission that skips an attempt":              recordUpdate(toEvaluation+`, attempt = 3`, retrying.IssueID),
 			"a start of development under another run":        recordUpdate(toDeveloping+`, run_id = 'run-9'`, claimed.IssueID),
 			"a start of development that names a candidate":   recordUpdate(toDeveloping+`, candidate_digest = '`+string(candidateDigest)+`'`, claimed.IssueID),
 			"a start of development that names a release":     recordUpdate(toDeveloping+`, release_digest = '`+string(releaseDigest)+`'`, claimed.IssueID),
-			"a submission that names no candidate":            recordUpdate(`state = 'QAEvaluation', version = version + 1, candidate_digest = ''`, retrying.IssueID),
-			"a submission that names a release":               recordUpdate(toEvaluation+`, release_digest = '`+string(releaseDigest)+`'`, retrying.IssueID),
-			"a submission under another run":                  recordUpdate(toEvaluation+`, run_id = 'run-9'`, retrying.IssueID),
 			"a step under a fencing token never issued":       recordUpdate(toDeveloping+`, fencing_token = fencing_token + 5`, claimed.IssueID),
 			"a leased step without a lease owner":             recordUpdate(toDeveloping+`, lease_owner = ''`, claimed.IssueID),
 			"a leased step without a fencing token":           recordUpdate(toDeveloping+`, lease_owner = '', fencing_token = 0`, claimed.IssueID),
@@ -95,6 +93,24 @@ func TestPostgresRefusesAStepThatRewritesWhatTheRecordIsAbout(t *testing.T) {
 			"a claim under the token of a lease taken before": recordUpdate(toClaimed("run-3", 1, "", lease.Token-1), ready.IssueID),
 		} {
 			refusedRow(t, agent, name, statement)
+		}
+		for name, statement := range map[string]string{
+			"a submission that resets the attempt": recordUpdate(toEvaluation+`, attempt = 1`, retrying.IssueID),
+			"a submission that skips an attempt":   recordUpdate(toEvaluation+`, attempt = 3`, retrying.IssueID),
+			"a submission that names no candidate": recordUpdate(`state = 'QAEvaluation', version = version + 1, candidate_digest = ''`, retrying.IssueID),
+			"a submission that names a release":    recordUpdate(toEvaluation+`, release_digest = '`+string(releaseDigest)+`'`, retrying.IssueID),
+			"a submission under another run":       recordUpdate(toEvaluation+`, run_id = 'run-9'`, retrying.IssueID),
+		} {
+			refusedRow(t, controlRole, name, statement)
+		}
+		// The agent zone submits no candidate: its role does not see a
+		// record in Developing to submit one on it.
+		result, err := agent.ExecContext(ctx, recordUpdate(toEvaluation, retrying.IssueID))
+		if err != nil {
+			t.Fatalf("a submission by the agent role: %v", err)
+		}
+		if changed, _ := result.RowsAffected(); changed != 0 {
+			t.Fatalf("the agent role submitted a candidate on %d records", changed)
 		}
 		// A claim always starts its run at attempt 1, so on a record the
 		// store wrote the statement below is the legal start of development.
@@ -112,7 +128,7 @@ func TestPostgresRefusesAStepThatRewritesWhatTheRecordIsAbout(t *testing.T) {
 
 		// Starting a rollout is not the agent zone's step: its role does not
 		// see a record in ReleaseCandidate to name a release on it.
-		result, err := agent.ExecContext(ctx, recordUpdate(`state = 'Canary', version = version + 1, release_digest = '`+string(releaseDigest)+`'`, releasing.IssueID))
+		result, err = agent.ExecContext(ctx, recordUpdate(`state = 'Canary', version = version + 1, release_digest = '`+string(releaseDigest)+`'`, releasing.IssueID))
 		if err != nil {
 			t.Fatalf("a rollout started by the agent role: %v", err)
 		}
@@ -128,9 +144,11 @@ func TestPostgresRefusesAStepThatRewritesWhatTheRecordIsAbout(t *testing.T) {
 		// The same statements, written as the store writes the steps, go
 		// through: the premise that each refusal above is for the one thing
 		// it changes.
-		changedOne(t, agent, "a claim of a run the issue never had", recordUpdate(toClaimed("run-3", 1, "", lease.Token), ready.IssueID))
-		changedOne(t, agent, "a submission of the second attempt", recordUpdate(toEvaluation, retrying.IssueID))
-		changedOne(t, agent, "a start of development", recordUpdate(toDeveloping, claimed.IssueID))
+		rawStep(t, agent, "a claim of a run the issue never had", ready.IssueID, toClaimed("run-3", 1, "", lease.Token),
+			core.StateReady, core.EventClaimed)
+		rawStep(t, controlRole, "a submission of the second attempt", retrying.IssueID, toEvaluation,
+			core.StateDeveloping, core.EventCandidateSubmitted)
+		rawStep(t, agent, "a start of development", claimed.IssueID, toDeveloping, core.StateClaimed, core.EventDevelopmentStarted)
 		if got := record(t, owner, retrying.IssueID); got.Attempt != 2 || got.CandidateDigest != otherCandidate {
 			t.Fatalf("the submission wrote %+v", got)
 		}
@@ -169,15 +187,15 @@ func TestPostgresEveryZoneTakesEveryLegalStepThroughItsOwnRole(t *testing.T) {
 			return take(s, claimWrite(t, s, rec, "worker-1", run))
 		}
 
-		// The agent zone runs the work: it claims, develops and submits,
-		// and submits again after a failed evaluation; the control zone
-		// approves, judges, releases and closes.
+		// The agent zone runs the work: it claims and develops; the control
+		// zone approves, builds and submits the candidate, again after a
+		// failed evaluation, judges, releases and closes.
 		rec := walk(control, created(issue(91)), core.EventInfoMissing, core.EventClarificationCompleted,
 			core.EventApprovalRequired, core.EventOwnerApproved)
-		rec = walk(agent, claimFor(agent, rec, "run-1"), core.EventDevelopmentStarted, core.EventCandidateSubmitted)
-		rec = walk(control, rec, core.EventQAFailed)
-		rec = take(agent, next(t, rec, core.EventCandidateSubmitted, func(tr *core.Transition) {
-			tr.CandidateDigest, tr.IdempotencyKey = otherCandidate, "candidate/second"
+		rec = walk(agent, claimFor(agent, rec, "run-1"), core.EventDevelopmentStarted)
+		rec = walk(control, rec, core.EventCandidateSubmitted, core.EventQAFailed)
+		rec = take(control, next(t, rec, core.EventCandidateSubmitted, func(tr *core.Transition) {
+			tr.CandidateDigest, tr.IdempotencyKey = otherCandidate, "candidate/run-1/2"
 		}))
 		rec = walk(control, rec, core.EventQAPassed, core.EventRolloutStarted, core.EventRolloutHealthy,
 			core.EventPostDeployVerified, core.EventIssueClosed)
@@ -263,8 +281,19 @@ func TestPostgresUpgradeHoldsTheRecordsOfAStoreAtMigration8(t *testing.T) {
 		// The schema as migration 8 left it: the trigger checks the pair of
 		// states, the version, the factory and the issue, and nothing else.
 		restoreMigration8Trigger(t, raw)
-		if _, err := raw.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version > 8`); err != nil {
-			t.Fatalf("restore the schema version: %v", err)
+		forgetStoreRules(t, raw)
+		for _, statement := range []string{
+			// The agent role's policy as the earlier release wrote it, when
+			// the agent zone submitted candidates.
+			`DROP POLICY "sisf_agent_update" ON records`,
+			`CREATE POLICY "sisf_agent_update" ON records FOR UPDATE TO "` + logins.Roles[core.ZoneAgent] + `"
+				USING (state IN ('Claimed', 'Developing', 'Ready'))
+				WITH CHECK (state IN ('Claimed', 'Developing', 'QAEvaluation'))`,
+			`DELETE FROM schema_migrations WHERE version > 8`,
+		} {
+			if _, err := raw.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("restore the schema of migration 8: %v", err)
+			}
 		}
 		agentRole := rawLogin(t, logins.DSN[core.ZoneAgent])
 		changedOne(t, agentRole, "the attempt reset the earlier trigger lets in, the premise of this test",
@@ -273,7 +302,9 @@ func TestPostgresUpgradeHoldsTheRecordsOfAStoreAtMigration8(t *testing.T) {
 		before := []core.StateRecord{claimed, retrying, ready, closed, reset}
 
 		migrator := db.Open(t, core.ZoneControl)
-		if err := migrator.Migrate(ctx, state.MigrateOptions{}); err != nil {
+		// Migration 12 is not backward compatible; this test is about what the
+		// migrations do to the records, so the Owner's approval is given.
+		if err := migrator.Migrate(ctx, state.MigrateOptions{AllowIncompatible: true}); err != nil {
 			t.Fatalf("migrate a store at migration 8: %v", err)
 		}
 		if version, err := migrator.SchemaVersion(ctx); err != nil || version != len(sqlstore.Migrations()) {
@@ -293,14 +324,16 @@ func TestPostgresUpgradeHoldsTheRecordsOfAStoreAtMigration8(t *testing.T) {
 			t.Fatalf("the rewritten policy names %q, want the agent role %q", roles, logins.Roles[core.ZoneAgent])
 		}
 
-		refusedRow(t, agentRole, "an attempt reset after the migration",
+		// The submission is the control zone's now, and its role is held to
+		// the same rule.
+		refusedRow(t, rawLogin(t, logins.DSN[core.ZoneControl]), "an attempt reset after the migration",
 			recordUpdate(`state = 'QAEvaluation', version = version + 1, attempt = 1, candidate_digest = '`+string(otherCandidate)+`'`, retrying.IssueID))
 
 		// The work in flight carries on through the zones' own roles.
 		agent := db.OpenWith(t, logins.DSN[core.ZoneAgent], core.ZoneAgent)
 		control := db.OpenWith(t, logins.DSN[core.ZoneControl], core.ZoneControl)
 		advance(t, agent, claimed, core.EventDevelopmentStarted, nil)
-		submitted := advance(t, agent, retrying, core.EventCandidateSubmitted, func(tr *core.Transition) {
+		submitted := advance(t, control, retrying, core.EventCandidateSubmitted, func(tr *core.Transition) {
 			tr.CandidateDigest, tr.IdempotencyKey = otherCandidate, "candidate/after-upgrade"
 		})
 		advance(t, control, submitted, core.EventQAPassed, nil)

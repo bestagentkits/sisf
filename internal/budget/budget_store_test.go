@@ -85,12 +85,20 @@ func TestGateWorksAcrossZonesOnTheRealStore(t *testing.T) {
 		if err != nil || first.Mode != core.BudgetCapped || first.Status != core.ReservationHeld {
 			t.Fatalf("the agent zone could not reserve under the cap: %+v, %v", first, err)
 		}
-		if err := agent.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-			spent := usage(6, million, false)
-			spent.FactoryID = factory
-			return gate.Settle(ctx, tx, first.ID, spent)
-		}); err != nil {
-			t.Fatalf("the agent zone could not settle its usage: %v", err)
+		settle := func(store *sqlstore.Store) error {
+			return store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+				spent := usage(6, million, false)
+				spent.FactoryID = factory
+				return gate.Settle(ctx, tx, first.ID, spent)
+			})
+		}
+		// The agent zone changes no reservation; the control plane and the
+		// supervisor close a run's.
+		if err := settle(agent); !core.HasCode(err, core.CodePermissionDenied) {
+			t.Fatalf("the agent zone settled a reservation: %v", err)
+		}
+		if err := settle(db.OpenFactory(t, factory, core.ZoneControl)); err != nil {
+			t.Fatalf("the control plane could not settle the run's usage: %v", err)
 		}
 		// One million is spent; two remain under the cap.
 		if r, err := reserveIn(agent, 7, 2*million); err != nil || r.Mode != core.BudgetCapped {
