@@ -327,6 +327,10 @@ func TestPostgresStoreRulesMigrationUpgradesAGrantedStore(t *testing.T) {
 			`CREATE POLICY "sisf_agent_update" ON records FOR UPDATE TO "` + agentRole + `"
 				USING (state IN ('Claimed', 'Developing', 'Ready'))
 				WITH CHECK (state IN ('Claimed', 'Developing', 'QAEvaluation'))`,
+			`DROP POLICY "sisf_agent_insert" ON usage_ledger`,
+			`CREATE POLICY "sisf_agent_insert" ON usage_ledger FOR INSERT TO "` + agentRole + `" WITH CHECK (true)`,
+			`DROP POLICY "sisf_control_insert" ON usage_ledger`,
+			`CREATE POLICY "sisf_control_insert" ON usage_ledger FOR INSERT TO "` + controlRole + `" WITH CHECK (true)`,
 			`DELETE FROM schema_migrations WHERE version > 11`,
 			`GRANT UPDATE ON reservations TO "` + agentRole + `"`,
 			`INSERT INTO reservations (factory_id, id, issue, run_id, budget_mode, amount, status, hard_cap_enforced,
@@ -400,9 +404,11 @@ func TestPostgresStoreRulesMigrationUpgradesAGrantedStore(t *testing.T) {
 		claimed := claim(t, owner, readyRecord(t, owner, issue(61)), "worker-1", "run-1")
 		refusedAtCommit(t, agent, "a record step with no journal row",
 			recordUpdate(`state = 'Developing', version = version + 1, idempotency_key = 'develop/run-1'`, claimed.IssueID))
+		// The row names a reservation of its own run, so only the
+		// constraint on the cost stands in its way.
 		_, err := agent.ExecContext(ctx, `INSERT INTO usage_ledger (factory_id, issue, run_id, reservation_id, step, model_route,
 			input_tokens, output_tokens, cost, verified, recorded_at) VALUES ('`+string(sqlstoretest.Factory)+`', 'acme/app#7',
-			'run-1', 'r-1', 'coding', '{}', 0, 0, -1, false, 1)`)
+			'run-1', 'r-up', 'coding', '{}', 0, 0, -1, false, 1)`)
 		var pg *pgconn.PgError
 		if !errors.As(err, &pg) || pg.Code != "23514" {
 			t.Errorf("a negative cost after the migration must be refused by a constraint, got %v", err)

@@ -270,7 +270,9 @@ func TestClosingARunsReservationWithoutReadingTheLedger(t *testing.T) {
 				issue := core.IssueRef{Owner: "acme", Repo: "app", Number: 1}
 				gate := budget.NewGate(budget.Config{Clock: f.clock})
 				reads := 0
-				err := f.store.Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
+				// The control zone closes a run's reservation; the agent zone
+				// may not change one.
+				err := f.db.Open(t, core.ZoneControl).Update(context.Background(), func(ctx context.Context, tx state.Tx) error {
 					if err := tx.PutReservation(ctx, core.Reservation{ID: "res-1", FactoryID: sqlstoretest.Factory, IssueID: issue, RunID: "run-1",
 						Mode: core.BudgetUnlimited, Amount: c.amount, Status: core.ReservationHeld, IdempotencyKey: "claim/run-1", CreatedAt: f.clock.Now()}); err != nil {
 						return err
