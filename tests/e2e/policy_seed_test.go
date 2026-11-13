@@ -18,12 +18,13 @@ import (
 // The first time, on a fresh install, they are committed alone and put in
 // force without an approval, as the first policy revision is. While main
 // has not moved since, nothing changes. Once a release was merged, main has
-// moved past the policy in force, and a later release of the same unit is
-// refused unless the policy contains the merged one. The Owner then moves
-// the baseline as the operations guide says: a commit on main's head that
-// holds the seed files again, so it contains every merged release and the
-// scripted diffs still apply, filed as a policy change, decided on the
-// dashboard after a step-up and put in force with that approval.
+// moved past the policy in force; the supervisor builds on main while the
+// approved content is unchanged, but a scenario that changed the seed files
+// needs them back. The Owner then moves the baseline as the operations
+// guide says: a commit on main's head that holds the seed files again, so
+// it contains every merged release and the scripted diffs still apply,
+// filed as a policy change, decided on the dashboard after a step-up and
+// put in force with that approval.
 func seedPolicy(t *testing.T, d deployment) {
 	t.Helper()
 	gh := d.github()

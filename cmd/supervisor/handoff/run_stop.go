@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -45,8 +46,10 @@ type RunStop struct {
 	Verified bool `json:"verified,omitempty"`
 	// Held is the reason the supervisor held the run's build with when
 	// that ended the run (HeldEndsRun); "" otherwise.
-	Held      string    `json:"held,omitempty"`
-	BlockedAt time.Time `json:"blocked_at"`
+	// HeldDetail is the supervisor's refusal that held it, when kept.
+	Held       string    `json:"held,omitempty"`
+	HeldDetail string    `json:"held_detail,omitempty"`
+	BlockedAt  time.Time `json:"blocked_at"`
 }
 
 // RunStopKey is the key of the record of one stopped run.
@@ -86,7 +89,7 @@ func (s RunStop) Summary() string {
 	case statemachine.BlockPolicySuperseded:
 		if s.Held == HeldBaseLacksRelease {
 			return fmt.Sprintf("Run %s was coded on a commit that lacks the last known good release of its unit, so its candidate "+
-				"could not be released and was not judged.", s.RunID)
+				"could not be released and was not judged%s.", s.RunID, s.heldDetail())
 		}
 		return fmt.Sprintf("Run %s was coded under a policy that is no longer in force, so its patch is not built, judged or released.", s.RunID)
 	case statemachine.BlockReleaseRefused:
@@ -145,8 +148,9 @@ func (s RunStop) WayOut() string {
 	switch s.Cause {
 	case statemachine.BlockPolicySuperseded:
 		if s.Held == HeldBaseLacksRelease {
-			return "Put a policy revision in force that contains the last known good release of the unit; then, " + retry +
-				": a new run codes the scope on the commit the supervisor builds on then."
+			return "A" + retry[1:] + ": a new run codes the scope on the commit the supervisor builds on then, which holds that release " +
+				"once the supervisor followed its merge. If the factory stopped building on main instead, first put a policy revision " +
+				"in force that contains the release."
 		}
 		return "A" + retry[1:] + ": the scope is judged under the policy in force and, once it is permitted or approved under it, " +
 			"the issue returns to Ready and a new run codes it under that policy."
@@ -174,4 +178,13 @@ func (s RunStop) WayOut() string {
 			": " + readyAgain + " and a new run codes, judges and releases it, which spends agent budget."
 	}
 	return "Remove the cause, then, " + retry + ": " + readyAgain + " and a new run claims it."
+}
+
+// heldDetail quotes the supervisor's refusal that held the run's build,
+// when it was kept.
+func (s RunStop) heldDetail() string {
+	if s.HeldDetail == "" {
+		return ""
+	}
+	return ": " + strings.TrimSuffix(s.HeldDetail, ".")
 }

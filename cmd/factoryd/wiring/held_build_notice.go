@@ -57,8 +57,10 @@ func heldBuildComment(n handoff.BuildHeldNotice) string {
 			"No attempt was spent.\n\n", n.RunID, n.Attempt)
 	} else if n.Reason == handoff.HeldBaseLacksRelease {
 		fmt.Fprintf(&b, "### Candidate build held\n\nRun `%s` was coded on a commit that lacks the last known good release of its unit, "+
-			"so its candidate could not be released and attempt %d is not submitted to QA. The Owner approves a policy revision "+
-			"that contains that release. No attempt was spent.\n\n", n.RunID, n.Attempt)
+			"so its candidate could not be released and attempt %d is not submitted to QA. No attempt was spent.\n\n", n.RunID, n.Attempt)
+		if n.Detail != "" {
+			fmt.Fprintf(&b, "> %s\n\n", n.Detail)
+		}
 	} else {
 		fmt.Fprintf(&b, "### Candidate build held\n\nThe build of attempt %d of run `%s` failed %d times in a row on errors outside the patch "+
 			"(GitHub, Docker or the configuration), so the supervisor stopped trying it. No attempt was spent.\n\n", n.Attempt, n.RunID, n.Failures)

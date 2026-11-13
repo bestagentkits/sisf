@@ -75,13 +75,35 @@ func TestASecondReleaseOfAUnitOnABaselineWithoutTheFirstIsStoppedBeforeQA(t *tes
 	if stop.Cause != statemachine.BlockPolicySuperseded || stop.Held != handoff.HeldBaseLacksRelease {
 		t.Fatalf("the record of the stopped run: %+v", stop)
 	}
-	if why := f.Explain(second); !why.Stopped || !strings.Contains(why.Reason, "last known good release") {
-		t.Errorf("runs.explain answers %+v", why)
+	// The Owner is told the refusal the release would have given: the base,
+	// and the commit and run of the last known good release.
+	if why := f.Explain(second); !why.Stopped || !strings.Contains(why.Reason, string(good.Commit)) || !strings.Contains(why.Reason, string(good.RunID)) {
+		t.Errorf("runs.explain does not name the last known good release: %+v", why)
+	}
+	if got := countComments(t, f, second, string(good.Commit)); got == 0 {
+		t.Error("the issue was not told the commit its base lacks")
 	}
 	if now := f.Deploy.Staged(); len(now) != staged {
 		t.Fatalf("the second candidate was deployed: %+v", now[staged:])
 	}
 	if observed, err := f.Deploy.ObservedRevision(ctx, "control"); err != nil || !observed.Healthy || observed.Digest != good.Digest {
 		t.Fatalf("the control unit runs %+v, %v; want the last known good release", observed, err)
+	}
+
+	// The Owner puts main's head, which holds the first release, in force
+	// and retries: a new run is coded on it and released.
+	head, _, ok := f.GitData.Branch(f.Repo, "main")
+	if !ok {
+		t.Fatal("main has no head")
+	}
+	approveRevision(t, f, core.CommitSHA(head))
+	if _, err := f.Control.Retry(ctx, f.Issue(second), ownerActor(f)); err != nil {
+		t.Fatalf("the Owner's retry: %v", err)
+	}
+	f.ScriptPatch(second, 0, sitePageRewordDiff)
+	f.Cycle(4)
+	wantSurfaces(t, f, second, core.StateClosed)
+	if now, _, err := f.Trust.LKG.Get(ctx, "control"); err != nil || now.RunID == good.RunID {
+		t.Fatalf("the retried run did not become the last known good release: %+v, %v", now, err)
 	}
 }

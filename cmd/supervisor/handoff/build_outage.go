@@ -29,8 +29,11 @@ type BuildOutage struct {
 	LastCode  core.ErrorCode `json:"last_code"`
 	NextTryAt time.Time      `json:"next_try_at"`
 	// Reason is why the build was held when it was not a run of outages:
-	// HeldPolicySuperseded or HeldBaseLacksRelease; "" otherwise.
+	// HeldPolicySuperseded or HeldBaseLacksRelease; "" otherwise. Detail
+	// is the supervisor's own refusal for HeldBaseLacksRelease, which names
+	// the base, the commit and the run of the last known good release.
 	Reason string `json:"reason,omitempty"`
+	Detail string `json:"detail,omitempty"`
 	// Held is set once the failures reach the supervisor's limit; Holds
 	// counts how often that happened.
 	Held  bool `json:"held"`
@@ -71,6 +74,7 @@ type BuildHeldNotice struct {
 	Failures int            `json:"failures"`
 	LastCode core.ErrorCode `json:"last_code"`
 	Reason   string         `json:"reason,omitempty"`
+	Detail   string         `json:"detail,omitempty"`
 	Holds    int            `json:"holds"`
 	// Reminder numbers a reminder that the build is still held, from 1;
 	// zero on the notice of the hold itself. HeldAt is when it was held.
