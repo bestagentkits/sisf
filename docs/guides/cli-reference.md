@@ -103,9 +103,11 @@ Exit status:
 | 1 | refused: not authentic, malformed, or about something else |
 | 2 | usage error |
 | 3 | authentic, but its hard gates did NOT pass (`verdict: authentic_hard_gates_failed`); never reported as verified |
-| 4 | authentic and passing, but expired, under `--require-unexpired` (`verdict: authentic_expired`) |
+| 4 | authentic, but expired, under `--require-unexpired` (`verdict: authentic_expired`): a passing receipt, or one whose gates failed under `--allow-failed`, which never lets an expired receipt through |
 
-Expiry is always reported; it changes the exit status only under `--require-unexpired`, since an expired receipt still proves what the evaluator concluded.
+Expiry is always reported; it changes the exit status only under `--require-unexpired`, since an expired receipt still proves what the evaluator concluded. A receipt whose gates failed exits 3 before its expiry is looked at; with `--allow-failed` its expiry is still judged, so both flags together exit 4 for a failed, expired receipt.
+
+The fingerprint, `--commit` and `--digest` are hex and are read in any letter case. A `--commit` that is not a full 40- or 64-character hash, or a `--digest` that is not `sha256:` or `sha512:` with its hex, is a usage error (exit 2), not a refusal of the receipt.
 
 The key is judged as of the receipt's issue time, so a receipt stays verifiable after its week-long key has expired. A key that leaked could then sign a receipt dated inside its old window; pass the Owner's latest revocation list with `--revocations` to rule that out. Without one the report says the check was not made.
 

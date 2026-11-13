@@ -27,8 +27,9 @@ const maxReceiptFile = 1 << 20
 const (
 	// exitGatesFailed is an authentic receipt whose hard gates did not pass.
 	exitGatesFailed = 3
-	// exitExpired is an authentic, passing receipt that has expired, under
-	// --require-unexpired.
+	// exitExpired is an authentic receipt that has expired, under
+	// --require-unexpired: a passing one, or a failing one under
+	// --allow-failed.
 	exitExpired = 4
 )
 
@@ -86,7 +87,8 @@ Exit status:
   1  refused: not authentic, malformed, or about something else
   2  usage error
   3  authentic, but its hard gates did NOT pass (not reported as verified)
-  4  authentic and passing, but expired, under --require-unexpired
+  4  authentic, but expired, under --require-unexpired; also with
+     --allow-failed, which never lets an expired receipt through
 
 Expiry is always reported; it decides the exit status only under
 --require-unexpired. --allow-failed exits 0 for an authentic receipt
@@ -168,6 +170,18 @@ func runReceiptVerify(ctx context.Context, env *Env, args []string) error {
 	case f.attempt < 0:
 		return usagef("--attempt must be 1 or more, or 0 not to check it")
 	}
+	// Fingerprints, commits and digests are hex: read them in lower case.
+	f.rootKeyID, f.commit, f.digest = strings.ToLower(f.rootKeyID), strings.ToLower(f.commit), strings.ToLower(f.digest)
+	if f.commit != "" {
+		if err := core.CommitSHA(f.commit).Validate(); err != nil {
+			return usagef("--commit: %v", err)
+		}
+	}
+	if f.digest != "" {
+		if err := core.Digest(f.digest).Validate(); err != nil {
+			return usagef("--digest: %v", err)
+		}
+	}
 	want := iqa.ReceiptClaim{FactoryID: core.FactoryID(f.factory), RunID: core.RunID(f.run), CandidateSHA: core.CommitSHA(f.commit),
 		CandidateDigest: core.Digest(f.digest), EvaluatorAttempt: f.attempt}
 	if want.IssueID, err = core.ParseIssueRef(f.issue); err != nil {
@@ -211,18 +225,18 @@ func runReceiptVerify(ctx context.Context, env *Env, args []string) error {
 	if f.rootOffline {
 		out.Assurance = delegation.AssuranceRootOffline
 	}
+	// Expiry under --require-unexpired is judged whatever the gates say, so
+	// --allow-failed never lets an expired receipt through it.
 	var refusal error
-	switch {
-	case !check.HardGatesPassed:
+	if !check.HardGatesPassed {
 		out.Verdict = verdictGatesFailed
 		if !f.allowFailed {
 			refusal = receiptNotAccepted{exitGatesFailed, "the receipt is authentic, but its hard gates did NOT pass"}
 		}
-	case check.Expired:
-		if f.requireUnexpired {
-			out.Verdict = verdictExpired
-			refusal = receiptNotAccepted{exitExpired, "the receipt is authentic, but it expired at " + check.Receipt.ExpiresAt.UTC().Format(time.RFC3339)}
-		}
+	}
+	if refusal == nil && check.Expired && f.requireUnexpired {
+		out.Verdict = verdictExpired
+		refusal = receiptNotAccepted{exitExpired, "the receipt is authentic, but it expired at " + check.Receipt.ExpiresAt.UTC().Format(time.RFC3339)}
 	}
 	if f.asJSON {
 		encoded, err := json.MarshalIndent(out, "", "  ")
