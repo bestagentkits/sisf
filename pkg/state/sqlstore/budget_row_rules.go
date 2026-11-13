@@ -34,8 +34,9 @@ const reservationFunction = "sisf_reservation_run"
 //
 // What the database does not hold: a zone role that may write reservations
 // may still settle, suspend or release a held one along reservationMoves,
-// whether or not its run has ended, as the agent zone's dispatcher does when
-// a run closes. A released or settled reservation is no longer counted as
+// whether or not its run has ended. The agent zone needs the move: its
+// dispatcher closes the reservation of a run that used every attempt
+// (Dispatcher.stopRun in internal/dispatcher/supervise.go). A released or settled reservation is no longer counted as
 // held. Binding that move to the end of the run is not done here.
 //
 // The database scopes no table by factory, since a zone role is granted per
