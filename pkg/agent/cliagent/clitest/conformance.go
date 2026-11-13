@@ -4,6 +4,7 @@ package clitest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -148,7 +149,7 @@ func (s *subject) start(t *testing.T, task agent.Task) agent.RunRef {
 	t.Helper()
 	ref, err := s.Start(context.Background(), task, s.ws, []string{"repo:read"})
 	if err != nil {
-		t.Fatalf("start: %v", err)
+		t.Fatalf("start: %v (cause: %v)", err, errors.Unwrap(err))
 	}
 	return ref
 }
