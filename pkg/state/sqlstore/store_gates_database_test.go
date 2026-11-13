@@ -164,48 +164,69 @@ func TestPostgresHoldsTheAgentRoleToTheReservationsAndUsageItMayWrite(t *testing
 				input_tokens, output_tokens, cost, verified, recorded_at) VALUES ('` + string(sqlstoretest.Factory) +
 				`', 'acme/app#7', 'run-1', 'r-1', 'coding', '{}', ` + input + `, ` + output + `, ` + cost + `, false, 1)`
 		}
-		// A reservation that changes hands is refused as a privilege the
-		// role does not have.
+		newReservation := func(id, amount, key, mode, status string) string {
+			return `INSERT INTO reservations (factory_id, id, issue, run_id, budget_mode, amount, status, hard_cap_enforced,
+				idempotency_key, created_at) VALUES ('` + string(sqlstoretest.Factory) + `', '` + id + `', 'acme/app#7', 'run-1',
+				'` + mode + `', ` + amount + `, '` + status + `', true, '` + key + `', 1)`
+		}
+		// A reservation that changes hands or terms, one made other than
+		// held, and one whose status goes back are refused as a privilege
+		// the role does not have.
 		for name, statement := range map[string]string{
-			"a reservation handed to another run":    reservationOf(`run_id = 'run-9'`),
-			"a reservation handed to another issue":  reservationOf(`issue = 'acme/app#9'`),
-			"a reservation handed to another claim":  reservationOf(`idempotency_key = 'claim-other'`),
-			"a reservation moved to another factory": reservationOf(`factory_id = 'other'`),
-			"a reservation renamed":                  reservationOf(`id = 'r-2'`),
-			"a reservation backdated":                reservationOf(`created_at = 0`),
+			"a reservation made settled":                     newReservation("r-5", "1", "claim-r-5", "capped", "settled"),
+			"a reservation made released":                    newReservation("r-6", "1", "claim-r-6", "capped", "released"),
+			"a reservation lowered":                          reservationOf(`amount = 0`),
+			"a negative reservation":                         reservationOf(`amount = -1`),
+			"a reservation made unlimited":                   reservationOf(`budget_mode = 'unlimited'`),
+			"a reservation that drops the provider hard cap": reservationOf(`hard_cap_enforced = false`),
+			"a reservation in no known status":               reservationOf(`status = 'forgotten'`),
+			"a reservation in no known budget mode":          reservationOf(`budget_mode = 'free'`),
+			"a reservation handed to another run":            reservationOf(`run_id = 'run-9'`),
+			"a reservation handed to another issue":          reservationOf(`issue = 'acme/app#9'`),
+			"a reservation handed to another claim":          reservationOf(`idempotency_key = 'claim-other'`),
+			"a reservation moved to another factory":         reservationOf(`factory_id = 'other'`),
+			"a reservation renamed":                          reservationOf(`id = 'r-2'`),
+			"a reservation backdated":                        reservationOf(`created_at = 0`),
 		} {
 			refusedRow(t, agent, name, statement)
 		}
 		// A value no store writes is refused by a constraint, for every
-		// session.
-		newReservation := func(id, amount, key string) string {
-			return `INSERT INTO reservations (factory_id, id, issue, run_id, budget_mode, amount, status, hard_cap_enforced,
-				idempotency_key, created_at) VALUES ('` + string(sqlstoretest.Factory) + `', '` + id + `', 'acme/app#7', 'run-1',
-				'capped', ` + amount + `, 'held', true, '` + key + `', 1)`
-		}
-		for name, statement := range map[string]string{
-			"a negative reservation":                    reservationOf(`amount = -1`),
-			"a reservation in no known status":          reservationOf(`status = 'forgotten'`),
-			"a reservation in no known budget mode":     reservationOf(`budget_mode = 'free'`),
-			"a negative reservation made":               newReservation("r-3", "-1", "claim-r-3"),
-			"a reservation made with no claim key":      newReservation("r-4", "1", ""),
-			"usage that lowers the spending":            usage("-100", "0", "0"),
-			"usage with a negative count of tokens in":  usage("0", "-1", "0"),
-			"usage with a negative count of tokens out": usage("0", "0", "-1"),
+		// session, the owner's as well.
+		owner := db.Raw(t)
+		for name, check := range map[string]struct {
+			role      *sql.DB
+			statement string
+		}{
+			"a negative reservation":                    {owner, reservationOf(`amount = -1`)},
+			"a reservation in no known status":          {owner, reservationOf(`status = 'forgotten'`)},
+			"a reservation in no known budget mode":     {agent, newReservation("r-7", "1", "claim-r-7", "free", "held")},
+			"a negative reservation made":               {agent, newReservation("r-3", "-1", "claim-r-3", "capped", "held")},
+			"a reservation made with no claim key":      {agent, newReservation("r-4", "1", "", "capped", "held")},
+			"usage that lowers the spending":            {agent, usage("-100", "0", "0")},
+			"usage with a negative count of tokens in":  {agent, usage("0", "-1", "0")},
+			"usage with a negative count of tokens out": {agent, usage("0", "0", "-1")},
 		} {
-			_, err := agent.ExecContext(ctx, statement)
+			_, err := check.role.ExecContext(ctx, check.statement)
 			var pg *pgconn.PgError
 			if !errors.As(err, &pg) || pg.Code != "23514" {
 				t.Errorf("the database must refuse %s by a constraint, got %v", name, err)
 			}
 		}
-		for name, statement := range map[string]string{
-			"a reservation the run gives up": reservationOf(`status = 'released'`),
-			"usage the run reports":          usage("3", "10", "20"),
+		for _, allowed := range []struct{ name, statement string }{
+			{"a reservation the run is suspended on", reservationOf(`status = 'suspended'`)},
+			{"a reservation the run gives up", reservationOf(`status = 'released'`)},
+			{"usage the run reports", usage("3", "10", "20")},
 		} {
-			if _, err := agent.ExecContext(ctx, statement); err != nil {
-				t.Errorf("the agent role must be allowed %s: %v", name, err)
+			if _, err := agent.ExecContext(ctx, allowed.statement); err != nil {
+				t.Errorf("the agent role must be allowed %s: %v", allowed.name, err)
 			}
+		}
+		for name, statement := range map[string]string{
+			"a released reservation held again": reservationOf(`status = 'held'`),
+			"a released reservation settled":    reservationOf(`status = 'settled'`),
+			"a released reservation suspended":  reservationOf(`status = 'suspended'`),
+		} {
+			refusedRow(t, agent, name, statement)
 		}
 		if got := totals(t, agentStore, time.Unix(0, 0)); got.Reserved != 0 || got.SpentUnverified != 3 {
 			t.Errorf("after the refused changes the budget counts %+v, want nothing reserved and 3 spent", got)

@@ -112,9 +112,14 @@ func TestClosingARunsReservation(t *testing.T) {
 				gate := budget.NewGate(budget.Config{Clock: f.clock})
 				ctx := context.Background()
 				err := f.store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-					if err := tx.PutReservation(ctx, core.Reservation{ID: "res-1", FactoryID: sqlstoretest.Factory, IssueID: issue, RunID: "run-1",
-						Mode: core.BudgetCapped, Amount: amount, Status: c.status, IdempotencyKey: "claim/run-1", CreatedAt: f.clock.Now()}); err != nil {
-						return err
+					// A reservation is made held and moved on from there.
+					r := core.Reservation{ID: "res-1", FactoryID: sqlstoretest.Factory, IssueID: issue, RunID: "run-1",
+						Mode: core.BudgetCapped, Amount: amount, Status: core.ReservationHeld, IdempotencyKey: "claim/run-1", CreatedAt: f.clock.Now()}
+					for _, status := range []core.ReservationStatus{core.ReservationHeld, c.status} {
+						r.Status = status
+						if err := tx.PutReservation(ctx, r); err != nil {
+							return err
+						}
 					}
 					return dispatcher.CloseReservationOfRun(ctx, gate, tx, "run-1", "res-1", dispatcher.RunSpend{ReportedCost: c.reported, Unpriced: c.unpriced})
 				})

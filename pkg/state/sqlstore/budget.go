@@ -5,16 +5,31 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// PutReservation creates a reservation or updates the mode, amount, status
-// and guarantee of an existing one. The run a reservation was made for never
-// changes: an ID that already belongs to another issue, run or idempotency
-// key is refused with CONFLICT, so money set aside for one run cannot be
-// handed to another.
+// reservationMoves lists, for each status of a reservation, the statuses it
+// may move on to besides staying where it is. Settled and released are final,
+// and a suspended run's money is never held again, so no rewrite of a
+// reservation can set money aside anew that its run already gave up or
+// spent, nor free it by going back. budgetRowRules holds the zone roles to
+// the same list in PostgreSQL.
+var reservationMoves = map[core.ReservationStatus][]core.ReservationStatus{
+	core.ReservationHeld:      {core.ReservationSettled, core.ReservationSuspended, core.ReservationReleased},
+	core.ReservationSuspended: {core.ReservationSettled, core.ReservationReleased},
+}
+
+// PutReservation makes a reservation, which is made held, or moves an
+// existing one to another status along reservationMoves. The terms a
+// reservation was made on never change: its issue, run and claim, which an
+// ID that already belongs to another one is refused for with CONFLICT, so
+// money set aside for one run cannot be handed to another; and its budget
+// mode, amount and provider hard cap, so a rewrite cannot lower what the
+// budget counts as set aside. A change of terms and a move the list does not
+// have are refused with CONFLICT.
 func (t *tx) PutReservation(ctx context.Context, r core.Reservation) error {
 	if err := t.writes(tableReservations, canInsert|canUpdate); err != nil {
 		return err
@@ -41,21 +56,55 @@ func (t *tx) PutReservation(ctx context.Context, r core.Reservation) error {
 	case r.IdempotencyKey == "":
 		return invalid("a reservation needs the idempotency key of its claim")
 	}
+	stored, err := t.GetReservation(ctx, r.ID)
+	if core.HasCode(err, core.CodeNotFound) {
+		return t.makeReservation(ctx, r)
+	}
+	if err != nil {
+		return err
+	}
+	switch {
+	case stored.IssueID != r.IssueID || stored.RunID != r.RunID || stored.IdempotencyKey != r.IdempotencyKey:
+		return conflict("reservation %s belongs to another run", r.ID)
+	case stored.Mode != r.Mode || stored.Amount != r.Amount || stored.HardCapEnforced != r.HardCapEnforced:
+		return conflict("reservation %s keeps the budget mode, amount and provider hard cap it was made with", r.ID)
+	case stored.Status == r.Status:
+		return nil
+	case !slices.Contains(reservationMoves[stored.Status], r.Status):
+		return conflict("reservation %s is %s and cannot become %s", r.ID, stored.Status, r.Status)
+	}
+	// The status read is part of the condition, so a concurrent move of the
+	// same reservation makes this one change nothing and fail.
+	changed, err := t.q.exec(ctx, "move reservation", `UPDATE reservations SET status = ?
+		WHERE factory_id = ? AND id = ? AND status = ?`,
+		string(r.Status), string(r.FactoryID), r.ID, string(stored.Status))
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return conflict("reservation %s changed while it was being moved", r.ID)
+	}
+	return nil
+}
+
+// makeReservation inserts a reservation that does not exist yet. It is made
+// held: a reservation that is settled, suspended or released from the start
+// sets nothing aside and records no step of a run.
+func (t *tx) makeReservation(ctx context.Context, r core.Reservation) error {
+	if r.Status != core.ReservationHeld {
+		return invalid("a reservation is made %s, not %s", core.ReservationHeld, r.Status)
+	}
 	changed, err := t.q.exec(ctx, "write reservation", `INSERT INTO reservations
 		(factory_id, id, issue, run_id, budget_mode, amount, status, hard_cap_enforced, idempotency_key, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (factory_id, id) DO UPDATE
-		SET budget_mode = excluded.budget_mode, amount = excluded.amount, status = excluded.status,
-		    hard_cap_enforced = excluded.hard_cap_enforced
-		WHERE reservations.issue = excluded.issue AND reservations.run_id = excluded.run_id
-		  AND reservations.idempotency_key = excluded.idempotency_key`,
+		ON CONFLICT (factory_id, id) DO NOTHING`,
 		string(r.FactoryID), r.ID, r.IssueID.String(), string(r.RunID), string(r.Mode), int64(r.Amount),
 		string(r.Status), r.HardCapEnforced, r.IdempotencyKey, toNanos(timeOr(r.CreatedAt, t.store.now())))
 	if err != nil {
 		return err
 	}
 	if changed != 1 {
-		return conflict("reservation %s belongs to another run", r.ID)
+		return conflict("reservation %s was made while it was being made", r.ID)
 	}
 	return nil
 }
