@@ -12,6 +12,8 @@ services:
       WORDPRESS_DB_NAME: shop
       WORDPRESS_DB_USER: shop
       WORDPRESS_DB_PASSWORD_FILE: /run/secrets/db_password
+      WORDPRESS_SECRET_FILE: /run/secrets/wp_secret
+      WORDPRESS_HOME: http://127.0.0.1:7480
       APACHE_RUN_DIR: /tmp/apache2
       APACHE_PID_FILE: /tmp/apache2/apache2.pid
       APACHE_LOCK_DIR: /tmp/apache2/lock
@@ -19,7 +21,7 @@ services:
     volumes:
       - ./build/bundle:/var/www/html:ro
       - uploads:/var/www/html/wp-content/uploads
-    secrets: [db_password]
+    secrets: [db_password, wp_secret]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1/healthz"]
   db:
@@ -37,3 +39,5 @@ volumes:
 secrets:
   db_password:
     file: ./secrets/db_password
+  wp_secret:
+    file: ./secrets/wp_secret

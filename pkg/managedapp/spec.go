@@ -53,17 +53,26 @@ type Runtime struct {
 	HealthPath string `yaml:"health_path" json:"health_path"`
 	// Env is configuration that is not secret.
 	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	// Command overrides the image's command; empty keeps it. It may name a
+	// file of the bundle, such as a program the build exported.
+	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
 	// Secrets maps a variable to the name of a secret. The variable
 	// NAME_FILE is set to the path of a file holding the secret; the value
 	// itself never enters the environment, the Spec or a log.
 	Secrets map[string]string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 }
 
-// Bundle is how a revision's content is assembled from the repository.
+// Bundle is how a revision's content is made from the repository, in one of
+// two ways. Lock: trusted code packages pinned archives and repository files,
+// running nothing (an interpreted application such as WordPress). Program:
+// the candidate's program is compiled in the build sandbox, which exports one
+// file (a compiled application such as a Go service). Exactly one is set.
 type Bundle struct {
 	// Lock is the repository path of the lockfile pinning every downloaded
 	// archive by version and sha256.
-	Lock string `yaml:"lock" json:"lock"`
+	Lock string `yaml:"lock,omitempty" json:"lock,omitempty"`
+	// Program is the repository path of the package the sandbox builds.
+	Program string `yaml:"program,omitempty" json:"program,omitempty"`
 	// Mount is where the bundle is mounted, read-only, in the container.
 	Mount string `yaml:"mount" json:"mount"`
 	// Sources are files or directories of the repository copied into the

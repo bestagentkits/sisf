@@ -1,0 +1,113 @@
+# Written by sisf adopt; review it, then commit it.
+# The factory reads this file from the Owner-approved branch only.
+apiVersion: sisf/managed-app/v1
+name: shop
+stack: wordpress
+runtime:
+  image: wordpress:7.0-php8.3-apache@sha256:b427cec767f5de2aa649390cb8805aa1fe320e1e0d57fc1f467754edb6cc0a49
+  port: 80
+  user: "33:33"
+  health_path: /healthz
+  env:
+    APACHE_LOCK_DIR: /tmp/apache2/lock
+    APACHE_LOG_DIR: /tmp/apache2/log
+    APACHE_PID_FILE: /tmp/apache2/apache2.pid
+    APACHE_RUN_DIR: /tmp/apache2
+    WORDPRESS_DB_HOST: db
+    WORDPRESS_DB_NAME: shop
+    WORDPRESS_DB_USER: shop
+    WORDPRESS_HOME: http://127.0.0.1:7480
+  secrets:
+    WORDPRESS_DB_PASSWORD: db_password
+    WORDPRESS_SECRET: wp_secret
+bundle:
+  lock: content.lock
+  mount: /var/www/html
+  sources:
+    - from: plugins
+      to: wp-content/plugins
+    - from: mu-plugins
+      to: wp-content/mu-plugins
+    - from: wp-config.php
+      to: wp-config.php
+    - from: htaccess
+      to: .htaccess
+  prune:
+    - wp-content/plugins/akismet
+    - wp-content/plugins/hello.php
+data:
+  - name: uploads
+    target: /var/www/html/wp-content/uploads
+    owner: "33:33"
+dependencies:
+  - name: db
+    image: mariadb:11.4@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
+    env:
+      MARIADB_DATABASE: shop
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+      MARIADB_USER: shop
+    secrets:
+      MARIADB_PASSWORD: db_password
+    data:
+      - name: db
+        target: /var/lib/mysql
+    ready:
+      - sh
+      - -c
+      - MYSQL_PWD="$(cat "$MARIADB_PASSWORD_FILE")" mariadb -u"$MARIADB_USER" -e "SELECT 1" "$MARIADB_DATABASE" >/dev/null
+    backup:
+      - sh
+      - -c
+      - set -eu; MYSQL_PWD="$(cat "$MARIADB_PASSWORD_FILE")" exec mariadb-dump --single-transaction --quick --routines --triggers --hex-blob -u"$MARIADB_USER" "$MARIADB_DATABASE"
+    restore:
+      - sh
+      - -c
+      - set -eu; MYSQL_PWD="$(cat "$MARIADB_PASSWORD_FILE")" exec mariadb -u"$MARIADB_USER" "$MARIADB_DATABASE"
+checks:
+  - name: health
+    max_latency_ms: 2000
+    steps:
+      - path: /healthz
+        json:
+          database: ok
+  - name: home
+    max_latency_ms: 3000
+    steps:
+      - path: /
+        contains: </html>
+  - name: catalogue
+    max_latency_ms: 3000
+    steps:
+      - path: /wp-json/wc/store/v1/products?per_page=5
+        contains: '"prices"'
+  - name: purchase
+    max_latency_ms: 8000
+    steps:
+      - path: /wp-json/wc/store/v1/cart
+        capture_header:
+          nonce: Nonce
+      - path: /wp-json/wc/store/v1/products?per_page=1&stock_status=instock
+        capture_json:
+          product: 0.id
+      - method: POST
+        path: /wp-json/wc/store/v1/cart/add-item
+        headers:
+          Nonce: ${nonce}
+        body: '{"id":${product},"quantity":1}'
+        status: 201
+      - method: POST
+        path: /wp-json/wc/store/v1/checkout
+        headers:
+          Nonce: ${nonce}
+        body: '{"billing_address":{"first_name":"Synthetic","last_name":"Buyer","address_1":"1 Example Street","city":"Sampletown","state":"CA","postcode":"94000","country":"US","email":"synthetic@shop.example.invalid"},"shipping_address":{"first_name":"Synthetic","last_name":"Buyer","address_1":"1 Example Street","city":"Sampletown","state":"CA","postcode":"94000","country":"US"},"payment_method":"sisf_sandbox"}'
+        json:
+          payment_result.payment_status: success
+    writes: true
+policy:
+  protected:
+    - htaccess
+    - mu-plugins/*
+    - plugins/sisf-sandbox-pay/*
+    - wp-config.php
+  lock_changes:
+    patch: auto

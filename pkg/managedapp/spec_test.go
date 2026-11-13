@@ -55,6 +55,8 @@ func TestASpecThatBreaksABoundaryIsRefused(t *testing.T) {
 		"no checks":              {func(s *Spec) { s.Checks = nil }, "at least one check"},
 		"unknown lock class":     {func(s *Spec) { s.Policy.LockChanges["everything"] = DecisionAuto }, "unknown class"},
 		"absolute pattern":       {func(s *Spec) { s.Policy.Protected = []string{"/etc/*"} }, "policy.protected"},
+		"two ways to bundle":     {func(s *Spec) { s.Bundle.Program = "./cmd/app" }, "both lock and program"},
+		"no way to bundle":       {func(s *Spec) { s.Bundle.Lock = "" }, "neither lock nor program"},
 		"wrong api version":      {func(s *Spec) { s.APIVersion = "v0" }, "apiVersion"},
 	}
 	for name, c := range cases {

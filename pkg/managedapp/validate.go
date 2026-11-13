@@ -9,14 +9,13 @@ import (
 )
 
 var (
-	namePattern     = regexp.MustCompile(`^[a-z][a-z0-9-]{1,30}$`)
-	volumePattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,40}$`)
-	envNamePattern  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	secretPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,40}$`)
-	userPattern     = regexp.MustCompile(`^([0-9]+):([0-9]+)$`)
-	pinnedPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$`)
-	secretLikeNames = regexp.MustCompile(`(?i)(PASSWORD|PASSWD|SECRET|TOKEN|PRIVATE|API_KEY|_KEY)$`)
-	methods         = map[string]bool{"": true, "GET": true, "HEAD": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}
+	namePattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{1,30}$`)
+	volumePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,40}$`)
+	envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	secretPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,40}$`)
+	userPattern    = regexp.MustCompile(`^([0-9]+):([0-9]+)$`)
+	pinnedPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$`)
+	methods        = map[string]bool{"": true, "GET": true, "HEAD": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}
 )
 
 // reservedEnv are variables the factory sets; a Spec cannot.
@@ -61,7 +60,16 @@ func (r Runtime) validate(p *problems) {
 }
 
 func (b Bundle) validate(p *problems) {
-	validateRelative(p, "bundle.lock", b.Lock)
+	switch {
+	case b.Lock != "" && b.Program != "":
+		p.addf("bundle sets both lock and program; a bundle is made one way")
+	case b.Lock != "":
+		validateRelative(p, "bundle.lock", b.Lock)
+	case b.Program != "":
+		validateRelative(p, "bundle.program", strings.TrimPrefix(b.Program, "./"))
+	default:
+		p.addf("bundle sets neither lock nor program")
+	}
 	if !path.IsAbs(b.Mount) || path.Clean(b.Mount) != b.Mount || b.Mount == "/" {
 		p.addf("bundle.mount %q is not a clean absolute path below /", b.Mount)
 	}
@@ -159,7 +167,10 @@ func (pol Policy) validate(p *problems) {
 // ProtectedPaths returns the repository path patterns a candidate may not
 // change on its own: the Spec, its lockfile, and the Owner's patterns.
 func (s *Spec) ProtectedPaths() []string {
-	out := append([]string{FileName, s.Bundle.Lock}, s.Policy.Protected...)
+	out := append([]string{FileName}, s.Policy.Protected...)
+	if s.Bundle.Lock != "" {
+		out = append(out, s.Bundle.Lock)
+	}
 	sort.Strings(out)
 	return compact(out)
 }
@@ -176,13 +187,13 @@ func validateUser(p *problems, where, user string, nonRoot bool) {
 }
 
 func validateEnv(p *problems, where string, env, secrets map[string]string) {
-	for k := range env {
+	for k, v := range env {
 		switch {
 		case !envNamePattern.MatchString(k):
 			p.addf("%s env %q is not a variable name", where, k)
 		case reservedEnv[k]:
 			p.addf("%s env %s is set by the factory", where, k)
-		case secretLikeNames.MatchString(k):
+		case SecretLike(k) && !Flag(v):
 			p.addf("%s env %s looks like a secret; declare it under secrets", where, k)
 		}
 	}
@@ -197,6 +208,27 @@ func validateEnv(p *problems, where string, env, secrets map[string]string) {
 			p.addf("%s sets %s both as env and as a secret", where, k)
 		}
 	}
+}
+
+// SecretLike reports whether a variable's name says it holds a secret.
+func SecretLike(name string) bool {
+	u := strings.ToUpper(name)
+	for _, s := range []string{"PASSWORD", "PASSWD", "SECRET", "TOKEN", "PRIVATE", "API_KEY"} {
+		if strings.Contains(u, s) {
+			return true
+		}
+	}
+	return strings.HasSuffix(u, "_KEY")
+}
+
+// Flag reports whether v is a switch (1, 0, yes, no, true, false) rather than
+// a value: MARIADB_RANDOM_ROOT_PASSWORD=1 holds no secret.
+func Flag(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "1", "yes", "no", "true", "false", "":
+		return true
+	}
+	return false
 }
 
 func validateRelative(p *problems, where, rel string) {
