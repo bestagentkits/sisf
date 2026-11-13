@@ -10,6 +10,7 @@ import (
 	"github.com/bestagentkits/sisf/internal/policy"
 	iqa "github.com/bestagentkits/sisf/internal/qa"
 	"github.com/bestagentkits/sisf/internal/redact"
+	"github.com/bestagentkits/sisf/internal/signing/delegation"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/internal/supplychain"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -57,6 +58,11 @@ type Config struct {
 	SameRouteAcknowledged bool
 	QASigner              core.Signer
 	ArtifactSigner        core.Signer
+	// Delegation finds the root-signed delegation of one of the
+	// supervisor's keys; the QA stage stores it with each receipt so the
+	// receipt can be checked with the root public key alone. Nil stores
+	// none.
+	Delegation func(keyID string) (delegation.SignedDelegation, bool)
 	// Verifier trusts the supervisor's delegated keys; ApprovalVerifier
 	// trusts the approval service's.
 	Verifier         core.Verifier
@@ -175,6 +181,7 @@ func New(cfg Config) (*Stages, error) {
 		QA: &QAStage{
 			FactoryID: cfg.FactoryID, Owner: "supervisor-qa", State: cfg.State, Evaluator: evaluator, Tree: tree, Policy: refs,
 			MaxAttempts: cfg.MaxAttempts, PassScore: passScore(rc.PassScore), ExtraGates: rc.ExtraGates, Budget: cfg.Budget, Clock: cfg.Clock,
+			Delegation: cfg.Delegation,
 		},
 		Release: releaseStage,
 	}, nil

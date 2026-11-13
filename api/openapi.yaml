@@ -1199,6 +1199,80 @@ paths:
         - agent
       x-sisf-sensitivity: read
       x-sisf-step-up: false
+  /api/v1/actions/runs.receipt:
+    post:
+      operationId: runs_receipt
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                input:
+                  additionalProperties: false
+                  description: Exactly one of issue and run_id; attempt defaults to the issue's current evaluator attempt.
+                  properties:
+                    attempt:
+                      description: Evaluator attempt of the run.
+                      minimum: 1
+                      type: integer
+                    issue:
+                      description: Issue reference owner/repo#number.
+                      type: string
+                    run_id:
+                      description: Run identifier.
+                      type: string
+                  type: object
+              type: object
+        required: false
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  output:
+                    properties:
+                      attempt:
+                        type: integer
+                      delegation:
+                        description: The root-signed delegation of the key that signed the receipt; absent for a receipt stored before delegations were kept.
+                        type: object
+                      factory_id:
+                        type: string
+                      issue:
+                        type: string
+                      receipt:
+                        description: The QA receipt as the evaluator signed it.
+                        type: object
+                      ref:
+                        type: string
+                      run_id:
+                        type: string
+                      verify_with:
+                        description: The command that checks this output offline with the root public key.
+                        type: string
+                    type: object
+                type: object
+          description: The action ran.
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - bearerAuth:
+            - runs:read
+      summary: Hand out the signed QA receipt of an issue's run with the root-signed delegation of its key, to check offline with the root public key (sisf receipt verify).
+      tags:
+        - runs
+      x-sisf-action: runs.receipt
+      x-sisf-dry-run: false
+      x-sisf-roles:
+        - owner
+        - maintainer
+        - reporter
+        - viewer
+        - agent
+      x-sisf-sensitivity: read
+      x-sisf-step-up: false
   /api/v1/actions/secrets.list_refs:
     post:
       operationId: secrets_list_refs

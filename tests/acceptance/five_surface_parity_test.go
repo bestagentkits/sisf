@@ -32,6 +32,7 @@ func parityRequests(t *testing.T, f *harness.Factory) map[string]call {
 		"issues.list":              {Input: raw(`{}`)},
 		"runs.inspect":             {Input: raw(issue)},
 		"runs.explain":             {Input: raw(issue)},
+		"runs.receipt":             {Input: raw(issue)},
 		"approvals.list":           {Input: raw(`{}`)},
 		"approvals.get":            {Input: raw(`{"id":"apr-unknown"}`)},
 		"approvals.decide":         {Input: raw(`{"request_id":"apr-unknown","nonce":"n","subject_digest":"sha256:00","policy_revision":"` + string(f.PolicyRevision) + `","decision":"approve"}`)},

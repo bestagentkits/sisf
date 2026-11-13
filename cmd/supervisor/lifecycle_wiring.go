@@ -154,7 +154,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	return stages.New(stages.Config{
 		FactoryID: m.FactoryID, Repo: repo, State: d.stop.store, SameRouteAcknowledged: m.ModelRoutes.SameModelRoute,
 		GitHub: client, Merger: merger, Self: settings.Self, Judge: judge, QAIdentity: "agent:qa/" + string(m.FactoryID), QAWorkspace: "qa/" + string(m.FactoryID),
-		QASigner: keys.QA, ArtifactSigner: keys.Artifact, Verifier: keys.Verifier, ApprovalVerifier: approvalVerifier,
+		QASigner: keys.QA, ArtifactSigner: keys.Artifact, Delegation: keys.Delegation, Verifier: keys.Verifier, ApprovalVerifier: approvalVerifier,
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
 		BuildRetry: stages.BuildRetry{HoldAfter: l.buildOutageLimit}, Budget: spend,
 		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor, Synthetic: synthetic,

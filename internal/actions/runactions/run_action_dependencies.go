@@ -108,6 +108,9 @@ type Deps struct {
 	// RunStops reads why an issue was blocked when its run stopped; nil
 	// leaves it out.
 	RunStops RunStops
+	// QAReceipts reads the signed QA receipts runs.receipt hands out; nil
+	// makes that action NOT_SUPPORTED.
+	QAReceipts QAReceipts
 }
 
 // New returns the actions of this package over deps.
@@ -127,6 +130,7 @@ func New(deps Deps) ([]core.Action, error) {
 		ActionIssuesList:    h.issuesList,
 		ActionRunsInspect:   h.runsInspect,
 		ActionRunsExplain:   h.runsExplain,
+		ActionRunsReceipt:   h.runsReceipt,
 	}
 	specs := Specs()
 	out := make([]core.Action, 0, len(specs))

@@ -50,6 +50,19 @@ func (k *supervisorKeys) remember(d delegation.SignedDelegation) {
 	k.trusted = append(k.trusted, d)
 }
 
+// Delegation returns the delegation of a key the supervisor has trusted
+// since it started, the latest one when the key was trusted twice.
+func (k *supervisorKeys) Delegation(keyID string) (delegation.SignedDelegation, bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	for i := len(k.trusted) - 1; i >= 0; i-- {
+		if k.trusted[i].Delegation.KeyID == keyID {
+			return k.trusted[i], true
+		}
+	}
+	return delegation.SignedDelegation{}, false
+}
+
 // VerifierAt returns a verifier that judges signatures as of at, trusting
 // every delegation the supervisor has trusted since it started. The QA
 // receipt of a release that is already verified is judged with it as of

@@ -56,6 +56,12 @@ func (h handlers) resolve(ctx context.Context, req core.ActionRequest) (Inspecti
 	if err != nil {
 		return Inspection{}, err
 	}
+	return h.resolveTarget(ctx, in)
+}
+
+// resolveTarget reads the issue or run in names, as resolve does.
+func (h handlers) resolveTarget(ctx context.Context, in targetInput) (Inspection, error) {
+	var err error
 	if (in.Issue == "") == (in.RunID == "") {
 		return Inspection{}, core.NewError(core.CodeInvalidArgument, "name exactly one of issue and run_id")
 	}

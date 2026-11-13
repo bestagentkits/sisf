@@ -22,6 +22,8 @@ import (
 // supervisor's delegated keys, and the trust volume with the root-signed
 // release that pins each unit's last known good build.
 type Trust struct {
+	// Root is the Owner's root public key, all an outside party holds.
+	Root     ed25519.PublicKey
 	Verifier *delegation.ChainVerifier
 	QA       *delegation.DelegatedSigner
 	Artifact *delegation.DelegatedSigner
@@ -32,6 +34,14 @@ type Trust struct {
 	Installed map[string]core.ReleaseDigest
 	// Dir is the trust volume the LKG book is kept on.
 	Dir string
+	// delegations are the root-signed delegations of the keys, by key id.
+	delegations map[string]delegation.SignedDelegation
+}
+
+// Delegation returns the root-signed delegation of one of the keys.
+func (tr *Trust) Delegation(keyID string) (delegation.SignedDelegation, bool) {
+	d, ok := tr.delegations[keyID]
+	return d, ok
 }
 
 // digestOf names a fixed build of the harness.
@@ -50,6 +60,7 @@ func newTrust(t testingT, factory core.FactoryID, clock core.Clock) *Trust {
 	must(t, err)
 	verifier, err := delegation.NewChainVerifier(delegation.VerifierConfig{FactoryID: factory, Root: pub, Clock: clock})
 	must(t, err)
+	delegations := map[string]delegation.SignedDelegation{}
 	load := func(purpose delegation.Purpose) *delegation.DelegatedSigner {
 		issued, err := delegation.Issue(ctx, root, delegation.IssueRequest{
 			FactoryID: factory, Purpose: purpose, Holder: delegation.HolderSupervisor,
@@ -60,9 +71,10 @@ func newTrust(t testingT, factory core.FactoryID, clock core.Clock) *Trust {
 			Holder: delegation.HolderSupervisor, Delegation: issued.Delegation, PrivateKey: issued.PrivateKey,
 		})
 		must(t, err)
+		delegations[issued.Delegation.Delegation.KeyID] = issued.Delegation
 		return signer
 	}
-	tr := &Trust{Verifier: verifier, QA: load(delegation.PurposeQAReceipt), Artifact: load(delegation.PurposeDeployArtifact),
+	tr := &Trust{Root: pub, delegations: delegations, Verifier: verifier, QA: load(delegation.PurposeQAReceipt), Artifact: load(delegation.PurposeDeployArtifact),
 		Supervisor: digestOf(string(factory) + " supervisor"),
 		Installed: map[string]core.ReleaseDigest{
 			"app":     core.ReleaseDigest(digestOf(string(factory) + " app v1")),
