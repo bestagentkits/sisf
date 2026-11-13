@@ -42,8 +42,9 @@ diff -q "$work/sisf-app.yaml" "$app/sisf-app.yaml" >/dev/null || fail "adopt dif
 end adopt
 
 begin bundle
-"$sisf" app bundle --spec "$app/sisf-app.yaml" --out "$work/bundle.tar" --json >"$work/bundle.json"
-digest=$(sed -E 's/.*"digest":"sha256:([0-9a-f]+)".*/\1/' "$work/bundle.json")
+"$sisf" app bundle --spec "$app/sisf-app.yaml" --out "$work/bundle.tar" >"$work/bundle.txt"
+digest=$(awk '{print $1}' "$work/bundle.txt" | sed 's/^sha256://')
+echo "$digest" | grep -Eq '^[0-9a-f]{64}$' || fail "bundle digest: $(cat "$work/bundle.txt")"
 bundle_vol="sisf-bundle-$(echo "$digest" | cut -c1-16)"
 end bundle
 
