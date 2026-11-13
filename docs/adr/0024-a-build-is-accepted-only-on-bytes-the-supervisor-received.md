@@ -25,7 +25,7 @@ Where the deploy backend runs images (Docker mode, the Compose backend) the supe
 
 - Docker mode builds, evaluates and releases no agent-written candidate until the supervisor can observe what it deploys. It did not release one before either: the deploy filter refuses every image but the installed one, so the only builds it could stage were the forged kind above.
 - A Standalone install with a build sandbox is unchanged.
-- **Not proven by the program digest:** that the program was built from the commit. That rests on the report phase running no candidate code and building the commit it is told, in a fresh container, The SBOM and provenance references were that phase's word too; the supervisor now makes and holds both documents itself ([ADR 0026](0026-release-evidence-is-what-the-supervisor-measured-and-made.md)).
+- **Not proven by the program digest:** that the program was built from the commit. That rests on the report phase running no candidate code and building the commit it is told, in a fresh container, The SBOM and provenance references were that phase's word too; the supervisor now makes and holds both documents itself ([ADR 0025](0025-release-evidence-is-what-the-supervisor-measured-and-made.md)).
 
 ## Alternatives considered
 

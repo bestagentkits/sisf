@@ -1,4 +1,4 @@
-# ADR 0026: Release evidence is what the supervisor measured and made
+# ADR 0025: Release evidence is what the supervisor measured and made
 
 ## Status
 
