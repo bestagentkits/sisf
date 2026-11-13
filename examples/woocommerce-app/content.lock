@@ -1,0 +1,7 @@
+# Pinned content of the shop. One line per component: kind slug version sha256.
+# The bundle build downloads each archive from downloads.wordpress.org and
+# refuses one whose sha256 differs. Adding a line (a new plugin) or changing
+# the core line needs the Owner's approval; see sisf-app.yaml.
+core wordpress 7.0.4 f0885ad10c35ac87e70517bc5789275cd54ccac052222a58acfb7b9f870082b0
+plugin woocommerce 11.2.1 5317434cb381b5fdc7c1dd6ee258324f08c390976aaf8d1199f2a0e9a3ab8586
+plugin contact-form-7 6.1.3 a5feaa9988f31cea6b052865d1c3ee080daa04ec23ffab7266a63f448e9c90d1
