@@ -144,12 +144,19 @@ var releaseMigrations = []migration{
 		// under the agent zone's key prefixes, and the reservations and the
 		// usage ledger refuse what the store refuses. No data moves and no
 		// column changes; the constraints are not checked against existing
-		// rows. The previous release's store journals every step it writes
-		// with the record as written, its claim names no candidate, its
-		// agent zone never submitted a candidate, its control zone keys no
-		// step under an agent prefix and its budget writes are within the
-		// new rules, so it keeps working on the schema.
-		Migration: state.Migration{Version: 12, Name: "the journal, the keys and the budget hold to the store's rules", BackwardCompatible: true},
+		// rows.
+		//
+		// It is not backward compatible. On PostgreSQL the agent zone's role
+		// loses UPDATE on the reservations, and the previous release's
+		// dispatcher makes each reservation with INSERT ... ON CONFLICT DO
+		// UPDATE, which PostgreSQL refuses without that privilege even when
+		// nothing conflicts, and settles and releases reservations as the
+		// agent zone. So the previous release cannot claim an issue on the
+		// new schema. On SQLite nothing is revoked, but the flag belongs to
+		// the migration, not the dialect. A store that has migrations applied
+		// therefore takes it only with the Owner's approval, and it cannot
+		// ride along with a self-published release.
+		Migration: state.Migration{Version: 12, Name: "the journal, the keys and the budget hold to the store's rules", BackwardCompatible: false},
 		file:      "0012_store_rules_in_the_database.sql",
 		postgres:  storeGatesScript,
 	},

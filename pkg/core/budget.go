@@ -130,7 +130,13 @@ type BudgetTotals struct {
 // transaction satisfies it, which is how a reservation commits or rolls back
 // together with the claim it belongs to. Usage entries are append-only.
 type BudgetLedger interface {
-	// PutReservation creates or updates a reservation by ID.
+	// PutReservation makes a reservation by ID, which must be held, or moves
+	// the status of an existing one on: held to settled, suspended or
+	// released, suspended to settled or released. The issue, run, idempotency
+	// key, budget mode, amount and hard cap of a reservation never change,
+	// writing the status it already has changes nothing, and any other change
+	// is CONFLICT. A ledger that may only make reservations answers
+	// PERMISSION_DENIED for an existing one.
 	PutReservation(ctx context.Context, r Reservation) error
 	// GetReservation returns NOT_FOUND for an unknown ID.
 	GetReservation(ctx context.Context, id string) (Reservation, error)

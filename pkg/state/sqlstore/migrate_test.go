@@ -86,6 +86,49 @@ func TestIncompatibleMigrationNeedsApprovalAndNothingIsAppliedWithoutIt(t *testi
 	})
 }
 
+// Migration 12 takes UPDATE on the reservations from the agent zone's role,
+// which the previous release's dispatcher needs to claim, so it is marked
+// not backward compatible and cannot ride along with a self-published
+// release.
+func TestTheStoreRulesMigrationIsNotBackwardCompatible(t *testing.T) {
+	t.Parallel()
+	shipped := sqlstore.Migrations()
+	if len(shipped) < 12 {
+		t.Fatalf("the release ships %d migrations, want migration 12", len(shipped))
+	}
+	if m := shipped[11]; m.Version != 12 || m.BackwardCompatible {
+		t.Fatalf("migration 12 is %+v, want it marked not backward compatible", m)
+	}
+}
+
+// A store with no migration applied runs no release yet, so none can break
+// on its schema and a rollback has no data to keep: it takes every migration
+// the release ships without approval, compatible or not. A store that has a
+// migration applied still needs the approval.
+func TestAStoreWithNothingAppliedTakesAnIncompatibleMigrationWithoutApproval(t *testing.T) {
+	t.Parallel()
+	incompatible := sqlstore.TestMigration{Name: "rename what documents keep", SQL: `ALTER TABLE kv ADD COLUMN memo TEXT`}
+	sqlstoretest.RunUnmigrated(t, func(t *testing.T, db *sqlstoretest.Database) {
+		s := db.Open(t, core.ZoneControl)
+		sqlstore.AddReleaseMigrations(s, incompatible)
+		if err := s.Migrate(ctx, state.MigrateOptions{}); err != nil {
+			t.Fatalf("an empty store refused the migrations of its release: %v", err)
+		}
+		if version, err := s.SchemaVersion(ctx); err != nil || version != len(sqlstore.Migrations())+1 {
+			t.Fatalf("version after migrating an empty store = %d, %v", version, err)
+		}
+		sqlstore.AddReleaseMigrations(s, incompatible)
+		wantCode(t, s.Migrate(ctx, state.MigrateOptions{}), core.CodeApprovalRequired)
+
+		// A store whose bookkeeping was emptied still holds its tables and
+		// is not taken for a fresh one.
+		if _, err := db.Raw(t).ExecContext(ctx, `DELETE FROM schema_migrations`); err != nil {
+			t.Fatal(err)
+		}
+		wantCode(t, s.Migrate(ctx, state.MigrateOptions{}), core.CodeApprovalRequired)
+	})
+}
+
 func TestFailedMigrationLeavesTheSchemaWhereItWas(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {

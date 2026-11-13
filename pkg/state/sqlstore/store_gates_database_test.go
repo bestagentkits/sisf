@@ -338,6 +338,18 @@ func TestPostgresStoreRulesMigrationUpgradesAGrantedStore(t *testing.T) {
 			}
 		}
 		suspend := `UPDATE reservations SET status = 'suspended' WHERE factory_id = '` + string(sqlstoretest.Factory) + `' AND id = 'r-up'`
+		// previousClaim is how the previous release's dispatcher makes the
+		// reservation of a claim, as the agent zone.
+		previousClaim := func(id string) string {
+			return `INSERT INTO reservations
+				(factory_id, id, issue, run_id, budget_mode, amount, status, hard_cap_enforced, idempotency_key, created_at)
+				VALUES ('` + string(sqlstoretest.Factory) + `', '` + id + `', 'acme/app#8', 'run-1', 'capped', 5, 'held', true, 'claim-` + id + `', 1)
+				ON CONFLICT (factory_id, id) DO UPDATE
+				SET budget_mode = excluded.budget_mode, amount = excluded.amount, status = excluded.status,
+				    hard_cap_enforced = excluded.hard_cap_enforced
+				WHERE reservations.issue = excluded.issue AND reservations.run_id = excluded.run_id
+				  AND reservations.idempotency_key = excluded.idempotency_key`
+		}
 		agent := rawLogin(t, logins.DSN[core.ZoneAgent])
 		control := rawLogin(t, logins.DSN[core.ZoneControl])
 		// The premise: the earlier schema lets forged rows in.
@@ -348,6 +360,7 @@ func TestPostgresStoreRulesMigrationUpgradesAGrantedStore(t *testing.T) {
 			"a journal row for no record":              {agent, journalRow("acme/app#404", "Ready", "claimed", "Claimed", 1, "claim/run-1").sql()},
 			"an intake step under the agent claim key": {control, journalRow("acme/app#405", "", "issue_received", "Intake", 1, "claim/run-1").sql()},
 			"a reservation the agent role suspends":    {agent, suspend},
+			"the previous release's claim reservation": {agent, previousClaim("r-before")},
 			"a negative cost":                          {agent, `INSERT INTO usage_ledger (factory_id, issue, run_id, reservation_id, step, model_route, input_tokens, output_tokens, cost, verified, recorded_at) VALUES ('` + string(sqlstoretest.Factory) + `', 'acme/app#7', 'run-1', 'r-1', 'coding', '{}', 0, 0, -1, false, 1)`},
 		} {
 			if _, err := statement.role.ExecContext(ctx, statement.sql); err != nil {
@@ -355,10 +368,21 @@ func TestPostgresStoreRulesMigrationUpgradesAGrantedStore(t *testing.T) {
 			}
 		}
 
+		// The migration takes away what the previous release's dispatcher
+		// needs, so it is not backward compatible: a store at migration 11
+		// takes it only with the Owner's approval.
 		migrator := db.Open(t, core.ZoneControl)
-		if err := migrator.Migrate(ctx, state.MigrateOptions{}); err != nil {
+		wantCode(t, migrator.Migrate(ctx, state.MigrateOptions{}), core.CodeApprovalRequired)
+		if version, err := migrator.SchemaVersion(ctx); err != nil || version != 11 {
+			t.Fatalf("a store at migration 11 moved to %d without approval: %v", version, err)
+		}
+		if err := migrator.Migrate(ctx, state.MigrateOptions{AllowIncompatible: true}); err != nil {
 			t.Fatalf("migrate a granted store at migration 11: %v", err)
 		}
+		// Even with nothing to conflict with, the previous release's claim
+		// needs UPDATE on the reservations, which the agent role no longer
+		// has.
+		refusedRow(t, agent, "the previous release's claim reservation after the migration", previousClaim("r-after"))
 		for policy, want := range map[string]string{"sisf_agent_insert": agentRole, "sisf_control_insert": controlRole} {
 			var roles string
 			if err := raw.QueryRowContext(ctx, `SELECT array_to_string(roles, ',') FROM pg_policies
