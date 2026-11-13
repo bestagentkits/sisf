@@ -76,29 +76,51 @@ Actions without a shortcut, such as `budget.get` or `setup.sample_issue`, are ca
 
 `sisf receipt verify` checks a QA receipt with nothing but the Owner's root public key (`cmd/sisf/cmd_receipt.go`, `internal/qa/receipt_bundle.go`). It connects to no factory, so an auditor who was handed the receipt can run it anywhere.
 
+**What it proves.** A receipt that verifies was signed under a key the root key delegated. That proves nothing against whoever holds the root key: they can sign any receipt. In the default profile the root key sits in the factory host's secret store (`secrets/control/root-key.pem`), so the factory host itself can; the report states this as the assurance `lower_root_in_factory_store`. For an audit that holds against the factory host, the Owner keeps the root key off the host (offline, or in hardware the host cannot use) and tells the auditor so apart from the factory; only then does the auditor pass `--root-offline`, and the report states `root_offline`. The tool cannot tell where the key is kept; the flag records what the Owner said.
+
+**Pinning the root key.** The auditor gets the root key's fingerprint (`ed25519:` and 64 hex digits) from the Owner apart from the receipt and the factory, and passes it as `--root-key-id`. A root key file whose fingerprint differs is refused, so a root key swapped beside the receipt cannot vouch for it. Without `--root-key-id` the report says the key was not pinned.
+
 | Flag | Meaning |
 |---|---|
 | `--root-key file` | the Owner's root public key, PEM or one line of base64; required |
+| `--root-key-id fingerprint` | the root key's fingerprint from the Owner; a key with another fingerprint is refused |
 | `--factory id`, `--issue owner/repo#n`, `--run id` | what the receipt must be about; required |
-| `--commit sha` | the candidate commit the receipt must name; not checked when empty |
+| `--commit sha`, `--digest sha256:...`, `--attempt n` | the candidate commit, candidate image digest and evaluator attempt the receipt must name; each is checked only when given |
 | `--delegation file` | the signed delegation of the receipt's key, when the input carries none |
 | `--revocations file` | the Owner's latest root-signed revocation list |
-| `--json` | print the result as JSON |
+| `--root-offline` | the Owner said, apart from the factory, that the root key is kept off the factory host |
+| `--allow-failed` | exit 0 for an authentic receipt whose hard gates did not pass, to inspect it |
+| `--require-unexpired` | exit 4 for an authentic receipt that has expired |
+| `--json` | print the result as JSON, with `verdict`, `assurance`, `root_key_id` and `root_key_pinned` |
 
-The input (a file, or `-` for standard input) is what `sisf call runs.receipt` prints, its `output` object, or a bare receipt with `--delegation`. The receipt is accepted only when the delegation is signed by the root key for that factory and names the receipt's key as the supervisor's QA-receipt key, the signature covers every field, the key was inside its delegated window at the receipt's issue time and is not on the revocation list, and the receipt names the factory, issue, run and (when given) commit asked for. It exits 0 on success and 1 on any refusal. The verdict, reason and candidate factoryd stores beside the receipt are not signed and are not shown.
+The input (a file, or `-` for standard input) is what `sisf call runs.receipt` prints, its `output` object, or a bare receipt with `--delegation`. Every file is read strictly: a key that appears twice in one object (also in another letter case), a key that is not a field, data after the document, or nesting deeper than 16 levels is refused, so no two JSON readers can disagree on what was checked. The receipt is authentic only when the delegation is signed by the root key for that factory and names the receipt's key as the supervisor's QA-receipt key, the signature covers every field, the key was inside its delegated window at the receipt's issue time and is not on the revocation list, and the receipt names the factory, issue, run and (when given) commit, digest and attempt asked for. Name all three of `--commit`, `--digest` and `--attempt` to bind the receipt to the release you audit: a passing receipt of attempt 1 is then refused for a release built from attempt 2. `runs.receipt` prints them in `verify_with`. The verdict, reason and candidate factoryd stores beside the receipt are not signed and are not shown.
+
+Exit status:
+
+| Status | Meaning |
+|---|---|
+| 0 | authentic, its hard gates passed and, under `--require-unexpired`, not expired (`verdict: verified`); or authentic under `--allow-failed` |
+| 1 | refused: not authentic, malformed, or about something else |
+| 2 | usage error |
+| 3 | authentic, but its hard gates did NOT pass (`verdict: authentic_hard_gates_failed`); never reported as verified |
+| 4 | authentic and passing, but expired, under `--require-unexpired` (`verdict: authentic_expired`) |
+
+Expiry is always reported; it changes the exit status only under `--require-unexpired`, since an expired receipt still proves what the evaluator concluded.
 
 The key is judged as of the receipt's issue time, so a receipt stays verifiable after its week-long key has expired. A key that leaked could then sign a receipt dated inside its old window; pass the Owner's latest revocation list with `--revocations` to rule that out. Without one the report says the check was not made.
 
-On a factory, the Owner fetches the bundle with `sisf call runs.receipt --input '{"issue":"owner/repo#N"}' > receipt.json` and hands it to the auditor with the root public key. The example below was run for real, on a receipt and keys made fresh by the test helper of `cmd/sisf/cmd_receipt_test.go` rather than by a factory:
+On a factory, the Owner fetches the bundle with `sisf call runs.receipt --input '{"issue":"owner/repo#N"}' > receipt.json` and hands it to the auditor with the root public key, and the fingerprint by another channel. The example below was run for real, with the command built from this tree, on a receipt and keys made fresh by the test helper of `cmd/sisf/cmd_receipt_test.go` rather than by a factory:
 
 ```text
-$ sisf receipt verify --root-key root.pub --factory acme-app --issue 'acme/app#7' --run run-1 receipt.json
-QA receipt verified: signed by a key the root key delegated, and about the run named.
+$ sisf receipt verify --root-key root.pub --root-key-id ed25519:e9797519595cf9b5f2000ba9e0a4e4458aa50e18063347858c0f36df7f5117cd --factory acme-app --issue 'acme/app#7' --run run-1 --commit cccccccccccccccccccccccccccccccccccccccc --digest sha256:1111111111111111111111111111111111111111111111111111111111111111 --attempt 1 receipt.json
+QA receipt verified: signed by a key the root key delegated, about the run named, and its hard gates passed.
+This proves nothing against whoever holds the root key, who can sign anything.
 
-  root key:              ed25519:3d74518671b176003424cc61b636dee0688f8b8f7af89d62ecd6b1dffa59056e
-  signing key:           ed25519:61435a4ad692488de98cd6e489f1becff426839b6ee7c52b5986ea6d83c9416b
-  key delegation:        qa_receipt held by supervisor, valid 2026-11-13T07:04:14Z to 2026-11-20T07:04:14Z
-  key judged at:         2026-11-13T07:05:14Z (the receipt's issue time)
+  root key:              ed25519:e9797519595cf9b5f2000ba9e0a4e4458aa50e18063347858c0f36df7f5117cd (matches --root-key-id)
+  assurance:             lower_root_in_factory_store (the root key may sit on the factory host, which could then sign anything)
+  signing key:           ed25519:49bc917825761155559e292597d2d4bdbd06360d4201ef92839b786ea22c9dce
+  key delegation:        qa_receipt held by supervisor, valid 2026-11-13T10:03:47Z to 2026-11-20T10:03:47Z
+  key judged at:         2026-11-13T10:04:47Z (the receipt's issue time)
   revocations:           not checked (no --revocations list given)
 
 Signed fields:
@@ -114,21 +136,29 @@ Signed fields:
   qa agent:              agent:qa on openai/mid
   coding agent:          agent:coder on anthropic/mid
   same model route:      false
-  issued:                2026-11-13T07:05:14Z
-  expires:               2026-11-14T07:05:14Z (still valid)
+  issued:                2026-11-13T10:04:47Z
+  expires:               2026-11-14T10:04:47Z (still valid)
   hard gates:            all passed
   score:                 28
 
 Checks:
   hard_gate  tests                        passed
   rubric     correctness                  passed 28/30
-$ sisf receipt verify --root-key root.pub --factory acme-app --issue 'acme/app#7' --run run-2 receipt.json
-sisf: GUARD_FAILED: the QA receipt was issued for another issue or run
-$ sisf receipt verify --root-key root.pub --factory acme-app --issue 'acme/app#7' --run run-1 tampered.json
+$ echo $?
+0
+$ sisf receipt verify --root-key root.pub --root-key-id ed25519:e9797519595cf9b5f2000ba9e0a4e4458aa50e18063347858c0f36df7f5117cd --factory acme-app --issue 'acme/app#7' --run run-1 --commit cccccccccccccccccccccccccccccccccccccccc --digest sha256:1111111111111111111111111111111111111111111111111111111111111111 --attempt 2 receipt.json
+sisf: GUARD_FAILED: the QA receipt was issued for another evaluator attempt
+$ echo $?
+1
+$ sisf receipt verify --root-key root.pub --root-key-id ed25519:e9797519595cf9b5f2000ba9e0a4e4458aa50e18063347858c0f36df7f5117cd --factory acme-app --issue 'acme/app#7' --run run-1 tampered.json
 sisf: SIGNATURE_INVALID: the signature does not match the payload
+$ echo $?
+1
 ```
 
-`tampered.json` is `receipt.json` with its score changed. The root public key is the one `sisf init` made, in `secrets/control/root-public-key` under the install; it is public and may be handed out, unlike `root-key.pem` beside it. A receipt stored before the supervisor kept delegations beside receipts carries none: give the delegation of its key (`delegation-qa_receipt.json` on the supervisor's trust volume, while that key has not been replaced since) with `--delegation`.
+`tampered.json` is `receipt.json` with its score changed. For a receipt whose hard gates failed the report opens with `QA receipt authentic, but its hard gates did NOT pass`, shows `hard gates: NOT all passed` and the failed check, prints `sisf receipt verify: the receipt is authentic, but its hard gates did NOT pass` to standard error and exits 3.
+
+The root public key is the one `sisf init` made, in `secrets/control/root-public-key` under the install; it is public and may be handed out, unlike `root-key.pem` beside it. A receipt stored before the supervisor kept delegations beside receipts carries none: give the delegation of its key (`delegation-qa_receipt.json` on the supervisor's trust volume, while that key has not been replaced since) with `--delegation`.
 
 ## Emergency stop
 
