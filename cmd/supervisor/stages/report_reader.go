@@ -147,6 +147,8 @@ func (r *reportReader) result() (ImageResult, error) {
 		return ImageResult{}, reportUnusable("the reported image digest is not a digest")
 	case !strings.HasSuffix(r.values["image"], "@"+string(digest)):
 		return ImageResult{}, reportUnusable("the reported image is not pinned to the reported digest")
+	case !usableImageName(strings.TrimSuffix(r.values["image"], "@"+string(digest))):
+		return ImageResult{}, reportUnusable("the reported image has no name, or a name with a space or a second digest")
 	}
 	if !r.exported {
 		return ImageResult{}, reportUnusable("the report exports no program (key " + programKey + "); the supervisor accepts a build " +
@@ -160,6 +162,12 @@ func (r *reportReader) result() (ImageResult, error) {
 		return ImageResult{}, err
 	}
 	return ImageResult{Digest: digest, Image: r.values["image"]}, nil
+}
+
+// usableImageName says whether name, the reported image without its digest,
+// can name the build in the SBOM the supervisor makes of it.
+func usableImageName(name string) bool {
+	return name != "" && !strings.ContainsAny(name, "@ \t\n\r")
 }
 
 // reportUnusable is the outage of a build command whose report phase did

@@ -174,10 +174,22 @@ func TestABuildCommandThatDoesNotReportAsAskedIsAnOutage(t *testing.T) {
 		"an image not pinned to the digest": func(env map[string]string) string {
 			return strings.Replace(goodReport(env), "registry.local/app@"+string(reportedDigest), "registry.local/app:latest", 1)
 		},
+		// The image name goes into the SBOM the supervisor makes, which
+		// refuses a name it cannot carry: the report is unusable, not the
+		// supervisor broken.
+		"an image name with a space": func(env map[string]string) string {
+			return strings.Replace(goodReport(env), "registry.local/app@", "registry.local/my app@", 1)
+		},
+		"an image with no name": func(env map[string]string) string {
+			return strings.Replace(goodReport(env), "registry.local/app@", "@", 1)
+		},
+		"an image name holding a digest": func(env map[string]string) string {
+			return strings.Replace(goodReport(env), "registry.local/app@", "registry.local/app@sha256:00@", 1)
+		},
 	} {
 		_, err := sandboxBuild(t, &phasedSandbox{phase: map[string]execution.ExecResult{}, report: report})
-		if _, refused := RefusalOf(err); refused || err == nil {
-			t.Errorf("%s: %v, want an outage", name, err)
+		if _, refused := RefusalOf(err); refused || !core.HasCode(err, core.CodeUnavailable) || !strings.Contains(err.Error(), "phased protocol") {
+			t.Errorf("%s: %v, want the outage of an unusable report", name, err)
 		}
 	}
 	_, err := sandboxBuild(t, &phasedSandbox{phase: map[string]execution.ExecResult{"report": {ExitCode: 3}}})
