@@ -101,6 +101,13 @@ func assertControlJournalRules(t *testing.T, db *sqlstoretest.Database, control 
 	place(key)
 	refusedRow(t, control, "a step of an issue with no record", journalRow("acme/app#404", "", "issue_received", "Intake", 1, key).
 		with("lease_owner", "''").with("fencing_token", "0").with("attempt", "0").with("run_id", "''").sql())
+	// The journal names only steps the lifecycle has: an event of the zone
+	// on an edge it does not end or start on is refused, though the record
+	// stands where the row says.
+	refusedRow(t, control, "a claim the lifecycle has no edge into Intake for",
+		received(key).with("event", "'claimed'").with("from_state", "'Ready'").sql())
+	refusedRow(t, control, "an intake from a state the issue_received edge does not start from",
+		received(key).with("from_state", "'Ready'").sql())
 	for name, column := range map[string][2]string{
 		"a run the record does not name":       {"run_id", "'run-2'"},
 		"a lease the record does not name":     {"lease_owner", "'worker-2'"},
@@ -127,7 +134,7 @@ func TestPostgresCommitsARecordStepOnlyWithItsJournalRow(t *testing.T) {
 		agent := rawLogin(t, logins.DSN[core.ZoneAgent])
 		control := db.Open(t, core.ZoneControl)
 		claimed := claim(t, control, readyRecord(t, control, issue(6)), "worker-1", "run-1")
-		refusedRow(t, agent, "a record step with no journal row",
+		refusedAtCommit(t, agent, "a record step with no journal row",
 			recordUpdate(`state = 'Developing', version = version + 1, idempotency_key = 'develop/run-1'`, claimed.IssueID))
 		if got := record(t, control, claimed.IssueID); got != claimed {
 			t.Fatalf("a refused step moved the record to %+v", got)
@@ -319,7 +326,7 @@ func TestPostgresStoreRulesMigrationUpgradesAGrantedStore(t *testing.T) {
 		assertControlJournalRules(t, db, control)
 		owner := db.Open(t, core.ZoneControl)
 		claimed := claim(t, owner, readyRecord(t, owner, issue(61)), "worker-1", "run-1")
-		refusedRow(t, agent, "a record step with no journal row",
+		refusedAtCommit(t, agent, "a record step with no journal row",
 			recordUpdate(`state = 'Developing', version = version + 1, idempotency_key = 'develop/run-1'`, claimed.IssueID))
 		_, err := agent.ExecContext(ctx, `INSERT INTO usage_ledger (factory_id, issue, run_id, reservation_id, step, model_route,
 			input_tokens, output_tokens, cost, verified, recorded_at) VALUES ('`+string(sqlstoretest.Factory)+`', 'acme/app#7',

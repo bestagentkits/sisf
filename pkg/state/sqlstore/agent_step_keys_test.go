@@ -216,14 +216,42 @@ func (j journalInsert) sql() string {
 	return "INSERT INTO transitions (" + strings.Join(j.columns, ", ") + ") VALUES (" + strings.Join(values, ", ") + ")"
 }
 
-// refusedRow fails the test unless the database refuses statement with
-// insufficient_privilege.
+// refusedRow fails the test unless the database refuses statement itself
+// with insufficient_privilege. The statement runs in a transaction that is
+// rolled back and never committed, so a refusal deferred to the commit, as
+// the pairing of a record with its journal row is (recordJournalTrigger),
+// does not stand in for a rule that must refuse the statement.
 func refusedRow(t *testing.T, db *sql.DB, name, statement string) {
 	t.Helper()
-	_, err := db.ExecContext(ctx, statement)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, statement)
 	var pg *pgconn.PgError
 	if !errors.As(err, &pg) || pg.Code != "42501" {
-		t.Errorf("the agent role must be refused %s, got %v", name, err)
+		t.Errorf("the role must be refused %s by the statement itself, got %v", name, err)
+	}
+}
+
+// refusedAtCommit fails the test unless the database lets statement run and
+// refuses the transaction that holds it at the commit, with
+// insufficient_privilege.
+func refusedAtCommit(t *testing.T, db *sql.DB, name, statement string) {
+	t.Helper()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, statement); err != nil {
+		t.Fatalf("%s must reach the commit, the premise of this test: %v", name, err)
+	}
+	err = tx.Commit()
+	var pg *pgconn.PgError
+	if !errors.As(err, &pg) || pg.Code != "42501" {
+		t.Errorf("the role must be refused %s at the commit, got %v", name, err)
 	}
 }
 

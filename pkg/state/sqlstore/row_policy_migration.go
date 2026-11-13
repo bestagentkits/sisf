@@ -12,7 +12,7 @@ const stepPolicyScriptTag = "$sisf_check$"
 // keyedStepPolicyScript is the PostgreSQL script of the migration that
 // replaces the policy under which each zone with keys of its own
 // (zoneStepKeys) journals its steps, with the condition of this release
-// (keyedStepCheck).
+// (stepCheck).
 //
 // A migration does not know the zone roles: they are named at install, and
 // GrantZoneRoles writes the policies with the grants. So the script keeps
@@ -28,7 +28,7 @@ func keyedStepPolicyScript() (string, error) {
 		}
 		// The table is named as the other migrations name it, through the
 		// search path of the migrating connection.
-		check, err := keyedStepCheck(zone, quote(tableRecords))
+		check, err := stepCheck(zone, quote(tableRecords))
 		if err != nil {
 			return "", err
 		}

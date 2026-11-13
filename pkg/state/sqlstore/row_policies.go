@@ -140,14 +140,9 @@ func rowRule(table string, command privilege, zone core.Zone, records string) (u
 		case canSelect:
 			return "true", "", nil
 		case canInsert:
-			if _, keyed := zoneStepKeys[zone]; keyed {
-				check, err = keyedStepCheck(zone, records)
-				return "", check, err
-			}
-			if check, err = inList("event", eventNames(zone), false); err != nil {
+			if check, err = stepCheck(zone, records); err != nil {
 				return "", "", err
 			}
-			check += " AND " + journalsItsRecord(records)
 			foreign, err := foreignKeyCheck(zone)
 			if err != nil || foreign == "" {
 				return "", check, err
@@ -211,25 +206,21 @@ func stepStates(zone core.Zone) (created, from, to []string) {
 	return created, from, to
 }
 
-// keyedStepCheck is the condition on a step a zone with keys of its own
-// journals: the step is one of the zone's edges of the lifecycle, taken
-// under the key prefix of its event (zoneStepKeys), and it journals the
-// record exactly as written (journalsItsRecord). A stolen credential can so
-// neither take a key of another zone, nor journal a step the lifecycle has
-// no edge for, nor one for a record it did not write, nor one whose replay
-// would return other values than the record holds.
+// stepCheck is the condition on a step a zone journals: the step is one of
+// the zone's edges of the lifecycle, taken, when the zone holds a key prefix
+// for its event (zoneStepKeys), under that prefix, and it journals the record
+// exactly as written (journalsItsRecord). A stolen credential can so neither
+// take a key of another zone, nor journal a step the lifecycle has no edge
+// for, nor one for a record it did not write, nor one whose replay would
+// return other values than the record holds.
 //
 // The state the step starts from cannot be bound to the record: a policy
 // sees the record only as it stands after the step. The edge binds it
 // instead, since each event and state it ends in belong to one edge.
-func keyedStepCheck(zone core.Zone, records string) (string, error) {
+func stepCheck(zone core.Zone, records string) (string, error) {
 	var edges []string
 	for _, edge := range statemachine.Edges() {
 		if !zoneEvents[zone][edge.Event] {
-			continue
-		}
-		prefix, listed := zoneStepKeys[zone][edge.Event]
-		if !listed {
 			continue
 		}
 		// A step that creates its record starts from no state.
@@ -248,13 +239,15 @@ func keyedStepCheck(zone core.Zone, records string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		quotedPrefix, err := literal(prefix, keyPrefixPattern)
-		if err != nil {
-			return "", err
+		clause := fmt.Sprintf("from_state = %s AND event = %s AND to_state = %s", from, event, to)
+		if prefix, keyed := zoneStepKeys[zone][edge.Event]; keyed {
+			quotedPrefix, err := literal(prefix, keyPrefixPattern)
+			if err != nil {
+				return "", err
+			}
+			clause += fmt.Sprintf(" AND starts_with(idempotency_key, %s) AND length(idempotency_key) > %d", quotedPrefix, len(prefix))
 		}
-		edges = append(edges, fmt.Sprintf(
-			"(from_state = %s AND event = %s AND to_state = %s AND starts_with(idempotency_key, %s) AND length(idempotency_key) > %d)",
-			from, event, to, quotedPrefix, len(prefix)))
+		edges = appendNew(edges, "("+clause+")")
 	}
 	if len(edges) == 0 {
 		return "false", nil
@@ -314,15 +307,6 @@ func foreignKeyCheck(zone core.Zone) (string, error) {
 	}
 	slices.Sort(misuses)
 	return "NOT (" + strings.Join(misuses, " OR ") + ")", nil
-}
-
-// eventNames lists the events zone may write.
-func eventNames(zone core.Zone) []string {
-	var names []string
-	for event := range zoneEvents[zone] {
-		names = append(names, string(event))
-	}
-	return names
 }
 
 // namespaces describes the namespaces allowed reports for zone as a list:
