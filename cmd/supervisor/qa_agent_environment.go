@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/runcontrol"
+	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/manifestsettings"
 	"github.com/bestagentkits/sisf/pkg/agent/agentenv"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -23,10 +24,10 @@ func (q *qaFlags) paths(d judgeDeps, exec string) (root, home, tmp string, err e
 		root = filepath.Join(os.TempDir(), "sisf-qa-"+string(d.manifest.FactoryID))
 	}
 	if !filepath.IsAbs(root) {
-		return "", "", "", core.NewError(core.CodeInvalidArgument, "--qa-workspace-root and --qa-home must be absolute paths")
+		return "", "", "", stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "--qa-workspace-root and --qa-home must be absolute paths"))
 	}
 	if slices.ContainsFunc(d.protected, func(p string) bool { return p != "" && agentenv.Overlaps(root, p) }) {
-		return "", "", "", core.NewError(core.CodePermissionDenied, "the QA agent's directories must lie apart from the factory's secrets, state and trust")
+		return "", "", "", stages.Misconfigured(core.NewError(core.CodePermissionDenied, "the QA agent's directories must lie apart from the factory's secrets, state and trust"))
 	}
 	home = filepath.Join(root, "home")
 	tmp = filepath.Join(home, "tmp")
@@ -37,8 +38,8 @@ func (q *qaFlags) paths(d judgeDeps, exec string) (root, home, tmp string, err e
 		return root, home, tmp, nil
 	}
 	if exec != "local" || !d.manifest.TrustedCodeOnly {
-		return "", "", "", core.NewError(core.CodePermissionDenied,
-			"--qa-home is accepted only with --exec local under trusted_code_only; under --exec docker the launcher's sandbox owns the QA agent's home")
+		return "", "", "", stages.Misconfigured(core.NewError(core.CodePermissionDenied,
+			"--qa-home is accepted only with --exec local under trusted_code_only; under --exec docker the launcher's sandbox owns the QA agent's home"))
 	}
 	if err := agentenv.CheckOperatorHome(q.home, d.protected...); err != nil {
 		return "", "", "", err

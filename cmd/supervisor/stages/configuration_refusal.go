@@ -17,3 +17,15 @@ var ErrConfiguration = errors.New("refused by the configuration")
 
 // Misconfigured marks e as a refusal the configuration alone decides.
 func Misconfigured(e *core.Error) *core.Error { return e.WithCause(ErrConfiguration) }
+
+// MisconfiguredWhenInvalid marks err as a refusal the configuration alone
+// decides when it is INVALID_ARGUMENT: what a flag or a file says, as
+// opposed to a file that is not there or cannot be read. Any other error
+// is returned as it is.
+func MisconfiguredWhenInvalid(err error) error {
+	var typed *core.Error
+	if errors.As(err, &typed) && typed.Code == core.CodeInvalidArgument {
+		return Misconfigured(typed)
+	}
+	return err
+}

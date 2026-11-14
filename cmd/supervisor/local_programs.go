@@ -79,7 +79,7 @@ func (p *localPrograms) buildStore() *programstore.Store {
 // release's image reference is started with.
 func (p *localPrograms) command(image string) (string, []string, error) {
 	if p.launcher == "" || !filepath.IsAbs(p.launcher) {
-		return "", nil, core.NewError(core.CodeInvalidArgument, "deploy local needs an absolute --deploy-local-program")
+		return "", nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "deploy local needs an absolute --deploy-local-program"))
 	}
 	if !imageRefPattern.MatchString(image) {
 		return "", nil, core.NewError(core.CodeInvalidArgument, "the release's image reference is not one a local program accepts")
@@ -153,5 +153,5 @@ func (l *lifecycleFlags) artifactObserver(sim bool) (release.ArtifactObserver, e
 	if sim && l.coderAgent == "fake" {
 		return stages.SimulatedArtifacts{}, nil
 	}
-	return nil, core.NewError(core.CodeNotSupported, "this factory keeps no programs, so the supervisor cannot observe what a release would run")
+	return nil, stages.Misconfigured(core.NewError(core.CodeNotSupported, "this factory keeps no programs, so the supervisor cannot observe what a release would run"))
 }

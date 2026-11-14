@@ -25,13 +25,17 @@ var imageRefPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@+-]{0,254}$
 // environment only and is never logged or put in an error.
 func (l *lifecycleFlags) edgeAdmin(lookupEnv func(string) (string, bool)) (*edge.AdminClient, error) {
 	if l.edgeAdminURL == "" {
-		return nil, core.NewError(core.CodeInvalidArgument, "releases need --edge-admin-url")
+		return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "releases need --edge-admin-url"))
 	}
 	token, _ := lookupEnv(envEdgeAdminToken)
 	if token == "" {
 		return nil, core.NewError(core.CodeNotFound, envEdgeAdminToken+" is not set")
 	}
-	return edge.NewAdminClient(l.edgeAdminURL, token, nil)
+	client, err := edge.NewAdminClient(l.edgeAdminURL, token, nil)
+	if err != nil {
+		return nil, stages.MisconfiguredWhenInvalid(err)
+	}
+	return client, nil
 }
 
 // localSlotsRecord names, in the trust volume, the directory where the
@@ -70,5 +74,5 @@ func (l *lifecycleFlags) deployBackend(factory core.FactoryID, ctl edge.Controll
 			Edge: ctl, Clock: clock, Logger: log,
 		})
 	}
-	return nil, core.NewError(core.CodeInvalidArgument, "--deploy must be local or compose")
+	return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "--deploy must be local or compose"))
 }

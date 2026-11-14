@@ -44,14 +44,14 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	}
 	m, err := manifest.Load(l.factoryManifest)
 	if err != nil {
-		return nil, err
+		return nil, stages.MisconfiguredWhenInvalid(err)
 	}
 	if m.FactoryID != d.cfg.FactoryID {
 		return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "the factory manifest is not the one of --factory-id"))
 	}
 	inputs, err := release.NewUnitInputs(declaredUnitInputs(m))
 	if err != nil {
-		return nil, err
+		return nil, stages.MisconfiguredWhenInvalid(err)
 	}
 	sim := manifestsettings.SimulationProfile(m)
 	client, settings, err := gitHubClient(m, d.lookupEnv, d.clock)
