@@ -34,7 +34,7 @@ func everyOperation(lease state.Lease) map[string]func(tx state.Tx) error {
 		"mark failed":    func(tx state.Tx) error { return tx.MarkOutboxFailed(ctx, 2, time.Time{}, "x") },
 		"reserve":        func(tx state.Tx) error { return tx.PutReservation(ctx, reservation("r-2", 1)) },
 		"get reserved":   func(tx state.Tx) error { _, err := tx.GetReservation(ctx, "r-1"); return err },
-		"append usage":   func(tx state.Tx) error { return tx.AppendUsage(ctx, spend(1, true, time.Time{})) },
+		"append usage":   func(tx state.Tx) error { return tx.AppendUsage(ctx, spend(1, false, time.Time{})) },
 		"budget totals":  func(tx state.Tx) error { _, err := tx.BudgetTotals(ctx, time.Time{}); return err },
 		"get document":   func(tx state.Tx) error { _, err := tx.GetKV(ctx, "policy", "revision"); return err },
 		"put document":   func(tx state.Tx) error { _, err := tx.PutKV(ctx, state.KVEntry{Namespace: "n", Key: "k"}); return err },

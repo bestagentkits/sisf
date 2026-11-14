@@ -73,7 +73,7 @@ func (g *Gate) alertOnCrossing(ctx context.Context, ledger core.BudgetLedger, s 
 	if err != nil {
 		return err
 	}
-	spent := totals.SpentVerified + totals.SpentUnverified
+	spent := addMicros(totals.SpentVerified, totals.SpentUnverified)
 	if spent >= s.AlertThresholdMicros && spent-actual.Cost < s.AlertThresholdMicros {
 		g.notify(ctx, Notice{Kind: NoticeAlertThreshold, FactoryID: r.FactoryID, RunID: r.RunID,
 			LimitMicros: s.AlertThresholdMicros, SpentMicros: spent, At: actual.At})

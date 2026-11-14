@@ -24,9 +24,17 @@ func (m BudgetMode) Valid() bool { return m == BudgetUnlimited || m == BudgetCap
 // units keep ledger arithmetic exact.
 type Micros int64
 
+// MaxUsageCost bounds the cost of one usage entry: one million in the
+// ledger currency. A cost an agent reports above it is booked at the bound,
+// which is still more than any run reserves, so sums of the ledger stay far
+// from overflowing and a run is never charged less for it.
+const MaxUsageCost Micros = 1_000_000 * 1_000_000
+
 // Usage is one metered piece of spending. Verified is false when the amount
 // was estimated or the provider could not confirm it; such usage is shown as
-// unverified and never presented as a guarantee.
+// unverified and never presented as a guarantee. Nothing in the factory
+// confirms a cost with its provider yet, so the store refuses usage booked
+// as verified.
 type Usage struct {
 	FactoryID     FactoryID  `json:"factory_id"`
 	IssueID       IssueRef   `json:"issue_id"`
@@ -41,12 +49,13 @@ type Usage struct {
 	At            time.Time  `json:"at"`
 }
 
-// CostUnreported reports whether u counted tokens but its provider stated
-// no cost for them, as a CLI that prints tokens only does. Such usage is
-// not free; its cost is unknown.
+// CostUnreported reports whether u is unverified and states no cost, as a
+// CLI that prints tokens only does, whatever tokens it counted. Such usage
+// is not free; its cost is unknown. A row that states no cost and no
+// tokens is no proof that nothing was spent: the agent zone writes these
+// rows, and an empty one must not stand for a run that spent nothing.
 func (u Usage) CostUnreported() bool {
-	// The counts are compared one by one: their sum may not fit in an int64.
-	return !u.Verified && u.Cost == 0 && (u.InputTokens > 0 || u.OutputTokens > 0)
+	return !u.Verified && u.Cost == 0
 }
 
 // ReservationStatus is the life stage of a reservation.
@@ -143,6 +152,33 @@ type BudgetLedger interface {
 	AppendUsage(ctx context.Context, u Usage) error
 	// BudgetTotals sums reservations still held and usage recorded since the instant.
 	BudgetTotals(ctx context.Context, since time.Time) (BudgetTotals, error)
+	// RunUsage sums the usage of one run recorded at or after since. A
+	// ledger the caller may append to but not read returns
+	// PERMISSION_DENIED.
+	RunUsage(ctx context.Context, run RunID, since time.Time) (RunUsage, error)
+}
+
+// RunUsage is what the ledger holds for one run since its reservation was
+// made. A run's reservation is closed with it, never with the dispatcher's
+// record of the run, which the agent zone can rewrite. It is still the agent
+// zone's metering: the dispatcher books what its agents reported, so it can
+// under-report what a run cost. What the store enforces is narrower: rows
+// are append-only, an agent-zone row is dated by the store and booked
+// against a reservation of its own run, and rows dated before the
+// reservation do not count.
+type RunUsage struct {
+	// Cost sums the costs booked for the run, capped far above any amount a
+	// run reserves rather than overflowing.
+	Cost Micros `json:"cost"`
+	// CostUnreported is set when some usage of the run stated no cost (see
+	// Usage.CostUnreported).
+	CostUnreported bool `json:"cost_unreported"`
+	// Entries counts the usage records of the run.
+	Entries int64 `json:"entries"`
+	// CostTampered is set when some usage of the run has a negative cost,
+	// which no store writes: such a row counts for nothing in Cost, and a
+	// close charges the run as if its usage were unpriced.
+	CostTampered bool `json:"cost_tampered"`
 }
 
 // BudgetGate decides whether a run may spend. It is consulted before a claim

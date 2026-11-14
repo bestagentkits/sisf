@@ -160,6 +160,23 @@ var releaseMigrations = []migration{
 		file:      "0012_store_rules_in_the_database.sql",
 		postgres:  storeGatesScript,
 	},
+	{
+		// Every reservation and usage row a zone role writes is dated by the
+		// database server's clock; no zone role books usage as verified, and
+		// the agent zone's role books usage only against a reservation of
+		// the same run and issue; the ledger is indexed by run. No data
+		// moves and no column changes.
+		//
+		// It is backward compatible. The previous release dates rows by its
+		// own clock, which the server's replaces with what is in effect the
+		// same instant; no code of it books usage as verified; and its agent
+		// zone books usage only as an attempt ends, against the reservation
+		// its claim made for the same run and issue (bookAttempt in the
+		// dispatcher). So the previous release keeps working on the schema.
+		Migration: state.Migration{Version: 13, Name: "budget rows dated by the server and usage booked against its own run", BackwardCompatible: true},
+		file:      "0013_budget_rows_dated_by_the_server.sql",
+		postgres:  budgetTimeAndUsageScript,
+	},
 }
 
 // Migrations lists the migrations this release ships, for callers that must

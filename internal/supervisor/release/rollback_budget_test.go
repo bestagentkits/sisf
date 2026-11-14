@@ -30,7 +30,7 @@ func (w *world) withCappedBudget(capMicros, reserve, spent core.Micros) {
 			return err
 		}
 		return tx.AppendUsage(ctx, core.Usage{
-			FactoryID: testFactory, IssueID: issueRef(1), RunID: "run-earlier", Cost: spent, Verified: true, At: startTime,
+			FactoryID: testFactory, IssueID: issueRef(1), RunID: "run-earlier", Cost: spent, At: startTime,
 		})
 	})
 	if err != nil {
@@ -65,7 +65,7 @@ func TestAnExhaustedBudgetNeverBlocksARollbackAndItsSpendIsRecorded(t *testing.T
 	out, err := w.pipeline().Release(context.Background(), w.request(issue, run, firstBuild))
 	requireRestored(t, w, issue, run, out, err)
 	totals := w.budgetTotals()
-	if totals.Reserved != 0 || totals.SpentVerified != 10 || totals.SpentUnverified != DefaultRollbackCost {
+	if totals.Reserved != 0 || totals.SpentVerified != 0 || totals.SpentUnverified != 10+DefaultRollbackCost {
 		t.Fatalf("budget totals %+v, want the earlier spend plus the rollback's nominal cost and nothing held", totals)
 	}
 }
@@ -91,7 +91,7 @@ func TestARollbackSpendsTheRollbackReserveARunCannotReach(t *testing.T) {
 	out, err := w.pipeline().Release(ctx, w.request(issue, run, firstBuild))
 	requireRestored(t, w, issue, run, out, err)
 	totals := w.budgetTotals()
-	if totals.Reserved != 0 || totals.SpentUnverified != DefaultRollbackCost {
+	if totals.Reserved != 0 || totals.SpentUnverified != 7+DefaultRollbackCost {
 		t.Fatalf("budget totals %+v, want the rollback's reservation settled at its nominal cost", totals)
 	}
 }
@@ -155,7 +155,7 @@ func TestAnOwnerRollbackIsRecordedInTheLedgerAndNeverBlockedByTheBudget(t *testi
 	if _, err := w.pipeline().OwnerRollback(context.Background(), rollbackRequest(ref)); err != nil {
 		t.Fatalf("an Owner rollback with the budget exhausted: %v", err)
 	}
-	if totals := w.budgetTotals(); totals.Reserved != 0 || totals.SpentVerified != 10 || totals.SpentUnverified != DefaultRollbackCost {
+	if totals := w.budgetTotals(); totals.Reserved != 0 || totals.SpentVerified != 0 || totals.SpentUnverified != 10+DefaultRollbackCost {
 		t.Fatalf("budget totals %+v, want the earlier spend plus the rollback's nominal cost", totals)
 	}
 
