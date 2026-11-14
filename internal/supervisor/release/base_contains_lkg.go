@@ -13,14 +13,15 @@ type CommitComparer interface {
 	ChangedPaths(ctx context.Context, base, head core.CommitSHA) ([]string, error)
 }
 
-// checkBaseHasLKG refuses a verified candidate whose base, the policy
-// commit its QA receipt names, does not contain the commit of the LKG
-// release of its unit. The candidate was built and judged on that base, so
-// releasing it would serve, and merge, a program without the change the
-// LKG release made, and every later release of the unit would drop it too.
-// The trust baseline is moved to a commit that contains it only by the
-// Owner. An LKG the install pins names no commit and is not checked, nor is
-// one an earlier build recorded.
+// checkBaseHasLKG refuses a verified candidate whose base, the commit its
+// QA receipt says it was built and judged on, does not contain the commit
+// of the LKG release of its unit. Releasing it would serve, and merge, a
+// program without the change the LKG release made, and every later release
+// of the unit would drop it too. The commit to build on follows the merges
+// of verified releases while the content the Owner approved is unchanged
+// (policy.BuildBases); when it could not, the Owner puts a revision that
+// contains the release in force. An LKG the install pins names no commit
+// and is not checked, nor is one an earlier build recorded.
 //
 // A comparison that is cut short, or that GitHub refuses, for example for
 // a commit it does not know, cannot show the base holds the commit, and
@@ -31,7 +32,14 @@ type CommitComparer interface {
 // read but is not an entry the supervisor wrote holds it with RELEASE_HOLD
 // for the Owner, as the preflight holds it.
 func (p *Pipeline) checkBaseHasLKG(ctx context.Context, v verifiedRelease) error {
-	unit := v.artifact.Unit
+	return p.CheckBaseHasLKG(ctx, v.artifact.Unit, v.receipt.BaselineSHA)
+}
+
+// CheckBaseHasLKG is checkBaseHasLKG for a candidate of unit built on base,
+// as the build stage asks it before a candidate is judged: a candidate that
+// could not be released is then never submitted to QA. The refusal is the
+// same APPROVAL_REQUIRED the release gives.
+func (p *Pipeline) CheckBaseHasLKG(ctx context.Context, unit string, base core.CommitSHA) error {
 	lkg, found, err := p.cfg.LKG.Get(ctx, unit)
 	switch {
 	case core.HasCode(err, core.CodeUnavailable):
@@ -40,7 +48,6 @@ func (p *Pipeline) checkBaseHasLKG(ctx context.Context, v verifiedRelease) error
 	case err != nil:
 		return holdf("the last known good release of %s cannot be read", unit).WithCause(err)
 	}
-	base := v.receipt.PolicySHA
 	if !found || lkg.Source != SourcePromoted || lkg.Commit == "" || lkg.Commit == base {
 		return nil
 	}
@@ -48,7 +55,8 @@ func (p *Pipeline) checkBaseHasLKG(ctx context.Context, v verifiedRelease) error
 		err := core.NewError(core.CodeApprovalRequired, "the candidate is built on "+string(base)+", which "+why+" "+string(lkg.Commit)+
 			", the commit of "+string(lkg.RunID)+", the last known good release of unit "+unit+
 			"; releasing it would drop that release's change, so the Owner moves the trust baseline to a commit that contains it before the unit is released again")
-		err.Details = map[string]string{"base": string(base), "lkg_commit": string(lkg.Commit), "lkg_run": string(lkg.RunID), "unit": unit}
+		err.Details = map[string]string{"base": string(base), "lkg_commit": string(lkg.Commit), "lkg_run": string(lkg.RunID), "unit": unit,
+			"reason": BaseLacksLKG}
 		return err
 	}
 	if p.cfg.Commits == nil {
@@ -65,6 +73,38 @@ func (p *Pipeline) checkBaseHasLKG(ctx context.Context, v verifiedRelease) error
 	}
 	return refused("GitHub's comparison cannot show contains")
 }
+
+// BaseAccepter accepts the commit a verified candidate was built and
+// judged on as one it may be released on: policy.BuildBases. A base it
+// does not accept is POLICY_HOLD.
+type BaseAccepter interface {
+	Accept(ctx context.Context, base core.CommitSHA) error
+}
+
+// checkBaseAccepted refuses, for the Owner, a verified candidate whose base
+// the supervisor no longer accepts: the factory stopped building on main,
+// or the base is neither the policy revision nor a merge it followed with
+// the approved content unchanged. Nothing is deployed. One that cannot be
+// decided now waits.
+func (p *Pipeline) checkBaseAccepted(ctx context.Context, v verifiedRelease) error {
+	if p.cfg.Bases == nil {
+		return nil
+	}
+	err := p.cfg.Bases.Accept(ctx, v.receipt.BaselineSHA)
+	if !core.HasCode(err, core.CodePolicyHold) {
+		return err
+	}
+	refused := core.NewError(core.CodeApprovalRequired, "the candidate is built on "+string(v.receipt.BaselineSHA)+
+		", which the supervisor does not release on now: "+messageOf(err))
+	refused.Details = map[string]string{"base": string(v.receipt.BaselineSHA), "reason": BaseNotAccepted}
+	return refused
+}
+
+// BaseNotAccepted is the reason detail of checkBaseAccepted's refusal.
+const BaseNotAccepted = "base_not_accepted"
+
+// BaseLacksLKG is the reason detail of CheckBaseHasLKG's refusal.
+const BaseLacksLKG = "base_lacks_lkg"
 
 // comparisonUnanswered reports whether GitHub could not answer a
 // comparison now, rather than answering it in a way that judges.

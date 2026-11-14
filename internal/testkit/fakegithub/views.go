@@ -33,8 +33,16 @@ func pullJSON(r *repo, is *issue) jPull {
 		Head:    jBranch{Ref: is.pr.headRef, SHA: is.pr.headSHA, Repo: &head},
 		Base:    jBranch{Ref: is.pr.baseRef, SHA: is.pr.baseSHA, Repo: &base},
 		User:    is.author.json(), AuthorAssociation: is.author.assoc(), CreatedAt: is.created, UpdatedAt: is.updated,
-		MergedAt: mergedAt(is.pr),
+		MergedAt: mergedAt(is.pr), MergeCommitSHA: mergeCommit(is.pr),
 	}
+}
+
+func mergeCommit(p *pull) *string {
+	if !p.merged || p.mergeCommit == "" {
+		return nil
+	}
+	sha := p.mergeCommit
+	return &sha
 }
 
 func mergedAt(p *pull) *time.Time {

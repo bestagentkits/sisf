@@ -26,6 +26,7 @@ type GitHub interface {
 	BranchHead(ctx context.Context, repo github.RepoRef, branch string) (core.CommitSHA, error)
 	CommitToBranch(ctx context.Context, repo github.RepoRef, bc github.BranchCommit) (core.CommitSHA, error)
 	CommitExists(ctx context.Context, repo github.RepoRef, commit core.CommitSHA) error
+	CommitParents(ctx context.Context, repo github.RepoRef, commit core.CommitSHA) ([]core.CommitSHA, error)
 	CreatePullRequest(ctx context.Context, repo github.RepoRef, pr github.NewPullRequest) (github.PullRequest, error)
 	// The candidates' pull requests: found by branch, titled from the issue
 	// and noted when their release is rolled back.
@@ -136,6 +137,10 @@ func New(cfg Config) (*Stages, error) {
 	if rc.Commits == nil {
 		rc.Commits = tree
 	}
+	keeper, err := wireCommitToBuildOn(cfg, &rc, tree, prs)
+	if err != nil {
+		return nil, err
+	}
 	if prs != nil {
 		rc.Lander = prs
 	}
@@ -159,7 +164,7 @@ func New(cfg Config) (*Stages, error) {
 	evaluator, err := iqa.New(iqa.Config{
 		FactoryID: cfg.FactoryID, Identity: cfg.QAIdentity, Workspace: cfg.QAWorkspace,
 		Gates: HardGates(GateSources{State: cfg.State, Files: tree, Redactor: cfg.Redactor, LKG: rc.LKG, Backend: rc.Backend, SupplyChain: supply}),
-		Judge: cfg.Judge, Baselines: Baselines{Workspace: cfg.QAWorkspace, Policy: refs}, Builds: Ledger{State: cfg.State},
+		Judge: cfg.Judge, Baselines: Baselines{Workspace: cfg.QAWorkspace, Policy: refs, Bases: keeper}, Builds: Ledger{State: cfg.State},
 		Review: tree, Routes: cfg.Routes, SameRouteAcknowledged: cfg.SameRouteAcknowledged,
 		Signer: cfg.QASigner, Verifier: cfg.Verifier, Clock: cfg.Clock,
 	})
@@ -175,11 +180,12 @@ func New(cfg Config) (*Stages, error) {
 		CandidatePRs: prs,
 		Build: &BuildStage{
 			Owner: "supervisor-builder", State: cfg.State, QAPolicy: refs, CodingPolicy: stepPolicy(loader, core.StepCoding), Clock: cfg.Clock,
+			Bases: keeper, BaseHasLKG: pipeline.CheckBaseHasLKG,
 			Retry:   cfg.BuildRetry,
 			Builder: &CandidateBuilder{FactoryID: cfg.FactoryID, Repo: cfg.Repo, Git: cfg.GitHub, Images: cfg.Images, Units: UnitRouter{Inputs: cfg.Release.UnitInputs}, Clock: cfg.Clock},
 		},
 		QA: &QAStage{
-			FactoryID: cfg.FactoryID, Owner: "supervisor-qa", State: cfg.State, Evaluator: evaluator, Tree: tree, Policy: refs,
+			FactoryID: cfg.FactoryID, Owner: "supervisor-qa", State: cfg.State, Evaluator: evaluator, Tree: tree, Policy: refs, Bases: keeper,
 			MaxAttempts: cfg.MaxAttempts, PassScore: passScore(rc.PassScore), ExtraGates: rc.ExtraGates, Budget: cfg.Budget, Clock: cfg.Clock,
 			Delegation: cfg.Delegation,
 		},
@@ -238,4 +244,32 @@ func (b Branches) Head(ctx context.Context, repo github.RepoRef, branch string) 
 // Commit commits c on its branch, which starts at c.Base.
 func (b Branches) Commit(ctx context.Context, repo github.RepoRef, c catalog.Commit) (core.CommitSHA, error) {
 	return b.GitHub.CommitToBranch(ctx, repo, github.BranchCommit{Branch: c.Branch, Base: c.Base, Message: c.Message, Author: c.Author, Files: c.Files})
+}
+
+// wireCommitToBuildOn builds the keeper of the commit to build on and hands
+// it to every place that needs it: the release pipeline follows the
+// supervisor's own merges with it and accepts each release's base again,
+// and the merge checks main with it. Moving the commit is audited, so
+// without an audit log there is no keeper, and only the policy revision
+// is built on, as before.
+func wireCommitToBuildOn(cfg Config, rc *release.Config, tree Tree, prs *CandidatePRs) (BaseKeeper, error) {
+	if rc.Audit == nil {
+		return nil, nil
+	}
+	bases, err := policy.NewBuildBases(policy.BuildBasesConfig{
+		State: cfg.State, Source: tree, Baselines: StoredBaseline{State: cfg.State}, Commits: rc.Commits,
+		Parents: CommitGraph{GitHub: cfg.GitHub, Repo: cfg.Repo}, OwnerOnly: foundationOrProtected,
+		Audit: rc.Audit, FactoryID: cfg.FactoryID, Clock: cfg.Clock,
+	})
+	if err != nil {
+		return nil, err
+	}
+	rc.Bases = releaseBases{keeper: bases}
+	if prs != nil {
+		prs.Bases = bases
+		if rc.Follower == nil {
+			rc.Follower = mainFollower{keeper: bases}
+		}
+	}
+	return bases, nil
 }

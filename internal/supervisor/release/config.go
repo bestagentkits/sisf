@@ -102,7 +102,12 @@ type Config struct {
 	// receipt names contains the commit of its unit's LKG release; without
 	// Commits that cannot be shown, and such a candidate is refused.
 	Commits CommitComparer
-	Freeze  FreezeCheck
+	// Bases is optional; with it a candidate is released only on a base
+	// the supervisor accepts again now, the policy revision or a merge it
+	// followed with the approved content unchanged, and none while the
+	// factory stopped building on main.
+	Bases  BaseAccepter
+	Freeze FreezeCheck
 	// Publisher writes the changelog and the catalog before an issue closes.
 	Publisher Publisher
 	// Blocks keeps the record of why the pipeline blocked an issue, which
@@ -111,6 +116,10 @@ type Config struct {
 	// Lander is optional; with it a verified release's change is landed on
 	// the default branch before the issue closes.
 	Lander Lander
+	// Follower is optional; with it the commit to build on follows the
+	// merge of each verified release whose foundation content is unchanged,
+	// so the next release of the unit is built on it without the Owner.
+	Follower Follower
 	// Synthetic is optional; without it a low-traffic release holds.
 	Synthetic SyntheticSuite
 	// Approvals and Policy are optional; without them OwnerRollback is

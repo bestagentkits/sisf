@@ -42,6 +42,19 @@ type Brief struct {
 	Policy  core.PolicyRefs `json:"policy"`
 	// ScopeDigest identifies the scope version the handoff was taken from.
 	ScopeDigest core.Digest `json:"scope_digest,omitempty"`
+	// Base is the commit the run is coded on: the policy revision, or a
+	// later merge the supervisor followed from it with the content the
+	// Owner approved unchanged. Empty means the policy revision. The
+	// supervisor accepts it again before it builds on it.
+	Base core.CommitSHA `json:"base,omitempty"`
+}
+
+// BaseSHA is the commit the run is coded on.
+func (b Brief) BaseSHA() core.CommitSHA {
+	if b.Base != "" {
+		return b.Base
+	}
+	return b.Policy.PolicySHA
 }
 
 // validate refuses a brief an agent could not work from.
@@ -53,6 +66,11 @@ func (b Brief) validate() error {
 	}
 	if err := probe.Validate(); err != nil {
 		return err
+	}
+	if b.Base != "" {
+		if err := b.Base.Validate(); err != nil {
+			return err
+		}
 	}
 	if b.ScopeDigest != "" {
 		return b.ScopeDigest.Validate()

@@ -158,7 +158,7 @@ func (g *GitData) mergePull(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if err := g.s.markMerged(name, n, head, g.s.actor(r)); err != nil {
+	if err := g.s.markMerged(name, n, head, sha, g.s.actor(r)); err != nil {
 		fail(w, err)
 		return
 	}
@@ -207,14 +207,16 @@ func (g *GitData) Merges() int {
 	return g.merges
 }
 
-// markMerged closes a pull request as merged at head.
-func (s *Server) markMerged(repoName string, number int, head string, by User) error {
+// markMerged closes a pull request as merged at head by the merge commit
+// merge.
+func (s *Server) markMerged(repoName string, number int, head, merge string, by User) error {
 	return s.change(func() ([]pending, error) {
 		r, is, err := s.find(repoName, number)
 		if err != nil {
 			return nil, err
 		}
 		is.pr.merged, is.pr.mergedAt, is.pr.headSHA, is.state, is.updated = true, s.now(), head, "closed", s.now()
+		is.pr.mergeCommit = merge
 		return []pending{s.event(r, "pull_request", "closed", by, map[string]any{"pull_request": pullJSON(r, is)})}, nil
 	})
 }

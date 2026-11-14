@@ -106,6 +106,7 @@ type wirePull struct {
 	// MergedAt is how a list of pull requests tells a merged one: its
 	// answer has no merged field.
 	MergedAt          *time.Time `json:"merged_at"`
+	MergeCommitSHA    string     `json:"merge_commit_sha"`
 	Head              wireBranch `json:"head"`
 	Base              wireBranch `json:"base"`
 	User              wireUser   `json:"user"`
@@ -121,6 +122,9 @@ func (w wirePull) pull(repo RepoRef) PullRequest {
 		Draft: w.Draft, Merged: w.Merged || w.MergedAt != nil, HeadRef: w.Head.Ref, HeadSHA: core.CommitSHA(w.Head.SHA),
 		BaseRef: w.Base.Ref, BaseSHA: core.CommitSHA(w.Base.SHA), IsFork: true,
 		Author: w.User.user(), AuthorAssociation: AuthorAssociation(w.AuthorAssociation),
+	}
+	if pr.Merged && core.CommitSHA(w.MergeCommitSHA).Validate() == nil {
+		pr.MergeCommit = core.CommitSHA(w.MergeCommitSHA)
 	}
 	if w.Head.Repo != nil {
 		pr.HeadRepo = w.Head.Repo.ref()

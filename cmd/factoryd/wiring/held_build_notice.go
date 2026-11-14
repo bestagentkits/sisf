@@ -55,11 +55,17 @@ func heldBuildComment(n handoff.BuildHeldNotice) string {
 		fmt.Fprintf(&b, "### Candidate build held\n\nThe policy in force changed after run `%s` was claimed. Its patch was written "+
 			"against the earlier policy, so the supervisor does not build, judge or release attempt %d on the new one. "+
 			"No attempt was spent.\n\n", n.RunID, n.Attempt)
+	} else if n.Reason == handoff.HeldBaseLacksRelease {
+		fmt.Fprintf(&b, "### Candidate build held\n\nRun `%s` was coded on a commit that lacks the last known good release of its unit, "+
+			"so its candidate could not be released and attempt %d is not submitted to QA. No attempt was spent.\n\n", n.RunID, n.Attempt)
+		if n.Detail != "" {
+			fmt.Fprintf(&b, "> %s\n\n", n.Detail)
+		}
 	} else {
 		fmt.Fprintf(&b, "### Candidate build held\n\nThe build of attempt %d of run `%s` failed %d times in a row on errors outside the patch "+
 			"(GitHub, Docker or the configuration), so the supervisor stopped trying it. No attempt was spent.\n\n", n.Attempt, n.RunID, n.Failures)
 	}
-	if n.Reason == handoff.HeldPolicySuperseded {
+	if handoff.HeldEndsRun(n.Reason) {
 		fmt.Fprintf(&b, "- The issue is blocked. To have it coded again under the policy in force: "+
 			"`factoryd issue retry --issue %s`, as the Owner.", n.IssueID)
 		return b.String()

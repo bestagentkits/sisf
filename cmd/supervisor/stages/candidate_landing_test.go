@@ -87,7 +87,7 @@ func newLandingWorldOf(t *testing.T, store state.Store, baseFiles map[string]str
 	}
 	pinned := core.CommitSHA(base)
 	candidate := qa.Candidate{IssueID: issue, RunID: run, CommitSHA: commit, Digest: landingDigest, Attempt: 1, ChangedPaths: stored}
-	receipt := core.QAReceipt{Score: 92, PolicySHA: pinned, CandidateSHA: commit}
+	receipt := core.QAReceipt{Score: 92, PolicySHA: pinned, BaselineSHA: pinned, CandidateSHA: commit}
 	err = store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		if err := put(ctx, tx, QAResultKey(run, 1), QAResult{Candidate: candidate, Receipt: receipt, Verdict: VerdictPassed}); err != nil {
 			return err
