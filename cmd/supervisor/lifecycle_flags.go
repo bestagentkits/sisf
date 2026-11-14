@@ -97,7 +97,7 @@ func (l *lifecycleFlags) execBackends(m *manifest.Manifest, clock core.Clock) (d
 	case "local":
 		local, err = execlocal.New(execlocal.Config{Clock: clock})
 	default:
-		err = core.NewError(core.CodeInvalidArgument, "--exec must be none, docker or local")
+		err = stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "--exec must be none, docker or local"))
 	}
 	if err != nil {
 		return nil, nil, err

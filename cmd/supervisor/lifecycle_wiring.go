@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"log/slog"
 	"path/filepath"
 
@@ -60,7 +61,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	}
 	rootPub, err := signing.ResolvePublicKey(d.cfg.RootKeyRef, d.lookupEnv)
 	if err != nil {
-		return nil, err
+		return nil, misconfiguredKeyRef(err)
 	}
 	root, err := rootSignerFrom(l.rootPrivateKeyEnv, d.lookupEnv)
 	if err != nil {
@@ -72,7 +73,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	}
 	approvalPub, err := signing.ResolvePublicKey(l.approvalKeyRef, d.lookupEnv)
 	if err != nil {
-		return nil, err
+		return nil, misconfiguredKeyRef(err)
 	}
 	approvalVerifier, err := signing.NewVerifier(approvalPub)
 	if err != nil {
@@ -125,7 +126,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	}
 	gate, err := prgate.New(prgate.Config{Visibility: prgate.Visibility(l.visibility), AgentLogins: agentLogins, Audit: log, Clock: d.clock})
 	if err != nil {
-		return nil, err
+		return nil, stages.MisconfiguredWhenInvalid(err)
 	}
 	docker, local, err := l.execBackends(m, d.clock)
 	if err != nil {
@@ -174,7 +175,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 func gitHubClient(m *manifest.Manifest, lookupEnv func(string) (string, bool), clock core.Clock) (*github.RESTClient, manifestsettings.GitHubSettings, error) {
 	settings, err := manifestsettings.GitHubSettingsOf(m)
 	if err != nil {
-		return nil, settings, err
+		return nil, settings, stages.MisconfiguredWhenInvalid(err)
 	}
 	if url, ok := lookupEnv(envGitHubAPIURL); ok && url != "" {
 		settings.APIURL = url
@@ -209,4 +210,16 @@ func (spendOnly) KeyID() string { return "supervisor-spend-only" }
 
 func (spendOnly) Sign(context.Context, []byte) (core.Signature, error) {
 	return core.Signature{}, core.NewError(core.CodePermissionDenied, "the supervisor does not decide approvals")
+}
+
+// misconfiguredKeyRef marks a public key reference the configuration alone
+// refuses: one not written as a reference, one in a store the supervisor
+// cannot read, or a value that is not a key. A variable that holds no key
+// yet (NOT_FOUND) is not marked: a secret store may deliver it later.
+func misconfiguredKeyRef(err error) error {
+	var typed *core.Error
+	if errors.As(err, &typed) && typed.Code == core.CodeNotSupported {
+		return stages.Misconfigured(typed)
+	}
+	return stages.MisconfiguredWhenInvalid(err)
 }

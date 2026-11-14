@@ -94,7 +94,32 @@ func TestAStartTheConfigurationRefusesEndsWithExConfig(t *testing.T) {
 			writeTrustFile(t, i, qaKey, "", 0o600)
 			return withoutRoot(a)
 		}, exitConfigRefused},
+		"an unknown execution backend": {func(_ *testing.T, _ *install, a []string) []string {
+			return append(a, "--exec", "bogus")
+		}, exitConfigRefused},
+		"an unknown repository visibility": {func(_ *testing.T, _ *install, a []string) []string {
+			return append(a, "--repo-visibility", "bogus")
+		}, exitConfigRefused},
+		"an installation id that is not a positive number": {func(t *testing.T, _ *install, a []string) []string {
+			appendToManifest(t, a, "  github_installation_id: \"-1\"\n")
+			return a
+		}, exitConfigRefused},
+		"an approval key reference that is not one": {func(_ *testing.T, _ *install, a []string) []string {
+			return append(a, "--approval-key-ref", "not a reference")
+		}, exitConfigRefused},
+		"an approval key in a store the supervisor cannot read": {func(_ *testing.T, _ *install, a []string) []string {
+			return append(a, "--approval-key-ref", "local:keys/approval")
+		}, exitConfigRefused},
+		"an approval key that is not a key": {func(_ *testing.T, i *install, a []string) []string {
+			i.env["SISF_APPROVAL_PUBLIC_KEY"] = "not a key"
+			return a
+		}, exitConfigRefused},
 		// What the environment decides may change by the next start.
+		// A key a secret store has not delivered yet may be there next time.
+		"an approval key not delivered yet": {func(_ *testing.T, i *install, a []string) []string {
+			delete(i.env, "SISF_APPROVAL_PUBLIC_KEY")
+			return a
+		}, exitFailure},
 		"a synthetic program not there yet": {func(t *testing.T, i *install, a []string) []string {
 			return append(a, "--synthetic-program", filepath.Join(i.dir, "no-suite"))
 		}, exitFailure},
