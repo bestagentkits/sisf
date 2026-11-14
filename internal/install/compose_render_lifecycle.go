@@ -92,20 +92,12 @@ func lifecycleChoice(o Options, mode manifest.Mode) LifecycleChoice {
 	if c.QAAgent == "" {
 		c.QAAgent = defaultQAAgent
 	}
-	switch {
-	case mode != manifest.ModeDocker:
-	case c.QAAgentBinary == "":
-		c.Enabled, c.OffCheck = false, "qa launcher"
-		c.Off = "no sandboxing launcher for the QA agent is configured (qa_agent_binary), so the supervisor builds, evaluates and releases nothing"
-	case c.BuildCommand == "":
-		// Every build would fail, and a failed build must never be charged
-		// to an agent's patch.
-		c.Enabled, c.OffCheck = false, "build command"
-		c.Off = "no command to build candidates in the runner sandbox is configured (build_command), so the supervisor builds, evaluates and releases nothing"
-	default:
+	if mode == manifest.ModeDocker {
 		// The Compose backend runs images, and the supervisor can observe
 		// no image a sandboxed build reports: it would start a supervisor
 		// that refuses to build (cmd/supervisor/stages/image_builders.go).
+		// No build command or launcher changes that, so init refuses both
+		// in Docker mode; a manifest written before may still name them.
 		c.Enabled, c.OffCheck = false, "build evidence"
 		c.Off = "Docker mode deploys images, and the supervisor cannot observe an image a sandboxed build reports, " +
 			"only a program it receives; it accepts no build on a report's word, so it builds, evaluates and releases nothing " +

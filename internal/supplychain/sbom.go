@@ -109,22 +109,29 @@ func ParseGoVersionM(output string) ([]*debug.BuildInfo, error) {
 // every module they link as a library, with its module hash. The same input
 // always yields the same bytes.
 func GenerateSBOM(in SBOMInput) ([]byte, error) {
-	if strings.TrimSpace(in.ImageName) == "" || strings.ContainsAny(in.ImageName, "@ \t\n") {
-		return nil, invalid("the SBOM needs the image name without a digest")
-	}
-	if err := in.ImageDigest.Validate(); err != nil {
-		return nil, err
-	}
-	if in.Timestamp.IsZero() {
-		return nil, invalid("the SBOM needs a timestamp")
-	}
 	infos, err := ParseGoVersionM(in.GoVersionM)
 	if err != nil {
 		return nil, err
 	}
+	return sbomOf(in.ImageName, in.ImageDigest, in.Timestamp, infos, nil)
+}
+
+// sbomOf renders the CycloneDX SBOM of the image name@digest made at
+// timestamp, whose Go binaries have the build information infos; props
+// are added to the described component.
+func sbomOf(name string, digest core.Digest, timestamp time.Time, infos []*debug.BuildInfo, props []cdxProperty) ([]byte, error) {
+	if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "@ \t\n") {
+		return nil, invalid("the SBOM needs the image name without a digest")
+	}
+	if err := digest.Validate(); err != nil {
+		return nil, err
+	}
+	if timestamp.IsZero() {
+		return nil, invalid("the SBOM needs a timestamp")
+	}
 	image := cdxComponent{
-		Type: "container", BOMRef: in.ImageName + "@" + string(in.ImageDigest),
-		Name: in.ImageName, Version: string(in.ImageDigest), Hashes: digestHashes(in.ImageDigest),
+		Type: "container", BOMRef: name + "@" + string(digest),
+		Name: name, Version: string(digest), Hashes: digestHashes(digest), Properties: props,
 	}
 	components := map[string]cdxComponent{}
 	dependsOn := map[string][]string{}
@@ -147,7 +154,7 @@ func GenerateSBOM(in SBOMInput) ([]byte, error) {
 	}
 	bom := cdxBOM{
 		BOMFormat: cycloneDXFormat, SpecVersion: cycloneDXVersion, Version: 1,
-		Metadata: cdxMetadata{Timestamp: in.Timestamp.UTC().Format(time.RFC3339), Component: image},
+		Metadata: cdxMetadata{Timestamp: timestamp.UTC().Format(time.RFC3339), Component: image},
 	}
 	for _, ref := range slices.Sorted(maps.Keys(components)) {
 		bom.Components = append(bom.Components, components[ref])

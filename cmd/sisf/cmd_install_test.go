@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,28 @@ func runWithOutput(t *testing.T, args ...string) (status int, stdout, stderr str
 	t.Helper()
 	var out, errOut bytes.Buffer
 	status = commands.run(context.Background(), &Env{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut}, args)
+	return status, out.String(), errOut.String()
+}
+
+// noExec fails the test on any program an install command would run, so a
+// command that must refuse can never reach a real docker or go build.
+type noExec struct{ t *testing.T }
+
+func (e noExec) Run(_ context.Context, c install.Cmd) ([]byte, error) {
+	e.t.Errorf("the command ran %s %v", c.Name, c.Args)
+	return nil, errors.New("no program may run")
+}
+
+func (e noExec) Start(_ context.Context, c install.Cmd) (install.Process, error) {
+	e.t.Errorf("the command started %s %v", c.Name, c.Args)
+	return nil, errors.New("no program may start")
+}
+
+// runRefused runs a command line that must refuse before it runs any program.
+func runRefused(t *testing.T, args ...string) (status int, stdout, stderr string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	status = commands.run(context.Background(), &Env{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut, Exec: noExec{t}}, args)
 	return status, out.String(), errOut.String()
 }
 
@@ -139,9 +162,43 @@ func TestDebugOutsideDockerModeIsRefused(t *testing.T) {
 func TestUpKeepsTheModeOfAnExistingInstall(t *testing.T) {
 	t.Parallel()
 	dir := initSim(t, "standalone")
-	status, _, stderr := runWithOutput(t, "up", "--dir", dir, "--mode", "docker")
-	if status != exitFailure || !strings.Contains(stderr, "fixed") {
-		t.Fatalf("up in the other mode = %d %q, want a refusal", status, stderr)
+	status, _, stderr := runRefused(t, "up", "--dir", dir, "--mode", "docker")
+	if status != exitUsage || !strings.Contains(stderr, "fixed") {
+		t.Fatalf("up in the other mode = %d %q, want a refusal with status %d", status, stderr, exitUsage)
+	}
+	// A wrong flag on the command line of a service unit refuses on every
+	// start, so it ends with the status --refusal-status chose, as any
+	// refusal does: the launchd agent passes 0 and is not started again.
+	for _, refusalStatus := range []string{"0", "2"} {
+		status, _, stderr = runRefused(t, "up", "--dir", dir, "--profile", "prod", "--refusal-status", refusalStatus)
+		if strconv.Itoa(status) != refusalStatus || !strings.Contains(stderr, "--profile") || !strings.Contains(stderr, "Usage:") {
+			t.Fatalf("up with a wrong flag and --refusal-status %s = %d %q, want the usage refusal with that status", refusalStatus, status, stderr)
+		}
+	}
+}
+
+// The build flags reach the installer from `sisf up` of an existing Docker
+// install, which refuses them instead of building images that ignore them.
+// The refusal exits 2, a status the systemd unit does not restart on, or
+// what --refusal-status chose, which the launchd agent sets to 0.
+func TestUpOfAnExistingDockerInstallRefusesTheBuildFlagsAndExitsWithTheRefusalStatus(t *testing.T) {
+	t.Parallel()
+	dir := initSim(t, "docker")
+	for _, flag := range []string{"--build-command", "--qa-agent-binary"} {
+		status, stdout, stderr := runRefused(t, "up", "--dir", dir, flag, "/usr/local/bin/x")
+		if status != exitUsage || !strings.Contains(stderr, "no effect in Docker mode") || strings.Contains(stdout, "built") {
+			t.Fatalf("up %s = %d %q %q, want the refusal with status %d", flag, status, stdout, stderr, exitUsage)
+		}
+	}
+	status, _, stderr := runRefused(t, "up", "--dir", dir, "--build-command", "make", "--refusal-status", "0")
+	if status != exitOK || !strings.Contains(stderr, "no effect in Docker mode") {
+		t.Fatalf("up --refusal-status 0 = %d %q, want the refusal reported with status 0", status, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "compose.yaml")); err == nil {
+		t.Fatal("the refused up rendered the Compose file")
+	}
+	if status, _, _ := runRefused(t, "up", "--dir", dir, "--refusal-status", "-1"); status != exitUsage {
+		t.Fatalf("a negative --refusal-status was accepted: %d", status)
 	}
 }
 

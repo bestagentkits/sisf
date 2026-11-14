@@ -41,6 +41,10 @@ func (in *Installer) ensure(ctx context.Context, o UpOptions) (*manifest.Manifes
 		return nil, unavailablef(err, "cannot inspect %s", in.Layout.Dir)
 	}
 	if !done {
+		// An install that could never start is not created by `up`.
+		if needsBuildSandbox(o.Init, o.Init.Mode) {
+			return nil, refusedf("%s", noBuildSandbox)
+		}
 		o.Init.Dir = in.Layout.Dir
 		res, err := in.Init(ctx, o.Init)
 		if err != nil {
@@ -59,10 +63,13 @@ func (in *Installer) ensure(ctx context.Context, o UpOptions) (*manifest.Manifes
 	}
 	if done {
 		if o.Init.Mode != "" && o.Init.Mode != m.Mode {
-			return nil, invalidf("this install runs in %s mode; the mode is fixed when it is created", m.Mode)
+			return nil, refusedf("this install runs in %s mode; the mode is fixed when it is created", m.Mode)
 		}
 		if wantSim := o.Init.Sim; wantSim != (m.Extensions["profile"] == profileSim) {
-			return nil, invalidf("the simulation profile is fixed when the install is created")
+			return nil, refusedf("the simulation profile is fixed when the install is created")
+		}
+		if err := o.Init.refuseDockerBuildFlags(m.Mode); err != nil {
+			return nil, err
 		}
 	}
 	if o.Budget != nil && o.Budget.Confirmed {

@@ -173,6 +173,10 @@ func (in *Installer) checkDelegations(c *collector, m *manifest.Manifest, read t
 func (in *Installer) checkStages(c *collector, m *manifest.Manifest) {
 	o := Options{Sim: m.Extensions["profile"] == profileSim}
 	o.lifecycleExtensions(m)
+	if needsBuildSandbox(o, m.Mode) {
+		c.fail("build sandbox", "%s", noBuildSandbox)
+		return
+	}
 	choice := lifecycleChoice(o, m.Mode)
 	if !choice.Enabled {
 		c.warn(choice.OffCheck, "%s", choice.Off)

@@ -45,6 +45,10 @@ type Env struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
+	// Exec runs the programs an install command starts, such as go build
+	// and docker; nil means the programs of this machine. A test sets it so
+	// that a command it expects to refuse can never run a real build.
+	Exec install.Exec
 }
 
 // Printf writes a command's result to standard output. A result that cannot
@@ -373,6 +377,10 @@ func report(env *Env, cmd Command, err error) int {
 		return exitOK
 	case errors.As(err, &usage):
 		say(env.Stderr, "%s %s: %s\nUsage: %s\n", program, cmd.name(), usage.message, cmd.synopsis())
+		// A usage error a command refuses with carries its own status.
+		if coded, ok := err.(exitCoder); ok {
+			return coded.ExitCode()
+		}
 		return exitUsage
 	}
 	var quiet silent

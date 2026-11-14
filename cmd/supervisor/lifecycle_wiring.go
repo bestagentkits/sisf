@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"log/slog"
 	"path/filepath"
 
@@ -37,21 +38,21 @@ type lifecycleDeps struct {
 // Keys are loaded here and handed on only as signers.
 func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*stages.Stages, error) {
 	if l.buildOutageLimit < 1 {
-		return nil, core.NewError(core.CodeInvalidArgument, "--build-outage-limit must be at least 1")
+		return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "--build-outage-limit must be at least 1"))
 	}
 	if d.stop == nil {
-		return nil, core.NewError(core.CodeInvalidArgument, "the lifecycle needs the state store; set the variable --state-dsn-env names")
+		return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "the lifecycle needs the state store; set the variable --state-dsn-env names"))
 	}
 	m, err := manifest.Load(l.factoryManifest)
 	if err != nil {
-		return nil, err
+		return nil, stages.MisconfiguredWhenInvalid(err)
 	}
 	if m.FactoryID != d.cfg.FactoryID {
-		return nil, core.NewError(core.CodeInvalidArgument, "the factory manifest is not the one of --factory-id")
+		return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "the factory manifest is not the one of --factory-id"))
 	}
 	inputs, err := release.NewUnitInputs(declaredUnitInputs(m))
 	if err != nil {
-		return nil, err
+		return nil, stages.MisconfiguredWhenInvalid(err)
 	}
 	sim := manifestsettings.SimulationProfile(m)
 	client, settings, err := gitHubClient(m, d.lookupEnv, d.clock)
@@ -60,7 +61,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	}
 	rootPub, err := signing.ResolvePublicKey(d.cfg.RootKeyRef, d.lookupEnv)
 	if err != nil {
-		return nil, err
+		return nil, misconfiguredKeyRef(err)
 	}
 	root, err := rootSignerFrom(l.rootPrivateKeyEnv, d.lookupEnv)
 	if err != nil {
@@ -72,7 +73,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	}
 	approvalPub, err := signing.ResolvePublicKey(l.approvalKeyRef, d.lookupEnv)
 	if err != nil {
-		return nil, err
+		return nil, misconfiguredKeyRef(err)
 	}
 	approvalVerifier, err := signing.NewVerifier(approvalPub)
 	if err != nil {
@@ -125,13 +126,17 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	}
 	gate, err := prgate.New(prgate.Config{Visibility: prgate.Visibility(l.visibility), AgentLogins: agentLogins, Audit: log, Clock: d.clock})
 	if err != nil {
-		return nil, err
+		return nil, stages.MisconfiguredWhenInvalid(err)
 	}
 	docker, local, err := l.execBackends(m, d.clock)
 	if err != nil {
 		return nil, err
 	}
 	images, err := l.imageBuilder(ctx, m, sim, gate, docker, local)
+	if err != nil {
+		return nil, err
+	}
+	observer, err := l.artifactObserver(sim)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +162,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 		QASigner: keys.QA, ArtifactSigner: keys.Artifact, Delegation: keys.Delegation, Verifier: keys.Verifier, ApprovalVerifier: approvalVerifier,
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
 		BuildRetry: stages.BuildRetry{HoldAfter: l.buildOutageLimit}, Budget: spend,
-		Release: release.Config{Backend: backend, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor, Synthetic: synthetic,
+		Release: release.Config{Backend: backend, Observer: observer, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor, Synthetic: synthetic,
 			SelfPublishable: selfPublishableUnits(m), UnitInputs: inputs, VerifierAt: keys.VerifierAt,
 			// A rollback reserves through the rollback reserve and records
 			// its spend; an exhausted budget never blocks it.
@@ -170,7 +175,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 func gitHubClient(m *manifest.Manifest, lookupEnv func(string) (string, bool), clock core.Clock) (*github.RESTClient, manifestsettings.GitHubSettings, error) {
 	settings, err := manifestsettings.GitHubSettingsOf(m)
 	if err != nil {
-		return nil, settings, err
+		return nil, settings, stages.MisconfiguredWhenInvalid(err)
 	}
 	if url, ok := lookupEnv(envGitHubAPIURL); ok && url != "" {
 		settings.APIURL = url
@@ -205,4 +210,16 @@ func (spendOnly) KeyID() string { return "supervisor-spend-only" }
 
 func (spendOnly) Sign(context.Context, []byte) (core.Signature, error) {
 	return core.Signature{}, core.NewError(core.CodePermissionDenied, "the supervisor does not decide approvals")
+}
+
+// misconfiguredKeyRef marks a public key reference the configuration alone
+// refuses: one not written as a reference, one in a store the supervisor
+// cannot read, or a value that is not a key. A variable that holds no key
+// yet (NOT_FOUND) is not marked: a secret store may deliver it later.
+func misconfiguredKeyRef(err error) error {
+	var typed *core.Error
+	if errors.As(err, &typed) && typed.Code == core.CodeNotSupported {
+		return stages.Misconfigured(typed)
+	}
+	return stages.MisconfiguredWhenInvalid(err)
 }

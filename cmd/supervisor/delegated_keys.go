@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/signing"
 	"github.com/bestagentkits/sisf/internal/signing/delegation"
 	"github.com/bestagentkits/sisf/internal/supervisor"
@@ -170,7 +171,7 @@ func readKey(trustDir string, p delegation.Purpose) (delegation.SignedDelegation
 		return signed, core.SecretValue{}, err
 	}
 	if err := json.Unmarshal(raw, &signed); err != nil {
-		return signed, core.SecretValue{}, core.NewError(core.CodeInvalidArgument, "the delegation "+delegationFile(p)+" is not readable")
+		return signed, core.SecretValue{}, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "the delegation "+delegationFile(p)+" is not readable"))
 	}
 	priv, err := readTrustFile(trustDir, privateKeyFile(p))
 	if err != nil {
@@ -196,9 +197,13 @@ func readTrustFile(trustDir, name string) ([]byte, error) {
 	}
 	defer func() { _ = f.Close() }()
 	buf, err := io.ReadAll(io.LimitReader(f, maxKeyFile+1))
-	if err != nil || len(buf) == 0 || len(buf) > maxKeyFile {
+	if err != nil {
 		clear(buf)
-		return nil, core.NewError(core.CodeInvalidArgument, name+" is empty, unreadable or too large")
+		return nil, core.NewError(core.CodeUnavailable, name+" cannot be read").WithCause(err)
+	}
+	if len(buf) == 0 || len(buf) > maxKeyFile {
+		clear(buf)
+		return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, name+" is empty or too large"))
 	}
 	return buf, nil
 }

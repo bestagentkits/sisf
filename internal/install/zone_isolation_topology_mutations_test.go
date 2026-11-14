@@ -204,12 +204,13 @@ func TestAProductionDockerInstallRunsNoStages(t *testing.T) {
 	if strings.Contains(string(plain), "--factory-manifest") || strings.Contains(string(plain), "--qa-judge") {
 		t.Error("the stages run without a QA launcher")
 	}
-	_, unbuildable := renderCompose(t, func(o *Options) { real(o); o.QAAgent, o.QAAgentBinary = "claude", "/opt/sisf/qa-launcher" })
+	// init refuses both settings in Docker mode; a manifest written before
+	// it did may still hold them.
+	_, unbuildable := renderComposeOf(t, real, func(o *Options) { o.QAAgent, o.QAAgentBinary = "claude", "/opt/sisf/qa-launcher" })
 	if strings.Contains(string(unbuildable), "--factory-manifest") {
 		t.Error("the stages run without a build command")
 	}
-	_, launched := renderCompose(t, func(o *Options) {
-		real(o)
+	_, launched := renderComposeOf(t, real, func(o *Options) {
 		o.QAAgent, o.QAAgentBinary, o.BuildCommand = "claude", "/opt/sisf/qa-launcher", "/opt/sisf/build-candidate --push"
 	})
 	for _, unwanted := range []string{"--factory-manifest", "--qa-judge", "--build-command", "--release-window", "--sim-image"} {

@@ -112,8 +112,10 @@ func TestWhatTheCandidatePrintsIsNeverTakenAsTheBuildsResult(t *testing.T) {
 		t.Error("a candidate whose tests exited 1 printed its way to passing tests")
 	case out.Digest != reportedDigest || out.Image != "registry.local/app@"+string(reportedDigest):
 		t.Errorf("the image is the candidate's claim: %s %s", out.Digest, out.Image)
-	case out.SBOMRef != "sbom:sha256:01" || out.ProvenanceRef != "provenance:sha256:02":
-		t.Errorf("the supply chain records are the candidate's claim: %s %s", out.SBOMRef, out.ProvenanceRef)
+	case out.Program != nil || out.ProgramUnread == "":
+		// The exported program carries no Go build information, and the
+		// supervisor says so rather than list what the candidate printed.
+		t.Errorf("the program's build information is %+v (%q)", out.Program, out.ProgramUnread)
 	case strings.Contains(out.TestEvidence, "passed"):
 		t.Errorf("the test evidence quotes the candidate: %q", out.TestEvidence)
 	}
@@ -158,17 +160,36 @@ func TestABuildCommandThatDoesNotReportAsAskedIsAnOutage(t *testing.T) {
 		"the old protocol":     func(map[string]string) string { return forgedLines },
 		"a wrong nonce":        func(map[string]string) string { return goodReport(map[string]string{"SISF_REPORT_NONCE": "guessed"}) },
 		"a key reported twice": func(env map[string]string) string { return goodReport(env) + goodReport(env) },
-		"no provenance": func(env map[string]string) string {
+		"no image": func(env map[string]string) string {
 			lines := strings.Split(strings.TrimSpace(goodReport(env)), "\n")
-			return strings.Join(lines[:3], "\n")
+			return strings.Join(append(lines[:1], lines[2:]...), "\n")
+		},
+		// The supervisor makes a build's SBOM and provenance itself: a
+		// report that still names them does not speak the protocol, and
+		// what it names is never taken as evidence.
+		"an SBOM and provenance claimed": func(env map[string]string) string {
+			nonce := env["SISF_REPORT_NONCE"]
+			return goodReport(env) + "sisf-report " + nonce + " sbom: sbom:sha256:01\nsisf-report " + nonce + " provenance: provenance:sha256:02\n"
 		},
 		"an image not pinned to the digest": func(env map[string]string) string {
 			return strings.Replace(goodReport(env), "registry.local/app@"+string(reportedDigest), "registry.local/app:latest", 1)
 		},
+		// The image name goes into the SBOM the supervisor makes, which
+		// refuses a name it cannot carry: the report is unusable, not the
+		// supervisor broken.
+		"an image name with a space": func(env map[string]string) string {
+			return strings.Replace(goodReport(env), "registry.local/app@", "registry.local/my app@", 1)
+		},
+		"an image with no name": func(env map[string]string) string {
+			return strings.Replace(goodReport(env), "registry.local/app@", "@", 1)
+		},
+		"an image name holding a digest": func(env map[string]string) string {
+			return strings.Replace(goodReport(env), "registry.local/app@", "registry.local/app@sha256:00@", 1)
+		},
 	} {
 		_, err := sandboxBuild(t, &phasedSandbox{phase: map[string]execution.ExecResult{}, report: report})
-		if _, refused := RefusalOf(err); refused || err == nil {
-			t.Errorf("%s: %v, want an outage", name, err)
+		if _, refused := RefusalOf(err); refused || !core.HasCode(err, core.CodeUnavailable) || !strings.Contains(err.Error(), "phased protocol") {
+			t.Errorf("%s: %v, want the outage of an unusable report", name, err)
 		}
 	}
 	_, err := sandboxBuild(t, &phasedSandbox{phase: map[string]execution.ExecResult{"report": {ExitCode: 3}}})

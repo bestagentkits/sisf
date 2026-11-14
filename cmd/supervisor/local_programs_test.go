@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/supervisor/programstore"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/deploy"
 )
 
 const launcherPath = "/srv/factory/bin/sisf-app-launcher"
@@ -219,5 +221,95 @@ func TestARestartedSupervisorStartsThePromotedProgram(t *testing.T) {
 	want, _ := store.Path(promoted)
 	if err != nil || len(args) != 2 || args[1] != want {
 		t.Errorf("the promoted release starts %v (%v), want the store's file %s", args, err, want)
+	}
+}
+
+// The release pipeline verifies what the local backend would start, hashed
+// now: a kept program measures as its bytes, so one swapped after it was
+// received is not the signed build; the installed release measures as the
+// installed program's file, and as nothing when that file is not known;
+// anything else is not found, and a factory that keeps no programs observes
+// nothing.
+func TestTheBytesOfAReleaseAreMeasuredNotTakenFromTheArtifact(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, _ := trustStore(t)
+	candidate := exported(t, store, "the candidate's own build")
+	installed := digestOfText("the installed program")
+	installedFile := filepath.Join(t.TempDir(), "hello-app")
+	if err := os.WriteFile(installedFile, []byte("the installed program"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := &localPrograms{launcher: launcherPath, store: store, installed: installed, installedProgram: installedFile}
+	artifact := func(d core.Digest) deploy.Artifact {
+		return deploy.Artifact{Unit: "app", Digest: core.ReleaseDigest(d), Image: "smoke.local/app@" + string(d)}
+	}
+
+	if got, err := p.ObserveArtifact(ctx, artifact(candidate)); err != nil || got != core.ReleaseDigest(candidate) {
+		t.Errorf("a kept program: %s, %v", got, err)
+	}
+	if got, err := p.ObserveArtifact(ctx, artifact(installed)); err != nil || got != core.ReleaseDigest(installed) {
+		t.Errorf("the installed release: %s, %v", got, err)
+	}
+	if err := os.WriteFile(installedFile, []byte("an installed program replaced"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := p.ObserveArtifact(ctx, artifact(installed)); err != nil || got != core.ReleaseDigest(digestOfText("an installed program replaced")) {
+		t.Errorf("a replaced installed program measures as %s, %v; want the bytes installed now", got, err)
+	}
+	unknown := &localPrograms{launcher: launcherPath, store: store, installed: installed}
+	if got, err := unknown.ObserveArtifact(ctx, artifact(installed)); !core.HasCode(err, core.CodeNotFound) {
+		t.Errorf("the installed release without its file: %s, %v; want NOT_FOUND, never the manifest's digest", got, err)
+	}
+	if _, err := p.ObserveArtifact(ctx, artifact(digestOfText("never received"))); !core.HasCode(err, core.CodeNotFound) {
+		t.Errorf("a release neither kept nor installed: %v, want NOT_FOUND", err)
+	}
+
+	path, err := store.Path(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("what an agent swapped in"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := p.ObserveArtifact(ctx, artifact(candidate)); err != nil || got != core.ReleaseDigest(digestOfText("what an agent swapped in")) {
+		t.Errorf("a program swapped after it was received measures as %s, %v; want the bytes kept now", got, err)
+	}
+
+	none := &localPrograms{launcher: launcherPath}
+	if _, err := none.ObserveArtifact(ctx, artifact(candidate)); !core.HasCode(err, core.CodeNotSupported) {
+		t.Errorf("a factory that keeps no programs: %v, want NOT_SUPPORTED", err)
+	}
+}
+
+// Only a factory that keeps programs, or the simulation with its scripted
+// agent, has an observer for its releases.
+func TestOnlyAFactoryThatKeepsProgramsOrTheSimulationObservesReleases(t *testing.T) {
+	t.Parallel()
+	store, _ := trustStore(t)
+	kept := &lifecycleFlags{coderAgent: "claude", programs: &localPrograms{launcher: launcherPath, store: store}}
+	if o, err := kept.artifactObserver(false); err != nil || o != release.ArtifactObserver(kept.programs) {
+		t.Errorf("a factory that keeps programs observes with %T, %v", o, err)
+	}
+	simulated := &lifecycleFlags{coderAgent: "fake", programs: &localPrograms{launcher: launcherPath}}
+	if o, err := simulated.artifactObserver(true); err != nil {
+		t.Errorf("the simulation: %T, %v", o, err)
+	} else if _, ok := o.(stages.SimulatedArtifacts); !ok {
+		t.Errorf("the simulation observes with %T", o)
+	}
+	for name, l := range map[string]struct {
+		flags *lifecycleFlags
+		sim   bool
+	}{
+		"production without a store":         {&lifecycleFlags{coderAgent: "claude", programs: &localPrograms{launcher: launcherPath}}, false},
+		"the simulation with a real agent":   {&lifecycleFlags{coderAgent: "claude", programs: &localPrograms{launcher: launcherPath}}, true},
+		"the scripted agent outside the sim": {&lifecycleFlags{coderAgent: "fake", programs: &localPrograms{launcher: launcherPath}}, false},
+	} {
+		if _, err := l.flags.artifactObserver(l.sim); !core.HasCode(err, core.CodeNotSupported) {
+			t.Errorf("%s: %v, want NOT_SUPPORTED", name, err)
+		}
 	}
 }

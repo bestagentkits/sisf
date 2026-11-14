@@ -37,7 +37,7 @@ func (in *Installer) standaloneSupervisorArgs(m *manifest.Manifest, c LifecycleC
 	args = append(args,
 		"--factory-manifest="+l.Config(), "--coder-agent="+c.CoderAgent, "--lifecycle-interval="+c.Interval,
 		"--deploy=local", "--edge-admin-url=http://"+addr(PortEdgeAdmin),
-		"--deploy-local-program="+l.Bin(appLauncher), "--qa-judge="+c.QAJudge,
+		"--deploy-local-program="+l.Bin(appLauncher), "--deploy-local-installed-program="+l.Bin("hello-app"), "--qa-judge="+c.QAJudge,
 	)
 	if m.Release.LowTraffic.SyntheticSuite != "" {
 		args = append(args, "--synthetic-program="+l.Bin(syntheticProgram))
