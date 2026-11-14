@@ -13,7 +13,9 @@ import (
 // The usage itself is in the ledger, booked as each attempt ended.
 type RunSpend struct {
 	// ReportedCost sums the costs the agents stated; a tool's own figure,
-	// never verified by the provider.
+	// never verified by the provider, kept in the agent zone's record. It
+	// is shown, never used to close the run's reservation: that reads the
+	// run's rows in the ledger (see CloseReservationOfRun).
 	ReportedCost core.Micros `json:"reported_cost"`
 	// Unpriced is set once work ran whose cost is unknown: its agent
 	// reported no usage, or usage without a cost.
@@ -27,7 +29,7 @@ func (s *RunSpend) Add(usage []core.Usage, reported bool) {
 		s.Unpriced = true
 	}
 	for _, u := range usage {
-		s.ReportedCost += u.Cost
+		s.ReportedCost = min(s.ReportedCost+min(u.Cost, core.MaxUsageCost), core.MaxUsageCost*1000)
 		if u.Cost == 0 {
 			s.Unpriced = true
 		}
@@ -72,17 +74,37 @@ type ReservationCloser interface {
 }
 
 // CloseReservationOfRun ends the reservation of a run that will start no
-// more coding attempts. The usage already booked stays in the ledger. When
-// some of the run's work reported no cost, the Owner's estimate stands for
-// it: the part of the reserved amount the reported cost does not cover is
-// booked as an unverified estimate and the reservation is settled. Booking
-// at most the amount keeps a capped reservation from being suspended by its
-// own close. Otherwise the reservation is released. A reservation that is
-// no longer held or suspended is left as it is.
+// more coding attempts. The usage already booked stays in the ledger.
+//
+// What the run spent is read from the ledger rows of the run recorded since
+// its reservation was made, never from the dispatcher's record of it, which
+// the agent zone can rewrite. Rows dated earlier do not count, so a row
+// written into the past cannot lower the charge. The rows are still the
+// agent zone's metering, so they can under-report; core.RunUsage says what
+// the store holds them to.
+//
+// When some of the run's work stated no cost, as the ledger shows or as
+// unpricedClaimed says, or the ledger holds no row of the run at all, the
+// Owner's estimate stands for it: the part of the reserved amount the
+// booked cost does not cover is booked as an unverified estimate and the
+// reservation is settled. A run without a row is charged in full because
+// what it ran is unknown; over-charging a run stopped before its first
+// attempt is the safe side. unpricedClaimed comes from the run's records
+// and can only raise the charge; a caller with no record of the run passes
+// true. Booking at most the amount keeps a capped
+// reservation from being suspended by its own close. A row of the run
+// with a negative cost, which no store writes, means the rows were written
+// past the store: the whole amount is booked on top of what they show and
+// the reservation is settled. Otherwise the
+// reservation is released. A reservation of no amount is released without
+// reading the ledger. A ledger the caller may not read counts as no booked
+// cost with work unpriced, so the whole amount is charged as an unverified
+// estimate; the close still succeeds. A reservation that is no longer held
+// or suspended is left as it is.
 //
 // A reservation that belongs to another run than run is refused with
 // TAMPERED and left as it is.
-func CloseReservationOfRun(ctx context.Context, gate ReservationCloser, ledger core.BudgetLedger, run core.RunID, reservationID string, spend RunSpend) error {
+func CloseReservationOfRun(ctx context.Context, gate ReservationCloser, ledger core.BudgetLedger, run core.RunID, reservationID string, unpricedClaimed bool) error {
 	if run == "" {
 		return core.NewError(core.CodeInvalidArgument, "closing a reservation needs the run it belongs to")
 	}
@@ -96,8 +118,24 @@ func CloseReservationOfRun(ctx context.Context, gate ReservationCloser, ledger c
 	if r.Status != core.ReservationHeld && r.Status != core.ReservationSuspended {
 		return nil
 	}
-	estimate := r.Amount - spend.ReportedCost
-	if !spend.Unpriced || estimate <= 0 {
+	if r.Amount <= 0 {
+		return gate.Release(ctx, ledger, reservationID)
+	}
+	booked, err := ledger.RunUsage(ctx, run, r.CreatedAt)
+	switch {
+	case core.HasCode(err, core.CodePermissionDenied):
+		booked = core.RunUsage{CostUnreported: true}
+	case err != nil:
+		return err
+	}
+	estimate := r.Amount - booked.Cost
+	if booked.CostTampered {
+		// A negative cost no store writes: the run's rows were written past
+		// the store, so none of them lowers the charge.
+		estimate = r.Amount
+	}
+	unpriced := unpricedClaimed || booked.CostUnreported || booked.CostTampered || booked.Entries == 0
+	if !unpriced || estimate <= 0 {
 		return gate.Release(ctx, ledger, reservationID)
 	}
 	return gate.Settle(ctx, ledger, reservationID, core.Usage{IssueID: r.IssueID, RunID: r.RunID, Cost: estimate, Verified: false})

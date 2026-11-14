@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -164,4 +165,24 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
 	}
 	return string(out)
+}
+
+// A dollar amount a tool reports is converted within the bounds the ledger
+// books: never negative, never above core.MaxUsageCost, and never through a
+// float-to-integer conversion out of range, whose result Go leaves to the
+// platform.
+func TestMicrosStaysWithinTheLedgersBounds(t *testing.T) {
+	t.Parallel()
+	for usd, want := range map[float64]core.Micros{
+		1.25:                       1_250_000,
+		-3:                         0,
+		math.Inf(1):                0,
+		1e30:                       core.MaxUsageCost,
+		float64(math.MaxInt64):     core.MaxUsageCost,
+		float64(core.MaxUsageCost): core.MaxUsageCost,
+	} {
+		if got := cliagent.Micros(usd); got != want {
+			t.Errorf("Micros(%g) = %d, want %d", usd, got, want)
+		}
+	}
 }

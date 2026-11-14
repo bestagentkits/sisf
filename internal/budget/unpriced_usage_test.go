@@ -40,8 +40,8 @@ func TestSettlingUsageWithoutACostRecordsItAsReported(t *testing.T) {
 	}
 }
 
-// budget.get warns once about usage whose provider reported no cost, and
-// not about usage with a cost, verified usage or usage without tokens.
+// budget.get warns once about unverified usage that states no cost, with
+// tokens or without, and not about usage with a cost or verified usage.
 func TestStatusWarnsOnlyAboutUsageWithoutACost(t *testing.T) {
 	t.Parallel()
 	priced := tokensOnly(1)
@@ -55,7 +55,7 @@ func TestStatusWarnsOnlyAboutUsageWithoutACost(t *testing.T) {
 		"tokens, no cost": {tokensOnly(1), 1},
 		"priced":          {priced, 0},
 		"verified":        {verified, 0},
-		"no tokens":       {usage(1, 0, false), 0},
+		"no tokens":       {usage(1, 0, false), 1},
 		"verified, empty": {usage(1, 0, true), 0},
 	} {
 		t.Run(name, func(t *testing.T) {

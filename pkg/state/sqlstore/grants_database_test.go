@@ -39,7 +39,7 @@ func TestPostgresRolesKeepTheZonesApartInTheDatabase(t *testing.T) {
 			t.Skip("database roles exist on PostgreSQL only")
 		}
 		control := db.Open(t, core.ZoneControl)
-		mustUpdate(t, control, func(tx state.Tx) error { return tx.AppendUsage(ctx, spend(1, true, db.Clock.Now())) })
+		mustUpdate(t, control, func(tx state.Tx) error { return tx.AppendUsage(ctx, spend(1, false, db.Clock.Now())) })
 		if _, err := control.AppendAuditRow(ctx, func(int64, string) (string, []byte, error) { return "h", []byte("{}"), nil }); err != nil {
 			t.Fatal(err)
 		}

@@ -40,12 +40,20 @@ func RequireProvider(route core.ModelRoute, provider, tool string) error {
 	return nil
 }
 
-// Micros converts a dollar amount to millionths, rounding to the nearest.
+// Micros converts a dollar amount to millionths, rounding to the nearest,
+// within what the ledger books: 0 for a negative or meaningless amount and
+// at most core.MaxUsageCost. The bound is applied before the conversion to
+// an integer, whose result for a float out of range Go leaves to the
+// platform.
 func Micros(usd float64) core.Micros {
 	if usd <= 0 || math.IsNaN(usd) || math.IsInf(usd, 0) {
 		return 0
 	}
-	return core.Micros(math.Round(usd * 1e6))
+	micros := math.Round(usd * 1e6)
+	if micros >= float64(core.MaxUsageCost) {
+		return core.MaxUsageCost
+	}
+	return core.Micros(micros)
 }
 
 // Text returns the text of a JSON value that is a string, or the text blocks

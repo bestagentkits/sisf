@@ -108,7 +108,7 @@ func TestReadOnlyTransactionRefusesEveryWrite(t *testing.T) {
 			"sent":        func(tx state.Tx) error { return tx.MarkOutboxSent(ctx, 1) },
 			"failed":      func(tx state.Tx) error { return tx.MarkOutboxFailed(ctx, 1, time.Time{}, "x") },
 			"reservation": func(tx state.Tx) error { return tx.PutReservation(ctx, reservation("r-1", 1)) },
-			"usage":       func(tx state.Tx) error { return tx.AppendUsage(ctx, spend(1, true, time.Time{})) },
+			"usage":       func(tx state.Tx) error { return tx.AppendUsage(ctx, spend(1, false, time.Time{})) },
 			"put":         func(tx state.Tx) error { _, err := tx.PutKV(ctx, state.KVEntry{Namespace: "n", Key: "k"}); return err },
 			"delete":      func(tx state.Tx) error { return tx.DeleteKV(ctx, "n", "k", 1) },
 		} {
