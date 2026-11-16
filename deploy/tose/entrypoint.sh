@@ -12,7 +12,9 @@ set -euo pipefail
 SISF_REPO="${SISF_REPO:-bestagentkits/sisf-sandbox}"
 SISF_HOME="${SISF_HOME:-/data/factory}"
 SRC=/opt/sisf/src
-export SISF_HOME GOCACHE="${GOCACHE:-/data/cache/go-build}"
+# The root filesystem may be read-only and the uid arbitrary: HOME, TMPDIR and
+# GOCACHE (set in the image) and nginx state all live on the volume.
+export SISF_HOME
 
 if [[ "$SISF_REPO" != "bestagentkits/sisf-sandbox" ]]; then
   echo "trial: refusing SISF_REPO other than bestagentkits/sisf-sandbox" >&2
@@ -23,10 +25,10 @@ echo "trial: $(sisf version)"
 echo "trial: $(uname -sm), docker CLI: $(command -v docker || echo absent), docker socket: $([[ -S /var/run/docker.sock ]] && echo present || echo absent)"
 data_dir="$(dirname "$SISF_HOME")"
 if [[ ! -w "$data_dir" ]]; then
-  echo "trial: $data_dir is not writable by uid $(id -u); give the volume to uid 10001 (or group 10001) and start again" >&2
+  echo "trial: $data_dir is not writable by uid $(id -u) gid $(id -g); give the volume to that uid or group and start again" >&2
   exit 1
 fi
-mkdir -p "$GOCACHE"
+mkdir -p "$HOME" "$TMPDIR" "$GOCACHE" /data/run
 
 if [[ ! -f "$SISF_HOME/factory.yaml" ]]; then
   cd "$SRC"
@@ -42,6 +44,6 @@ if [[ ! -f "$SISF_HOME/factory.yaml" ]]; then
   fi
 fi
 
-nginx -c "$SRC/deploy/tose/nginx.conf"
+nginx -e stderr -c "$SRC/deploy/tose/nginx.conf"
 cd "$SRC"
 exec sisf up --dir "$SISF_HOME"

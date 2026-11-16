@@ -24,6 +24,17 @@ COPY --chown=10001:10001 . .
 # .git, so the version and commit can be passed as build arguments.
 ARG SISF_VERSION=trial
 ARG SISF_COMMIT=unknown
-RUN make install VERSION="$SISF_VERSION" COMMIT="$SISF_COMMIT" && sisf version
+RUN make install VERSION="$SISF_VERSION" COMMIT="$SISF_COMMIT" && sisf version \
+ && go clean -cache && chmod -R a+rX /opt/sisf /home/sisf
+# The platform may run the container as another uid on a read-only root
+# filesystem: every file above is readable by any uid, the module cache is
+# read-only, and every process writes only under /data (home, temporary
+# files, build cache), which the entry point creates.
+ENV GOMODCACHE=/home/sisf/go/pkg/mod HOME=/data/home TMPDIR=/data/tmp GOCACHE=/data/cache/go-build GOTELEMETRY=off
+# The supervisor starts with only PATH and HOME and keeps its local sandboxes
+# under /tmp, so /tmp itself points to the volume.
+USER 0
+RUN rm -rf /tmp && ln -s /data/tmp /tmp
+USER 10001:10001
 EXPOSE 8080
 ENTRYPOINT ["/sbin/tini", "--", "/opt/sisf/src/deploy/tose/entrypoint.sh"]
