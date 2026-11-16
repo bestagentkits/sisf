@@ -10,9 +10,10 @@ import (
 // Accept checks that base is a commit a run of the policy in force may be
 // built, judged and released on, and returns the commit it accepted: the
 // approved revision itself, or a commit the supervisor followed from it.
-// The record is not trusted on its own: base must contain the approved
-// revision, change no path only the Owner may change since it, and hold
-// the foundation files the Owner approved. While the factory is stopped,
+// The record is not trusted on its own: base must be part of the default
+// branch as it stands now, contain the approved revision, change no path
+// only the Owner may change since it, and hold the foundation files the
+// Owner approved. While the factory is stopped,
 // no base is accepted, the approved revision included, so no run builds,
 // is released or merges until the Owner approves a revision. Anything else
 // is POLICY_HOLD, so a commit an agent names cannot become what a candidate
@@ -34,6 +35,22 @@ func (b *BuildBases) Accept(ctx context.Context, base core.CommitSHA) (core.Comm
 	}
 	if !record.followed(base) {
 		return "", baseHold("commit %s is neither the approved policy revision %s nor a merge the supervisor followed from it", base, baseline.Revision)
+	}
+	head, err := b.cfg.Main.MainHead(ctx)
+	switch {
+	case err != nil && unanswered(err):
+		return "", err
+	case err != nil || head.Validate() != nil:
+		return "", baseHold("GitHub cannot name the head of main, so %s cannot be shown to be part of it", base)
+	}
+	outside, err := b.cfg.Commits.ChangedPaths(ctx, head, base)
+	switch {
+	case err != nil && unanswered(err):
+		return "", err
+	case err != nil:
+		return "", baseHold("GitHub cannot show that main at %s contains %s", head, base)
+	case len(outside) > 0:
+		return "", baseHold("%s is not part of main, which is at %s", base, head)
 	}
 	apart, err := b.cfg.Commits.ChangedPaths(ctx, base, baseline.Revision)
 	switch {

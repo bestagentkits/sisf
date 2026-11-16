@@ -2,6 +2,7 @@ package stages
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/bestagentkits/sisf/internal/policy"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/state"
 	"github.com/bestagentkits/sisf/pkg/state/sqlstore/sqlstoretest"
 )
 
@@ -142,4 +144,86 @@ func TestTheCommitToBuildOnIsWiredIntoReleaseAndMerge(t *testing.T) {
 			t.Fatalf("without an audit log a keeper was wired: %v, %v", keeper, err)
 		}
 	})
+}
+
+// verifiedListing is a store whose records list, besides what it holds,
+// the Verified records of other runs, as the store lists releases that are
+// verified and not closed yet.
+type verifiedListing struct {
+	state.Store
+	verified []core.StateRecord
+}
+
+func (s verifiedListing) View(ctx context.Context, fn func(context.Context, state.Tx) error) error {
+	return s.Store.View(ctx, func(ctx context.Context, tx state.Tx) error { return fn(ctx, listingTx{Tx: tx, verified: s.verified}) })
+}
+
+type listingTx struct {
+	state.Tx
+	verified []core.StateRecord
+}
+
+func (t listingTx) ListRecords(ctx context.Context, filter state.RecordFilter) ([]core.StateRecord, error) {
+	records, err := t.Tx.ListRecords(ctx, filter)
+	return append(records, t.verified...), err
+}
+
+// Before a merge, main is checked with every other release that was merged
+// or is being merged and not closed yet, so a merge whose follow lags is
+// followed before another is made on top of it. A pull request left for
+// the Owner is no landing.
+func TestMainIsCheckedWithTheLandingsWhoseFollowMayLag(t *testing.T) {
+	t.Parallel()
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		ctx := context.Background()
+		w := landingFactory(t, db, "landings in flight")
+		keeper := &stoppedKeeper{}
+		w.prs.Bases = keeper
+		merged := handoff.CandidatePR{RunID: "run-0007", Number: 7, State: handoff.LandingMerged,
+			Commit: "7777777777777777777777777777777777777777", MergeCommit: "8888888888888888888888888888888888888888"}
+		merging := handoff.CandidatePR{RunID: "run-0008", Number: 8, State: handoff.LandingPending, Commit: "9999999999999999999999999999999999999999"}
+		left := handoff.CandidatePR{RunID: "run-0009", Number: 9, State: handoff.LandingLeftOpen, Commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+		if err := w.prs.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+			for _, pr := range []handoff.CandidatePR{merged, merging, left} {
+				if err := handoff.PutCandidatePR(ctx, tx, pr); err != nil {
+					return err
+				}
+			}
+			return handoff.PutDoc(ctx, tx, handoff.BuildNamespace, handoff.BuildKey(merged.Commit), handoff.BuildRecord{Commit: merged.Commit, Unit: "app"})
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var verified []core.StateRecord
+		for _, pr := range []handoff.CandidatePR{merged, merging, left} {
+			verified = append(verified, core.StateRecord{State: core.StateVerified, RunID: pr.RunID})
+		}
+		w.prs.State = verifiedListing{Store: w.prs.State, verified: verified}
+
+		if _, err := w.prs.Land(ctx, w.req); err != nil {
+			t.Fatal(err)
+		}
+		want := []policy.FollowProof{
+			{Merge: merged.MergeCommit, Candidate: merged.Commit, Run: merged.RunID, Unit: "app"},
+			{Candidate: merging.Commit, Run: merging.RunID},
+		}
+		if len(keeper.checked) != 1 || !slices.Equal(keeper.checked[0].Landings, want) {
+			t.Fatalf("main was checked with the landings %+v, want %+v", keeper.checked, want)
+		}
+	})
+}
+
+// The paths only the Owner changes, by which a merge is followed and a base
+// accepted, are the governance's trusted control surface as well as what an
+// agent's patch may not change.
+func TestTheOwnerOnlyPathsAreTheTrustedControlSurface(t *testing.T) {
+	t.Parallel()
+	for _, p := range []string{"go.mod", "internal/supervisor/release/release.go", "cmd/edge/main.go", "internal/supplychain/verify.go",
+		"AGENTS.md", "docs/adr/0001-x.md", ".github/workflows/ci.yml", "CODEOWNERS"} {
+		if !foundationOrProtected(p) {
+			t.Errorf("%s is not counted as a path only the Owner changes", p)
+		}
+	}
+	if foundationOrProtected("examples/hello-app/main.go") {
+		t.Error("the application's code is counted as a path only the Owner changes")
+	}
 }

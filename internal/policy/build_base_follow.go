@@ -81,6 +81,10 @@ type MainCheck struct {
 	Head core.CommitSHA
 	Run  core.RunID
 	Unit string
+	// Landings are the other releases the supervisor verified and merged,
+	// or is merging, whose follow may not have happened yet: the candidate
+	// QA judged of each, and its merge commit once recorded.
+	Landings []FollowProof
 }
 
 // CheckMain refuses to let the supervisor merge into a default branch whose
@@ -93,6 +97,14 @@ type MainCheck struct {
 // revision. A commit pushed to main that changes nothing the Owner approves
 // does not stop the merge here; following the merge then stops the factory
 // (Follow). Only the supervisor checks, and a refusal is audited.
+//
+// When head is the merge of one of check.Landings that was not followed
+// yet, as when its follow met an outage or the supervisor restarted
+// between the merge and the follow, it is followed first: a merge on top of
+// it would otherwise be made on a commit the factory never followed, and
+// stop the factory. While that follow cannot be made now the answer is
+// UNAVAILABLE and nothing is merged; a follow that is refused stops the
+// factory with its own reason.
 func (b *BuildBases) CheckMain(ctx context.Context, actor core.Actor, check MainCheck) error {
 	proof := FollowProof{Merge: check.Head, Run: check.Run, Unit: check.Unit}
 	if actor.Kind != core.ActorService || actor.ID != SupervisorActorID {
@@ -114,6 +126,19 @@ func (b *BuildBases) CheckMain(ctx context.Context, actor core.Actor, check Main
 	if check.Head == baseline.Revision || check.Head == record.Commit || record.followed(check.Head) {
 		return nil
 	}
+	landing, found, err := b.landingAt(ctx, check)
+	if err != nil {
+		return core.NewError(core.CodeUnavailable, "GitHub cannot name the commits main at "+string(check.Head)+
+			" was made of, so the merge waits").WithCause(err)
+	}
+	if found {
+		_, err := b.Follow(ctx, actor, landing)
+		if err != nil && unanswered(err) {
+			return core.NewError(core.CodeUnavailable, "main is at "+string(check.Head)+", the merge of the release of "+string(landing.Run)+
+				", which the factory has not followed yet; the merge waits until it is").WithCause(err)
+		}
+		return err
+	}
 	changed, err := b.cfg.Commits.ChangedPaths(ctx, record.Commit, check.Head)
 	why := ""
 	switch {
@@ -131,6 +156,35 @@ func (b *BuildBases) CheckMain(ctx context.Context, actor core.Actor, check Main
 	}
 	_, err = b.write(ctx, actor, proof, baseline, record, version, why)
 	return err
+}
+
+// landingAt returns the landing of check.Landings whose merge main is at:
+// the merge commit recorded for it, or, when none is recorded yet, a merge
+// whose parents beyond the first include its candidate. The proof returned
+// names check.Head as the merge. An error means GitHub could not answer.
+func (b *BuildBases) landingAt(ctx context.Context, check MainCheck) (FollowProof, bool, error) {
+	if len(check.Landings) == 0 {
+		return FollowProof{}, false, nil
+	}
+	for _, l := range check.Landings {
+		if l.Merge == check.Head && l.Candidate.Validate() == nil {
+			return l, true, nil
+		}
+	}
+	parents, err := b.cfg.Parents.CommitParents(ctx, check.Head)
+	switch {
+	case err != nil && unanswered(err):
+		return FollowProof{}, false, err
+	case err != nil || len(parents) < 2:
+		return FollowProof{}, false, nil
+	}
+	for _, l := range check.Landings {
+		if l.Merge == "" && l.Candidate.Validate() == nil && slices.Contains(parents[1:], l.Candidate) {
+			l.Merge = check.Head
+			return l, true, nil
+		}
+	}
+	return FollowProof{}, false, nil
 }
 
 // write records the outcome of an attempt to move the commit to build on:
@@ -224,7 +278,7 @@ func (b *BuildBases) onlyTheCandidate(ctx context.Context, baseline Baseline, re
 	}
 	on := parents[0]
 	if on != baseline.Revision && !record.followed(on) {
-		return "the merge was made on " + string(on) + ", a commit on main the factory neither made nor followed, so it may bring in a change QA never judged", nil
+		return b.notFollowed(ctx, record, on), nil
 	}
 	added, err := b.cfg.Commits.ChangedPaths(ctx, on, proof.Merge)
 	switch {
@@ -243,6 +297,20 @@ func (b *BuildBases) onlyTheCandidate(ctx context.Context, baseline Baseline, re
 		}
 	}
 	return "", nil
+}
+
+// notFollowed says why the merge made on commit on, which the factory
+// never followed, is not followed. A merge of a branch made on the commit
+// the factory builds on is told apart from any other commit: it may be the
+// merge of an earlier release whose follow had not happened yet, or a merge
+// made outside the factory.
+func (b *BuildBases) notFollowed(ctx context.Context, record BuildBase, on core.CommitSHA) string {
+	parents, err := b.cfg.Parents.CommitParents(ctx, on)
+	if err == nil && len(parents) >= 2 && (parents[0] == record.Commit || record.followed(parents[0])) {
+		return "the merge was made on " + string(on) + ", a merge on the commit the factory builds on that the factory has not followed: " +
+			"either the follow of an earlier release had not happened yet, or it was merged outside the factory; it may bring in a change QA never judged"
+	}
+	return "the merge was made on " + string(on) + ", a commit on main the factory neither made nor followed, so it may bring in a change QA never judged"
 }
 
 // sameFile reports whether path holds the same content at a and b, or is

@@ -57,6 +57,25 @@ func (g CommitGraph) CommitParents(ctx context.Context, commit core.CommitSHA) (
 	return g.GitHub.CommitParents(ctx, g.Repo, commit)
 }
 
+// MainBranch names the head of the factory's default branch on GitHub.
+type MainBranch struct {
+	GitHub interface {
+		BranchHead(ctx context.Context, repo github.RepoRef, branch string) (core.CommitSHA, error)
+	}
+	Repo github.RepoRef
+	// Branch is the default branch; "main" when empty.
+	Branch string
+}
+
+// MainHead returns the commit the default branch is at now.
+func (m MainBranch) MainHead(ctx context.Context) (core.CommitSHA, error) {
+	branch := m.Branch
+	if branch == "" {
+		branch = "main"
+	}
+	return m.GitHub.BranchHead(ctx, m.Repo, branch)
+}
+
 // mainFollower is the release pipeline's Follower: the supervisor moves the
 // commit to build on as itself.
 type mainFollower struct{ keeper BaseKeeper }
