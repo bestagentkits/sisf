@@ -229,11 +229,13 @@ func (w *world) bundleArtifact(t *testing.T, image, bundle string) deploy.Artifa
 	return a
 }
 
-// bundleRequest is a release request of the bundle, with a passing receipt.
+// bundleRequest is a release request of the bundle, with a passing receipt,
+// for an issue the control plane brought to ReleaseCandidate.
 func (w *world) bundleRequest(t *testing.T, issue core.IssueRef, run core.RunID, image, bundle string) Request {
 	t.Helper()
 	a := w.bundleArtifact(t, image, bundle)
 	c := candidate(issue, run, core.Digest(a.Digest))
+	w.seedReleaseCandidate(issue, run, c.Digest)
 	return Request{
 		IssueID: issue, RunID: run, Candidate: c, Receipt: w.keys.receiptFor(t, c, nil), Artifact: a,
 		Feature: "Managed shop update", Summary: "Update the shop",
