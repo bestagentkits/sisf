@@ -171,7 +171,8 @@ func (t listingTx) ListRecords(ctx context.Context, filter state.RecordFilter) (
 // Before a merge, main is checked with every other release that was merged
 // or is being merged and not closed yet, so a merge whose follow lags is
 // followed before another is made on top of it. A pull request left for
-// the Owner is no landing.
+// the Owner is no landing, nor is the unreadable record of another run:
+// that run reports it, and the others are still merged.
 func TestMainIsCheckedWithTheLandingsWhoseFollowMayLag(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
@@ -183,18 +184,27 @@ func TestMainIsCheckedWithTheLandingsWhoseFollowMayLag(t *testing.T) {
 			Commit: "7777777777777777777777777777777777777777", MergeCommit: "8888888888888888888888888888888888888888"}
 		merging := handoff.CandidatePR{RunID: "run-0008", Number: 8, State: handoff.LandingPending, Commit: "9999999999999999999999999999999999999999"}
 		left := handoff.CandidatePR{RunID: "run-0009", Number: 9, State: handoff.LandingLeftOpen, Commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+		// A pull request record without its number, and one whose build
+		// record names another commit: neither can be read.
+		numberless := handoff.CandidatePR{RunID: "run-0010", State: handoff.LandingPending, Commit: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+		forgedBuild := handoff.CandidatePR{RunID: "run-0011", Number: 11, State: handoff.LandingMerged,
+			Commit: "cccccccccccccccccccccccccccccccccccccccc", MergeCommit: "dddddddddddddddddddddddddddddddddddddddd"}
+		all := []handoff.CandidatePR{merged, merging, left, numberless, forgedBuild}
 		if err := w.prs.State.Update(ctx, func(ctx context.Context, tx state.Tx) error {
-			for _, pr := range []handoff.CandidatePR{merged, merging, left} {
+			for _, pr := range all {
 				if err := handoff.PutCandidatePR(ctx, tx, pr); err != nil {
 					return err
 				}
+			}
+			if err := handoff.PutDoc(ctx, tx, handoff.BuildNamespace, handoff.BuildKey(forgedBuild.Commit), handoff.BuildRecord{Commit: merged.Commit, Unit: "app"}); err != nil {
+				return err
 			}
 			return handoff.PutDoc(ctx, tx, handoff.BuildNamespace, handoff.BuildKey(merged.Commit), handoff.BuildRecord{Commit: merged.Commit, Unit: "app"})
 		}); err != nil {
 			t.Fatal(err)
 		}
 		var verified []core.StateRecord
-		for _, pr := range []handoff.CandidatePR{merged, merging, left} {
+		for _, pr := range all {
 			verified = append(verified, core.StateRecord{State: core.StateVerified, RunID: pr.RunID})
 		}
 		w.prs.State = verifiedListing{Store: w.prs.State, verified: verified}
@@ -208,6 +218,14 @@ func TestMainIsCheckedWithTheLandingsWhoseFollowMayLag(t *testing.T) {
 		}
 		if len(keeper.checked) != 1 || !slices.Equal(keeper.checked[0].Landings, want) {
 			t.Fatalf("main was checked with the landings %+v, want %+v", keeper.checked, want)
+		}
+		// The run whose record cannot be read meets the error itself.
+		err := w.prs.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
+			_, err := handoff.ReadCandidatePR(ctx, tx, numberless.RunID)
+			return err
+		})
+		if !core.HasCode(err, core.CodeTampered) {
+			t.Fatalf("the unreadable record of %s reads as %v", numberless.RunID, err)
 		}
 	})
 }

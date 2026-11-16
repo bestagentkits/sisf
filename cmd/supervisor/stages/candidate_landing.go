@@ -302,6 +302,12 @@ func (c *CandidatePRs) mainUnapproved(ctx context.Context, req release.LandReque
 // follow of their merge may not have happened, as after an outage or a
 // restart between the merge and the follow, and the check of main follows
 // it before anything is merged on top of it.
+//
+// A record of another run that cannot be read (TAMPERED) is left out: it
+// is that run's fault, reported when that run's own landing reads it, and
+// it must not stop every other release. Left out, its merge is not
+// followed here, so a main at it still stops the factory: the check stays
+// closed. Any other read error is the store's and fails the check.
 func (c *CandidatePRs) landingsInFlight(ctx context.Context, run core.RunID) ([]policy.FollowProof, error) {
 	var landings []policy.FollowProof
 	err := c.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
@@ -315,7 +321,7 @@ func (c *CandidatePRs) landingsInFlight(ctx context.Context, run core.RunID) ([]
 			}
 			pr, err := handoff.ReadCandidatePR(ctx, tx, r.RunID)
 			switch {
-			case core.HasCode(err, core.CodeNotFound):
+			case core.HasCode(err, core.CodeNotFound), core.HasCode(err, core.CodeTampered):
 				continue
 			case err != nil:
 				return err
@@ -323,9 +329,13 @@ func (c *CandidatePRs) landingsInFlight(ctx context.Context, run core.RunID) ([]
 				continue
 			}
 			unit := ""
-			if build, err := handoff.ReadBuild(ctx, tx, pr.Commit); err == nil {
+			build, err := handoff.ReadBuild(ctx, tx, pr.Commit)
+			switch {
+			case err == nil:
 				unit = build.Unit
-			} else if !core.HasCode(err, core.CodeNotFound) {
+			case core.HasCode(err, core.CodeTampered):
+				continue
+			case !core.HasCode(err, core.CodeNotFound):
 				return err
 			}
 			landings = append(landings, policy.FollowProof{Merge: pr.MergeCommit, Candidate: pr.Commit, Run: pr.RunID, Unit: unit})
