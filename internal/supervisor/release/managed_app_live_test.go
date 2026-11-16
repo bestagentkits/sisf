@@ -45,16 +45,42 @@ import (
 //
 // Containers are reached as <name>.orb.local, as OrbStack names them.
 
-// trafficClock is the world's clock whose every wait sends real requests
-// through the edge first, so a window the monitor reads holds traffic.
+// liveClock is wall time plus the waits the release pipeline skipped. The
+// store, the edge and the backend all read it, so an observation the
+// backend makes is never dated after the pipeline's instant, while a
+// monitor window passes at once. Its own waits are real: the backend's
+// readiness polls wait for the application.
+type liveClock struct {
+	mu      sync.Mutex
+	skipped time.Duration
+}
+
+func (c *liveClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().UTC().Add(c.skipped)
+}
+
+func (c *liveClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
+func (c *liveClock) skip(d time.Duration) time.Time {
+	c.mu.Lock()
+	c.skipped += d
+	c.mu.Unlock()
+	return c.Now()
+}
+
+// trafficClock is the pipeline's view of the live clock: a wait skips its
+// duration and sends a window of real requests through the edge, so the
+// window the monitor then reads holds traffic.
 type trafficClock struct {
-	*fakeClock
+	*liveClock
 	drive func()
 }
 
 func (c trafficClock) After(d time.Duration) <-chan time.Time {
 	fired := make(chan time.Time, 1)
-	now := c.Advance(d)
+	now := c.skip(d)
 	c.drive()
 	fired <- now
 	return fired
@@ -108,9 +134,10 @@ func TestManagedShopReleasesAndRollsBackOnRealDocker(t *testing.T) {
 
 	// The world: real store, keys and LKG, with the shop's first bundle as
 	// the release the install recorded.
-	clock := &fakeClock{now: startTime}
+	clock := &fakeClock{now: time.Now().UTC()} // the keys' instant
+	live := &liveClock{}
 	w := &world{t: t, clock: clock, keys: newKeyring(t, clock), freeze: &fakeFreeze{}, publisher: &fakePublisher{}, commits: &fakeCommits{}}
-	w.store = openStore(t, clock)
+	w.store = openStore(t, live)
 	w.trustDir = filepath.Join(t.TempDir(), "trust")
 	if err := os.Mkdir(w.trustDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -144,7 +171,7 @@ func TestManagedShopReleasesAndRollsBackOnRealDocker(t *testing.T) {
 	containerOf := func(d core.ReleaseDigest) string { return string(testFactory) + "-" + testUnit + "-" + string(d)[7:19] }
 	edgeURL := "http://" + edgeAddr
 	traffic := &driver{url: edgeURL + "/robots.txt", perWindow: 400, workers: 16}
-	tclock := trafficClock{fakeClock: clock, drive: traffic.drive}
+	tclock := trafficClock{liveClock: live, drive: traffic.drive}
 	splitter, err := edge.NewSplitter(tclock, log, edge.Target{Revision: string(pair("v1")), URL: resolve(containerOf(pair("v1")))})
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +182,7 @@ func TestManagedShopReleasesAndRollsBackOnRealDocker(t *testing.T) {
 		Endpoint: "unix://" + filterSock, Factory: testFactory, Network: network, AppPort: spec.Runtime.Port,
 		Env: revisionEnv, Volumes: dataVolumes, User: spec.Runtime.User,
 		BundleTarget: spec.Bundle.Mount, BundleSource: store, Edge: splitter, Resolve: resolve,
-		ReadyTimeout: 3 * time.Minute, Logger: log,
+		Clock: live, ReadyTimeout: 3 * time.Minute, Logger: log,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -275,11 +302,12 @@ type driver struct {
 	perWindow, workers int
 	mu                 sync.Mutex
 	sent, failed       int
+	firstErr           string
 	byStatus           map[int]int
 }
 
 func (d *driver) drive() {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	jobs := make(chan struct{})
 	var wg sync.WaitGroup
 	for range d.workers {
@@ -302,6 +330,9 @@ func (d *driver) drive() {
 				d.byStatus[status]++
 				if err != nil && !errors.Is(err, context.Canceled) {
 					d.failed++
+					if d.firstErr == "" {
+						d.firstErr = err.Error()
+					}
 				}
 				d.mu.Unlock()
 			}
@@ -317,5 +348,5 @@ func (d *driver) drive() {
 func (d *driver) report(t *testing.T) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	t.Log(fmt.Sprintf("traffic: %d requests, %d transport errors, by status %v", d.sent, d.failed, d.byStatus))
+	t.Log(fmt.Sprintf("traffic: %d requests, %d transport errors (first: %q), by status %v", d.sent, d.failed, d.firstErr, d.byStatus))
 }

@@ -31,6 +31,14 @@ $table_prefix = 'wp_';
 if ( sisf_env( 'WORDPRESS_HOME' ) ) {
 	define( 'WP_HOME', sisf_env( 'WORDPRESS_HOME' ) );
 	define( 'WP_SITEURL', sisf_env( 'WORDPRESS_HOME' ) );
+	// The shop answers on one host. The edge and the supervisor reach a
+	// revision by its container name, which must never leak into a link or
+	// a redirect; no forwarded header is trusted to say otherwise.
+	$sisf_home = parse_url( WP_HOME );
+	if ( isset( $sisf_home['host'] ) ) {
+		$_SERVER['HTTP_HOST'] = $sisf_home['host'] . ( isset( $sisf_home['port'] ) ? ':' . $sisf_home['port'] : '' );
+	}
+	unset( $sisf_home );
 }
 
 // The code is a read-only bundle: nothing installs or edits it at run time.
