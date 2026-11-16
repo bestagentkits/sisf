@@ -87,13 +87,19 @@ func bundleWorld(t *testing.T, src *bundles, filtered bool) *world {
 	o := worldOptions{cfg: func(c *compose.Config) {
 		c.User, c.BundleTarget, c.BundleSource = "33:33", docRoot, src
 		c.Env = []string{"APACHE_RUN_DIR=/tmp/apache2"}
-		c.Volumes = []compose.VolumeMount{{Name: "acme-app_uploads", Target: docRoot + "/wp-content/uploads"}}
+		c.Volumes = []compose.VolumeMount{
+			{Name: "acme-app_uploads", Target: docRoot + "/wp-content/uploads"},
+			{Name: "acme-app_secrets", Target: "/run/secrets", ReadOnly: true},
+		}
 	}}
 	if filtered {
 		o.filter = &dockerfilter.Config{
 			DeployNetwork: "acme-app_default", Images: []string{runtimeImage, artifact(digestA).Image},
 			BundleTarget: docRoot, DeployEnv: []string{"APACHE_RUN_DIR=/tmp/apache2"},
-			DataVolumes: []dockerfilter.DeployVolume{{Name: "acme-app_uploads", Target: docRoot + "/wp-content/uploads"}},
+			DataVolumes: []dockerfilter.DeployVolume{
+				{Name: "acme-app_uploads", Target: docRoot + "/wp-content/uploads"},
+				{Name: "acme-app_secrets", Target: "/run/secrets", ReadOnly: true},
+			},
 		}
 	}
 	return newWorld(t, o)
@@ -200,8 +206,8 @@ func TestABundleArtifactRunsItsBundleReadOnlyOverTheRuntimeImage(t *testing.T) {
 				t.Errorf("loader = %+v", loader)
 			}
 			rm := revision.HostConfig.Mounts
-			if revision.User != "33:33" || len(rm) != 2 || rm[0].Source != bundleVolumeA || rm[0].Target != docRoot || !rm[0].ReadOnly ||
-				rm[1].Source != "acme-app_uploads" || rm[1].ReadOnly {
+			if revision.User != "33:33" || len(rm) != 3 || rm[0].Source != bundleVolumeA || rm[0].Target != docRoot || !rm[0].ReadOnly ||
+				rm[1].Source != "acme-app_uploads" || rm[1].ReadOnly || rm[2].Source != "acme-app_secrets" || !rm[2].ReadOnly {
 				t.Errorf("revision = %+v", revision)
 			}
 			if !slices.Equal(revision.Env, []string{compose.RevisionEnv + "=" + string(a.Digest), "APACHE_RUN_DIR=/tmp/apache2"}) {

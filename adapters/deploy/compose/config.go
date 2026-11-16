@@ -33,11 +33,13 @@ const LoaderTarget = "/sisf-bundle"
 // was started as. The backend sets it; configuration cannot.
 const RevisionEnv = "SISF_REVISION"
 
-// VolumeMount is a named volume shared by every revision of the unit. A
+// VolumeMount is a named volume shared by every revision of the unit,
+// mounted read-only when ReadOnly is set, such as the Owner's secrets. A
 // revision swap never touches its content.
 type VolumeMount struct {
-	Name   string
-	Target string
+	Name     string
+	Target   string
+	ReadOnly bool
 }
 
 // ResourceLimits bound one revision's container.

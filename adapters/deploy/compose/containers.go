@@ -64,7 +64,7 @@ func (b *Backend) spec(a deploy.Artifact) createSpec {
 		mounts = append(mounts, mount{Type: "volume", Source: b.bundleVolume(a.Bundle), Target: b.cfg.BundleTarget, ReadOnly: true})
 	}
 	for _, v := range b.cfg.Volumes {
-		mounts = append(mounts, mount{Type: "volume", Source: v.Name, Target: v.Target})
+		mounts = append(mounts, mount{Type: "volume", Source: v.Name, Target: v.Target, ReadOnly: v.ReadOnly})
 	}
 	return createSpec{
 		Image: a.Image, Env: env, User: b.cfg.User,

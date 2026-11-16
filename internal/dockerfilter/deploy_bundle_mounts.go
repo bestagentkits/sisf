@@ -47,11 +47,13 @@ const (
 	maxDeployMounts = 16
 )
 
-// DeployVolume is a named data volume a revision may mount at Target. Its
+// DeployVolume is a named data volume a revision may mount at Target,
+// read-only exactly when ReadOnly is set, such as the Owner's secrets. Its
 // content outlives every revision.
 type DeployVolume struct {
-	Name   string
-	Target string
+	Name     string
+	Target   string
+	ReadOnly bool
 }
 
 // deployMount is the only mount the deploy role forwards: a named volume,
@@ -160,8 +162,8 @@ func (f *Filter) checkRevisionMounts(mounts []deployMount) error {
 			}
 			continue
 		}
-		if !slices.Contains(f.cfg.DataVolumes, DeployVolume{Name: m.Source, Target: m.Target}) {
-			return fmt.Errorf("volume %q at %q is not a configured data volume", m.Source, m.Target)
+		if !slices.Contains(f.cfg.DataVolumes, DeployVolume{Name: m.Source, Target: m.Target, ReadOnly: m.ReadOnly}) {
+			return fmt.Errorf("volume %q at %q, read-only %t, is not a configured data volume", m.Source, m.Target, m.ReadOnly)
 		}
 	}
 	return nil

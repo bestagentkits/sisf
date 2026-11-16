@@ -18,6 +18,8 @@ const (
 	bundleTarget = "/var/www/html"
 	uploadsName  = "acme-app-uploads"
 	uploadsAt    = "/var/www/html/wp-content/uploads"
+	secretsName  = "acme-app-secrets"
+	secretsAt    = "/run/secrets"
 )
 
 var (
@@ -38,8 +40,9 @@ func newBundleEnv(t *testing.T, tweak func(*dockerfilter.Config)) deployEnv {
 	cfg := dockerfilter.Config{
 		Role: dockerfilter.RoleDeploy, Upstream: upstream.Client().Transport, UpstreamURL: upstream.URL,
 		RunnerValue: factory, DeployNetwork: deployNetwork, Images: []string{unitImage},
-		BundleTarget: bundleTarget, DataVolumes: []dockerfilter.DeployVolume{{Name: uploadsName, Target: uploadsAt}},
-		DeployEnv: runtimeEnv, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		BundleTarget: bundleTarget, DeployEnv: runtimeEnv,
+		DataVolumes: []dockerfilter.DeployVolume{{Name: uploadsName, Target: uploadsAt}, {Name: secretsName, Target: secretsAt, ReadOnly: true}},
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	if tweak != nil {
 		tweak(&cfg)
@@ -63,6 +66,7 @@ func bundleRevision() map[string]any {
 	host(b)["Mounts"] = []any{
 		map[string]any{"Type": "volume", "Source": bundleVolume, "Target": bundleTarget, "ReadOnly": true},
 		map[string]any{"Type": "volume", "Source": uploadsName, "Target": uploadsAt},
+		map[string]any{"Type": "volume", "Source": secretsName, "Target": secretsAt, "ReadOnly": true},
 	}
 	return b
 }
@@ -167,7 +171,7 @@ func TestTheDeployRoleLoadsABundleAndRunsARevisionOverIt(t *testing.T) {
 	if err := json.Unmarshal(created[len(created)-1].Body, &forwarded); err != nil {
 		t.Fatal(err)
 	}
-	if len(forwarded.HostConfig.Mounts) != 2 || forwarded.HostConfig.Mounts[0]["ReadOnly"] != true {
+	if m := forwarded.HostConfig.Mounts; len(m) != 3 || m[0]["ReadOnly"] != true || m[1]["ReadOnly"] != nil || m[2]["ReadOnly"] != true {
 		t.Fatalf("the revision's mounts were forwarded as %+v", forwarded.HostConfig.Mounts)
 	}
 	// The bundle volume is in use by the revision, and the daemon keeps it.
@@ -291,7 +295,9 @@ func TestARevisionMountsOnlyItsBundleAndItsDataVolumes(t *testing.T) {
 		"another factory's bundle": func(b map[string]any) {
 			setMounts(b, mount("other-bundle-"+strings.Repeat("b", 12), bundleTarget, true))
 		},
-		"an undeclared volume":           func(b map[string]any) { setMounts(b, mount("acme-app-secrets", "/run/secrets", true)) },
+		"an undeclared volume":           func(b map[string]any) { setMounts(b, mount("acme-app-keys", "/run/keys", true)) },
+		"a writable secrets volume":      func(b map[string]any) { setMounts(b, mount(secretsName, secretsAt, false)) },
+		"a read-only data volume":        func(b map[string]any) { setMounts(b, mount(uploadsName, uploadsAt, true)) },
 		"a data volume at another place": func(b map[string]any) { setMounts(b, mount(uploadsName, "/etc", false)) },
 		"a data volume over the bundle":  func(b map[string]any) { setMounts(b, mount(uploadsName, bundleTarget, false)) },
 		"a bind mount": func(b map[string]any) {
