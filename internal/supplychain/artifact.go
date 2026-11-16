@@ -14,8 +14,10 @@ import (
 var pinnedImagePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*@(sha256:[a-f0-9]{64}|sha512:[a-f0-9]{128})$`)
 
 // CheckPinned requires the artifact to name its image by the digest it
-// carries, and to point to its SBOM and provenance. An image named by a tag
-// alone can move after it was signed, so it is never released.
+// carries, and to point to its SBOM and provenance. A bundle artifact's
+// image is pinned by its own digest, and the artifact carries the pair
+// digest of that image and its bundle. An image named by a tag alone can
+// move after it was signed, so it is never released.
 func CheckPinned(a deploy.Artifact) error {
 	if err := a.Digest.Validate(); err != nil {
 		return invalid("artifact %q is not pinned by a full digest", a.Unit)
@@ -23,7 +25,11 @@ func CheckPinned(a deploy.Artifact) error {
 	if !pinnedImagePattern.MatchString(a.Image) {
 		return invalid("artifact %q image is not pinned by a digest", a.Unit)
 	}
-	if _, digest, _ := strings.Cut(a.Image, "@"); digest != string(a.Digest) {
+	if a.Bundle != "" {
+		if deploy.PairDigest(a.Image, a.Bundle) != a.Digest {
+			return invalid("artifact %q is not the pair of its image and bundle", a.Unit)
+		}
+	} else if _, digest, _ := strings.Cut(a.Image, "@"); digest != string(a.Digest) {
 		return invalid("artifact %q image is pinned to another digest than the artifact's", a.Unit)
 	}
 	if strings.TrimSpace(a.SBOMRef) == "" || strings.TrimSpace(a.ProvenanceRef) == "" {
