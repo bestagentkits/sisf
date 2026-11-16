@@ -2,14 +2,18 @@ package acceptance
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/policy"
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 	"github.com/bestagentkits/sisf/pkg/github"
+	"github.com/bestagentkits/sisf/pkg/state"
 )
 
 // acceptingOnly is a keeper of the commit to build on that accepts the
@@ -60,5 +64,42 @@ func TestARunIsBuiltOnTheCommitItWasCodedOn(t *testing.T) {
 	}
 	if got := candidateOf(t, f, record).Candidate.BaselineSHA; got != merge {
 		t.Fatalf("the candidate was built and judged on %s, want the commit it was coded on, %s", got, merge)
+	}
+}
+
+// refusingAll is the keeper of a factory that stopped building on main: it
+// accepts no base, the policy revision included.
+type refusingAll struct{ acceptingOnly }
+
+func (refusingAll) Accept(context.Context, core.CommitSHA) (core.CommitSHA, error) {
+	return "", core.NewError(core.CodePolicyHold, "the factory stopped building on main")
+}
+
+// A run whose base the keeper refuses is not built, whatever commit its
+// patch names: it ends as superseded, blocked for the Owner, and nothing is
+// sent to QA.
+func TestARunOnABaseTheKeeperRefusesIsNotBuilt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := harness.New(t, harness.Options{})
+	number := f.OpenIssue("maintainer", "MEMBER", "Greet the world", bugBody, github.LabelReady, github.LabelKindBug)
+	f.ScriptPatch(number, 0, greetingDiff)
+	record := exportedPatch(t, f, number)
+	f.Stages.Build.Bases = refusingAll{}
+
+	res := f.Stages.Build.Pass(ctx)
+	if len(res.Submitted) != 0 || len(res.Unbuildable) != 0 || !strings.Contains(fmt.Sprint(res.Errors), "stopped building on main") {
+		t.Fatalf("a run on a refused base was built: %+v", res)
+	}
+	err := f.ControlStore.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		_, err := handoff.ReadCandidate(ctx, tx, record.RunID, record.Attempt)
+		return err
+	})
+	if !core.HasCode(err, core.CodeNotFound) {
+		t.Fatalf("a run on a refused base was sent to QA: %v", err)
+	}
+	f.Pass()
+	if stop := runStopOf(t, f, record.RunID); stop.Cause != statemachine.BlockPolicySuperseded {
+		t.Fatalf("the run on a refused base ended %+v, want it superseded", stop)
 	}
 }
