@@ -181,6 +181,9 @@ func TestManagedShopReleasesAndRollsBackOnRealDocker(t *testing.T) {
 	p := w.pipeline()
 
 	// The good update: WooCommerce 11.2.1 -> 11.2.2, released by canary.
+	// Customers are on the shop before each release: the pipeline judges
+	// the stable revision's error rate as the baseline.
+	traffic.drive()
 	good := w.bundleRequest(t, issueRef(101), "run-good", image, bundle["v2"])
 	out, err := p.Release(ctx, good)
 	if err != nil || out.Result != ResultClosed || out.Observed.Digest != pair("v2") {
@@ -195,6 +198,7 @@ func TestManagedShopReleasesAndRollsBackOnRealDocker(t *testing.T) {
 	}
 
 	// The failing update: the shop plugin breaks every page but health.
+	traffic.drive()
 	bad := w.bundleRequest(t, issueRef(102), "run-bad", image, bundle["bad"])
 	out, err = p.Release(ctx, bad)
 	if err != nil || out.Result != ResultBlocked || out.RestoredTo != pair("v2") || out.Observed.Digest != pair("v2") {
