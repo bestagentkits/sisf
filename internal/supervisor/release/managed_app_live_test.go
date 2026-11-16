@@ -25,6 +25,7 @@ import (
 	"github.com/bestagentkits/sisf/pkg/appbundle"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/deploy"
+	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 	"github.com/bestagentkits/sisf/pkg/managedapp"
 	"github.com/bestagentkits/sisf/pkg/managedapp/changegate"
 	"github.com/bestagentkits/sisf/pkg/managedapp/checkrun"
@@ -207,9 +208,10 @@ func TestManagedShopReleasesAndRollsBackOnRealDocker(t *testing.T) {
 	w.cfg = Config{
 		FactoryID: testFactory, State: w.store, Backend: backend, Verifier: w.keys.verifier, Observer: appbundle.PairObserver{Store: store}, VerifierAt: w.keys.verifierAt, LKG: w.book,
 		Freeze: w.freeze, Publisher: w.publisher, Blocks: storeBlocks{}, Clock: tclock, Commits: w.commits,
-		// A window skips one minute but takes as long as its 400 real
-		// requests do; the lease must outlast that, not three skipped minutes.
-		Monitor: MonitorConfig{Window: time.Minute, MinSamples: 15}, LeaseTTL: 30 * time.Minute,
+		// A window's 400 real requests must all be dated inside it, however
+		// slowly a broken revision answers; what the requests leave of the
+		// window is skipped. The lease must outlast a window in real time.
+		Monitor: MonitorConfig{Window: 5 * time.Minute, MinSamples: 15}, LeaseTTL: 30 * time.Minute,
 	}
 	p := w.pipeline()
 
@@ -234,8 +236,11 @@ func TestManagedShopReleasesAndRollsBackOnRealDocker(t *testing.T) {
 	traffic.drive()
 	bad := w.bundleRequest(t, issueRef(102), "run-bad", image, bundle["bad"])
 	out, err = p.Release(ctx, bad)
-	if err != nil || out.Result != ResultBlocked || out.RestoredTo != pair("v2") || out.Observed.Digest != pair("v2") {
-		t.Fatalf("the failing update: %+v, %v", out, err)
+	if err != nil || out.Result != ResultBlocked || out.Cause != statemachine.BlockRolledBack || out.RestoredTo != pair("v2") || out.Observed.Digest != pair("v2") {
+		t.Fatalf("the failing update was not judged unhealthy and rolled back: %+v, %v", out, err)
+	}
+	for _, w := range out.Windows {
+		t.Logf("failing update window %d%%: %d samples, %d server errors, %s", w.Percent, w.Samples, w.ServerErrors, w.Decision)
 	}
 	t.Logf("failing update rolled back to %s: %s", out.RestoredTo, out.Reason)
 	if resp, err := http.Get(edgeURL + "/healthz"); err != nil || resp.StatusCode != http.StatusOK || resp.Header.Get(edge.RevisionHeader) != string(pair("v2")) {
