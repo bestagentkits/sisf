@@ -70,9 +70,10 @@ func (c *liveClock) skip(d time.Duration) time.Time {
 	return c.Now()
 }
 
-// trafficClock is the pipeline's view of the live clock: a wait skips its
-// duration and sends a window of real requests through the edge, so the
-// window the monitor then reads holds traffic.
+// trafficClock is the pipeline's view of the live clock: a wait first sends
+// a window of real requests through the edge, then skips what is left of
+// its duration, so every request is dated inside the window the monitor
+// then reads.
 type trafficClock struct {
 	*liveClock
 	drive func()
@@ -80,9 +81,12 @@ type trafficClock struct {
 
 func (c trafficClock) After(d time.Duration) <-chan time.Time {
 	fired := make(chan time.Time, 1)
-	now := c.skip(d)
+	start := c.Now()
 	c.drive()
-	fired <- now
+	if left := d - c.Now().Sub(start); left > 0 {
+		c.skip(left)
+	}
+	fired <- c.Now()
 	return fired
 }
 
