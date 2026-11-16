@@ -3,11 +3,17 @@
  * Prints the shop's data as JSON: counts, and a checksum of every order's id,
  * status, total and line items, so data preservation can be compared.
  *
- * Run: wp eval-file seed/counts.php
+ * Run: wp eval-file seed/counts.php [max-order-id]
+ * With max-order-id, orders_sha256 covers only the orders up to that id, so
+ * the orders that existed before a release can be compared after it.
  */
+$max    = isset( $args[0] ) ? (int) $args[0] : PHP_INT_MAX;
 $orders = wc_get_orders( array( 'limit' => -1, 'orderby' => 'ID', 'order' => 'ASC', 'type' => 'shop_order' ) );
 $rows   = array();
 foreach ( $orders as $o ) {
+	if ( $o->get_id() > $max ) {
+		continue;
+	}
 	$items = array();
 	foreach ( $o->get_items() as $item ) {
 		$items[] = $item->get_product_id() . 'x' . $item->get_quantity();
