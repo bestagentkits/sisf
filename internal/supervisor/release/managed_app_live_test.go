@@ -174,7 +174,7 @@ func TestManagedShopReleasesAndRollsBackOnRealDocker(t *testing.T) {
 	}
 
 	w.cfg = Config{
-		FactoryID: testFactory, State: w.store, Backend: backend, Verifier: w.keys.verifier, VerifierAt: w.keys.verifierAt, LKG: w.book,
+		FactoryID: testFactory, State: w.store, Backend: backend, Verifier: w.keys.verifier, Observer: appbundle.PairObserver{Store: store}, VerifierAt: w.keys.verifierAt, LKG: w.book,
 		Freeze: w.freeze, Publisher: w.publisher, Blocks: storeBlocks{}, Clock: tclock, Commits: w.commits,
 		Monitor: MonitorConfig{Window: time.Minute, MinSamples: 15},
 	}
