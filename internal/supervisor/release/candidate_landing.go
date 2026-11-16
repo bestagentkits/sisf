@@ -64,6 +64,9 @@ type Landing struct {
 	Merged  bool
 	Ref     string
 	Summary string
+	// Commit is the merge commit on the default branch, when the merge is
+	// known to have made one; empty otherwise.
+	Commit core.CommitSHA
 }
 
 // Lander lands a verified release's change. It decides once and records

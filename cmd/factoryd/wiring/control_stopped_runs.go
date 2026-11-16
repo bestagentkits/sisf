@@ -160,8 +160,8 @@ func stoppedRun(ctx context.Context, tx state.Tx, record core.StateRecord, now t
 	if record.State == core.StateDeveloping {
 		outage, _, err := handoff.ReadBuildOutage(ctx, tx, record.RunID, record.Attempt)
 		switch {
-		case err == nil && outage.Held && outage.Reason == handoff.HeldPolicySuperseded:
-			stop.Cause = statemachine.BlockPolicySuperseded
+		case err == nil && outage.Held && handoff.HeldEndsRun(outage.Reason):
+			stop.Cause, stop.Held, stop.HeldDetail = statemachine.BlockPolicySuperseded, outage.Reason, outage.Detail
 			return stop, true, nil
 		case err != nil && !core.HasCode(err, core.CodeNotFound):
 			return stop, false, err

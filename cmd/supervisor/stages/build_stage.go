@@ -29,6 +29,13 @@ type BuildStage struct {
 	Owner   string
 	State   state.Store
 	Builder *CandidateBuilder
+	// Bases accepts the commit a run was coded on; nil accepts the policy
+	// revision only.
+	Bases BaseKeeper
+	// BaseHasLKG refuses, before QA, a candidate of a unit whose base lacks
+	// the unit's last known good release, as the release would
+	// (release.Pipeline.CheckBaseHasLKG); nil checks nothing here.
+	BaseHasLKG func(ctx context.Context, unit string, base core.CommitSHA) error
 	// QAPolicy and CodingPolicy read the policy in force, pinned for each step.
 	QAPolicy     PolicyRefs
 	CodingPolicy PolicyRefs
@@ -149,6 +156,10 @@ func (s *BuildStage) build(ctx context.Context, j buildJob) (failed bool, err er
 	if err := s.runPolicyInForce(ctx, record, patch, qaRefs); err != nil {
 		return false, err
 	}
+	base, err := s.runBase(ctx, patch, qaRefs)
+	if err != nil {
+		return false, err
+	}
 	coding, err := s.CodingPolicy(ctx)
 	if err != nil {
 		return false, err
@@ -170,16 +181,23 @@ func (s *BuildStage) build(ctx context.Context, j buildJob) (failed bool, err er
 		// The attempt in the branch name is the state record's, never the
 		// agent zone's: a patch cannot pick the branch it is pushed to.
 		built, buildErr = s.Builder.Build(ctx, BuildRequest{
-			Issue: record.IssueID, RunID: record.RunID, Attempt: record.Attempt, Base: qaRefs.PolicySHA, Diff: patch.Diff,
+			Issue: record.IssueID, RunID: record.RunID, Attempt: record.Attempt, Base: base, Diff: patch.Diff,
 		})
 	}
 	refusal, refused := RefusalOf(buildErr)
 	if buildErr != nil && !refused {
 		return false, buildErr
 	}
+	if !refused && s.BaseHasLKG != nil {
+		// A candidate that could not be released is not judged: the unit
+		// is known only now, from the paths the patch changes.
+		if err := s.BaseHasLKG(ctx, built.Record.Unit, base); err != nil {
+			return false, err
+		}
+	}
 	doc := handoff.CandidateDoc{
 		Candidate: qa.Candidate{
-			IssueID: record.IssueID, RunID: record.RunID, BaselineSHA: qaRefs.PolicySHA, SuiteDigest: handoff.SuiteDigest(qaRefs),
+			IssueID: record.IssueID, RunID: record.RunID, BaselineSHA: base, SuiteDigest: handoff.SuiteDigest(qaRefs),
 			Policy: qaRefs, CodingAgentIdentity: coder, CodingModelRoute: coding.ModelRoute,
 			WorkspaceID: string(record.RunID), Attempt: record.Attempt,
 		},

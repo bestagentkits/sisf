@@ -18,6 +18,8 @@ var controlDocuments = []state.KVEntry{
 	{Namespace: "approvals", Key: "request/apr-1", Value: []byte(`{"status":"pending"}`)},
 	{Namespace: "intake", Key: "issue/acme/app#7", Value: []byte(`{}`)},
 	{Namespace: "control.policy", Key: "refs/abc", Value: []byte(`{}`)},
+	// The commit to build on, which only the supervisor moves.
+	{Namespace: "control.policy", Key: "build-base", Value: []byte(`{"commit":"approved"}`)},
 	{Namespace: "control.issue_view", Key: "acme/app#7", Value: []byte(`{}`)},
 }
 

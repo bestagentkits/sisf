@@ -26,6 +26,9 @@ type QAStage struct {
 	// Tree lists what a candidate changed, read from the repository.
 	Tree   Tree
 	Policy PolicyRefs
+	// Bases accepts the commit a candidate was built on; nil accepts the
+	// policy revision only.
+	Bases BaseKeeper
 	// MaxAttempts is the run's attempt limit from the policy in force.
 	MaxAttempts int
 	PassScore   int
@@ -233,10 +236,19 @@ func (s *QAStage) proof(ctx context.Context, receipt core.QAReceipt) (statemachi
 	if err != nil {
 		return statemachine.QAProof{}, err
 	}
+	// The baseline is the commit the supervisor accepts now as the one the
+	// candidate was built and judged on: the policy revision or a merge it
+	// followed from it with the approved content unchanged. The proof names
+	// that accepted commit, never the receipt's claim, so the guard compares
+	// the receipt with what the supervisor accepted.
+	accepted, err := acceptBase(ctx, s.Bases, refs, receipt.BaselineSHA)
+	if err != nil {
+		return statemachine.QAProof{}, err
+	}
 	gates := slices.Concat(core.RequiredHardGates(), s.ExtraGates)
 	return statemachine.QAProof{
 		Receipt: receipt, FactoryID: s.FactoryID, PolicyRevision: refs.PolicySHA,
-		BaselineSHA: refs.PolicySHA, SuiteDigest: handoff.SuiteDigest(refs), RequiredGates: gates, PassScore: s.PassScore,
+		BaselineSHA: accepted, SuiteDigest: handoff.SuiteDigest(refs), RequiredGates: gates, PassScore: s.PassScore,
 	}, nil
 }
 

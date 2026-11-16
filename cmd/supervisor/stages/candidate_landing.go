@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
+	"github.com/bestagentkits/sisf/internal/policy"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
@@ -119,7 +120,7 @@ func (c *CandidatePRs) land(ctx context.Context, req release.LandRequest) (relea
 	// A merge already made at the candidate commit, as after a restart in
 	// the middle of one, stands whatever changed since.
 	if ok && live.Merged && live.HeadSHA == pr.Commit {
-		return c.decide(ctx, pr, handoff.LandingMerged, "", "")
+		return c.decide(ctx, pr, handoff.LandingMerged, "", live.MergeCommit)
 	}
 	reason, err := c.mayNotMerge(ctx, req, pr)
 	if err != nil {
@@ -165,7 +166,7 @@ func (c *CandidatePRs) land(ctx context.Context, req release.LandRequest) (relea
 	if again, ok, findErr := c.live(ctx, pr); findErr != nil {
 		return release.Landing{}, findErr
 	} else if ok && again.Merged && again.HeadSHA == pr.Commit {
-		return c.decide(ctx, pr, handoff.LandingMerged, "", "")
+		return c.decide(ctx, pr, handoff.LandingMerged, "", again.MergeCommit)
 	}
 	switch {
 	case core.HasCode(err, core.CodeConflict):
@@ -264,7 +265,32 @@ func (c *CandidatePRs) mayNotMerge(ctx context.Context, req release.LandRequest,
 	if refs.PolicySHA != req.Receipt.PolicySHA {
 		return "the policy in force changed after the run was pinned to it", nil
 	}
-	return "", nil
+	return c.mainUnapproved(ctx, req, build.Unit)
+}
+
+// mainUnapproved says why the supervisor may not merge into the default
+// branch as it stands now, "" when it may: the factory stopped building on
+// main, or main changes a path only the Owner approves since the commit
+// the factory builds on, which stops the factory (policy.BuildBases.CheckMain).
+func (c *CandidatePRs) mainUnapproved(ctx context.Context, req release.LandRequest, unit string) (string, error) {
+	if c.Bases == nil {
+		return "", nil
+	}
+	head, err := c.GitHub.BranchHead(ctx, c.Repo, c.Base)
+	switch {
+	case err != nil && transient(err):
+		return "", err
+	case err != nil:
+		return fmt.Sprintf("GitHub refused to name the head of %s (status %d, %s)", c.Base, github.ErrorStatus(err), core.CodeOf(err)), nil
+	}
+	err = c.Bases.CheckMain(ctx, policy.SupervisorActor(), policy.MainCheck{Head: head, Run: req.RunID, Unit: unit})
+	switch {
+	case err == nil:
+		return "", nil
+	case core.HasCode(err, core.CodeApprovalRequired):
+		return messageOf(err), nil
+	}
+	return "", err
 }
 
 // foundationOrProtected reports whether a path is one an agent's patch may
@@ -306,7 +332,8 @@ func (c *CandidatePRs) put(ctx context.Context, pr handoff.CandidatePR) error {
 func landingOf(pr handoff.CandidatePR) release.Landing {
 	ref := handoff.BuildNamespace + ":" + handoff.CandidatePRKey(pr.RunID)
 	if pr.State == handoff.LandingMerged {
-		return release.Landing{Merged: true, Ref: ref, Summary: fmt.Sprintf("the change is merged on %s by pull request #%d", pr.Base, pr.Number)}
+		return release.Landing{Merged: true, Ref: ref, Commit: pr.MergeCommit,
+			Summary: fmt.Sprintf("the change is merged on %s by pull request #%d", pr.Base, pr.Number)}
 	}
 	if pr.Number == 0 {
 		return release.Landing{Ref: ref, Summary: fmt.Sprintf("the change is NOT merged: the factory opened no pull request for it, left for the Owner (%s)", pr.Reason)}

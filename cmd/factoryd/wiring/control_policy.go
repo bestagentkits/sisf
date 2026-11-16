@@ -8,7 +8,8 @@ import (
 	"github.com/bestagentkits/sisf/pkg/core"
 )
 
-// publishPolicy publishes the references of the approved revision once.
+// publishPolicy publishes the references of the approved revision once,
+// and forgets the commit to build on of the revision it replaced.
 func (c *Control) publishPolicy(ctx context.Context) error {
 	baseline, err := c.Baselines.Current(ctx)
 	switch {
@@ -28,6 +29,11 @@ func (c *Control) publishPolicy(ctx context.Context) error {
 		return err
 	}
 	if err := PublishPolicyRefs(ctx, c.cfg.Store, snapshot); err != nil {
+		return err
+	}
+	// A stop of the supervisor's commit to build on that a revision the
+	// Owner since approved answered holds nothing any more.
+	if err := policy.ClearStaleBuildBase(ctx, c.cfg.Store, snapshot.Revision); err != nil {
 		return err
 	}
 	c.mu.Lock()

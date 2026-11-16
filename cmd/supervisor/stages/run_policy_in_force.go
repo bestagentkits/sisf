@@ -6,6 +6,7 @@ import (
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/intake"
+	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/state"
 )
@@ -49,6 +50,42 @@ func (s *BuildStage) runPolicyInForce(ctx context.Context, record core.StateReco
 		"scope_policy": string(scope.PolicyRevision), "patch_policy": string(patch.Policy.PolicySHA),
 		"policy_in_force": string(inForce.PolicySHA)}
 	return superseded
+}
+
+// runBase returns the commit the run was coded on, which the candidate is
+// built and judged on: the policy revision, or a merge the supervisor
+// followed from it with the approved content unchanged, accepted again now.
+// The patch's claim decides nothing on its own. A commit that is not
+// accepted ends the run as a superseded policy does: the Owner's retry
+// codes it again on the commit to build on then.
+func (s *BuildStage) runBase(ctx context.Context, patch handoff.PatchDoc, inForce core.PolicyRefs) (core.CommitSHA, error) {
+	base := patch.Base
+	if base == "" {
+		base = inForce.PolicySHA
+	}
+	accepted, err := acceptBase(ctx, s.Bases, inForce, base)
+	if !core.HasCode(err, core.CodePolicyHold) {
+		return accepted, err
+	}
+	superseded := core.NewError(core.CodePolicyHold, "the commit the run was coded on is not one the supervisor builds on now: "+messageOf(err))
+	superseded.Details = map[string]string{"reason": "policy_superseded", "base": string(base), "policy_in_force": string(inForce.PolicySHA)}
+	return "", superseded.WithCause(err)
+}
+
+// baseLacksLKG reports whether err is the refusal of a candidate whose base
+// lacks its unit's last known good release.
+func baseLacksLKG(err error) bool {
+	var e *core.Error
+	return errors.As(err, &e) && e.Code == core.CodeApprovalRequired && e.Details["reason"] == release.BaseLacksLKG
+}
+
+// messageOf is the message of the core error err carries, or err's text.
+func messageOf(err error) string {
+	var e *core.Error
+	if errors.As(err, &e) {
+		return e.Message
+	}
+	return err.Error()
 }
 
 // policySuperseded reports whether err is runPolicyInForce's refusal.

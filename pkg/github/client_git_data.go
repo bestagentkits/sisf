@@ -78,6 +78,38 @@ func (c *RESTClient) CommitExists(ctx context.Context, repo RepoRef, commit core
 	return atStep(err, StepBaseCommit)
 }
 
+// CommitParents returns the parents of commit in order, its first parent
+// first, as the commit object names them.
+func (c *RESTClient) CommitParents(ctx context.Context, repo RepoRef, commit core.CommitSHA) ([]core.CommitSHA, error) {
+	if err := validateRepo(repo); err != nil {
+		return nil, err
+	}
+	if err := commit.Validate(); err != nil {
+		return nil, err
+	}
+	resp, err := c.call(ctx, http.MethodGet, repoPath(repo, "git", "commits", string(commit)), nil, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var w struct {
+		Parents []struct {
+			SHA string `json:"sha"`
+		} `json:"parents"`
+	}
+	if err := decode(resp, &w); err != nil {
+		return nil, err
+	}
+	parents := make([]core.CommitSHA, 0, len(w.Parents))
+	for _, p := range w.Parents {
+		sha := core.CommitSHA(p.SHA)
+		if err := sha.Validate(); err != nil {
+			return nil, core.NewError(core.CodeUnavailable, "GitHub named a parent of "+string(commit)+" that is not a commit")
+		}
+		parents = append(parents, sha)
+	}
+	return parents, nil
+}
+
 // FactoryBranchPrefix starts every branch the factory writes: candidate
 // branches (sisf/<factory>/<run>-<attempt>), release notes and decision
 // proposals. CommitToBranch writes no other branch, so no caller of it can

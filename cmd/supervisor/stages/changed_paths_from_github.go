@@ -8,7 +8,7 @@ import (
 )
 
 // changedPathsFromGitHub lists the paths a candidate changes from GitHub's
-// comparison of the policy commit its QA receipt names with the candidate
+// comparison of the commit its QA receipt says it was built on with the candidate
 // commit the receipt names, as the supervisor asks it now. The stored
 // candidate is a document of the control zone, which the supervisor shares
 // with factoryd, so its list of paths never decides what is released or
@@ -24,7 +24,7 @@ import (
 func changedPathsFromGitHub(ctx context.Context, tree interface {
 	ChangedPaths(ctx context.Context, base, head core.CommitSHA) ([]string, error)
 }, receipt core.QAReceipt, c qa.Candidate) (qa.Candidate, error) {
-	listed, err := tree.ChangedPaths(ctx, receipt.PolicySHA, receipt.CandidateSHA)
+	listed, err := tree.ChangedPaths(ctx, receipt.BaselineSHA, receipt.CandidateSHA)
 	switch {
 	case err == nil:
 	case transient(err):

@@ -147,6 +147,16 @@ func (p *Pipeline) complete(ctx context.Context, f *finishing) (Outcome, error) 
 	case err != nil:
 		return held(err, waits(waitsLanding, err))
 	}
+	stopped, err := p.follow(ctx, f, landing)
+	if err != nil {
+		return held(err, waits(waitsFollow, err))
+	}
+	if stopped != "" {
+		if landing.Summary != "" {
+			landing.Summary += "; "
+		}
+		landing.Summary += stopped
+	}
 	evidence := f.evidence
 	if f.due.PublicationRef != "" {
 		evidence = append(evidence, f.due.PublicationRef)

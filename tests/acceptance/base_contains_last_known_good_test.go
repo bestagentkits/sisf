@@ -2,13 +2,18 @@ package acceptance
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/testkit/harness"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/core/statemachine"
 	"github.com/bestagentkits/sisf/pkg/github"
 	"github.com/bestagentkits/sisf/pkg/manifest"
+	"github.com/bestagentkits/sisf/pkg/state"
 )
 
 // sitePageOriginalRewordDiff words the status page differently, against
@@ -21,13 +26,14 @@ const sitePageOriginalRewordDiff = `--- a/site/status.html
 +<p>Every system is working.</p>
 `
 
-// The factory released and merged a change of a unit. A second candidate
-// of that unit is built on the trust baseline in force, which the Owner
-// has not moved to a commit that holds the first change: releasing it
-// would serve, and merge, a unit without that change. It is refused for the
-// Owner before anything is deployed, the reason names the commit of the
-// last known good release, and the last known good release keeps serving.
-func TestASecondReleaseOfAUnitOnABaselineWithoutTheFirstIsRefused(t *testing.T) {
+// The factory released and merged a change of a unit, but the commit to
+// build on did not follow it (this harness keeps no audit log, so the
+// supervisor never moves it). A second candidate of that unit is built on
+// a base without the first change: releasing it would serve, and merge, a
+// unit without that change. It is held right after its build, so it is
+// never judged or deployed, its issue is blocked for the Owner with the
+// reason named, and the last known good release keeps serving.
+func TestASecondReleaseOfAUnitOnABaselineWithoutTheFirstIsStoppedBeforeQA(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := harness.New(t, harness.Options{ReleaseUnits: []manifest.UnitName{manifest.UnitApp, manifest.UnitControl}, UnitInputs: controlSitePage})
@@ -44,15 +50,60 @@ func TestASecondReleaseOfAUnitOnABaselineWithoutTheFirstIsRefused(t *testing.T) 
 
 	second := f.OpenIssue("maintainer", "MEMBER", "Reword the status page", dashboardBody, github.LabelReady, github.LabelKindBug)
 	f.ScriptPatch(second, 0, sitePageOriginalRewordDiff)
-	f.Cycle(4)
-	rec := wantRefusedAndBlocked(t, f, second, core.CodeApprovalRequired)
-	if !strings.Contains(rec.Reason, string(good.Commit)) {
-		t.Fatalf("the refusal does not name the commit of the last known good release: %+v", rec)
+	record := exportedPatch(t, f, second)
+	res := f.Stages.Build.Pass(ctx)
+	if !slices.Equal(res.Held, []core.IssueRef{f.Issue(second)}) || len(res.Submitted) != 0 || len(res.Unbuildable) != 0 {
+		t.Fatalf("the build of a candidate whose base lacks the last known good release was not held: %+v", res)
+	}
+	if !strings.Contains(fmt.Sprint(res.Errors), string(good.Commit)) {
+		t.Fatalf("the hold does not name the commit of the last known good release: %v", res.Errors)
+	}
+	err = f.ControlStore.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		_, err := handoff.ReadCandidate(ctx, tx, record.RunID, record.Attempt)
+		return err
+	})
+	if !core.HasCode(err, core.CodeNotFound) {
+		t.Fatalf("a candidate that could not be released was sent to QA: %v", err)
+	}
+	if held := heldListing(t, f); len(held) != 1 || held[0].Reason != handoff.HeldBaseLacksRelease {
+		t.Fatalf("the held build does not say its base lacks the release: %+v", held)
+	}
+
+	f.Pass()
+	wantSurfaces(t, f, second, core.StateBlocked)
+	stop := runStopOf(t, f, record.RunID)
+	if stop.Cause != statemachine.BlockPolicySuperseded || stop.Held != handoff.HeldBaseLacksRelease {
+		t.Fatalf("the record of the stopped run: %+v", stop)
+	}
+	// The Owner is told the refusal the release would have given: the base,
+	// and the commit and run of the last known good release.
+	if why := f.Explain(second); !why.Stopped || !strings.Contains(why.Reason, string(good.Commit)) || !strings.Contains(why.Reason, string(good.RunID)) {
+		t.Errorf("runs.explain does not name the last known good release: %+v", why)
+	}
+	if got := countComments(t, f, second, string(good.Commit)); got == 0 {
+		t.Error("the issue was not told the commit its base lacks")
 	}
 	if now := f.Deploy.Staged(); len(now) != staged {
 		t.Fatalf("the second candidate was deployed: %+v", now[staged:])
 	}
 	if observed, err := f.Deploy.ObservedRevision(ctx, "control"); err != nil || !observed.Healthy || observed.Digest != good.Digest {
 		t.Fatalf("the control unit runs %+v, %v; want the last known good release", observed, err)
+	}
+
+	// The Owner puts main's head, which holds the first release, in force
+	// and retries: a new run is coded on it and released.
+	head, _, ok := f.GitData.Branch(f.Repo, "main")
+	if !ok {
+		t.Fatal("main has no head")
+	}
+	approveRevision(t, f, core.CommitSHA(head))
+	if _, err := f.Control.Retry(ctx, f.Issue(second), ownerActor(f)); err != nil {
+		t.Fatalf("the Owner's retry: %v", err)
+	}
+	f.ScriptPatch(second, 0, sitePageRewordDiff)
+	f.Cycle(4)
+	wantSurfaces(t, f, second, core.StateClosed)
+	if now, _, err := f.Trust.LKG.Get(ctx, "control"); err != nil || now.RunID == good.RunID {
+		t.Fatalf("the retried run did not become the last known good release: %+v, %v", now, err)
 	}
 }
