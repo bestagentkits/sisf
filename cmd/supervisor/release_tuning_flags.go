@@ -4,6 +4,7 @@ import (
 	"flag"
 	"time"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
 )
@@ -26,11 +27,11 @@ func (t *releaseTuning) register(fs *flag.FlagSet) {
 // factory in the given profile.
 func (t *releaseTuning) monitor(sim bool) (release.MonitorConfig, error) {
 	if t.window <= 0 || t.minSamples < 1 {
-		return release.MonitorConfig{}, core.NewError(core.CodeInvalidArgument, "--release-window and --release-min-samples must be positive")
+		return release.MonitorConfig{}, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "--release-window and --release-min-samples must be positive"))
 	}
 	if !sim && (t.window < release.DefaultWindow || t.minSamples < release.DefaultMinSamples) {
-		return release.MonitorConfig{}, core.NewError(core.CodeInvalidArgument,
-			"a shorter --release-window or a lower --release-min-samples is only for the simulation profile")
+		return release.MonitorConfig{}, stages.Misconfigured(core.NewError(core.CodeInvalidArgument,
+			"a shorter --release-window or a lower --release-min-samples is only for the simulation profile"))
 	}
 	return release.MonitorConfig{Window: t.window, MinSamples: t.minSamples}, nil
 }

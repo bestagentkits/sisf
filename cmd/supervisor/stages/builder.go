@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"runtime/debug"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/bestagentkits/sisf/cmd/supervisor/handoff"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
+	"github.com/bestagentkits/sisf/internal/supplychain"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/github"
 )
@@ -34,12 +38,16 @@ type ImageRequest struct {
 
 // ImageResult is a finished image build and the suite run with it.
 type ImageResult struct {
-	Digest        core.Digest
-	Image         string
-	TestsPassed   bool
-	TestEvidence  string
-	SBOMRef       string
-	ProvenanceRef string
+	Digest       core.Digest
+	Image        string
+	TestsPassed  bool
+	TestEvidence string
+	// Program is the Go build information of the program the supervisor
+	// received from the build; nil when it read none, and ProgramUnread
+	// then says why. The build's SBOM and provenance are made from them,
+	// never from what a build command reports.
+	Program       *debug.BuildInfo
+	ProgramUnread string
 }
 
 // ImageBuilder turns a candidate commit into an immutable image.
@@ -144,6 +152,7 @@ func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, 
 	if err != nil {
 		return Built{}, b.commitFault(ctx, req.Base, err)
 	}
+	started := b.Clock.Now().UTC()
 	image, err := b.Images.BuildImage(ctx, ImageRequest{
 		FactoryID: b.FactoryID, RunID: req.RunID, Unit: unit, Commit: commit, Branch: branch, Untrusted: true,
 	})
@@ -160,10 +169,22 @@ func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, 
 	if err != nil {
 		return Built{}, err
 	}
+	finished := b.Clock.Now().UTC()
+	name, _, _ := strings.Cut(image.Image, "@")
+	docs, err := supplychain.MakeBuildDocuments(supplychain.BuildObservation{
+		ImageName: name, Digest: image.Digest, Commit: commit, SourceRepo: "github.com/" + b.Repo.String(),
+		BuilderID: "sisf-supervisor/" + b.Images.Name(), InvocationID: string(req.RunID) + "/" + strconv.Itoa(req.Attempt),
+		StartedOn: started, FinishedOn: finished, Program: image.Program, Unread: image.ProgramUnread,
+	})
+	if err != nil {
+		// The supervisor's own documents could not be made: never the
+		// candidate's fault, and no build is recorded without them.
+		return Built{}, core.NewError(core.CodeInternal, "the SBOM and provenance of the build cannot be made").WithCause(err)
+	}
 	return Built{Branch: branch, ChangedPaths: changed, Record: handoff.BuildRecord{
 		Commit: commit, Digest: image.Digest, Unit: unit, Image: image.Image, Builder: b.Images.Name(),
 		TestsPassed: image.TestsPassed, TestEvidence: image.TestEvidence,
-		SBOMRef: image.SBOMRef, ProvenanceRef: image.ProvenanceRef, BuiltAt: b.Clock.Now().UTC(),
+		SBOM: docs.SBOM, SBOMRef: docs.SBOMRef, Provenance: docs.Provenance, ProvenanceRef: docs.ProvenanceRef, BuiltAt: finished,
 	}}, nil
 }
 

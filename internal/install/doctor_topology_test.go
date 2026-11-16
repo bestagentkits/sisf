@@ -59,7 +59,7 @@ func TestTheDoctorReportsDelegatedKeysThatExpireOrHaveExpired(t *testing.T) {
 	}
 }
 
-func TestTheDoctorWarnsWhenAProductionDockerInstallHasNoQALauncher(t *testing.T) {
+func TestTheDoctorSaysAProductionDockerInstallReleasesNothing(t *testing.T) {
 	t.Parallel()
 	in, _, _ := newTestInstaller(t)
 	o := initOptions(in, manifest.ModeDocker)
@@ -69,33 +69,38 @@ func TestTheDoctorWarnsWhenAProductionDockerInstallHasNoQALauncher(t *testing.T)
 	}
 	m, err := in.Layout.LoadManifest()
 	must(t, err)
-	var c collector
-	in.checkStages(&c, m)
-	if v := verdictOf(c.report, "qa launcher"); len(v) != 1 || v[0] != VerdictWarn || !strings.Contains(detailOf(c.report, "qa launcher"), "launcher") {
-		t.Fatalf("qa launcher = %v %q", v, detailOf(c.report, "qa launcher"))
-	}
-	m.Extensions["qa_agent_binary"] = "/opt/sisf/qa-launcher"
-	c = collector{}
-	in.checkStages(&c, m)
-	if v := verdictOf(c.report, "build command"); len(v) != 1 || v[0] != VerdictWarn || !strings.Contains(detailOf(c.report, "build command"), "build_command") {
-		t.Fatalf("with a launcher and no build command, build command = %v %q", v, detailOf(c.report, "build command"))
-	}
-	m.Extensions["build_command"] = "make candidate-image"
-	c = collector{}
-	in.checkStages(&c, m)
 	// The Compose backend runs images, and the supervisor accepts no build
 	// on an image it cannot observe: the stages stay off, and the doctor
-	// says why.
-	if v := verdictOf(c.report, "build evidence"); len(v) != 1 || v[0] != VerdictWarn || !strings.Contains(detailOf(c.report, "build evidence"), "cannot observe") {
-		t.Fatalf("with a launcher and a build command, build evidence = %v %q", v, detailOf(c.report, "build evidence"))
-	}
-	if v := verdictOf(c.report, "lifecycle"); len(v) != 0 {
-		t.Fatalf("with builds it cannot observe, lifecycle = %v", v)
+	// says why, whether or not the manifest still names a launcher and a
+	// build command, and never asks for either.
+	for _, tc := range []struct {
+		name  string
+		extra map[string]string
+	}{
+		{"as init writes it", nil},
+		{"naming a launcher and a build command", map[string]string{"qa_agent_binary": "/opt/sisf/qa-launcher", "build_command": "make candidate-image"}},
+	} {
+		name := tc.name
+		for k, v := range tc.extra {
+			m.Extensions[k] = v
+		}
+		var c collector
+		in.checkStages(&c, m)
+		if v := verdictOf(c.report, "build evidence"); len(v) != 1 || v[0] != VerdictWarn || !strings.Contains(detailOf(c.report, "build evidence"), "cannot observe") {
+			t.Fatalf("%s: build evidence = %v %q", name, v, detailOf(c.report, "build evidence"))
+		}
+		for _, check := range []string{"lifecycle", "qa launcher", "build command"} {
+			if v := verdictOf(c.report, check); len(v) != 0 {
+				t.Fatalf("%s: %s = %v %q", name, check, v, detailOf(c.report, check))
+			}
+		}
 	}
 	// Where the stages run, the launcher is trusted on the operator's word,
 	// and the doctor says so.
 	m.Mode = manifest.ModeStandalone
-	c = collector{}
+	BuildSandbox{Endpoint: "http://127.0.0.1:17480", Network: "sisf-shop-sandbox", EgressProxy: "http://egress:3128",
+		RunnerImage: "127.0.0.1:17481/sisf-runner@sha256:" + strings.Repeat("ab", 32)}.extensions(m.Extensions)
+	var c collector
 	in.checkStages(&c, m)
 	if v := verdictOf(c.report, "qa launcher"); len(v) != 1 || v[0] != VerdictWarn ||
 		!strings.Contains(detailOf(c.report, "qa launcher"), "/opt/sisf/qa-launcher") || !strings.Contains(detailOf(c.report, "qa launcher"), "on your word") {

@@ -99,6 +99,12 @@ func TestAProgramThatChangedAfterItWasReceivedIsRefused(t *testing.T) {
 	if _, err := s.Path(digestOf("another program")); !core.HasCode(err, core.CodeNotFound) {
 		t.Errorf("a digest never received: %v, want NOT_FOUND", err)
 	}
+	if measured, err := s.Measure(digest); err != nil || measured != digest {
+		t.Errorf("Measure of a kept program = %s, %v; want its own digest", measured, err)
+	}
+	if _, err := s.Measure(digestOf("another program")); !core.HasCode(err, core.CodeNotFound) {
+		t.Errorf("Measure of a digest never received: %v, want NOT_FOUND", err)
+	}
 	if err := os.Chmod(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +113,10 @@ func TestAProgramThatChangedAfterItWasReceivedIsRefused(t *testing.T) {
 	}
 	if _, err := s.Path(digest); !core.HasCode(err, core.CodeTampered) {
 		t.Errorf("a program whose bytes changed: %v, want TAMPERED", err)
+	}
+	// Measured, it is the program that was swapped in.
+	if measured, err := s.Measure(digest); err != nil || measured != digestOf("what an agent swapped in") {
+		t.Errorf("Measure of a program whose bytes changed = %s, %v; want the digest of what is kept now", measured, err)
 	}
 	// A link in a program's place could lead anywhere.
 	if err := os.Remove(path); err != nil {
@@ -117,6 +127,9 @@ func TestAProgramThatChangedAfterItWasReceivedIsRefused(t *testing.T) {
 	}
 	if _, err := s.Path(digest); !core.HasCode(err, core.CodeTampered) {
 		t.Errorf("a link in a program's place: %v, want TAMPERED", err)
+	}
+	if _, err := s.Measure(digest); !core.HasCode(err, core.CodeTampered) {
+		t.Errorf("Measure of a link in a program's place: %v, want TAMPERED", err)
 	}
 	for _, bad := range []core.Digest{"", "sha256:short", core.Digest("sha512:" + strings.Repeat("a", 128)), "sha256:../../../../bin/sh"} {
 		if _, err := s.Path(bad); !core.HasCode(err, core.CodeInvalidArgument) {

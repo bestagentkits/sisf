@@ -22,12 +22,12 @@ import (
 	"github.com/bestagentkits/sisf/pkg/execution"
 )
 
-// The smoke run's build script reports everything the supervisor's
-// observed-build hard gate needs: its tests, its image and digest, and
-// where the SBOM and provenance of the build are. A build without the last
-// two fails that gate on every attempt, whatever the judge scores. The
-// script runs here on the host against a local mirror, without Docker.
-func TestTheBuildScriptReportsTheSBOMAndProvenanceTheObservedBuildGateNeeds(t *testing.T) {
+// The smoke run's build script reports what the supervisor's observed-build
+// hard gate needs from it: its tests, its image and digest, and a program
+// whose Go build information the supervisor reads to make the build's SBOM
+// and provenance itself. The script runs here on the host against a local
+// mirror, without Docker.
+func TestTheBuildScriptExportsAProgramTheSupervisorCanDescribe(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	commit := sandboxCommit(t, filepath.Join(dir, "repo"), filepath.Join(dir, "mirror.git"))
@@ -39,13 +39,9 @@ func TestTheBuildScriptReportsTheSBOMAndProvenanceTheObservedBuildGateNeeds(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !built.TestsPassed || built.SBOMRef == "" || built.ProvenanceRef == "" {
-		t.Fatalf("the build reported tests passed %t, SBOM %q and provenance %q", built.TestsPassed, built.SBOMRef, built.ProvenanceRef)
-	}
-	for _, ref := range []string{built.SBOMRef, built.ProvenanceRef} {
-		if !strings.Contains(ref, ":sha256:") {
-			t.Errorf("the reference %q names no digest of a document the build wrote", ref)
-		}
+	if !built.TestsPassed || built.Program == nil || built.Program.Main.Path == "" {
+		t.Fatalf("the build reported tests passed %t and a program with build information %+v (%q)",
+			built.TestsPassed, built.Program, built.ProgramUnread)
 	}
 }
 
@@ -104,7 +100,7 @@ func TestTheBuildScriptRefusesACandidateWithTwoPrograms(t *testing.T) {
 	commit := sandboxCommit(t, repo, filepath.Join(dir, "mirror.git"))
 	build := &scriptBuild{t: t, script: filepath.Join(repoRoot(), "tests", "smoke", "sandbox", "build-candidate.sh"), env: []string{
 		"SISF_SMOKE_MIRROR=" + filepath.Join(dir, "mirror.git"), "GOFLAGS=-mod=readonly"}, work: filepath.Join(dir, "work")}
-	images := stages.SandboxImages{Exec: build, Argv: []string{"build"}, Timeout: 5 * time.Minute}
+	images := stages.SandboxImages{Exec: build, Argv: []string{"build"}, Timeout: 5 * time.Minute, Programs: scriptStore(t, dir)}
 	_, err := images.BuildImage(context.Background(), stages.ImageRequest{Commit: core.CommitSHA(commit), Unit: "app", RunID: "run-1"})
 	if r, refused := stages.RefusalOf(err); !refused || r.Reason != stages.RefusalBuildFailed {
 		t.Fatalf("a candidate with two programs: %v, want its build refused", err)

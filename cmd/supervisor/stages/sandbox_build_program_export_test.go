@@ -33,8 +33,7 @@ func sha256Of(data []byte) string {
 func exportReport(env map[string]string, digest string, program []byte) string {
 	nonce := env["SISF_REPORT_NONCE"]
 	var b strings.Builder
-	fmt.Fprintf(&b, "sisf-report %[1]s image-digest: %[2]s\nsisf-report %[1]s image: local.test/app@%[2]s\n"+
-		"sisf-report %[1]s sbom: sbom:sha256:01\nsisf-report %[1]s provenance: provenance:sha256:02\n", nonce, digest)
+	fmt.Fprintf(&b, "sisf-report %[1]s image-digest: %[2]s\nsisf-report %[1]s image: local.test/app@%[2]s\n", nonce, digest)
 	for len(program) > 0 {
 		n := min(len(program), 300)
 		fmt.Fprintf(&b, "sisf-report %s program: %s\n", nonce, base64.StdEncoding.EncodeToString(program[:n]))
@@ -101,6 +100,14 @@ func TestTheImageDigestIsTheDigestOfTheProgramTheSupervisorReceived(t *testing.T
 		if _, ok := s.envs[phase]["SISF_REPORT_TARGET_OS"]; ok {
 			t.Errorf("the %s phase, where the candidate's code runs, was told the report's target", phase)
 		}
+	}
+	// The build phase compiles for the same target, so a candidate that
+	// does not compile for the supervisor's system fails where its own
+	// failure is charged to it, never first in the report phase as an
+	// outage of the build command.
+	build := s.envs["build"]
+	if build["SISF_TARGET_OS"] != runtime.GOOS || build["SISF_TARGET_ARCH"] != runtime.GOARCH {
+		t.Errorf("the build phase was not told the supervisor's target: %v", build)
 	}
 }
 

@@ -17,7 +17,7 @@ func TestStandaloneRunsTheLifecycleWithNativeProcessesAndTheLocalBackends(t *tes
 	for _, want := range []string{
 		"--exec=local", "--deploy=local", "--qa-judge=fake", "--coder-agent=fake", "--release-window=10s",
 		"--edge-admin-url=http://127.0.0.1:7469", "--dispatcher-admin-url=http://127.0.0.1:7466",
-		"--deploy-local-program=" + r.in.Layout.Bin(appLauncher), "--factory-manifest=" + r.in.Layout.Config(),
+		"--deploy-local-program=" + r.in.Layout.Bin(appLauncher), "--deploy-local-installed-program=" + r.in.Layout.Bin("hello-app"), "--factory-manifest=" + r.in.Layout.Config(),
 	} {
 		if !slices.Contains(sup, want) {
 			t.Errorf("the supervisor lacks %s: %v", want, sup)

@@ -18,6 +18,9 @@ type InitResult struct {
 	Options   Options
 	// Warnings are things the Owner must read.
 	Warnings []string
+	// Next is the step that follows: `sisf up`, or what to do instead when
+	// the install cannot start.
+	Next string
 }
 
 // rootKeyWarning is shown at every init: the lower-assurance local profile.
@@ -76,7 +79,7 @@ func (in *Installer) writeInstall(o Options) (InitResult, error) {
 	if err := writeSourceRecord(l, in.SourceDir); err != nil {
 		return InitResult{}, err
 	}
-	res := InitResult{FactoryID: o.FactoryID, Options: o}
+	res := InitResult{FactoryID: o.FactoryID, Options: o, Next: "sisf up --dir " + l.Dir}
 	if o.Mode == manifest.ModeStandalone {
 		note, err := in.writeServiceUnits(o)
 		if err != nil {
@@ -90,6 +93,10 @@ func (in *Installer) writeInstall(o Options) (InitResult, error) {
 		return InitResult{}, err
 	}
 	res.Warnings = append(res.Warnings, fmt.Sprintf(rootKeyWarning, l.SecretsDir(areaControl)))
+	if needsBuildSandbox(o, o.Mode) {
+		res.Warnings = append(res.Warnings, "This install cannot start: "+noBuildSandbox+".")
+		res.Next = "remove " + l.Dir + " and run `sisf init` again with the build sandbox flags above, or with --profile sim"
+	}
 	if o.Dev {
 		res.Warnings = append(res.Warnings, devWarning)
 	}

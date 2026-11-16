@@ -63,7 +63,9 @@ type verifiedRelease struct {
 //   - the receipt passes: every required hard gate passed and the score
 //     reaches the pass score;
 //   - the artifact is the candidate QA judged, a pinned build of this
-//     factory with SBOM and provenance, signed by a trusted artifact key.
+//     factory with SBOM and provenance, signed by a trusted artifact key;
+//   - the bytes the release would run, measured now by the observer, are
+//     the build the artifact was signed for.
 func (p *Pipeline) verify(ctx context.Context, req Request, record core.StateRecord) (verifiedRelease, error) {
 	now := p.cfg.Clock.Now()
 	if record.CandidateDigest != req.Candidate.Digest {
@@ -78,7 +80,11 @@ func (p *Pipeline) verify(ctx context.Context, req Request, record core.StateRec
 	if req.Artifact.Digest != core.ReleaseDigest(req.Candidate.Digest) {
 		return verifiedRelease{}, core.NewError(core.CodeGuardFailed, "the artifact is another build than the candidate QA judged")
 	}
-	if err := supplychain.VerifyArtifact(ctx, p.cfg.Verifier, req.Artifact, p.cfg.FactoryID, req.Artifact.Digest); err != nil {
+	observed, err := p.cfg.Observer.ObserveArtifact(ctx, req.Artifact)
+	if err != nil {
+		return verifiedRelease{}, err
+	}
+	if err := supplychain.VerifyArtifact(ctx, p.cfg.Verifier, req.Artifact, p.cfg.FactoryID, observed); err != nil {
 		return verifiedRelease{}, err
 	}
 	return verifiedRelease{issue: req.IssueID, run: req.RunID, artifact: req.Artifact, receipt: req.Receipt, verifiedAt: now}, nil

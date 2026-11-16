@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/deploy"
@@ -142,7 +143,7 @@ func (l *lifecycleFlags) syntheticSuite(backend deploy.Backend, log *slog.Logger
 		return nil, nil
 	}
 	if !filepath.IsAbs(l.syntheticProgram) {
-		return nil, core.NewError(core.CodeInvalidArgument, "--synthetic-program must be an absolute path")
+		return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "--synthetic-program must be an absolute path"))
 	}
 	// A suite named but missing would leave every low-traffic release to
 	// hold; the supervisor refuses to start instead, where it is seen.

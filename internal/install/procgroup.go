@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -17,6 +18,12 @@ const (
 	stableAfter      = time.Minute
 	maxStartFailures = 5
 )
+
+// exitConfigRefused is the status a unit ends with when it refuses its
+// configuration, sysexits' EX_CONFIG (cmd/supervisor uses it). Starting it
+// again with the same configuration refuses again, so the group does not
+// start it again: it stops every unit and reports the refusal.
+const exitConfigRefused = 78
 
 // unit is one program of a Standalone install.
 type unit struct {
@@ -41,6 +48,9 @@ type group struct {
 	// cannot be recorded is stopped again and counts as one that failed
 	// to start.
 	record func(name string, p Process) (func(), error)
+	// logTail, when set, returns the end of a unit's log, so a refusal is
+	// reported with its reason on the output of `sisf up`.
+	logTail func(name string) string
 }
 
 func newGroup(exec Exec, clock core.Clock, units []unit, logf func(string, ...any)) *group {
@@ -115,6 +125,11 @@ func (g *group) supervise(ctx context.Context, u unit, fatal chan<- error) {
 			select {
 			case werr := <-exited:
 				forget()
+				if exitStatus(werr) == exitConfigRefused {
+					g.logf("%s refused its configuration (%v); not starting it again\n", u.name, werr)
+					fatal <- g.refusal(u.name)
+					return
+				}
 				g.logf("%s exited (%v); starting it again\n", u.name, werr)
 				if g.clock.Now().Sub(startedAt) >= stableAfter {
 					delay = restartBase
@@ -148,4 +163,28 @@ func (g *group) stop(u unit, p Process, exited <-chan error) {
 		_ = p.Kill() // the group is already gone if this fails
 		<-exited
 	}
+}
+
+// refusal is the error of a unit that refused its configuration, with the
+// end of its log when it can be read.
+func (g *group) refusal(name string) error {
+	why := ""
+	if g.logTail != nil {
+		why = g.logTail(name)
+	}
+	if why == "" {
+		return refusedf("%s refused its configuration and was not started again, since it would refuse again; its log says why", name)
+	}
+	return refusedf("%s refused its configuration and was not started again, since it would refuse again; its log ends with:\n%s", name, why)
+}
+
+// exitStatus returns the exit status a program ended with, or -1 when it
+// did not end with one (it was killed by a signal, or could not be waited
+// for).
+func exitStatus(err error) int {
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) {
+		return coded.ExitCode()
+	}
+	return -1
 }

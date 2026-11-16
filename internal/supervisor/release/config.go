@@ -91,6 +91,10 @@ type Config struct {
 	// Verifier trusts the delegated keys that sign QA receipts and deploy
 	// artifacts.
 	Verifier core.Verifier
+	// Observer measures the bytes an artifact would run, so that a release
+	// is verified on what the supervisor observed, never on the digest the
+	// artifact itself carries.
+	Observer ArtifactObserver
 	// VerifierAt is optional: it returns a verifier that judges signatures
 	// as of an earlier instant, with every delegation the supervisor has
 	// trusted. The QA evidence of a release that is already verified is
@@ -162,6 +166,8 @@ func (c Config) withDefaults() (Config, error) {
 	switch {
 	case c.State == nil || c.Backend == nil || c.Verifier == nil || c.LKG == nil:
 		return c, invalid("a release pipeline needs a state store, a deployment backend, a verifier and an LKG book")
+	case c.Observer == nil:
+		return c, invalid("a release pipeline needs an observer of the bytes a release runs; an artifact's own digest is never taken as observed")
 	case c.Freeze == nil || c.Publisher == nil || c.Blocks == nil:
 		return c, invalid("a release pipeline needs the emergency stop, a publisher and a record of its blocks")
 	}

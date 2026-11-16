@@ -95,5 +95,5 @@ func printInit(env *Env, res install.InitResult, source string) error {
 			return err
 		}
 	}
-	return env.Printf("next: sisf up --dir %s\n", res.Options.Dir)
+	return env.Printf("next: %s\n", res.Next)
 }

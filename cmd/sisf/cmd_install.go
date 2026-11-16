@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"os"
 	"os/signal"
@@ -72,8 +73,9 @@ A Standalone install can run real agents as local processes under
 trusted_code_only: --coder-agent claude|codex [--coder-model M] [--agent-home DIR]
 [--workspace-source URL|PATH], --qa-judge agent --qa-agent codex|claude
 [--qa-model M] [--qa-home DIR], --build-command CMD, --exec local.
-The local backend builds nothing an agent wrote. To build candidates, give
-the install a Docker build sandbox the operator runs: --exec docker
+The local backend builds nothing an agent wrote, so outside the simulation
+sisf up refuses such an install. Give it a Docker build sandbox the
+operator runs: --exec docker
 --exec-docker-endpoint http://127.0.0.1:PORT (the runner filter, sisf
 docker-filter --role runner) --exec-docker-network NET (internal)
 --egress-proxy http://HOST:PORT (on NET) --runner-image NAME@sha256:DIGEST
@@ -94,8 +96,12 @@ starts every unit.
 
 Standalone mode stays in the foreground and supervises the units until
 interrupted; SIGHUP restarts them. Docker mode starts one Compose project and
-returns. Ports used: 7460-7469 on 127.0.0.1, nothing else.`,
-		Flags: func(fs *flag.FlagSet) { bindInstallFlags(fs, &installFlags{}) },
+returns. Ports used: 7460-7469 on 127.0.0.1, nothing else.
+
+An up that can never succeed as configured (an install that cannot start,
+a flag its mode cannot use, a unit that refuses its configuration) exits 2,
+a status the generated systemd unit does not restart on.`,
+		Flags: func(fs *flag.FlagSet) { bindUpFlags(fs, &installFlags{}, new(int)) },
 		Run:   runUp,
 	})
 	register(Command{
@@ -128,6 +134,9 @@ volume, which -v removes with the other volumes.`,
 // the install, else the checkout that holds the current directory.
 func newInstaller(env *Env, dir, source string, debug bool) (*install.Installer, error) {
 	in := install.New(dir, env.Stdout)
+	if env.Exec != nil {
+		in.Exec = env.Exec
+	}
 	in.Debug = debug
 	if source != "" {
 		abs, err := filepath.Abs(source)
@@ -150,12 +159,24 @@ func newInstaller(env *Env, dir, source string, debug bool) (*install.Installer,
 	return in, nil
 }
 
+// bindUpFlags registers the flags of up: those of init and the exit status
+// of a refusal.
+func bindUpFlags(fs *flag.FlagSet, f *installFlags, refusalStatus *int) {
+	bindInstallFlags(fs, f)
+	fs.IntVar(refusalStatus, "refusal-status", exitUsage, "exit `status` of an up that can never succeed as configured; "+
+		"the launchd agent sets 0, since launchd can only tell success from failure when it decides to start it again")
+}
+
 func runUp(ctx context.Context, env *Env, args []string) error {
 	var f installFlags
+	var refusalStatus int
 	fs := newFlagSet("up")
-	bindInstallFlags(fs, &f)
+	bindUpFlags(fs, &f, &refusalStatus)
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	if refusalStatus < 0 || refusalStatus > 125 {
+		return usagef("--refusal-status must be an exit status from 0 to 125")
 	}
 	dir, err := resolveDir(f.dir)
 	if err != nil {
@@ -167,7 +188,13 @@ func runUp(ctx context.Context, env *Env, args []string) error {
 	}
 	o, err := upOptions(env, in, f, dir)
 	if err != nil {
-		return asUsage(err)
+		// A wrong flag refuses on every start, so it ends like any other
+		// refusal, with the status the service units do not restart on.
+		var usage *usageError
+		if err = asUsage(err); errors.As(err, &usage) {
+			return refusal{err: err, status: refusalStatus}
+		}
+		return err
 	}
 	// SIGHUP asks a running Standalone factory to restart its units.
 	hup := make(chan os.Signal, 1)
@@ -188,8 +215,25 @@ func runUp(ctx context.Context, env *Env, args []string) error {
 		}
 	}()
 	o.Reload = reload
-	return in.Up(ctx, o)
+	err = in.Up(ctx, o)
+	if install.Refused(err) {
+		// Exit status 2 by default, like any wrong invocation, and one the
+		// service units do not restart on: starting again would refuse again.
+		return refusal{err: err, status: refusalStatus}
+	}
+	return err
 }
+
+// refusal is an up that can never succeed as configured. It is reported in
+// full and ends with the status --refusal-status chose.
+type refusal struct {
+	err    error
+	status int
+}
+
+func (r refusal) Error() string { return r.err.Error() }
+func (r refusal) Unwrap() error { return r.err }
+func (r refusal) ExitCode() int { return r.status }
 
 // upOptions decides what `up` is told. An install that exists keeps its mode
 // and profile unless the flags name different ones, which the installer then
@@ -214,7 +258,10 @@ func upOptions(env *Env, in *install.Installer, f installFlags, dir string) (ins
 		if f.profile != "" && f.profile != "sim" {
 			return o, usagef("--profile must be \"sim\" or empty")
 		}
-		o.Init = install.Options{Dir: dir, Mode: manifest.Mode(f.mode), Sim: f.profile == "sim"}
+		// The build flags are carried so the installer can refuse those the
+		// install's mode cannot use, instead of dropping them unseen.
+		o.Init = install.Options{Dir: dir, Mode: manifest.Mode(f.mode), Sim: f.profile == "sim",
+			BuildCommand: f.agents.buildCommand, QAAgentBinary: f.agents.qaAgentBinary}
 		return o, nil
 	}
 	if f.mode == "" {

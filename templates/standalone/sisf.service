@@ -18,6 +18,11 @@ ExecStart="{{ .Sisf }}" up --mode standalone --dir "{{ .Dir }}" --source "{{ .So
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
+# Exit status 2 is an up that can never succeed as configured (an install
+# that cannot start, a unit that refuses its configuration); starting it
+# again would only refuse again, so systemd leaves it stopped and the
+# journal holds the reason.
+RestartPreventExitStatus=2
 # The install directory holds the secrets; nobody else may read them.
 UMask=0077
 NoNewPrivileges=true

@@ -4,15 +4,18 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/hex"
 	"io"
 	"maps"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/supervisor/programstore"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/deploy"
 	"github.com/bestagentkits/sisf/pkg/execution"
 )
 
@@ -40,8 +43,21 @@ func (s SimulatedImages) BuildImage(ctx context.Context, req ImageRequest) (Imag
 	return ImageResult{
 		Digest: digest, Image: "sim.local/" + string(req.FactoryID) + "/" + req.Unit + "@" + string(digest),
 		TestsPassed: passed, TestEvidence: evidence,
-		SBOMRef: "sbom:" + string(digest), ProvenanceRef: "provenance:" + string(digest),
+		ProgramUnread: "the simulation builds no program; its candidates run as the installed image",
 	}, nil
+}
+
+// SimulatedArtifacts is the release pipeline's observer in the simulation
+// profile with the scripted fake agent. Its builds make no program: a
+// candidate runs as the installed image under the digest SimulatedImages
+// derived, so there are no bytes to measure, and the observation is the
+// artifact's own digest. It is selected only where SimulatedImages is, and
+// never where code an agent wrote is built.
+type SimulatedArtifacts struct{}
+
+// ObserveArtifact returns the digest the simulated build derived.
+func (SimulatedArtifacts) ObserveArtifact(_ context.Context, a deploy.Artifact) (core.ReleaseDigest, error) {
+	return a.Digest, nil
 }
 
 // The phases of a sandboxed build. The build command is run once per
@@ -50,13 +66,17 @@ func (s SimulatedImages) BuildImage(ctx context.Context, req ImageRequest) (Imag
 //
 //   - test runs the candidate's tests. Only its exit status is read: 0
 //     means the tests passed.
-//   - build builds the candidate. Only its exit status is read: anything
-//     but 0 refuses the candidate.
+//   - build builds the candidate, for the supervisor's operating system and
+//     architecture as Go names them in SISF_TARGET_OS and SISF_TARGET_ARCH.
+//     Only its exit status is read: anything but 0 refuses the candidate,
+//     so a candidate that does not compile for that target is refused
+//     here rather than held as an outage of the report phase.
 //   - report runs no code of the candidate. It builds the commit again
-//     deterministically without running it, and reports the image, its
-//     digest and the references of its SBOM and provenance on lines
-//     "sisf-report <nonce> <key>: <value>", with the keys
-//     image-digest, image, sbom and provenance, each exactly once.
+//     deterministically without running it, and reports the image and its
+//     digest on lines "sisf-report <nonce> <key>: <value>", with the keys
+//     image-digest and image, each exactly once. It names no SBOM and no
+//     provenance: the supervisor makes those itself, from the program it
+//     received (see CandidateBuilder.Build).
 //
 // The report phase is also told the supervisor's own operating system and
 // architecture, in SISF_REPORT_TARGET_OS and SISF_REPORT_TARGET_ARCH as Go
@@ -144,7 +164,12 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 	if err != nil {
 		return ImageResult{}, err
 	}
-	built, err := s.phase(ctx, sandbox.ID, phaseBuild, candidate, deadline, nil)
+	// The build compiles for the target the report phase will export
+	// for, so a candidate that does not compile for the supervisor's
+	// system fails here, as its own failure.
+	targeted := maps.Clone(candidate)
+	targeted["SISF_TARGET_OS"], targeted["SISF_TARGET_ARCH"] = runtime.GOOS, runtime.GOARCH
+	built, err := s.phase(ctx, sandbox.ID, phaseBuild, targeted, deadline, nil)
 	if err != nil {
 		return ImageResult{}, err
 	}
@@ -183,9 +208,55 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 	if err != nil {
 		return ImageResult{}, err
 	}
+	if out.Program, out.ProgramUnread, err = s.programBuildInfo(out.Digest); err != nil {
+		return ImageResult{}, err
+	}
 	out.TestsPassed = tested.ExitCode == 0
 	out.TestEvidence = "sandbox test phase exited with status " + strconv.Itoa(tested.ExitCode)
 	return out, nil
+}
+
+// maxBuildInfoBytes bounds the Go build information of a candidate's
+// program that goes into its SBOM, which the build record and the state
+// store keep. The program was built from the candidate's code, so what it
+// carries is untrusted in size as well as content. It bounds what is kept
+// after the parse, not what is read: debug/buildinfo exposes no length
+// before it parses. The bound before the parse is the program store's,
+// programstore.MaxProgramBytes (256 MiB): the parse reads at most the
+// program, and the store receives none larger.
+const maxBuildInfoBytes = 1 << 20
+
+// programBuildInfo reads the Go build information of the program the store
+// keeps under digest, hashed again as it is opened. A program that carries
+// none, or none that can be read, is described without it: unread says
+// why, and its SBOM then lists no module as known.
+func (s SandboxImages) programBuildInfo(digest core.Digest) (info *debug.BuildInfo, unread string, err error) {
+	path, err := s.Programs.Path(digest)
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() {
+		// The program was built from the candidate's code: a file the
+		// reader cannot parse is described without its build information.
+		if recover() != nil {
+			info, unread, err = nil, "the program's Go build information cannot be read", nil
+		}
+	}()
+	info, unread = usableBuildInfo(buildinfo.ReadFile(path))
+	return info, unread, nil
+}
+
+// usableBuildInfo keeps build information that names its main module and
+// fits maxBuildInfoBytes; otherwise it says why the program is described
+// without it.
+func usableBuildInfo(info *debug.BuildInfo, readErr error) (*debug.BuildInfo, string) {
+	if readErr != nil || info == nil || info.Main.Path == "" {
+		return nil, "the program carries no Go build information that names its main module"
+	}
+	if len(info.String()) > maxBuildInfoBytes {
+		return nil, "the program's Go build information is larger than " + strconv.Itoa(maxBuildInfoBytes) + " bytes"
+	}
+	return info, ""
 }
 
 // phase runs the build command for one phase within what is left of the

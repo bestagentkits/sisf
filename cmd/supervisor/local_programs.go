@@ -5,9 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
+	"github.com/bestagentkits/sisf/internal/supervisor"
 	"github.com/bestagentkits/sisf/internal/supervisor/programstore"
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/deploy"
 )
 
 // localPrograms decides what the local deploy backend starts for a
@@ -33,6 +36,10 @@ type localPrograms struct {
 	// installed is the digest of the installed program, from the release
 	// manifest the Owner's root key signed.
 	installed core.Digest
+	// installedProgram is --deploy-local-installed-program: the file the
+	// launcher starts for the installed release, which is measured, not
+	// taken as the manifest's digest.
+	installedProgram string
 }
 
 // openLocalPrograms sets what the local deploy backend runs. A factory
@@ -40,7 +47,7 @@ type localPrograms struct {
 // sandbox: every one but the simulation with its scripted agent, whose
 // image builder runs nothing.
 func (l *lifecycleFlags) openLocalPrograms(ctx context.Context, trustDir string, sim bool, book *release.LKGBook) error {
-	l.programs = &localPrograms{launcher: l.localProgram}
+	l.programs = &localPrograms{launcher: l.localProgram, installedProgram: l.installedProgram}
 	if l.deploy != "local" || (sim && l.coderAgent == "fake") {
 		return nil
 	}
@@ -72,7 +79,7 @@ func (p *localPrograms) buildStore() *programstore.Store {
 // release's image reference is started with.
 func (p *localPrograms) command(image string) (string, []string, error) {
 	if p.launcher == "" || !filepath.IsAbs(p.launcher) {
-		return "", nil, core.NewError(core.CodeInvalidArgument, "deploy local needs an absolute --deploy-local-program")
+		return "", nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "deploy local needs an absolute --deploy-local-program"))
 	}
 	if !imageRefPattern.MatchString(image) {
 		return "", nil, core.NewError(core.CodeInvalidArgument, "the release's image reference is not one a local program accepts")
@@ -96,4 +103,55 @@ func (p *localPrograms) command(image string) (string, []string, error) {
 	}
 	return "", nil, core.NewError(core.CodeNotFound, "the release "+string(digest)+
 		" is neither a program a candidate build exported to the supervisor nor the installed release; nothing is started for it")
+}
+
+// ObserveArtifact measures what the local deploy backend would start for a
+// release, so the release pipeline verifies the bytes and not the digest
+// the artifact carries: for a program of the store, the sha256 of the file
+// it holds now; for the release the root-signed release manifest pins, the
+// sha256 of the installed program's file now, or NOT_FOUND when that file
+// was not given. Anything else is NOT_FOUND, as command starts nothing for
+// it. A factory that keeps no programs observes nothing and says so.
+func (p *localPrograms) ObserveArtifact(_ context.Context, a deploy.Artifact) (core.ReleaseDigest, error) {
+	if p == nil || p.store == nil {
+		return "", core.NewError(core.CodeNotSupported, "this factory keeps no programs, so the bytes a release would run cannot be observed")
+	}
+	digest := core.Digest(a.Digest)
+	measured, err := p.store.Measure(digest)
+	switch {
+	case err == nil:
+		return core.ReleaseDigest(measured), nil
+	case !core.HasCode(err, core.CodeNotFound):
+		return "", err
+	case digest == p.installed:
+		return p.measureInstalled()
+	}
+	return "", err
+}
+
+// measureInstalled hashes the installed program's file now.
+func (p *localPrograms) measureInstalled() (core.ReleaseDigest, error) {
+	if p.installedProgram == "" || !filepath.IsAbs(p.installedProgram) {
+		return "", core.NewError(core.CodeNotFound, "the installed program's file is not known (--deploy-local-installed-program), so its bytes cannot be measured")
+	}
+	measured, err := supervisor.DigestFile(p.installedProgram)
+	if err != nil {
+		return "", core.NewError(core.CodeNotFound, "the installed program cannot be measured").WithCause(err)
+	}
+	return core.ReleaseDigest(measured), nil
+}
+
+// artifactObserver is what the release pipeline measures releases with:
+// the program store where programs are kept, and in the simulation with
+// its scripted agent, which builds no program, the simulation's own
+// observer. Any other factory builds nothing it could observe, and is
+// refused.
+func (l *lifecycleFlags) artifactObserver(sim bool) (release.ArtifactObserver, error) {
+	if l.programs.buildStore() != nil {
+		return l.programs, nil
+	}
+	if sim && l.coderAgent == "fake" {
+		return stages.SimulatedArtifacts{}, nil
+	}
+	return nil, stages.Misconfigured(core.NewError(core.CodeNotSupported, "this factory keeps no programs, so the supervisor cannot observe what a release would run"))
 }

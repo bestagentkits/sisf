@@ -5,14 +5,17 @@
 #
 #   test    vets and tests every Go package of the candidate (SISF_COMMIT);
 #           the supervisor reads only the exit status.
-#   build   builds every package; the supervisor reads only the exit status.
+#   build   builds every package for the supervisor's operating system and
+#           architecture (SISF_TARGET_OS, SISF_TARGET_ARCH); the supervisor
+#           reads only the exit status.
 #   report  builds the one program of the commit the supervisor names
 #           (SISF_REPORT_COMMIT) for the supervisor's own operating system
 #           and architecture (SISF_REPORT_TARGET_OS, SISF_REPORT_TARGET_ARCH),
 #           which runs none of its code, and reports on lines
 #           "sisf-report <nonce> <key>: <value>" the sha256 of that program
-#           as the image digest, the digests of the SBOM and provenance it
-#           wrote, and the program itself, in base64 on "program" lines.
+#           as the image digest, and the program itself, in base64 on
+#           "program" lines. It reports no SBOM or provenance: the
+#           supervisor makes both from the program it receives.
 #
 # The program is what a Standalone factory deploys: the supervisor keeps
 # the bytes it receives, checks them against the digest and its local
@@ -27,7 +30,18 @@
 set -eu
 phase=${SISF_PHASE:?the supervisor sets SISF_PHASE}
 case $phase in
-test | build) commit=${SISF_COMMIT:?the supervisor sets SISF_COMMIT} ;;
+test) commit=${SISF_COMMIT:?the supervisor sets SISF_COMMIT} ;;
+build)
+	commit=${SISF_COMMIT:?the supervisor sets SISF_COMMIT}
+	target_os=${SISF_TARGET_OS:?the supervisor sets SISF_TARGET_OS}
+	target_arch=${SISF_TARGET_ARCH:?the supervisor sets SISF_TARGET_ARCH}
+	case $target_os$target_arch in
+	*[!a-z0-9]*)
+		echo "the target $target_os/$target_arch is not an operating system and architecture" >&2
+		exit 2
+		;;
+	esac
+	;;
 report)
 	commit=${SISF_REPORT_COMMIT:?the supervisor sets SISF_REPORT_COMMIT}
 	nonce=${SISF_REPORT_NONCE:?the supervisor sets SISF_REPORT_NONCE}
@@ -49,8 +63,7 @@ mirror=${SISF_SMOKE_MIRROR:?}
 work=${SISF_SMOKE_WORKDIR:-/tmp}
 src=$work/src
 out=$work/out
-meta=$work/meta
-mkdir -p "$src" "$out" "$meta"
+mkdir -p "$src" "$out"
 cd "$src"
 git init -q
 # The mirror follows GitHub every few seconds; a candidate pushed a moment
@@ -96,7 +109,7 @@ fi
 program=$(go list -f '{{if eq .Name "main"}}{{.ImportPath}}{{end}}' ./... | grep .)
 # Building compiles the candidate and runs none of it: no cgo, no generate.
 if [ "$phase" = build ]; then
-	CGO_ENABLED=0 go build -trimpath -o "$out/" ./... >&2
+	CGO_ENABLED=0 GOOS=$target_os GOARCH=$target_arch go build -trimpath -o "$out/" ./... >&2
 	exit 0
 fi
 rm -f "$out/program"
@@ -119,18 +132,8 @@ if [ ${#digest} -ne 64 ]; then
 	echo "the program's digest cannot be computed" >&2
 	exit 1
 fi
-# The SBOM is the module list Go recorded in the program; the provenance
-# names the commit, the toolchain, the target and this builder. Each is
-# referenced by the digest of what was written.
-go version -m "$out/program" >"$meta/sbom.txt"
-printf 'commit %s\nbuilder sisf-smoke-build\ntoolchain %s\ntarget %s/%s\nimage-digest sha256:%s\n' \
-	"$commit" "$(go env GOVERSION)" "$target_os" "$target_arch" "$digest" >"$meta/provenance.txt"
-sbom=$(sha256sum "$meta/sbom.txt" | cut -d' ' -f1)
-provenance=$(sha256sum "$meta/provenance.txt" | cut -d' ' -f1)
 echo "sisf-report $nonce image-digest: sha256:$digest"
 echo "sisf-report $nonce image: smoke.local/sisf-sandbox@sha256:$digest"
-echo "sisf-report $nonce sbom: go-version-m:sha256:$sbom"
-echo "sisf-report $nonce provenance: sisf-smoke-build:sha256:$provenance"
 # The program, in lines of base64 that each decode by themselves (4096 is
 # a multiple of four).
 base64 <"$out/program" | tr -d '\n' | fold -w 4096 |

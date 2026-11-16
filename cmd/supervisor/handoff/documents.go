@@ -100,9 +100,15 @@ type BuildRecord struct {
 	// Builder names how the build was made, for example "simulated" or "sandbox:docker".
 	Builder string `json:"builder"`
 	// TestsPassed is the result of the deterministic suite run with the build.
-	TestsPassed   bool      `json:"tests_passed"`
-	TestEvidence  string    `json:"test_evidence,omitempty"`
+	TestsPassed  bool   `json:"tests_passed"`
+	TestEvidence string `json:"test_evidence,omitempty"`
+	// SBOM and Provenance are the documents the supervisor made of the
+	// build from what it observed (supplychain.MakeBuildDocuments), and
+	// SBOMRef and ProvenanceRef the sha256 of each. They are kept as bytes:
+	// a reference is the digest of exactly those bytes.
+	SBOM          []byte    `json:"sbom,omitempty"`
 	SBOMRef       string    `json:"sbom_ref"`
+	Provenance    []byte    `json:"provenance,omitempty"`
 	ProvenanceRef string    `json:"provenance_ref"`
 	BuiltAt       time.Time `json:"built_at"`
 }

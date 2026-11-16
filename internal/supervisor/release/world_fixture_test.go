@@ -109,13 +109,15 @@ type world struct {
 	freeze    *fakeFreeze
 	publisher *fakePublisher
 	commits   *fakeCommits
+	programs  *heldPrograms
 	cfg       Config
 }
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
 	clock := &fakeClock{now: startTime}
-	w := &world{t: t, clock: clock, keys: newKeyring(t, clock), freeze: &fakeFreeze{}, publisher: &fakePublisher{}, commits: &fakeCommits{}}
+	w := &world{t: t, clock: clock, keys: newKeyring(t, clock), freeze: &fakeFreeze{}, publisher: &fakePublisher{}, commits: &fakeCommits{},
+		programs: &heldPrograms{}}
 	w.store = openStore(t, clock)
 	w.backend = newFakeBackend(clock, lkgDigest)
 	w.trustDir = filepath.Join(t.TempDir(), "trust")
@@ -124,7 +126,7 @@ func newWorld(t *testing.T) *world {
 	}
 	w.book = w.recordInstallLKG(lkgDigest)
 	w.cfg = Config{
-		FactoryID: testFactory, State: w.store, Backend: w.backend, Verifier: w.keys.verifier, VerifierAt: w.keys.verifierAt, LKG: w.book,
+		FactoryID: testFactory, State: w.store, Backend: w.backend, Verifier: w.keys.verifier, Observer: w.programs, VerifierAt: w.keys.verifierAt, LKG: w.book,
 		Freeze: w.freeze, Publisher: w.publisher, Blocks: storeBlocks{}, Clock: clock, Commits: w.commits,
 	}
 	return w
