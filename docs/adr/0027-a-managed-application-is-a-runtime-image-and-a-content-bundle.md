@@ -1,4 +1,4 @@
-# ADR 0025: A managed application is a runtime image and a content bundle
+# ADR 0027: A managed application is a runtime image and a content bundle
 
 ## Status
 
