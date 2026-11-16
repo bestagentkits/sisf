@@ -203,7 +203,9 @@ func TestManagedShopReleasesAndRollsBackOnRealDocker(t *testing.T) {
 	w.cfg = Config{
 		FactoryID: testFactory, State: w.store, Backend: backend, Verifier: w.keys.verifier, Observer: appbundle.PairObserver{Store: store}, VerifierAt: w.keys.verifierAt, LKG: w.book,
 		Freeze: w.freeze, Publisher: w.publisher, Blocks: storeBlocks{}, Clock: tclock, Commits: w.commits,
-		Monitor: MonitorConfig{Window: time.Minute, MinSamples: 15},
+		// A window skips one minute but takes as long as its 400 real
+		// requests do; the lease must outlast that, not three skipped minutes.
+		Monitor: MonitorConfig{Window: time.Minute, MinSamples: 15}, LeaseTTL: 30 * time.Minute,
 	}
 	p := w.pipeline()
 
