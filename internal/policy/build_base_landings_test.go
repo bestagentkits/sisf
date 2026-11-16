@@ -77,6 +77,25 @@ func TestAMergeWhoseFollowLagsIsFollowedBeforeAnotherIsMadeOnIt(t *testing.T) {
 		}
 	})
 
+	t.Run("main behind the commit to build on waits", func(t *testing.T) {
+		t.Parallel()
+		w := newBaseWorld(t)
+		w.release(cand1, merge1, revA, revA, app, nil)
+		w.release(cand2, merge2, merge1, merge1, app, nil)
+		// The factory builds on merge2, which contains merge1, though the
+		// follow of merge1 never happened; GitHub names main at merge1.
+		baseline, _ := w.baselines.Current(context.Background())
+		putRecord(t, w, policy.BuildBase{Revision: revA, Digest: baseline.Digest, Commit: merge2, Chain: []core.CommitSHA{merge2}})
+		err := w.checkMain(merge1, "run-3", policy.FollowProof{Merge: merge1, Candidate: cand1, Run: "run-1", Unit: "hello-app"})
+		wantCode(t, err, core.CodeUnavailable, "merging on a main behind the commit to build on")
+		if !strings.Contains(err.Error(), "behind the commit the factory builds on") {
+			t.Fatalf("the wait does not say main is behind: %v", err)
+		}
+		if base, _ := w.stored(t); base.Commit != merge2 || base.Stopped != nil {
+			t.Fatalf("a main behind the commit to build on moved or stopped it: %+v", base)
+		}
+	})
+
 	t.Run("a lagging follow still refused stops with its own reason", func(t *testing.T) {
 		t.Parallel()
 		w := newBaseWorld(t)

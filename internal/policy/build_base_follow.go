@@ -132,12 +132,22 @@ func (b *BuildBases) CheckMain(ctx context.Context, actor core.Actor, check Main
 			" was made of, so the merge waits").WithCause(err)
 	}
 	if found {
-		_, err := b.Follow(ctx, actor, landing)
-		if err != nil && unanswered(err) {
+		next, err := b.Follow(ctx, actor, landing)
+		switch {
+		case err != nil && unanswered(err):
 			return core.NewError(core.CodeUnavailable, "main is at "+string(check.Head)+", the merge of the release of "+string(landing.Run)+
 				", which the factory has not followed yet; the merge waits until it is").WithCause(err)
+		case err != nil:
+			return err
+		case check.Head != next.Commit && !next.followed(check.Head):
+			// The commit to build on already contains the merge, so the
+			// follow had nothing to add: main is behind it, as a stale
+			// answer from GitHub or a main moved back. A merge on it would
+			// not be followed, so it waits for main to catch up.
+			return core.NewError(core.CodeUnavailable, "main is at "+string(check.Head)+", the merge of the release of "+string(landing.Run)+
+				", behind the commit the factory builds on, "+string(next.Commit)+"; the merge waits until main contains it")
 		}
-		return err
+		return nil
 	}
 	changed, err := b.cfg.Commits.ChangedPaths(ctx, record.Commit, check.Head)
 	why := ""
