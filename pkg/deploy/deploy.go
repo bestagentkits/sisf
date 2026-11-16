@@ -111,11 +111,14 @@ func (a Artifact) ValidateFor(factory core.FactoryID) error {
 	return nil
 }
 
-// Domain and field-list version of the artifact's signing payload. Version 2
-// added the factory, version 3 the bundle.
+// Domain and field-list versions of the artifact's signing payload. Version 2
+// added the factory; version 3 adds the bundle and is used only by bundle
+// artifacts, so an image-only artifact keeps the exact bytes it was signed
+// over and a stored last-known-good build still verifies after an upgrade.
 const (
-	artifactPayloadDomain  = "sisf.deploy_artifact"
-	artifactPayloadVersion = 3
+	artifactPayloadDomain        = "sisf.deploy_artifact"
+	artifactPayloadVersion       = 2
+	bundleArtifactPayloadVersion = 3
 )
 
 // SigningPayload returns the canonical bytes the release signer signs and
@@ -124,15 +127,21 @@ const (
 // digest, image, set of supply-chain documents or bundle without
 // invalidating its signature.
 func (a Artifact) SigningPayload() []byte {
-	return core.NewPayloadBuilder(artifactPayloadDomain, artifactPayloadVersion).
+	version := artifactPayloadVersion
+	if a.Bundle != "" {
+		version = bundleArtifactPayloadVersion
+	}
+	b := core.NewPayloadBuilder(artifactPayloadDomain, version).
 		Text("factory_id", string(a.FactoryID)).
 		Text("unit", a.Unit).
 		Text("digest", string(a.Digest)).
 		Text("image", a.Image).
 		Text("sbom_ref", a.SBOMRef).
-		Text("provenance_ref", a.ProvenanceRef).
-		Text("bundle", a.Bundle).
-		Bytes()
+		Text("provenance_ref", a.ProvenanceRef)
+	if a.Bundle != "" {
+		b = b.Text("bundle", a.Bundle)
+	}
+	return b.Bytes()
 }
 
 // Revision is a staged or running version of a unit.

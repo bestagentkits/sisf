@@ -177,10 +177,9 @@ func TestTheArtifactPayloadIsStableAndLeavesTheSignatureOut(t *testing.T) {
 	if !bytes.Equal(base, signedArtifact().SigningPayload()) {
 		t.Fatal("two equal artifacts produced different payloads")
 	}
-	// The field list changed when the factory and then the bundle were
-	// bound, so the version did too: a signature made over an earlier list
-	// never verifies.
-	if !strings.HasPrefix(string(base), "sisf-signed-record\ndomain=20:sisf.deploy_artifact\nversion=1:3\nfactory_id=8:acme-app\n") {
+	// The field list changed when the factory was bound, so the version did
+	// too: a signature made over the earlier list never verifies.
+	if !strings.HasPrefix(string(base), "sisf-signed-record\ndomain=20:sisf.deploy_artifact\nversion=1:2\nfactory_id=8:acme-app\n") {
 		t.Fatalf("payload does not open with the artifact domain and version: %q", base)
 	}
 	artifact.Signature = core.Signature{KeyID: "another-key", Algorithm: "ed25519", Value: []byte{9}}
@@ -192,11 +191,19 @@ func TestTheArtifactPayloadIsStableAndLeavesTheSignatureOut(t *testing.T) {
 	}
 }
 
-func TestTheBundleIsBoundLastAndEmptyForAnImageOnlyArtifact(t *testing.T) {
+// An image-only artifact keeps the version 2 bytes it was signed over, so a
+// stored last-known-good build verifies after an upgrade; a bundle artifact
+// uses version 3 and binds its bundle last.
+func TestOnlyABundleArtifactUsesTheBundlePayload(t *testing.T) {
 	t.Parallel()
-	base := string(signedArtifact().SigningPayload())
-	if !strings.HasSuffix(base, "provenance_ref=21:artifact:provenance-1\nbundle=0:\n") {
-		t.Fatalf("an image-only artifact must bind an empty bundle last: %q", base)
+	image := string(signedArtifact().SigningPayload())
+	if strings.Contains(image, "bundle=") || !strings.HasSuffix(image, "provenance_ref=21:artifact:provenance-1\n") {
+		t.Fatalf("an image-only artifact's payload changed: %q", image)
+	}
+	b := bundleArtifact()
+	bundle := string(b.SigningPayload())
+	if !strings.Contains(bundle, "\nversion=1:3\n") || !strings.HasSuffix(bundle, "bundle=71:"+b.Bundle+"\n") {
+		t.Fatalf("a bundle artifact must use version 3 and bind its bundle last: %q", bundle)
 	}
 }
 
