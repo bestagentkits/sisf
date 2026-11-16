@@ -48,8 +48,9 @@ type Runtime struct {
 	Port int `yaml:"port" json:"port"`
 	// User is the uid:gid the container runs as; never root.
 	User string `yaml:"user" json:"user"`
-	// HealthPath answers 200 with a JSON object whose "revision" is the
-	// revision the container was started as (SISF_REVISION).
+	// HealthPath answers 200 with a JSON object whose "status" is "ok" and
+	// whose "revision" is the revision the container was started as
+	// (SISF_REVISION); anything else is not healthy.
 	HealthPath string `yaml:"health_path" json:"health_path"`
 	// Env is configuration that is not secret.
 	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`

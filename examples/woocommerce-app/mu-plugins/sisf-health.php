@@ -13,6 +13,7 @@ if ( isset( $_SERVER['REQUEST_URI'] ) && '/healthz' === strtok( $_SERVER['REQUES
 	header( 'Cache-Control: no-store' );
 	echo wp_json_encode(
 		array(
+			'status'   => $sisf_db_ok ? 'ok' : 'down',
 			'revision' => (string) getenv( 'SISF_REVISION' ),
 			'database' => $sisf_db_ok ? 'ok' : 'unreachable',
 		)
