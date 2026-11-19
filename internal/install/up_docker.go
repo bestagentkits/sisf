@@ -3,6 +3,7 @@ package install
 import (
 	"context"
 	"os"
+	"path/filepath"
 
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -25,8 +26,13 @@ func (in *Installer) compose(ctx context.Context, m *manifest.Manifest, args ...
 // bootstrapCommand is the one-shot state step run inside the project: it
 // migrates the schema, creates the zone roles and stores the budget
 // confirmation, if the Owner gave one.
-func (in *Installer) bootstrapCommand(m *manifest.Manifest) ([]string, error) {
+// A migration the Owner approved is passed on with the name of the dump
+// taken before the step runs.
+func (in *Installer) bootstrapCommand(m *manifest.Manifest, approve []int, dump string) ([]string, error) {
 	cmd := []string{"sisf", "state", "bootstrap", "--dialect=postgres", "--factory-id=" + string(m.FactoryID)}
+	if len(approve) > 0 {
+		cmd = append(cmd, "--approve-migrations="+joinVersions(approve), "--snapshot="+dump)
+	}
 	rec, ok, err := readBudgetConfirmation(in.Layout.BudgetConfirmation())
 	if err != nil || !ok {
 		return cmd, err
@@ -50,7 +56,7 @@ func (in *Installer) bootstrapCommand(m *manifest.Manifest) ([]string, error) {
 // supervisor's delegated keys on its trust volume, and starts every
 // service. The project is checked before anything runs, so the file that
 // runs is the file that passed the isolation rules.
-func (in *Installer) upDocker(ctx context.Context, m *manifest.Manifest) error {
+func (in *Installer) upDocker(ctx context.Context, m *manifest.Manifest, approve []int) error {
 	if err := in.checkProjectOwner(ctx, m); err != nil {
 		return err
 	}
@@ -58,7 +64,11 @@ func (in *Installer) upDocker(ctx context.Context, m *manifest.Manifest) error {
 	if err != nil {
 		return err
 	}
-	bootstrap, err := in.bootstrapCommand(m)
+	var dump string
+	if len(approve) > 0 {
+		dump = snapshotName(approve, in.Clock.Now(), ".dump")
+	}
+	bootstrap, err := in.bootstrapCommand(m, approve, dump)
 	if err != nil {
 		return err
 	}
@@ -99,6 +109,12 @@ func (in *Installer) upDocker(ctx context.Context, m *manifest.Manifest) error {
 	in.say("starting the state store\n")
 	if err := in.compose(ctx, m, "up", "-d", "--wait", "state"); err != nil {
 		return unavailablef(err, "the state store did not become healthy")
+	}
+	if dump != "" {
+		in.say("dumping the state store to %s before the approved migration\n", filepath.Join(in.Layout.Backups(), dump))
+		if err := in.dumpState(ctx, m, dump); err != nil {
+			return err
+		}
 	}
 	in.say("preparing the state store and its zone roles\n")
 	if err := in.compose(ctx, m, "run", "--rm", "--no-deps", "state-bootstrap"); err != nil {
@@ -181,4 +197,17 @@ func (in *Installer) dockerDown(ctx context.Context, m *manifest.Manifest, remov
 		return unavailablef(err, "docker compose down failed")
 	}
 	return nil
+}
+
+// dumpState writes a dump of the whole state database, taken through the
+// state container with pg_dump, to the install's backups, readable by its
+// owner only. The dump is restored with pg_restore through the same
+// container. An existing file is never overwritten.
+func (in *Installer) dumpState(ctx context.Context, m *manifest.Manifest, name string) error {
+	out, err := in.Exec.Run(ctx, Cmd{Name: "docker", Args: in.composeArgs(m,
+		"exec", "-T", "state", "pg_dump", "--username=sisf_owner", "--dbname=sisf", "--format=custom")})
+	if err != nil {
+		return unavailablef(err, "the state store could not be dumped, so the approved migration did not run")
+	}
+	return writeSnapshotFile(in.Layout.Backups(), name, out)
 }

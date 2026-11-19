@@ -175,6 +175,10 @@ func TestUpKeepsTheModeOfAnExistingInstall(t *testing.T) {
 			t.Fatalf("up with a wrong flag and --refusal-status %s = %d %q, want the usage refusal with that status", refusalStatus, status, stderr)
 		}
 	}
+	status, _, stderr = runRefused(t, "up", "--dir", dir, "--approve-migrations", "twelve")
+	if status != exitUsage || !strings.Contains(stderr, "--approve-migrations") {
+		t.Fatalf("up with an approval that names no version = %d %q", status, stderr)
+	}
 }
 
 // The build flags reach the installer from `sisf up` of an existing Docker
@@ -252,6 +256,7 @@ func TestStateBootstrapPreparesASQLiteStoreAndChecksItsFlags(t *testing.T) {
 		"no factory id":         {"state", "bootstrap", "--dialect", "sqlite"},
 		"alert without confirm": {"state", "bootstrap", "--dialect", "sqlite", "--factory-id", "x", "--no-alert"},
 		"unsettled alert":       {"state", "bootstrap", "--dialect", "sqlite", "--factory-id", "x", "--confirm-unlimited"},
+		"bad approval":          {"state", "bootstrap", "--dialect", "sqlite", "--factory-id", "x", "--approve-migrations", "twelve"},
 	} {
 		if status, _, _ := runWithOutput(t, args...); status != exitUsage {
 			t.Errorf("%s: status %d, want %d", name, status, exitUsage)

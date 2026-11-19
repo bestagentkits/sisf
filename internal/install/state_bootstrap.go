@@ -34,6 +34,18 @@ type BootstrapConfig struct {
 	// every claim.
 	Budget *BudgetConfirmation
 	Clock  core.Clock
+	// ApproveMigrations are the versions of the migrations that are not
+	// backward compatible the Owner approved with `sisf up
+	// --approve-migrations`. They apply only when they are exactly those
+	// pending; with none pending they change nothing.
+	ApproveMigrations []int
+	// SnapshotDir is where a SQLite store is snapshot before an approved
+	// migration runs.
+	SnapshotDir string
+	// Snapshot names the dump `sisf up` took of a PostgreSQL store before
+	// running this step with an approval; an approval without one is
+	// refused.
+	Snapshot string
 }
 
 // Bootstrap migrates the schema with a control-zone store, creates one role
@@ -42,6 +54,9 @@ type BootstrapConfig struct {
 // are updated in place (which also rotates a password), grants are re-issued
 // from scratch and the confirmation is replaced.
 func Bootstrap(ctx context.Context, cfg BootstrapConfig) error {
+	if len(cfg.ApproveMigrations) > 0 && cfg.Dialect == sqlstore.DialectPostgres && cfg.Snapshot == "" {
+		return invalidf("an approved migration of a PostgreSQL store needs the dump `sisf up` takes first")
+	}
 	store, err := sqlstore.Open(ctx, sqlstore.Config{
 		Dialect: cfg.Dialect, DSN: cfg.DSN, FactoryID: cfg.FactoryID, Zone: core.ZoneControl, Clock: cfg.Clock,
 	})
@@ -49,7 +64,7 @@ func Bootstrap(ctx context.Context, cfg BootstrapConfig) error {
 		return err
 	}
 	defer func() { _ = store.Close() }() // the work is committed or has failed by now
-	if err := store.Migrate(ctx, state.MigrateOptions{}); err != nil {
+	if err := migrateState(ctx, store, cfg); err != nil {
 		return err
 	}
 	if cfg.Dialect == sqlstore.DialectPostgres {

@@ -84,6 +84,10 @@ func (l Layout) Data(parts ...string) string {
 // StateDB is the SQLite database of Standalone mode.
 func (l Layout) StateDB() string { return l.Data("state", "factory.db") }
 
+// Backups is the directory of the snapshots `sisf up` takes of the state
+// store before a migration the Owner approved.
+func (l Layout) Backups() string { return filepath.Join(l.Dir, "backups") }
+
 // Logs is the directory of Standalone process logs.
 func (l Layout) Logs() string { return filepath.Join(l.Dir, "logs") }
 

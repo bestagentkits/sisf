@@ -240,11 +240,36 @@ func Incompatible(ms []Migration) []Migration {
 	return out
 }
 
+// ApprovesExactly reports whether the approved versions are exactly the
+// blocked migrations, in any order and each once.
+func ApprovesExactly(approved []int, blocked []Migration) bool {
+	if len(approved) != len(blocked) {
+		return false
+	}
+	want := make(map[int]bool, len(blocked))
+	for _, m := range blocked {
+		want[m.Version] = true
+	}
+	for _, v := range approved {
+		if !want[v] {
+			return false
+		}
+		delete(want, v)
+	}
+	return len(want) == 0
+}
+
 // MigrateOptions controls a migration run.
 type MigrateOptions struct {
 	// AllowIncompatible is set only after the Owner approved a migration that
 	// is not backward compatible.
 	AllowIncompatible bool
+	// Approved are the versions of the incompatible migrations the Owner
+	// approved. They allow the migration only when they are exactly the
+	// incompatible migrations pending, in any order; otherwise the store
+	// answers APPROVAL_REQUIRED naming those it needs. With no incompatible
+	// migration pending they change nothing.
+	Approved []int
 }
 
 // Migrator applies versioned schema migrations.

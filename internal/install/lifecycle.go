@@ -19,6 +19,10 @@ type UpOptions struct {
 	Budget *BudgetChoice
 	// Reload delivers a request to restart every unit (Standalone mode).
 	Reload <-chan struct{}
+	// ApproveMigrations are the versions of the migrations that are not
+	// backward compatible the Owner approves for the state store; see
+	// BootstrapConfig.ApproveMigrations.
+	ApproveMigrations []int
 }
 
 // Up brings the whole factory up: all three zones, from one manifest.
@@ -28,9 +32,9 @@ func (in *Installer) Up(ctx context.Context, o UpOptions) error {
 		return err
 	}
 	if m.Mode == manifest.ModeDocker {
-		return in.upDocker(ctx, m)
+		return in.upDocker(ctx, m, o.ApproveMigrations)
 	}
-	return in.upStandalone(ctx, m, o.Reload)
+	return in.upStandalone(ctx, m, o.Reload, o.ApproveMigrations)
 }
 
 // ensure initializes the directory if it holds no install, applies a budget

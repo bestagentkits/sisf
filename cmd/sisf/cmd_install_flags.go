@@ -27,11 +27,13 @@ type installFlags struct {
 	githubAppLogin                              string
 	githubInstallationID, githubAppID           int64
 	reconcileInterval                           string
-	debug                                       bool
-	confirmUnlimited, noAlert                   bool
-	alertThreshold, budgetCap, runEstimate      string
-	identity                                    identityFlags
-	agents                                      agentFlags
+	// approveMigrations is the `up` flag --approve-migrations.
+	approveMigrations                      string
+	debug                                  bool
+	confirmUnlimited, noAlert              bool
+	alertThreshold, budgetCap, runEstimate string
+	identity                               identityFlags
+	agents                                 agentFlags
 }
 
 // bindInstallFlags registers the flags of init and up.

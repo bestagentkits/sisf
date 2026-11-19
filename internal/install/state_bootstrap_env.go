@@ -24,8 +24,13 @@ type BootstrapEnv struct {
 	SQLitePath string
 	// Budget is stored as the Owner's confirmation when it is confirmed.
 	Budget BudgetChoice
-	Getenv func(string) string
-	Clock  core.Clock
+	// ApproveMigrations and Snapshot carry the Owner's approval of migrations
+	// that are not backward compatible and the name of the dump `sisf up`
+	// took first; see BootstrapConfig.
+	ApproveMigrations []int
+	Snapshot          string
+	Getenv            func(string) string
+	Clock             core.Clock
 }
 
 // RunBootstrap prepares the state store from the environment: the owner's
@@ -39,7 +44,8 @@ func RunBootstrap(ctx context.Context, e BootstrapEnv) error {
 	if err := e.Budget.Validate(); err != nil {
 		return err
 	}
-	cfg := BootstrapConfig{FactoryID: e.FactoryID, Dialect: e.Dialect, Clock: e.Clock}
+	cfg := BootstrapConfig{FactoryID: e.FactoryID, Dialect: e.Dialect, Clock: e.Clock,
+		ApproveMigrations: e.ApproveMigrations, Snapshot: e.Snapshot}
 	if rec, ok := e.Budget.confirmation(e.Clock.Now()); ok {
 		cfg.Budget = &rec
 	}

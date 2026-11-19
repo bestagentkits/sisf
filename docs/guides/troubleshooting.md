@@ -81,6 +81,7 @@ Real messages of `sisf`, `sisf doctor` and `factoryd`, what causes them and what
 | Message | Cause | Fix |
 |---|---|---|
 | `POLICY_HOLD: <file> could not be read at <sha>` | a foundation file is missing at that commit, or GitHub cannot be reached | commit all five files; check the GitHub API URL |
+| `APPROVAL_REQUIRED: a pending migration is not backward compatible and needs the Owner's approval: run sisf up --approve-migrations=12, ...` | the new build ships a migration the previous one cannot run after | [an upgrade with a migration that is not backward compatible](maintenance.md#an-upgrade-with-a-migration-that-is-not-backward-compatible) |
 | `APPROVAL_REQUIRED: replacing the policy in force needs an approval of the new revision` (observed) | a second revision without an approval | [changing the policy](policy-and-approvals.md#changing-the-policy) |
 | `INVALID_ARGUMENT: commit "<sha>" must be a full 40- or 64-character lowercase hash` (observed) | a short SHA | pass the full SHA |
 | `sisf: UNAVAILABLE: the emergency stop could not use every route it was given` (observed) | one route failed; the JSON above names it under `failures` | see the [incident runbook](incident.md#1-stop-the-damage) |

@@ -1,6 +1,6 @@
 # Maintenance: upgrade, back up, restore
 
-How to move a factory to a newer build, and how to copy and restore what it holds. The product has no upgrade, backup or restore command yet; these are the manual procedures that work with what exists. The decisions they will follow are still proposals: [ADR 0012](../adr/0012-backup-and-restore.md) (backup targets) and [ADR 0013](../adr/0013-schema-migration-on-self-update.md) (migrations compatible across two versions) await the Owner. What the code does today: each migration is marked backward compatible or not, and a build works on a schema ahead of it only when every migration it does not know is marked compatible; otherwise its store refuses to start (`pkg/state/sqlstore/migrate.go`). A migration that is not compatible needs the Owner's approval on a store that has migrations applied, and no command can pass that approval yet ([#76](https://github.com/bestagentkits/sisf/issues/76)); a database that holds no store yet takes every migration. Migration 12 is the one migration this release ships that is not compatible (`pkg/state/sqlstore/migrations.go`).
+How to move a factory to a newer build, and how to copy and restore what it holds. The product has no upgrade, backup or restore command yet; these are the manual procedures that work with what exists. [ADR 0012](../adr/0012-backup-and-restore.md) (backup targets) is still a proposal; [ADR 0013](../adr/0013-schema-migration-on-self-update.md) (migrations compatible across two versions) is accepted for what is described here. What the code does today: each migration is marked backward compatible or not, and a build works on a schema ahead of it only when every migration it does not know is marked compatible; otherwise its store refuses to start (`pkg/state/sqlstore/migrate.go`). A migration that is not compatible needs the Owner's approval on a store that has migrations applied, given with `sisf up --approve-migrations` after a snapshot of the store ([an upgrade with a migration that is not backward compatible](#an-upgrade-with-a-migration-that-is-not-backward-compatible)); a database that holds no store yet takes every migration. Migration 12 is the one migration this release ships that is not compatible (`pkg/state/sqlstore/migrations.go`).
 
 ## What an install holds
 
@@ -78,11 +78,37 @@ The supervisor records the application process of each slot under `data/trust/lo
 
 Verify: `sisf doctor` reports no failure, its `release manifest` line is `OK`, and `sisf status` answers.
 
-Migrations 7 to 11 are backward compatible; migration 12 is not, and all pending migrations apply in one transaction or none do. Migration 12 takes UPDATE on the reservations from the agent zone's PostgreSQL role, which the previous dispatcher needs to claim an issue, so it is marked not backward compatible, and `sisf up` on a store that predates it fails with `APPROVAL_REQUIRED: a pending migration is not backward compatible and needs the Owner's approval, ...` and applies nothing. Until the Owner can approve it ([#76](https://github.com/bestagentkits/sisf/issues/76)), keep the factory on the build it runs, or [back up](#back-up) its store and install this release into a new directory, with a new state store. A Standalone factory started by an older `sisf` holds no run lock: the new `sisf` refuses to start beside it, names its process and asks you to stop it first ([troubleshooting](troubleshooting.md#installing-and-starting)). A factory started by an older `sisf` names no root key in `/healthz`, so the CLI refuses to send it a token until it is restarted with `sisf up`.
+Migrations 7 to 11 and 13 are backward compatible; migration 12 is not, and all pending migrations apply in one transaction or none do. Migration 12 takes UPDATE on the reservations from the agent zone's PostgreSQL role, which the previous dispatcher needs to claim an issue, so on a store that predates it step 4 fails with `APPROVAL_REQUIRED: a pending migration is not backward compatible and needs the Owner's approval: run sisf up --approve-migrations=12, ...` and applies nothing; follow [an upgrade with a migration that is not backward compatible](#an-upgrade-with-a-migration-that-is-not-backward-compatible). A Standalone factory started by an older `sisf` holds no run lock: the new `sisf` refuses to start beside it, names its process and asks you to stop it first ([troubleshooting](troubleshooting.md#installing-and-starting)). A factory started by an older `sisf` names no root key in `/healthz`, so the CLI refuses to send it a token until it is restarted with `sisf up`.
 
 Undo: there are no down migrations. Stop the factory, [restore](#restore) the backup of step 1, check out the previous commit, `make install`, and `sisf up`.
 
 The rebuilt programs get new digests in `<dir>/factory.yaml`. If the repository's `.sisf/factory.yaml` is meant to match the install's file, committing the new one is a [policy change](policy-and-approvals.md#changing-the-policy).
+
+### An upgrade with a migration that is not backward compatible
+
+Such a migration takes something the previous build needs, so after it the previous build refuses to start on the store (`the state store schema has migration <n>, which this release does not know and which is not backward compatible`) and going back means restoring the store as well as the build. `sisf up` therefore applies it only on the Owner's approval, naming exactly the versions the refusal named, and snapshots the store before migrating (ADR 0013, `internal/install/state_approved_migration.go`).
+
+1. Do steps 1 to 3 of the [upgrade](#upgrade). The refusal of step 4 names the versions: `run sisf up --approve-migrations=12`.
+2. `sisf up --dir "$D" --approve-migrations=12`. Expected, Docker mode: `dumping the state store to <dir>/backups/state-before-migration-12-<time>.dump before the approved migration`, then the usual lines. In Standalone the snapshot is `<dir>/backups/state-before-migration-12-<time>.db`.
+3. `sisf doctor --dir "$D"`.
+
+Verify: `ls -l "$D/backups"` shows the snapshot, readable by you only (`-rw-------`, in a `drwx------` directory), and the audit log has a `state.migrate_approved` record naming the migrations and the snapshot. An approval that names other versions, fewer or more, is refused with `APPROVAL_REQUIRED` and nothing is snapshot or applied; with no such migration pending the flag changes nothing. A snapshot that fails stops the upgrade before anything is migrated. Do not put the flag in a service unit: approve once, by hand.
+
+Undo, with the factory stopped (`sisf stop --dir "$D"`) and the previous build checked out and installed (`make install`):
+
+- Standalone: move the store aside and put the snapshot in its place: `mv "$D/data/state/factory.db" "$D/data/state/factory.db.migrated"`, remove `factory.db-wal` and `factory.db-shm` beside it, then `cp "$D/backups/<snapshot>.db" "$D/data/state/factory.db"`, and `sisf up --dir "$D"`. Observed in the tests: the snapshot opens at the version the store had before the migration, with its records (`internal/install/state_bootstrap_approved_migration_test.go`).
+- Docker mode: start only the state service, replace the database with the dump, then start the factory:
+
+  ```sh
+  P="docker compose -p <project> -f $D/compose.yaml"
+  $P up -d --wait state
+  $P exec -T state dropdb --username=sisf_owner sisf
+  $P exec -T state createdb --username=sisf_owner sisf
+  $P exec -T state pg_restore --username=sisf_owner --dbname=sisf < "$D/backups/<snapshot>.dump"
+  sisf up --dir "$D"
+  ```
+
+  Observed against PostgreSQL 16 with `docker exec` on a store `sisf state bootstrap` prepared: the restore brought back the rows, the schema version, the row policies and the zone roles' grants, and removed a table created after the dump. The same steps through `docker compose` on a whole Docker install have not been run.
 
 ## Renewing the supervisor's delegated keys
 
