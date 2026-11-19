@@ -20,8 +20,10 @@ const (
 	// ActionFollowMain is the audited action of the supervisor moving the
 	// commit to build on to the merge of a release it verified.
 	ActionFollowMain = "policy.follow_main"
-	// SupervisorActorID is the one service identity that may move the
-	// commit to build on.
+	// SupervisorActorID is the service identity Follow and CheckMain ask
+	// for. The caller declares it, so it guards against mistakes; the
+	// boundary is the store role, as only the control zone may write
+	// BaseNamespace.
 	SupervisorActorID = "service:supervisor"
 	// maxChain bounds how many commits one approved revision is followed
 	// through. The Owner approving a revision starts a new chain.
@@ -148,6 +150,11 @@ type CommitParents interface {
 	CommitParents(ctx context.Context, commit core.CommitSHA) ([]core.CommitSHA, error)
 }
 
+// MainHead names the commit the default branch is at now.
+type MainHead interface {
+	MainHead(ctx context.Context) (core.CommitSHA, error)
+}
+
 // BuildBasesConfig is what the commit to build on is kept with. Every
 // field but Clock is required.
 type BuildBasesConfig struct {
@@ -156,6 +163,9 @@ type BuildBasesConfig struct {
 	Baselines BaselineReader
 	Commits   CommitComparer
 	Parents   CommitParents
+	// Main names the head of the default branch, which every commit the
+	// factory builds on other than the approved revision must be part of.
+	Main MainHead
 	// OwnerOnly reports whether a path is one only the Owner may change or
 	// merge: the foundation files, ADRs, CI, ownership and migrations. A
 	// merge that changes one is never followed.
@@ -165,13 +175,14 @@ type BuildBasesConfig struct {
 	Clock     core.Clock
 }
 
-// BuildBases keeps the commit to build on. Only the supervisor moves it.
+// BuildBases keeps the commit to build on. Only the supervisor moves it:
+// only the control zone's store role can write the record.
 type BuildBases struct{ cfg BuildBasesConfig }
 
 // NewBuildBases builds the record keeper, refusing a missing part.
 func NewBuildBases(cfg BuildBasesConfig) (*BuildBases, error) {
-	if cfg.State == nil || cfg.Source == nil || cfg.Baselines == nil || cfg.Commits == nil || cfg.Parents == nil || cfg.OwnerOnly == nil || cfg.Audit == nil {
-		return nil, core.NewError(core.CodeInvalidArgument, "the commit to build on needs a store, a source, the baseline, a comparer, the commits' parents, the Owner-only paths and an audit log")
+	if cfg.State == nil || cfg.Source == nil || cfg.Baselines == nil || cfg.Commits == nil || cfg.Parents == nil || cfg.Main == nil || cfg.OwnerOnly == nil || cfg.Audit == nil {
+		return nil, core.NewError(core.CodeInvalidArgument, "the commit to build on needs a store, a source, the baseline, a comparer, the commits' parents, the head of main, the Owner-only paths and an audit log")
 	}
 	if err := cfg.FactoryID.Validate(); err != nil {
 		return nil, err

@@ -258,8 +258,9 @@ func wireCommitToBuildOn(cfg Config, rc *release.Config, tree Tree, prs *Candida
 	}
 	bases, err := policy.NewBuildBases(policy.BuildBasesConfig{
 		State: cfg.State, Source: tree, Baselines: StoredBaseline{State: cfg.State}, Commits: rc.Commits,
-		Parents: CommitGraph{GitHub: cfg.GitHub, Repo: cfg.Repo}, OwnerOnly: foundationOrProtected,
-		Audit: rc.Audit, FactoryID: cfg.FactoryID, Clock: cfg.Clock,
+		Parents: CommitGraph{GitHub: cfg.GitHub, Repo: cfg.Repo}, Main: MainBranch{GitHub: cfg.GitHub, Repo: cfg.Repo, Branch: cfg.BaseBranch},
+		OwnerOnly: foundationOrProtected,
+		Audit:     rc.Audit, FactoryID: cfg.FactoryID, Clock: cfg.Clock,
 	})
 	if err != nil {
 		return nil, err

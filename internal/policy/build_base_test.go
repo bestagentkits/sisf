@@ -33,6 +33,8 @@ type history struct {
 	touches  map[core.CommitSHA][]string
 	down     bool
 	calls    int
+	// main is the head of the default branch.
+	main core.CommitSHA
 }
 
 func newHistory() *history {
@@ -98,6 +100,16 @@ func (h *history) CommitParents(_ context.Context, commit core.CommitSHA) ([]cor
 	return parents, nil
 }
 
+// MainHead names the head of the default branch.
+func (h *history) MainHead(context.Context) (core.CommitSHA, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.down {
+		return "", core.NewError(core.CodeUnavailable, "GitHub cannot be reached")
+	}
+	return h.main, nil
+}
+
 // ownerOnly is the rule of the paths only the Owner merges, as the
 // supervisor passes it.
 func ownerOnly(p string) bool {
@@ -118,10 +130,11 @@ func newBaseWorld(t *testing.T) *baseWorld {
 	t.Helper()
 	w := &baseWorld{world: approved(t), history: newHistory()}
 	w.history.add(revA, nil)
+	w.history.main = revA
 	var err error
 	w.bases, err = policy.NewBuildBases(policy.BuildBasesConfig{
-		State: w.state, Source: w.repo, Baselines: w.baselines, Commits: w.history, Parents: w.history, OwnerOnly: ownerOnly,
-		Audit: w.audit, FactoryID: factory, Clock: w.clock,
+		State: w.state, Source: w.repo, Baselines: w.baselines, Commits: w.history, Parents: w.history, Main: w.history,
+		OwnerOnly: ownerOnly, Audit: w.audit, FactoryID: factory, Clock: w.clock,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,6 +147,9 @@ func newBaseWorld(t *testing.T) *baseWorld {
 func (w *baseWorld) release(candidate, merge, base core.CommitSHA, main core.CommitSHA, paths []string, edit func(map[string]string)) {
 	w.history.add(candidate, paths, base)
 	w.history.add(merge, nil, main, candidate)
+	w.history.mu.Lock()
+	w.history.main = merge
+	w.history.mu.Unlock()
 	w.repo.commit(merge, edit)
 	w.repo.commit(candidate, edit)
 }
@@ -360,13 +376,14 @@ func TestTheCommitToBuildOnIsNotKeptWithoutItsParts(t *testing.T) {
 	t.Parallel()
 	w := newBaseWorld(t)
 	full := policy.BuildBasesConfig{State: w.state, Source: w.repo, Baselines: w.baselines, Commits: w.history, Parents: w.history,
-		OwnerOnly: ownerOnly, Audit: w.audit, FactoryID: factory}
+		Main: w.history, OwnerOnly: ownerOnly, Audit: w.audit, FactoryID: factory}
 	cases := map[string]func(*policy.BuildBasesConfig){
 		"no state":      func(c *policy.BuildBasesConfig) { c.State = nil },
 		"no source":     func(c *policy.BuildBasesConfig) { c.Source = nil },
 		"no baseline":   func(c *policy.BuildBasesConfig) { c.Baselines = nil },
 		"no comparer":   func(c *policy.BuildBasesConfig) { c.Commits = nil },
 		"no parents":    func(c *policy.BuildBasesConfig) { c.Parents = nil },
+		"no main":       func(c *policy.BuildBasesConfig) { c.Main = nil },
 		"no owner rule": func(c *policy.BuildBasesConfig) { c.OwnerOnly = nil },
 		"no audit log":  func(c *policy.BuildBasesConfig) { c.Audit = nil },
 		"no factory id": func(c *policy.BuildBasesConfig) { c.FactoryID = "" },

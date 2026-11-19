@@ -137,6 +137,23 @@ func repoPath(raw string) (string, bool) {
 	return clean, true
 }
 
+// IsProtected reports whether p is part of the trusted control surface
+// DefaultProtectedPaths lists, compared without regard to letter case. A
+// path that is not a clean repository path is counted as protected, as no
+// rule can be shown to leave it alone.
+func IsProtected(p string) bool {
+	clean, ok := repoPath(p)
+	if !ok {
+		return true
+	}
+	for _, entry := range DefaultProtectedPaths() {
+		if covers(entry, clean) {
+			return true
+		}
+	}
+	return false
+}
+
 // covers reports whether a protected entry covers the cleaned path.
 func covers(entry, clean string) bool {
 	entry = strings.ToLower(entry)

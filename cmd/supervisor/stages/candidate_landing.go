@@ -283,7 +283,11 @@ func (c *CandidatePRs) mainUnapproved(ctx context.Context, req release.LandReque
 	case err != nil:
 		return fmt.Sprintf("GitHub refused to name the head of %s (status %d, %s)", c.Base, github.ErrorStatus(err), core.CodeOf(err)), nil
 	}
-	err = c.Bases.CheckMain(ctx, policy.SupervisorActor(), policy.MainCheck{Head: head, Run: req.RunID, Unit: unit})
+	landings, err := c.landingsInFlight(ctx, req.RunID)
+	if err != nil {
+		return "", err
+	}
+	err = c.Bases.CheckMain(ctx, policy.SupervisorActor(), policy.MainCheck{Head: head, Run: req.RunID, Unit: unit, Landings: landings})
 	switch {
 	case err == nil:
 		return "", nil
@@ -293,14 +297,63 @@ func (c *CandidatePRs) mainUnapproved(ctx context.Context, req release.LandReque
 	return "", err
 }
 
-// foundationOrProtected reports whether a path is one an agent's patch may
-// not change or a foundation file the release governance keeps for the
-// Owner.
+// landingsInFlight lists the releases other than run's that were verified
+// and are not closed yet, whose pull request is merged or being merged: the
+// follow of their merge may not have happened, as after an outage or a
+// restart between the merge and the follow, and the check of main follows
+// it before anything is merged on top of it.
+//
+// A record of another run that cannot be read (TAMPERED) is left out: it
+// is that run's fault, reported when that run's own landing reads it, and
+// it must not stop every other release. Left out, its merge is not
+// followed here, so a main at it still stops the factory: the check stays
+// closed. Any other read error is the store's and fails the check.
+func (c *CandidatePRs) landingsInFlight(ctx context.Context, run core.RunID) ([]policy.FollowProof, error) {
+	var landings []policy.FollowProof
+	err := c.State.View(ctx, func(ctx context.Context, tx state.Tx) error {
+		records, err := tx.ListRecords(ctx, state.RecordFilter{States: []core.State{core.StateVerified}})
+		if err != nil {
+			return err
+		}
+		for _, r := range records {
+			if r.RunID == "" || r.RunID == run {
+				continue
+			}
+			pr, err := handoff.ReadCandidatePR(ctx, tx, r.RunID)
+			switch {
+			case core.HasCode(err, core.CodeNotFound), core.HasCode(err, core.CodeTampered):
+				continue
+			case err != nil:
+				return err
+			case pr.State != handoff.LandingPending && pr.State != handoff.LandingMerged:
+				continue
+			}
+			unit := ""
+			build, err := handoff.ReadBuild(ctx, tx, pr.Commit)
+			switch {
+			case err == nil:
+				unit = build.Unit
+			case core.HasCode(err, core.CodeTampered):
+				continue
+			case !core.HasCode(err, core.CodeNotFound):
+				return err
+			}
+			landings = append(landings, policy.FollowProof{Merge: pr.MergeCommit, Candidate: pr.Commit, Run: pr.RunID, Unit: unit})
+		}
+		return nil
+	})
+	return landings, err
+}
+
+// foundationOrProtected reports whether a path is one only the Owner may
+// change or merge: one an agent's patch may not change, or part of the
+// trusted control surface the release governance keeps for the Owner
+// (release.DefaultProtectedPaths), the foundation files and ADRs among them.
 func foundationOrProtected(p string) bool {
 	if _, protected := ProtectedPath(p); protected {
 		return true
 	}
-	return strings.HasPrefix(strings.ToLower(strings.TrimPrefix(p, "/")), "docs/adr/")
+	return release.IsProtected(strings.TrimPrefix(p, "/"))
 }
 
 // leave records that the pull request is left for the Owner and why, and

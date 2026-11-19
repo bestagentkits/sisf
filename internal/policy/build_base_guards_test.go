@@ -23,7 +23,7 @@ const (
 func (w *baseWorld) keeperOver(t *testing.T, store state.Store) *policy.BuildBases {
 	t.Helper()
 	keeper, err := policy.NewBuildBases(policy.BuildBasesConfig{
-		State: store, Source: w.repo, Baselines: w.baselines, Commits: w.history, Parents: w.history, OwnerOnly: ownerOnly,
+		State: store, Source: w.repo, Baselines: w.baselines, Commits: w.history, Parents: w.history, Main: w.history, OwnerOnly: ownerOnly,
 		Audit: w.audit, FactoryID: factory, Clock: w.clock,
 	})
 	if err != nil {
@@ -211,6 +211,7 @@ func TestAForgedRecordCannotMakeABaseAcceptable(t *testing.T) {
 		w.history.add(root, nil)
 		w.history.add(revA, []string{"README.md"}, root)
 		w.history.add(other, []string{"examples/hello-app/main.go"}, root)
+		w.history.main = other
 		w.repo.commit(other, nil)
 		forge(t, w, other)
 		if _, err := w.bases.Accept(ctx, other); !core.HasCode(err, core.CodePolicyHold) {
@@ -221,6 +222,7 @@ func TestAForgedRecordCannotMakeABaseAcceptable(t *testing.T) {
 		t.Parallel()
 		w := newBaseWorld(t)
 		w.history.add(other, []string{".github/workflows/x.yml", "go.mod"}, revA)
+		w.history.main = other
 		w.repo.commit(other, nil)
 		forge(t, w, other)
 		_, err := w.bases.Accept(ctx, other)
