@@ -1,10 +1,13 @@
 package fakegithub
 
 import (
+	"encoding/base64"
 	"maps"
 	"net/http"
 	"path"
 	"slices"
+
+	"github.com/bestagentkits/sisf/pkg/github"
 )
 
 // EntrySymlink makes a file of a commit list in its tree as a symbolic
@@ -15,6 +18,7 @@ type jTreeEntry struct {
 	Path string `json:"path"`
 	Mode string `json:"mode"`
 	Type string `json:"type"`
+	SHA  string `json:"sha,omitempty"`
 	Size int    `json:"size,omitempty"`
 }
 
@@ -42,7 +46,7 @@ func (s *Server) getTree(w http.ResponseWriter, r *http.Request) {
 		for d := path.Dir(p); d != "."; d = path.Dir(d) {
 			dirs[d] = true
 		}
-		e := jTreeEntry{Path: p, Mode: "100644", Type: "blob", Size: len(files[p])}
+		e := jTreeEntry{Path: p, Mode: "100644", Type: "blob", SHA: github.GitBlobSHA(files[p]), Size: len(files[p])}
 		switch kinds[sha+":"+p] {
 		case EntrySubmodule:
 			e.Mode, e.Type, e.Size = "160000", "commit", 0
@@ -63,4 +67,28 @@ func (s *Server) TruncateTrees() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.truncateTrees = true
+}
+
+// getBlob answers a blob of any commit made with Commit, by its git name.
+func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
+	sha := r.PathValue("sha")
+	s.mu.Lock()
+	repository, err := s.repoFor(repoName(r))
+	var found []byte
+	ok := false
+	if err == nil {
+		for _, files := range repository.commits {
+			for _, content := range files {
+				if github.GitBlobSHA(content) == sha {
+					found, ok = content, true
+				}
+			}
+		}
+	}
+	s.mu.Unlock()
+	if !ok {
+		writeError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sha": sha, "size": len(found), "encoding": "base64", "content": base64.StdEncoding.EncodeToString(found)})
 }

@@ -23,11 +23,12 @@ const (
 )
 
 // TreeEntry is one entry of a commit's tree: its repository path, kind,
-// mode and, for a blob, size in bytes.
+// mode, object name and, for a blob, size in bytes.
 type TreeEntry struct {
 	Path string `json:"path"`
 	Type string `json:"type"`
 	Mode string `json:"mode"`
+	SHA  string `json:"sha"`
 	Size int64  `json:"size"`
 }
 
