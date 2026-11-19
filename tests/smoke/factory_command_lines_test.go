@@ -60,7 +60,7 @@ const (
 	qaModelEnv      = "SISF_SMOKE_QA_MODEL"
 	buildCommandEnv = "SISF_SMOKE_BUILD_COMMAND"
 
-	defaultCoderModel   = "claude-sonnet-4-5"
+	defaultCoderModel   = "claude-sonnet-5-5"
 	defaultQAModel      = "gpt-5-codex"
 	defaultBuildCommand = sandboxBuildCommand
 )
