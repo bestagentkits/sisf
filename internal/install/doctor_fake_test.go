@@ -167,7 +167,7 @@ func builtStandalone(t *testing.T, net *fakeNet, mutate func(*Options)) *Install
 	if err := in.installTrust(t.Context(), m, b); err != nil {
 		t.Fatal(err)
 	}
-	if err := in.bootstrapState(t.Context(), m); err != nil {
+	if err := in.bootstrapState(t.Context(), m, nil); err != nil {
 		t.Fatal(err)
 	}
 	in.HTTP = &http.Client{Transport: net, Timeout: time.Second}

@@ -194,7 +194,7 @@ func TestBootstrapCommandCarriesTheBudgetConfirmationAndNoSecret(t *testing.T) {
 	t.Parallel()
 	in, _ := upDocker(t)
 	m, _ := in.Layout.LoadManifest()
-	cmd, err := in.bootstrapCommand(m)
+	cmd, err := in.bootstrapCommand(m, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

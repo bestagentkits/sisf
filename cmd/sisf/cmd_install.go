@@ -98,6 +98,10 @@ Standalone mode stays in the foreground and supervises the units until
 interrupted; SIGHUP restarts them. Docker mode starts one Compose project and
 returns. Ports used: 7460-7469 on 127.0.0.1, nothing else.
 
+A state store migration that is not backward compatible runs only with the
+Owner's approval of exactly the versions pending: --approve-migrations=12.
+The store is snapshot to <dir>/backups first; see the maintenance guide.
+
 An up that can never succeed as configured (an install that cannot start,
 a flag its mode cannot use, a unit that refuses its configuration) exits 2,
 a status the generated systemd unit does not restart on.`,
@@ -163,6 +167,8 @@ func newInstaller(env *Env, dir, source string, debug bool) (*install.Installer,
 // of a refusal.
 func bindUpFlags(fs *flag.FlagSet, f *installFlags, refusalStatus *int) {
 	bindInstallFlags(fs, f)
+	fs.StringVar(&f.approveMigrations, "approve-migrations", "", "`versions` of the state store migrations that are not backward compatible "+
+		"the Owner approves, comma-separated; the store is snapshot to <dir>/backups first")
 	fs.IntVar(refusalStatus, "refusal-status", exitUsage, "exit `status` of an up that can never succeed as configured; "+
 		"the launchd agent sets 0, since launchd can only tell success from failure when it decides to start it again")
 }
@@ -241,6 +247,11 @@ func (r refusal) ExitCode() int { return r.status }
 // flags that describe them are not needed.
 func upOptions(env *Env, in *install.Installer, f installFlags, dir string) (install.UpOptions, error) {
 	var o install.UpOptions
+	versions, err := parseMigrationVersions(f.approveMigrations)
+	if err != nil {
+		return o, err
+	}
+	o.ApproveMigrations = versions
 	choice, given, err := f.budget()
 	if err != nil {
 		return o, err

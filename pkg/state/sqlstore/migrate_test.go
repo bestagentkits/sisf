@@ -1,6 +1,8 @@
 package sqlstore_test
 
 import (
+	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -126,6 +128,54 @@ func TestAStoreWithNothingAppliedTakesAnIncompatibleMigrationWithoutApproval(t *
 			t.Fatal(err)
 		}
 		wantCode(t, s.Migrate(ctx, state.MigrateOptions{}), core.CodeApprovalRequired)
+	})
+}
+
+// The Owner's approval names the exact incompatible migrations it covers.
+// It applies them only when it names every one that is pending and no
+// other, so an approval given for one release never admits a later
+// incompatible migration, and a refused approval applies nothing. With no
+// incompatible migration pending, an approval changes nothing.
+func TestAnApprovalAppliesExactlyTheIncompatibleMigrationsItNames(t *testing.T) {
+	t.Parallel()
+	dropHint := sqlstore.TestMigration{Name: "drop the hint from documents", SQL: `ALTER TABLE kv DROP COLUMN hint`}
+	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
+		s := db.Open(t, core.ZoneControl)
+		base := len(sqlstore.Migrations())
+		sqlstore.AddReleaseMigrations(s, addNote, addHint, dropNote, dropHint)
+		dropNoteAt, dropHintAt := base+3, base+4
+		for name, approved := range map[string][]int{
+			"one of the two":                   {dropNoteAt},
+			"a compatible one in place of one": {dropNoteAt, base + 1},
+			"one more than is pending":         {dropNoteAt, dropHintAt, dropHintAt + 1},
+			"versions that are not pending":    {dropHintAt + 1},
+		} {
+			err := s.Migrate(ctx, state.MigrateOptions{Approved: approved})
+			wantCode(t, err, core.CodeApprovalRequired)
+			var typed *core.Error
+			if errors.As(err, &typed) && typed.Details["migrations"] != strconv.Itoa(dropNoteAt)+","+strconv.Itoa(dropHintAt) {
+				t.Errorf("approval %s: the refusal names %q", name, typed.Details["migrations"])
+			}
+			if version, err := s.SchemaVersion(ctx); err != nil || version != base {
+				t.Fatalf("approval %s moved the schema to %d: %v", name, version, err)
+			}
+		}
+		if err := s.Migrate(ctx, state.MigrateOptions{Approved: []int{dropHintAt, dropNoteAt}}); err != nil {
+			t.Fatalf("an approval naming every pending incompatible migration: %v", err)
+		}
+		if version, err := s.SchemaVersion(ctx); err != nil || version != base+4 {
+			t.Fatalf("version after the approval = %d, %v", version, err)
+		}
+
+		// The same approval does not carry over to a later incompatible migration.
+		sqlstore.AddReleaseMigrations(s, addNote, dropNote)
+		wantCode(t, s.Migrate(ctx, state.MigrateOptions{Approved: []int{dropHintAt, dropNoteAt}}), core.CodeApprovalRequired)
+		// With nothing incompatible pending, an approval changes nothing.
+		later := db.Open(t, core.ZoneControl)
+		sqlstore.AddReleaseMigrations(later, addNote, addHint, dropNote, dropHint, addNote)
+		if err := later.Migrate(ctx, state.MigrateOptions{Approved: []int{dropNoteAt}}); err != nil {
+			t.Fatalf("an approval with only compatible migrations pending: %v", err)
+		}
 	})
 }
 

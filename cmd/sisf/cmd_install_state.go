@@ -12,14 +12,16 @@ import (
 func init() {
 	register(Command{
 		Path:    []string{"state", "bootstrap"},
-		Args:    "--dialect postgres|sqlite --factory-id id [--sqlite-path file] [--confirm-unlimited (--alert-micros n | --no-alert) | --cap-micros n --run-estimate-micros n [--alert-micros n]]",
+		Args:    "--dialect postgres|sqlite --factory-id id [--sqlite-path file] [--confirm-unlimited (--alert-micros n | --no-alert) | --cap-micros n --run-estimate-micros n [--alert-micros n]] [--approve-migrations v,... --snapshot name]",
 		Summary: "Prepare the state store: migrate, create one role per zone, record the budget",
 		Help: `
 Run once by "sisf up" in Docker mode, inside the Compose project, as the
 store's owner. Migrates the schema, creates a database role for each of the
 three zones, grants each only what its zone may reach, and records the
 Owner's budget confirmation where the dispatcher's budget gate looks for it.
-Safe to run again.
+Safe to run again. "sisf up --approve-migrations" passes the Owner's approval
+of migrations that are not backward compatible on, with the name of the dump
+it took of the store first.
 
 PostgreSQL credentials are read from the environment, never the command line:
   ` + install.EnvStateOwnerDSN + `
@@ -32,6 +34,7 @@ func runStateBootstrap(ctx context.Context, env *Env, args []string) error {
 	var e install.BootstrapEnv
 	var dialect, factoryID string
 	var confirm, noAlert bool
+	var approve string
 	var alertMicros, capMicros, estimateMicros int64
 	fs := newFlagSet("state bootstrap")
 	fs.StringVar(&dialect, "dialect", "", "postgres or sqlite")
@@ -42,9 +45,16 @@ func runStateBootstrap(ctx context.Context, env *Env, args []string) error {
 	fs.BoolVar(&noAlert, "no-alert", false, "no budget alert (with --confirm-unlimited)")
 	fs.Int64Var(&capMicros, "cap-micros", 0, "record a capped budget of this many micros instead")
 	fs.Int64Var(&estimateMicros, "run-estimate-micros", 0, "with --cap-micros: what each run sets aside, in micros")
+	fs.StringVar(&approve, "approve-migrations", "", "versions of the incompatible migrations the Owner approved, comma-separated")
+	fs.StringVar(&e.Snapshot, "snapshot", "", "name of the dump of the store taken before an approved migration")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	versions, err := parseMigrationVersions(approve)
+	if err != nil {
+		return err
+	}
+	e.ApproveMigrations = versions
 	e.Dialect, e.FactoryID = sqlstore.Dialect(dialect), core.FactoryID(factoryID)
 	if !e.Dialect.Valid() {
 		return usagef("--dialect must be postgres or sqlite")

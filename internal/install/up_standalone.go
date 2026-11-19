@@ -12,7 +12,7 @@ import (
 // then stays in the foreground supervising every unit until ctx ends. One
 // command, one process for a service manager to watch, and one lifecycle for
 // the three zones.
-func (in *Installer) upStandalone(ctx context.Context, m *manifest.Manifest, reload <-chan struct{}) error {
+func (in *Installer) upStandalone(ctx context.Context, m *manifest.Manifest, reload <-chan struct{}, approve []int) error {
 	if err := in.standaloneRunnable(m); err != nil {
 		return err
 	}
@@ -35,7 +35,7 @@ func (in *Installer) upStandalone(ctx context.Context, m *manifest.Manifest, rel
 			return unavailablef(err, "cannot create the data directory %s", dir)
 		}
 	}
-	if err := in.bootstrapState(ctx, m); err != nil {
+	if err := in.bootstrapState(ctx, m, approve); err != nil {
 		return err
 	}
 	if err := in.installTrust(ctx, m, b); err != nil {
@@ -88,10 +88,13 @@ func (in *Installer) superviseUnits(ctx context.Context, lock *runLock, units []
 	return g.Run(ctx)
 }
 
-// bootstrapState migrates the SQLite store and records the confirmation.
-func (in *Installer) bootstrapState(ctx context.Context, m *manifest.Manifest) error {
+// bootstrapState migrates the SQLite store, snapshot first to the
+// install's backups when the Owner approved a migration that is not
+// backward compatible, and records the confirmation.
+func (in *Installer) bootstrapState(ctx context.Context, m *manifest.Manifest, approve []int) error {
 	cfg := BootstrapConfig{
 		FactoryID: m.FactoryID, Dialect: sqlstore.DialectSQLite, DSN: in.Layout.StateDB(), Clock: in.Clock,
+		ApproveMigrations: approve, SnapshotDir: in.Layout.Backups(),
 	}
 	rec, ok, err := readBudgetConfirmation(in.Layout.BudgetConfirmation())
 	if err != nil {

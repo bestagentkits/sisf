@@ -64,7 +64,8 @@ func (s *Store) Pending(ctx context.Context) ([]state.Migration, error) {
 // tries again, for up to migrateBusyWait, and then finds the schema as the
 // other migrator left it. Unless the database holds no store yet, a
 // pending migration that is not backward compatible needs
-// opts.AllowIncompatible, else APPROVAL_REQUIRED and nothing is applied.
+// opts.AllowIncompatible or an opts.Approved naming exactly the incompatible
+// migrations pending, else APPROVAL_REQUIRED and nothing is applied.
 // Only a store opened for the control zone migrates.
 func (s *Store) Migrate(ctx context.Context, opts state.MigrateOptions) error {
 	if s.zone != core.ZoneControl {
@@ -133,7 +134,7 @@ func (s *Store) migrate(ctx context.Context, opts state.MigrateOptions, known []
 			return nil
 		}
 		pending := s.migrations[len(applied):]
-		if blocked := state.Incompatible(known[len(applied):]); len(blocked) > 0 && !opts.AllowIncompatible {
+		if blocked := state.Incompatible(known[len(applied):]); len(blocked) > 0 && !opts.AllowIncompatible && !state.ApprovesExactly(opts.Approved, blocked) {
 			fresh, err := s.fresh(ctx, q, applied)
 			if err != nil {
 				return err
@@ -171,8 +172,8 @@ func approvalRequired(blocked []state.Migration) *core.Error {
 		versions[i] = strconv.Itoa(m.Version)
 	}
 	refusal := core.NewError(core.CodeApprovalRequired,
-		"a pending migration is not backward compatible and needs the Owner's approval, which this release cannot take yet; "+
-			"keep the store on the release it runs, or back it up and install this release on a new state store")
+		"a pending migration is not backward compatible and needs the Owner's approval: run `sisf up --approve-migrations="+
+			strings.Join(versions, ",")+"`, which snapshots the store first, or keep the store on the release it runs")
 	refusal.Details = map[string]string{"migrations": strings.Join(versions, ",")}
 	return refusal
 }
