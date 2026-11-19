@@ -23,10 +23,11 @@ type CandidateTester interface {
 	TestCandidate(ctx context.Context, req ImageRequest) (passed bool, evidence string, err error)
 }
 
-// CommitFiles reads the files of the factory's repository at a commit.
+// CommitFiles reads the files of the factory's repository at a commit: its
+// tree, then each blob by the name the tree gives it.
 type CommitFiles interface {
 	ListTree(ctx context.Context, repo github.RepoRef, commit core.CommitSHA) ([]github.TreeEntry, error)
-	ReadFile(ctx context.Context, repo github.RepoRef, revision core.CommitSHA, path string) ([]byte, error)
+	ReadBlob(ctx context.Context, repo github.RepoRef, sha string) ([]byte, error)
 }
 
 // BundleImages builds a managed application's candidate (ADR 0027): its
@@ -73,6 +74,11 @@ func (b BundleImages) BuildImage(ctx context.Context, req ImageRequest) (ImageRe
 	passed, evidence, err := b.Tests.TestCandidate(ctx, req)
 	if err != nil {
 		return ImageResult{}, err
+	}
+	if !passed {
+		// A candidate whose tests fail is never released: it is refused
+		// before its files are read, and no bundle is made for it.
+		return ImageResult{}, refuse(core.CodeGuardFailed, RefusalBuildFailed, "", "the candidate's tests failed: "+evidence)
 	}
 	work, err := os.MkdirTemp(b.WorkDir, "bundle-*")
 	if err != nil {
@@ -154,12 +160,12 @@ func (b BundleImages) checkout(ctx context.Context, commit core.CommitSHA, dir s
 		}
 		files++
 		total += e.Size
-		if files > limits.MaxFiles || e.Size > limits.MaxFileBytes || total > limits.MaxTotalBytes {
+		if files > limits.MaxFiles || e.Size > limits.MaxFileBytes || e.Size > github.MaxBlobBytes || total > limits.MaxTotalBytes {
 			return bundleRejected(e.Path, "the bundle's sources are past the bundle's limits")
 		}
-		data, err := b.GitHub.ReadFile(ctx, b.Repo, commit, e.Path)
+		data, err := b.GitHub.ReadBlob(ctx, b.Repo, e.SHA)
 		switch {
-		case core.HasCode(err, core.CodeInvalidArgument) || core.HasCode(err, core.CodeNotFound):
+		case core.HasCode(err, core.CodeInvalidArgument) || core.HasCode(err, core.CodeNotFound) || core.HasCode(err, core.CodeLimitExceeded):
 			return bundleRejected(e.Path, "the file cannot be read from the candidate: "+err.Error())
 		case err != nil:
 			return err

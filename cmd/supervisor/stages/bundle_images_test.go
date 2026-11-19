@@ -168,8 +168,11 @@ func TestABundleBuildIsTheBundleOfTheCandidatesCommit(t *testing.T) {
 		t.Fatalf("the store does not hold the bundle: %v", err)
 	}
 	s.tests.passed = false
-	if failed, err := s.build(t); err != nil || failed.TestsPassed {
-		t.Fatalf("a failing suite = %+v, %v; want its result recorded as failed", failed, err)
+	reads := &countedFiles{CommitFiles: s.b.GitHub}
+	s.b.GitHub = reads
+	_, err = s.build(t)
+	if r, ok := RefusalOf(err); !ok || r.Reason != RefusalBuildFailed || reads.n != 0 {
+		t.Fatalf("a failing suite = %v after %d reads of the commit; want refused as a failed build before any read", err, reads.n)
 	}
 }
 
@@ -238,4 +241,15 @@ func TestABundleBuildTellsTheCandidatesFaultFromAnOutage(t *testing.T) {
 			t.Fatalf("err = %v, want a configuration refusal", err)
 		}
 	})
+}
+
+// countedFiles counts the reads of the candidate's commit.
+type countedFiles struct {
+	CommitFiles
+	n int
+}
+
+func (c *countedFiles) ListTree(ctx context.Context, repo github.RepoRef, commit core.CommitSHA) ([]github.TreeEntry, error) {
+	c.n++
+	return c.CommitFiles.ListTree(ctx, repo, commit)
 }
