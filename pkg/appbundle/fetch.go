@@ -14,6 +14,11 @@ import (
 	"time"
 )
 
+// ErrUnavailable marks an archive that could not be downloaded: an outage
+// of its source, not a fault of the lockfile that pins it. A download that
+// arrived but does not hash to its pin, or is too large, is not marked.
+var ErrUnavailable = errors.New("an archive could not be downloaded")
+
 // Fetcher downloads an archive. Assemble verifies and bounds what it
 // returns, so an implementation need not be trusted with integrity.
 type Fetcher interface {
@@ -106,7 +111,7 @@ func openVerified(ctx context.Context, f Fetcher, cacheDir string, e Entry, maxB
 	}
 	body, err := f.Fetch(ctx, e.URL())
 	if err != nil {
-		return nil, fmt.Errorf("%s %s %s: %w", e.Kind, e.Slug, e.Version, err)
+		return nil, fmt.Errorf("%s %s %s: %w: %w", e.Kind, e.Slug, e.Version, ErrUnavailable, err)
 	}
 	tmp, err := os.CreateTemp(cacheDir, ".fetch-*")
 	if err != nil {
@@ -116,6 +121,9 @@ func openVerified(ctx context.Context, f Fetcher, cacheDir string, e Entry, maxB
 	// Hash on the way in so a download that does not match is never cached.
 	h := sha256.New()
 	_, copyErr := copyCapped(io.MultiWriter(tmp, h), body, maxBytes, e.URL())
+	if copyErr != nil && !errors.Is(copyErr, errLimit) {
+		copyErr = fmt.Errorf("%w: %w", ErrUnavailable, copyErr)
+	}
 	err = errors.Join(copyErr, body.Close(), tmp.Close())
 	if got := hex.EncodeToString(h.Sum(nil)); err == nil && got != e.SHA256 {
 		err = fmt.Errorf("archive has sha256 %s, the lockfile pins %s", got, e.SHA256)

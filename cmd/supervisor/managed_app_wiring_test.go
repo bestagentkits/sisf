@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,12 +11,17 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	execlocal "github.com/bestagentkits/sisf/adapters/exec/local"
+	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
 
 	"github.com/bestagentkits/sisf/internal/supervisor/release"
 	"github.com/bestagentkits/sisf/pkg/appbundle"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/deploy"
 	"github.com/bestagentkits/sisf/pkg/managedapp"
+	"github.com/bestagentkits/sisf/pkg/manifest"
 )
 
 func shopSpecPath(t *testing.T) string {
@@ -66,6 +72,13 @@ func TestAManagedApplicationsBackendRunsTheSpecsRevision(t *testing.T) {
 	observer, err := l.artifactObserver(false, emptyTrustVolume(t))
 	if _, ok := observer.(appbundle.PairObserver); err != nil || !ok {
 		t.Fatalf("observer %T, %v", observer, err)
+	}
+	if gate, err := l.changeGate(commitFiles{}); err != nil || gate == nil {
+		t.Fatalf("change gate %v, %v; want the Spec's", gate, err)
+	}
+	plain := &lifecycleFlags{deploy: "compose"}
+	if gate, err := plain.changeGate(commitFiles{}); err != nil || gate != nil {
+		t.Fatalf("change gate %v, %v without a managed application", gate, err)
 	}
 }
 
@@ -161,5 +174,34 @@ func TestAFailingReadOnlyCheckFailsTheRelease(t *testing.T) {
 	res, err := shopChecks(t, s).Run(context.Background(), deploy.Revision{Unit: "app"})
 	if err != nil || res.Passed || !strings.Contains(res.Detail, "catalogue") {
 		t.Fatalf("%+v, %v", res, err)
+	}
+}
+
+// A managed application's candidates are built as bundles, tested in the
+// Docker sandbox; without that sandbox, or without its test command, the
+// build is refused rather than run elsewhere.
+func TestAManagedApplicationIsBuiltAsABundleInTheSandbox(t *testing.T) {
+	t.Parallel()
+	m := &manifest.Manifest{FactoryID: "acme"}
+	m.Repository.Owner, m.Repository.Repo = "bestagentkits", "sisf-trial-woocommerce"
+	sandbox, err := execlocal.New(execlocal.Config{Clock: core.SystemClock{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := shopFlags(t)
+	l.buildCommand, l.runnerImage, l.buildTimeout = "bin/test", "ghcr.io/acme/php@sha256:"+strings.Repeat("a", 64), time.Minute
+	images, err := l.managedImages(m, nil, sandbox, nil, emptyTrustVolume(t))
+	if b, ok := images.(stages.BundleImages); err != nil || !ok || b.Spec == nil || b.Store.Dir == "" {
+		t.Fatalf("images %T, %v; want the bundle build", images, err)
+	}
+	if _, err := l.managedImages(m, nil, nil, nil, emptyTrustVolume(t)); !errors.Is(err, stages.ErrConfiguration) {
+		t.Fatalf("without a sandbox = %v, want refused", err)
+	}
+	l.buildCommand = ""
+	if _, err := l.managedImages(m, nil, sandbox, nil, emptyTrustVolume(t)); !errors.Is(err, stages.ErrConfiguration) {
+		t.Fatalf("without a test command = %v, want refused", err)
+	}
+	if images, err := (&lifecycleFlags{deploy: "compose"}).managedImages(m, nil, sandbox, nil, ""); images != nil || err != nil {
+		t.Fatalf("without a managed application = %v, %v", images, err)
 	}
 }

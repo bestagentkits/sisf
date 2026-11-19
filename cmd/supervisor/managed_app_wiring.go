@@ -181,3 +181,14 @@ func (s *managedChecks) Run(ctx context.Context, rev deploy.Revision) (release.S
 	}
 	return release.SyntheticResult{Passed: true, Detail: "the application's read-only checks passed"}, nil
 }
+
+// changeGate is the change gate of a managed application's releases: a
+// change its installed Spec gives to the Owner is released only on the
+// Owner's approval of its build. Nil without a managed application.
+func (l *lifecycleFlags) changeGate(tree commitReader) (release.ChangeGate, error) {
+	app, err := l.app.load(l.deploy)
+	if err != nil || app == nil {
+		return nil, err
+	}
+	return managedChangeGate{spec: app.Spec, tree: tree}, nil
+}

@@ -48,6 +48,11 @@ const (
 	RefusalBaseFileTooLarge RefusalReason = "base_file_too_large"
 	// RefusalCommitTooLarge: GitHub refused the patch's files as too large.
 	RefusalCommitTooLarge RefusalReason = "commit_too_large"
+	// RefusalBundleRejected: the candidate's content bundle could not be
+	// assembled from what it pins and carries: a lockfile that does not
+	// parse, an archive that does not hash to its pin, an unsafe or linked
+	// path, or a bundle past its limits.
+	RefusalBundleRejected RefusalReason = "bundle_rejected"
 )
 
 // PatchRefusal is a build failure that lies in the patch. The build stage

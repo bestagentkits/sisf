@@ -132,7 +132,10 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
-	images, err := l.imageBuilder(ctx, m, sim, gate, docker, local)
+	images, err := l.managedImages(m, gate, docker, client, d.cfg.TrustDir)
+	if err == nil && images == nil {
+		images, err = l.imageBuilder(ctx, m, sim, gate, docker, local)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -141,6 +144,10 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 		return nil, err
 	}
 	repo := github.RepoRef{Owner: m.Repository.Owner, Name: m.Repository.Repo}
+	changes, err := l.changeGate(stages.Tree{GitHub: client, Repo: repo})
+	if err != nil {
+		return nil, err
+	}
 	judge, err := l.judge(ctx, judgeDeps{
 		manifest: m, sim: sim, docker: docker, local: local, protected: l.protectedDirs(d.cfg.TrustDir, d.dsnEnv, d.lookupEnv), dsnEnv: d.dsnEnv, rootKeyEnv: l.rootPrivateKeyEnv,
 		lookupEnv: d.lookupEnv, clock: d.clock, store: d.stop.store,
@@ -162,7 +169,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 		QASigner: keys.QA, ArtifactSigner: keys.Artifact, Delegation: keys.Delegation, Verifier: keys.Verifier, ApprovalVerifier: approvalVerifier,
 		Redactor: d.redactor, MaxAttempts: m.Limits.MaxAttempts, Images: images, Clock: d.clock,
 		BuildRetry: stages.BuildRetry{HoldAfter: l.buildOutageLimit}, Budget: spend,
-		Release: release.Config{Backend: backend, Observer: observer, LKG: book, Freeze: d.stop.sw, Approvals: spender, Audit: log, Monitor: monitor, Synthetic: synthetic,
+		Release: release.Config{Backend: backend, Observer: observer, LKG: book, Freeze: d.stop.sw, Approvals: spender, ChangeGate: changes, Audit: log, Monitor: monitor, Synthetic: synthetic,
 			SelfPublishable: selfPublishableUnits(m), UnitInputs: inputs, VerifierAt: keys.VerifierAt,
 			// A rollback reserves through the rollback reserve and records
 			// its spend; an exhausted budget never blocks it.

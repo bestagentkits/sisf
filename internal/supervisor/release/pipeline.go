@@ -170,6 +170,12 @@ func (p *Pipeline) Release(ctx context.Context, req Request) (Outcome, error) {
 		return stop(ResultHeld, err)
 	}
 	r.feature, r.summary, r.candidate = req.Feature, req.Summary, req.Candidate
+	if err := p.spendOwnerApproval(ctx, v, v.owner); err != nil {
+		if judgedRefusal(ctx, err) {
+			return p.refuse(ctx, h, out, err)
+		}
+		return stop(ResultHeld, err)
+	}
 	if err := p.start(ctx, r); err != nil {
 		out.State = h.record.State
 		return stop(ResultHeld, err)

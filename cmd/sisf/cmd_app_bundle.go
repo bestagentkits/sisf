@@ -11,10 +11,6 @@ import (
 	"github.com/bestagentkits/sisf/pkg/managedapp"
 )
 
-// bundleLimits bound what one bundle may hold; a WordPress shop with
-// WooCommerce is about 60 MiB in 9,000 files.
-var bundleLimits = appbundle.Limits{MaxTotalBytes: 1 << 30, MaxFiles: 100_000, MaxFileBytes: 128 << 20}
-
 type appBundleFlags struct {
 	spec, repo, out, cache string
 	asJSON                 bool
@@ -76,16 +72,8 @@ func runAppBundle(ctx context.Context, env *Env, args []string) error {
 		cache = filepath.Join(dir, "sisf", "archives")
 	}
 	start := time.Now()
-	res, err := appbundle.Assemble(ctx, appbundle.Input{
-		RepoDir:    repo,
-		Bundle:     spec.Bundle,
-		Fetcher:    appbundle.NewHTTPFetcher(5*time.Minute, bundleLimits.MaxTotalBytes),
-		CacheDir:   cache,
-		OutputPath: f.out,
-		Limits:     bundleLimits,
-		// Data volumes mounted inside the bundle need their mountpoints in it.
-		Mountpoints: spec.BundleMountpoints(),
-	})
+	res, err := appbundle.Assemble(ctx, appbundle.SpecInput(spec, repo,
+		appbundle.NewHTTPFetcher(5*time.Minute, appbundle.DefaultLimits.MaxTotalBytes), cache, f.out))
 	if err != nil {
 		return err
 	}

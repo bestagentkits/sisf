@@ -54,6 +54,9 @@ type verifiedRelease struct {
 	// of Verified steps, once it was written: the LKG keeps it to order
 	// releases by their verification.
 	sequence int64
+	// owner is the Owner's approval of the change, when only the Owner may
+	// release it; spent when the release starts.
+	owner *ownerApproval
 }
 
 // verify accepts a release only when all of the following hold:

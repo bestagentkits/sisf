@@ -90,9 +90,10 @@ const (
 const largeFileSize = 2 << 20
 
 // SetEntryKind makes path of a commit answer as a directory, a submodule
-// or a file too large for the contents API, as GitHub answers them.
+// a file too large for the contents API or, in its tree, a symbolic link,
+// as GitHub answers them.
 func (s *Server) SetEntryKind(repoName, commit, path, kind string) error {
-	if kind != EntryDirectory && kind != EntrySubmodule && kind != EntryLargeFile {
+	if kind != EntryDirectory && kind != EntrySubmodule && kind != EntryLargeFile && kind != EntrySymlink {
 		return fmt.Errorf("unknown entry kind %q", kind)
 	}
 	s.mu.Lock()

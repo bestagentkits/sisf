@@ -20,6 +20,7 @@ const ActorHeader = "X-Sim-Actor"
 // Server is the fake GitHub. Create it with New; it is safe for concurrent use.
 type Server struct {
 	mu             sync.Mutex
+	truncateTrees  bool
 	installationID int64
 	token          string
 	bot            User

@@ -42,6 +42,8 @@ Taking such an application over raises five questions the existing contract does
   - A release carrying a migration is sensitive. It needs Owner approval and a verified backup, and it is never auto-canaried.
   - Restore is never automatic.
 
+- **The supervisor builds and gates a managed candidate.** The candidate's tests run in the sandbox; the supervisor then assembles its bundle from the commit as GitHub holds it. It reaches only the GitHub API and the fixed archive hosts of the lockfile kinds (`downloads.wordpress.org`, https only), with downloads bounded and checked by sha256. A change the Owner-installed Spec gives to the Owner is released only on a signed, single-use Owner approval of that exact build (action `releases.managed_change`), spent when the rollout starts.
+
 ## Consequences
 
 - An existing application can be adopted without rewriting it, and the WordPress knowledge sits in one detector (`pkg/managedapp/detect/stack_wordpress.go`). A second stack, a Go program, adopts through the same contract.

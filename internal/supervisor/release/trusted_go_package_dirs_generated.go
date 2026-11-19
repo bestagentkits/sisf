@@ -85,6 +85,7 @@ var trustedGoPackageDirs = []string{
 	"pkg/github/",
 	"pkg/identity/",
 	"pkg/managedapp/",
+	"pkg/managedapp/changegate/",
 	"pkg/managedapp/checkrun/",
 	"pkg/managedapp/detect/",
 	"pkg/manifest/",
