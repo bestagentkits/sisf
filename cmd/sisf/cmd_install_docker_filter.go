@@ -7,12 +7,13 @@ import (
 	"github.com/bestagentkits/sisf/internal/dockerfilter"
 	"github.com/bestagentkits/sisf/internal/install"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/managedapp"
 )
 
 func init() {
 	register(Command{
 		Path:    []string{"docker-filter"},
-		Args:    "--role runner|deploy --listen host:port --factory-id id --network name --image ref... [--socket path] [--sim-image unit=ref]...",
+		Args:    "--role runner|deploy --listen host:port --factory-id id --network name --image ref... [--socket path] [--sim-image unit=ref]... [--app-spec path [--app-volume name=volume]... [--app-secrets-volume volume]]",
 		Summary: "Serve a Docker request filter in front of the Docker socket",
 		Help: `
 Serves the Docker request filter of one role in front of the Docker socket:
@@ -27,7 +28,13 @@ before ` + "`sisf up`" + `, on a loopback address, and gives that address to
 
 Everything the role does not need is refused. --image lists the allowed
 images, each pinned by digest or named by its local image ID. --sim-image is
-for the deploy role of the simulation profile only.`,
+for the deploy role of the simulation profile only.
+
+--app-spec admits, in the deploy role, the revisions of a managed application:
+its runtime image, its bundle mounted read-only, its environment and its data
+volumes, each bound to a volume of the install with --app-volume, and its
+secrets volume, read-only. The supervisor is given the same flags, so both
+derive one configuration from the Spec.`,
 		Run: runDockerFilter,
 	})
 }
@@ -64,11 +71,26 @@ func runDockerFilter(ctx context.Context, env *Env, args []string) error {
 	fs.StringVar(&o.Network, "network", "", "the sandbox network (runner) or the deploy network (deploy)")
 	fs.Var(&images, "image", "allowed image (repeatable)")
 	fs.Var(sims, "sim-image", "deploy role, simulation only: unit=ref (repeatable)")
+	var appSpec string
+	var binding managedapp.Binding
+	fs.StringVar(&appSpec, "app-spec", "", "deploy role: absolute path of the managed application's installed "+managedapp.FileName)
+	fs.Func("app-volume", "deploy role, with --app-spec: name=volume binding of a data volume (repeatable)", binding.BindVolume)
+	fs.StringVar(&binding.Secrets, "app-secrets-volume", "", "deploy role, with --app-spec: the volume holding the runtime's secrets as files")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if o.Listen == "" || factoryID == "" || o.Network == "" || len(images) == 0 {
-		return usagef("--listen, --factory-id, --network and --image are required")
+	if o.Listen == "" || factoryID == "" || o.Network == "" || (len(images) == 0 && appSpec == "") {
+		return usagef("--listen, --factory-id, --network and --image (or --app-spec) are required")
+	}
+	if appSpec == "" && (len(binding.Volumes) > 0 || binding.Secrets != "") {
+		return usagef("--app-volume and --app-secrets-volume need --app-spec")
+	}
+	if appSpec != "" {
+		app, err := managedapp.LoadInstall(appSpec, binding)
+		if err != nil {
+			return err
+		}
+		o.App = &app.Revision
 	}
 	o.Role, o.FactoryID, o.Images, o.SimulatedImages = dockerfilter.Role(role), core.FactoryID(factoryID), images, sims
 	if err := env.Printf("docker filter (%s) of %s serving on %s\n", role, factoryID, o.Listen); err != nil {

@@ -146,7 +146,10 @@ func (p *localPrograms) measureInstalled() (core.ReleaseDigest, error) {
 // its scripted agent, which builds no program, the simulation's own
 // observer. Any other factory builds nothing it could observe, and is
 // refused.
-func (l *lifecycleFlags) artifactObserver(sim bool) (release.ArtifactObserver, error) {
+func (l *lifecycleFlags) artifactObserver(sim bool, trustDir string) (release.ArtifactObserver, error) {
+	if observer, err := l.managedObserver(trustDir); observer != nil || err != nil {
+		return observer, err
+	}
 	if l.programs.buildStore() != nil {
 		return l.programs, nil
 	}

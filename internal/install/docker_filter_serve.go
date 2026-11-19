@@ -10,6 +10,7 @@ import (
 
 	"github.com/bestagentkits/sisf/internal/dockerfilter"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/managedapp"
 )
 
 // DockerFilterOptions run one Docker request filter of a Docker install.
@@ -27,7 +28,10 @@ type DockerFilterOptions struct {
 	Images  []string
 	// SimulatedImages maps units to images (deploy role, simulation only).
 	SimulatedImages map[string]string
-	Logger          *slog.Logger
+	// App, in the deploy role only, admits the revisions of a managed
+	// application exactly as the supervisor's Compose backend starts them.
+	App    *managedapp.RevisionConfig
+	Logger *slog.Logger
 }
 
 // filter builds the filter the options describe.
@@ -39,11 +43,14 @@ func (o DockerFilterOptions) filter() (*dockerfilter.Filter, error) {
 	switch o.Role {
 	case dockerfilter.RoleRunner:
 		cfg.SandboxNetwork = o.Network
-		if len(o.SimulatedImages) > 0 {
-			return nil, invalidf("a runner filter takes no simulated images")
+		if len(o.SimulatedImages) > 0 || o.App != nil {
+			return nil, invalidf("a runner filter takes no simulated images and no managed application")
 		}
 	case dockerfilter.RoleDeploy:
 		cfg.DeployNetwork, cfg.SimulatedImages = o.Network, o.SimulatedImages
+		if o.App != nil {
+			cfg.AdmitRevision(*o.App)
+		}
 	default:
 		return nil, invalidf("the filter role must be runner or deploy")
 	}

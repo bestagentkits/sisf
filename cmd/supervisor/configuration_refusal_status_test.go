@@ -159,7 +159,7 @@ func TestRefusalsPastTheSimulationAreTheConfigurations(t *testing.T) {
 	_, _, _, relativeErr := (&qaFlags{workspaceRoot: "qa"}).paths(judgeDeps{manifest: m}, "docker")
 	_, _, _, overlapErr := (&qaFlags{workspaceRoot: dir}).paths(judgeDeps{manifest: m, protected: []string{dir}}, "docker")
 	_, _, _, homeErr := (&qaFlags{workspaceRoot: dir, home: filepath.Join(dir, "home")}).paths(judgeDeps{manifest: m}, "docker")
-	_, observerErr := (&lifecycleFlags{coderAgent: "claude"}).artifactObserver(false)
+	_, observerErr := (&lifecycleFlags{coderAgent: "claude"}).artifactObserver(false, "")
 	_, _, launcherErr := (&localPrograms{launcher: "app"}).command("app@sha256:" + strings.Repeat("0", 64))
 	for name, err := range map[string]error{
 		"a short release window outside the simulation": shortErr,

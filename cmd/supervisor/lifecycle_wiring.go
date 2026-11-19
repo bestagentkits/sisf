@@ -136,7 +136,7 @@ func (l *lifecycleFlags) buildLifecycle(ctx context.Context, d lifecycleDeps) (*
 	if err != nil {
 		return nil, err
 	}
-	observer, err := l.artifactObserver(sim)
+	observer, err := l.artifactObserver(sim, d.cfg.TrustDir)
 	if err != nil {
 		return nil, err
 	}

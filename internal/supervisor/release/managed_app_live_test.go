@@ -24,8 +24,8 @@ import (
 	"github.com/bestagentkits/sisf/internal/supplychain"
 	"github.com/bestagentkits/sisf/pkg/appbundle"
 	"github.com/bestagentkits/sisf/pkg/core"
-	"github.com/bestagentkits/sisf/pkg/deploy"
 	"github.com/bestagentkits/sisf/pkg/core/statemachine"
+	"github.com/bestagentkits/sisf/pkg/deploy"
 	"github.com/bestagentkits/sisf/pkg/managedapp"
 	"github.com/bestagentkits/sisf/pkg/managedapp/changegate"
 	"github.com/bestagentkits/sisf/pkg/managedapp/checkrun"
@@ -153,19 +153,15 @@ func TestManagedShopReleasesAndRollsBackOnRealDocker(t *testing.T) {
 	upstream := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", sock)
 	}}
-	revisionEnv := spec.Runtime.RevisionEnv()
-	dataVolumes := []compose.VolumeMount{
-		{Name: uploads, Target: spec.Data[0].Target},
-		{Name: secrets, Target: managedapp.SecretsDir, ReadOnly: true},
+	// The filter and the backend are configured from one derivation of
+	// the Spec, as the deploy filter and the supervisor of an install are.
+	appRev, err := spec.Revision(managedapp.Binding{Volumes: map[string]string{spec.Data[0].Name: uploads}, Secrets: secrets})
+	if err != nil {
+		t.Fatal(err)
 	}
-	filter, err := dockerfilter.New(dockerfilter.Config{
-		Role: dockerfilter.RoleDeploy, Upstream: upstream, RunnerValue: testFactory, DeployNetwork: network,
-		Images: []string{image}, BundleTarget: spec.Bundle.Mount, DeployEnv: revisionEnv, Logger: log,
-		DataVolumes: []dockerfilter.DeployVolume{
-			{Name: uploads, Target: spec.Data[0].Target},
-			{Name: secrets, Target: managedapp.SecretsDir, ReadOnly: true},
-		},
-	})
+	filterCfg := dockerfilter.Config{Role: dockerfilter.RoleDeploy, Upstream: upstream, RunnerValue: testFactory, DeployNetwork: network, Logger: log}
+	filterCfg.AdmitRevision(appRev)
+	filter, err := dockerfilter.New(filterCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,12 +179,13 @@ func TestManagedShopReleasesAndRollsBackOnRealDocker(t *testing.T) {
 	}
 	serveOn(t, "tcp", edgeAddr, splitter)
 
-	backend, err := compose.New(compose.Config{
-		Endpoint: "unix://" + filterSock, Factory: testFactory, Network: network, AppPort: spec.Runtime.Port,
-		Env: revisionEnv, Volumes: dataVolumes, User: spec.Runtime.User,
-		BundleTarget: spec.Bundle.Mount, BundleSource: store, Edge: splitter, Resolve: resolve,
+	backendCfg := compose.Config{
+		Endpoint: "unix://" + filterSock, Factory: testFactory, Network: network,
+		BundleSource: store, Edge: splitter, Resolve: resolve,
 		Clock: live, ReadyTimeout: 3 * time.Minute, Logger: log,
-	})
+	}
+	backendCfg.UseRevision(appRev)
+	backend, err := compose.New(backendCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
