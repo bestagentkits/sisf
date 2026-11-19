@@ -94,8 +94,7 @@ func TestRunTicksOnTheClockAndGivesItsLeasesUpWhenStopped(t *testing.T) {
 		if res := <-ticks; len(res.Claimed) != 1 {
 			t.Fatalf("the first tick claimed %v", res.Claimed)
 		}
-		f.clock.Advance(pollInterval)
-		if res := <-ticks; !res.Leader {
+		if res := nextTick(t, f.clock, ticks); !res.Leader {
 			t.Fatalf("the second tick was not active")
 		}
 		cancel()
@@ -148,4 +147,22 @@ func TestAMisconfiguredDispatcherIsRefused(t *testing.T) {
 			}
 		}
 	})
+}
+
+// nextTick moves the clock on by the poll interval until the running
+// dispatcher ticks: Run may not have set its timer yet when the clock first
+// moves, and a timer set after a move waits for the next one.
+func nextTick(t *testing.T, clock *sqlstoretest.Clock, ticks <-chan dispatcher.TickResult) dispatcher.TickResult {
+	t.Helper()
+	deadline := time.After(10 * time.Second)
+	for {
+		clock.Advance(pollInterval)
+		select {
+		case res := <-ticks:
+			return res
+		case <-time.After(10 * time.Millisecond):
+		case <-deadline:
+			t.Fatal("the dispatcher did not tick as the clock moved")
+		}
+	}
 }
