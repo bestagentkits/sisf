@@ -107,7 +107,7 @@ func TestAnOwnerChangeIsReleasedOnlyOnTheOwnersApprovalOfItsBuild(t *testing.T) 
 	}
 	filed, err := desk.store.Get(ctx, id)
 	if err != nil || filed.Action != ManagedChangeAction || filed.IssueID != issue ||
-		filed.SubjectDigest != ManagedChangeSubject(testFactory, testUnit, core.ReleaseDigest(firstBuild)) {
+		filed.SubjectDigest != ManagedChangeSubject(testFactory, issue, testUnit, core.ReleaseDigest(firstBuild)) {
 		t.Fatalf("filed %+v, %v; want a request bound to the issue and the build", filed, err)
 	}
 	// Asking again files nothing new while the request waits.
@@ -137,7 +137,7 @@ func TestAnOwnerChangeIsNotReleasedOnAnotherApproval(t *testing.T) {
 		w := newWorld(t)
 		desk := newApprovalDesk(t, w)
 		w.cfg.ChangeGate = coreUpgrade()
-		desk.file(ManagedChangeAction, ManagedChangeSubject(testFactory, testUnit, core.ReleaseDigest(otherBuild)), approvals.DecisionApprove)
+		desk.file(ManagedChangeAction, ManagedChangeSubject(testFactory, issueRef(302), testUnit, core.ReleaseDigest(otherBuild)), approvals.DecisionApprove)
 		issue, run := issueRef(302), core.RunID("run-302")
 		w.seedReleaseCandidate(issue, run, firstBuild)
 		out, err := w.pipeline().Release(ctx, w.request(issue, run, firstBuild))
@@ -149,7 +149,7 @@ func TestAnOwnerChangeIsNotReleasedOnAnotherApproval(t *testing.T) {
 		w := newWorld(t)
 		desk := newApprovalDesk(t, w)
 		w.cfg.ChangeGate = coreUpgrade()
-		desk.file(RollbackAction, ManagedChangeSubject(testFactory, testUnit, core.ReleaseDigest(firstBuild)), approvals.DecisionApprove)
+		desk.file(RollbackAction, ManagedChangeSubject(testFactory, issueRef(303), testUnit, core.ReleaseDigest(firstBuild)), approvals.DecisionApprove)
 		issue, run := issueRef(303), core.RunID("run-303")
 		w.seedReleaseCandidate(issue, run, firstBuild)
 		out, err := w.pipeline().Release(ctx, w.request(issue, run, firstBuild))
@@ -258,5 +258,57 @@ func (b *fakeBackend) failObserve(fail bool) {
 	b.observeErr = nil
 	if fail {
 		b.observeErr = core.NewError(core.CodeUnavailable, "the Docker endpoint does not answer")
+	}
+}
+
+// A backend that cannot stage the build holds the release without spending
+// the approval: the next pass releases on it.
+func TestAnApprovalOutlivesAStagingOutage(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := newWorld(t)
+	desk := newApprovalDesk(t, w)
+	w.cfg.ChangeGate = coreUpgrade()
+	issue, run := issueRef(309), core.RunID("run-309")
+	w.seedReleaseCandidate(issue, run, firstBuild)
+	p := w.pipeline()
+	out, err := p.Release(ctx, w.request(issue, run, firstBuild))
+	id := heldForOwner(t, w, out, err)
+	desk.decide(id, approvals.DecisionApprove)
+
+	w.backend.mu.Lock()
+	w.backend.stageErr = core.NewError(core.CodeUnavailable, "the Docker endpoint does not answer")
+	w.backend.mu.Unlock()
+	if out, err := p.Release(ctx, w.request(issue, run, firstBuild)); out.Result != ResultHeld || err == nil {
+		t.Fatalf("Release while staging fails = %+v, %v; want held", out, err)
+	}
+	if r, _ := desk.store.Get(ctx, id); r.Status != approvals.StatusApproved {
+		t.Fatalf("the approval is %s after a staging outage, want still approved", r.Status)
+	}
+	w.backend.mu.Lock()
+	w.backend.stageErr = nil
+	w.backend.mu.Unlock()
+	if out, err := p.Release(ctx, w.request(issue, run, firstBuild)); err != nil || out.Result != ResultClosed {
+		t.Fatalf("Release on the next pass = %+v, %v; want closed", out, err)
+	}
+}
+
+// The same build released for another issue needs that issue's own
+// approval, and is never taken for tampering.
+func TestTheSameBuildForAnotherIssueAsksAgain(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := newWorld(t)
+	newApprovalDesk(t, w)
+	w.cfg.ChangeGate = coreUpgrade()
+	p := w.pipeline()
+	first, second := issueRef(310), issueRef(311)
+	w.seedReleaseCandidate(first, "run-310", firstBuild)
+	w.seedReleaseCandidate(second, "run-311", firstBuild)
+	out, err := p.Release(ctx, w.request(first, "run-310", firstBuild))
+	a := heldForOwner(t, w, out, err)
+	out, err = p.Release(ctx, w.request(second, "run-311", firstBuild))
+	if b := heldForOwner(t, w, out, err); b == a {
+		t.Fatalf("both issues share request %s", a)
 	}
 }

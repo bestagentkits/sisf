@@ -34,11 +34,11 @@ const maxChangeRequests = 20
 const changeRequestTTL = 72 * time.Hour
 
 // ManagedChangeSubject is the subject digest of an approval to release the
-// build digest as unit of factory. An approval of one build never covers
-// another: a rebuilt candidate needs its own.
-func ManagedChangeSubject(factory core.FactoryID, unit string, digest core.ReleaseDigest) core.Digest {
+// build digest as unit of factory for issue. An approval of one build, or
+// of one issue's release of it, never covers another.
+func ManagedChangeSubject(factory core.FactoryID, issue core.IssueRef, unit string, digest core.ReleaseDigest) core.Digest {
 	payload := core.NewPayloadBuilder(managedChangeSubjectDomain, managedChangeSubjectVersion).
-		Text("factory_id", string(factory)).Text("unit", unit).Text("release", string(digest)).Bytes()
+		Text("factory_id", string(factory)).Text("issue", issue.String()).Text("unit", unit).Text("release", string(digest)).Bytes()
 	sum := sha256.Sum256(payload)
 	return core.Digest("sha256:" + hex.EncodeToString(sum[:]))
 }
@@ -103,7 +103,7 @@ func (p *Pipeline) judgeChange(ctx context.Context, v verifiedRelease, changed [
 	if err != nil {
 		return nil, core.NewError(core.CodePolicyHold, "the policy in force cannot be read").WithCause(err)
 	}
-	subject := ManagedChangeSubject(p.cfg.FactoryID, v.artifact.Unit, v.artifact.Digest)
+	subject := ManagedChangeSubject(p.cfg.FactoryID, v.issue, v.artifact.Unit, v.artifact.Digest)
 	now := p.cfg.Clock.Now()
 	for n := 1; n <= maxChangeRequests; n++ {
 		id := changeRequestID(subject, n)
@@ -168,8 +168,9 @@ func waitingForOwner(id, why string) error {
 	return e
 }
 
-// spendOwnerApproval spends the approval just before the release starts,
-// once nothing can hold it any more, so a hold keeps it for the next pass.
+// spendOwnerApproval spends the approval in the guard of the step that
+// starts the rollout, after staging and the preview, so a hold keeps it
+// for the next pass.
 // The spent approval must be for this factory, issue and action.
 func (p *Pipeline) spendOwnerApproval(ctx context.Context, v verifiedRelease, a *ownerApproval) error {
 	if a == nil {

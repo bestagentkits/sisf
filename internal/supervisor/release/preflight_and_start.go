@@ -30,6 +30,9 @@ type rollout struct {
 	feature, summary string
 	// candidate is the candidate as QA judged it, which the release lands.
 	candidate qa.Candidate
+	// refused is why the Owner's approval could not be spent as the
+	// rollout started; nil otherwise.
+	refused error
 }
 
 // preflight proves there is a way back and a way to observe before anything
@@ -125,6 +128,13 @@ func (p *Pipeline) start(ctx context.Context, r *rollout) error {
 		IssueID: r.h.record.IssueID, RunID: r.h.record.RunID, FactoryID: p.cfg.FactoryID,
 		Artifact: r.v.artifact, RollbackTarget: r.lkgRev, RollbackVerified: true, MetricsAvailable: true,
 		SelfPublishable: p.cfg.SelfPublishable,
+	}
+	// The Owner's approval of the change, if it needs one, is spent after
+	// the last check that can hold the release and just before the rollout
+	// starts, outside the step's transaction, so a hold never burns it.
+	if err := p.spendOwnerApproval(ctx, r.v, r.v.owner); err != nil {
+		r.refused = err
+		return err
 	}
 	return p.step(ctx, r.h, stepSpec{
 		event: core.EventRolloutStarted, reason: "the rollback preflight passed",
