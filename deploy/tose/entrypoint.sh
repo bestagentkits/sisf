@@ -29,6 +29,13 @@ if [[ ! -w "$data_dir" ]]; then
   exit 1
 fi
 mkdir -p "$HOME" "$TMPDIR" "$GOCACHE" /data/run
+# A Kubernetes fsGroup gives the pod's group access to every file on the disk
+# when the pod starts, and the factory refuses trust, program and secret
+# directories that other accounts could reach. Every process here runs as this
+# one uid, so the install keeps owner-only modes.
+if [[ -d "$SISF_HOME" ]]; then
+  chmod -R go-rwx "$SISF_HOME"
+fi
 
 if [[ ! -f "$SISF_HOME/factory.yaml" ]]; then
   cd "$SRC"
