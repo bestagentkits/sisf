@@ -8,6 +8,7 @@ Where to find what. The code owns behaviour; these pages explain why, and say wh
 |---|---|
 | [Quickstart](guides/quickstart.md) | a simulated factory on your machine, signed in, with a first issue |
 | [Installing a factory](guides/install.md) | modes and requirements, the development install, a real install (GitHub, sign-in, HTTPS), real agents, running as a service |
+| [Trial factory on TOSE](guides/deploy-tose-trial.md) | hosting a trial factory in an unprivileged container (TOSE): the image, its health check, what such a platform cannot provide, rollback and removal |
 | [Operations](guides/operations.md) | lifecycle commands, inspecting, surfaces, sign-in, candidate pull requests, reconciliation, public bug reports, budget, Decision Layer, secrets, held and interrupted releases, ports |
 | [Policy, approvals and budget](guides/policy-and-approvals.md) | putting a policy in force, deciding approvals, step-up, changing the budget |
 | [Why is my issue stuck?](guides/stuck-issues.md) | reading `sisf runs explain`, holds that stop the whole factory, causes of a block, retrying a Blocked issue |
