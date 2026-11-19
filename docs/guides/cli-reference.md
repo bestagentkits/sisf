@@ -194,7 +194,7 @@ It takes no flags (`cmd/sisf/cmd_conformance.go`): one optional argument, the ma
 
 Listed by `sisf help` but started by `sisf up` or its Compose project, not by hand: `sisf state bootstrap`, `sisf trust install`, `sisf docker-filter` (also started by the operator for a [Standalone build sandbox](install.md#building-in-a-docker-sandbox)), `sisf sim github`, `sisf sim oidc`. Their flags follow.
 
-`sisf docker-filter --role runner|deploy --listen host:port --factory-id id --network name --image ref... [--socket path] [--sim-image unit=ref]...` (`cmd/sisf/cmd_install_docker_filter.go`). `--listen`, `--factory-id`, `--network` and at least one `--image` are required. A Docker install's Compose project starts both roles itself; for the build sandbox of a Standalone install you start the runner role before `sisf up`, on a loopback address, and give that address to `sisf init` with `--exec-docker-endpoint`.
+`sisf docker-filter --role runner|deploy --listen host:port --factory-id id --network name --image ref... [--socket path] [--sim-image unit=ref]... [--app-spec path [--app-volume name=volume]... [--app-secrets-volume volume]]` (`cmd/sisf/cmd_install_docker_filter.go`). `--listen`, `--factory-id`, `--network` and at least one `--image` (or `--app-spec`) are required. A Docker install's Compose project starts both roles itself; for the build sandbox of a Standalone install you start the runner role before `sisf up`, on a loopback address, and give that address to `sisf init` with `--exec-docker-endpoint`.
 
 | Flag | Meaning |
 |---|---|
@@ -205,6 +205,11 @@ Listed by `sisf help` but started by `sisf up` or its Compose project, not by ha
 | `--network` | the sandbox network (runner) or the deploy network (deploy) |
 | `--image` | allowed image, pinned by digest or named by its full local image ID (repeatable) |
 | `--sim-image` | deploy role, simulation only: `unit=ref` (repeatable) |
+| `--app-spec` | deploy role: absolute path of a managed application's installed `sisf-app.yaml`; admits its revisions exactly as the supervisor's Compose backend starts them ([ADR 0027](../adr/0027-a-managed-application-is-a-runtime-image-and-a-content-bundle.md)) |
+| `--app-volume` | with `--app-spec`: `name=volume`, the install's volume for one of the Spec's data volumes (repeatable; every data volume must be bound) |
+| `--app-secrets-volume` | with `--app-spec`: the volume holding the runtime's secrets as files, mounted read-only at `/run/secrets` |
+
+The supervisor takes the same `--app-spec`, `--app-volume` and `--app-secrets-volume` with `--deploy compose`, plus `--deploy-host-suffix` (reach a revision at `<container><suffix>`, for example `.orb.local` for a supervisor on an OrbStack host) and `--deploy-ready-timeout`. With them it observes a release as the Spec's image and the bundle bytes on its trust volume, and judges a low-traffic release by the Spec's checks that do not write; `--synthetic-program` is refused beside `--app-spec`.
 
 `sisf sim github [--addr host:port] [--allow-non-loopback] [--repo owner/name]... [--webhook-url url] [--installation-id id]` (`cmd/sisf/cmd_sim_github.go`). The webhook signing secret is read from `SISF_SIM_WEBHOOK_SECRET`.
 
