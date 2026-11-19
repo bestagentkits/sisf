@@ -232,10 +232,24 @@ func (s storedReports) putCountIf(ctx context.Context, tx state.Tx, count report
 	return putCount(ctx, tx, count)
 }
 
+// deleteRead removes the document at key at the version this transaction
+// read it. Another writer may remove it between the read and the removal:
+// on a store that does not serialize its transactions, as PostgreSQL does
+// not at read committed, the removal then finds nothing. That is a lost
+// race like any other and is answered as one, with CONFLICT, so the caller
+// reads again rather than failing on NOT_FOUND.
+func deleteRead(ctx context.Context, tx state.Tx, key string, version int64) error {
+	err := tx.DeleteKV(ctx, ReportsNamespace, key, version)
+	if core.HasCode(err, core.CodeNotFound) {
+		return core.NewError(core.CodeConflict, "a stored report document was removed meanwhile; read it again").WithCause(err)
+	}
+	return err
+}
+
 // dropReport removes the stored entry e and its fingerprint index, when
 // the index still names e.
 func dropReport(ctx context.Context, tx state.Tx, e state.KVEntry) error {
-	if err := tx.DeleteKV(ctx, ReportsNamespace, e.Key, e.Version); err != nil {
+	if err := deleteRead(ctx, tx, e.Key, e.Version); err != nil {
 		return err
 	}
 	return dropIndexOf(ctx, tx, e.Key)
@@ -249,7 +263,7 @@ func dropIndexOf(ctx context.Context, tx state.Tx, key string) error {
 	index, err := tx.GetKV(ctx, ReportsNamespace, reportIndexPrefix+fingerprint)
 	switch {
 	case err == nil && string(index.Value) == key:
-		return tx.DeleteKV(ctx, ReportsNamespace, index.Key, index.Version)
+		return deleteRead(ctx, tx, index.Key, index.Version)
 	case err == nil || core.HasCode(err, core.CodeNotFound):
 		return nil
 	}

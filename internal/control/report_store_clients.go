@@ -124,7 +124,7 @@ func (c clientReports) put(ctx context.Context, tx state.Tx) error {
 		if c.entry.Version == 0 {
 			return nil
 		}
-		return tx.DeleteKV(ctx, ReportsNamespace, c.entry.Key, c.entry.Version)
+		return deleteRead(ctx, tx, c.entry.Key, c.entry.Version)
 	}
 	raw, err := json.Marshal(c.keys)
 	if err != nil {

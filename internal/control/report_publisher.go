@@ -321,7 +321,7 @@ const reportPublishErrorKey = "publish-error"
 // issues is cleared only by a report issue that carries its label
 // (labelled), not by a call that published nothing.
 func (p ReportPublisher) noteError(ctx context.Context, failure error, labelled bool) error {
-	return p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+	err := p.Store.Update(ctx, func(ctx context.Context, tx state.Tx) error {
 		entry, err := tx.GetKV(ctx, ReportsNamespace, reportPublishErrorKey)
 		switch {
 		case core.HasCode(err, core.CodeNotFound):
@@ -344,6 +344,13 @@ func (p ReportPublisher) noteError(ctx context.Context, failure error, labelled 
 		_, err = tx.PutKV(ctx, entry)
 		return err
 	})
+	// Another publisher cleared or rewrote the note between the read and
+	// the clearing: the note left is that publisher's, as recent as this
+	// call's success.
+	if failure == nil && (core.HasCode(err, core.CodeConflict) || core.HasCode(err, core.CodeNotFound)) {
+		return nil
+	}
+	return err
 }
 
 // publishOne publishes the report stored at entry, read as stored, and
@@ -512,14 +519,17 @@ func (p ReportPublisher) markPublished(ctx context.Context, key string, r stored
 		kept := publishedReport{ID: r.ID, Fingerprint: r.Fingerprint, Issue: number,
 			ReceivedAt: r.ReceivedAt, LastSeenAt: r.LastSeenAt, Count: r.Count}
 		current, err := tx.GetKV(ctx, ReportsNamespace, key)
+		if err == nil {
+			// Another publisher that found the same issue may remove the
+			// report between the read and the removal; it is then gone as
+			// surely as if the read had missed it.
+			err = tx.DeleteKV(ctx, ReportsNamespace, key, current.Version)
+		}
 		switch {
 		case err == nil:
 			var now storedReport
 			if json.Unmarshal(current.Value, &now) == nil {
 				kept.LastSeenAt, kept.Count = now.LastSeenAt, now.Count
-			}
-			if err := tx.DeleteKV(ctx, ReportsNamespace, key, current.Version); err != nil {
-				return err
 			}
 			if err := forgetWaiting(ctx, tx, r.Client, key); err != nil {
 				return err
@@ -591,7 +601,10 @@ func (p ReportPublisher) reject(ctx context.Context, key string, code core.Error
 		if !unreadable && stored.Publish.Rejections < maxReportRejections {
 			return putStored(ctx, tx, key, entry.Version, stored)
 		}
-		if err := tx.DeleteKV(ctx, ReportsNamespace, key, entry.Version); err != nil {
+		// Removed meanwhile by another publisher, nothing of this write
+		// stands, the charge it would give back included, since that
+		// publisher may have opened the report's issue on it.
+		if err := deleteRead(ctx, tx, key, entry.Version); err != nil {
 			return err
 		}
 		if err := addFailed(ctx, tx, 1); err != nil {
