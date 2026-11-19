@@ -83,6 +83,10 @@ type ControlConfig struct {
 	// Reconcile configures the polls that recover issue changes whose
 	// webhooks were lost.
 	Reconcile ReconcileConfig
+	// ProviderCost reads what the providers report was spent, by provider
+	// name, for the providers the budget settings name; see
+	// ProviderCostFromEnv. A named provider missing here holds capped runs.
+	ProviderCost map[string]budget.CostSource
 }
 
 // Control is the control zone of one factory: the HTTP server, intake, the
@@ -129,6 +133,8 @@ type Control struct {
 	// route. reportsOff is set once a pass said why it publishes none.
 	reports    *control.ReportPublisher
 	reportsOff bool
+	// providerSpend reads the providers' spend for the budget gate.
+	providerSpend budget.ProviderSpendRefresher
 	// budget closes the reservation of a run whose issue the control zone
 	// blocks because the run stopped.
 	budget *budget.Gate
@@ -169,7 +175,8 @@ func NewControl(cfg ControlConfig) (*Control, error) {
 	c := &Control{cfg: cfg, log: cfg.Logger, backoff: map[string]retryAt{}, projected: map[core.IssueRef]int64{},
 		progress:      &github.ProgressComment{Issues: cfg.GitHub, Self: settings.Self, Factory: m.FactoryID},
 		progressShown: map[core.IssueRef]string{}, redactor: redact.New(redact.Config{}),
-		budget: budget.NewGate(budget.Config{Clock: cfg.Clock})}
+		budget:        budget.NewGate(budget.Config{Clock: cfg.Clock}),
+		providerSpend: budget.ProviderSpendRefresher{Store: budget.StateStore(cfg.Store), Sources: cfg.ProviderCost, Clock: cfg.Clock}}
 	c.Audit = audit.New(cfg.Store, cfg.Clock)
 	reconcile, err := cfg.Reconcile.withDefaults()
 	if err != nil {
@@ -310,7 +317,8 @@ func (c *Control) Run(ctx context.Context, ln net.Listener, interval time.Durati
 // parks the issues whose wait for an answer is over, polling GitHub first
 // when an answer may not be known yet, and blocks the issues whose run
 // stopped without a candidate; when it is configured,
-// the decision layer reads the edge's counters; the stored bug reports
+// the decision layer reads the edge's counters; the providers' report of
+// what was spent is read for the budget gate when it is due; the stored bug reports
 // past their retention are pruned, and a small batch of those waiting is
 // published as GitHub issues for a person to triage. Once per reconciliation
 // interval it asks GitHub for the issue changes no webhook delivered. Each part runs even
@@ -350,6 +358,7 @@ func (c *Control) Pass(ctx context.Context) error {
 		c.projectProgress(ctx),
 		c.projectLifecycle(ctx),
 		c.runDecisions(ctx),
+		c.providerSpend.Refresh(ctx),
 		pruned,
 		// Late, so publishing reports delays none of the factory's own work.
 		c.publishReports(ctx),

@@ -8,6 +8,7 @@ import (
 
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/pkg/core"
+	"github.com/bestagentkits/sisf/pkg/state"
 )
 
 // NoticeKind says why the Owner is notified.
@@ -138,11 +139,24 @@ func (g *Gate) fits(ctx context.Context, ledger core.BudgetLedger, s Settings, e
 	if err != nil {
 		return err
 	}
+	kv, ok := ledger.(state.KV)
+	if !ok {
+		return core.NewError(core.CodeUnavailable, "the claim transaction cannot read the provider spend")
+	}
+	floor, err := providerFloor(ctx, kv, s, now)
+	switch {
+	case rollback && core.HasCode(err, core.CodeBudgetExceeded):
+		// A missing or stale provider figure never stops a rollback,
+		// which is still held to the agents' reports and the cap.
+		floor = 0
+	case err != nil:
+		return err
+	}
 	limit := s.CapMicros - s.RollbackReserveMicros
 	if rollback {
 		limit = s.CapMicros
 	}
-	if addMicros(usedIn(totals), estimate) > limit {
+	if addMicros(usedWith(totals, floor), estimate) > limit {
 		return core.NewError(core.CodeBudgetExceeded, "the reservation would pass the budget cap of the period",
 			core.NextAction{Action: "budget.get", Description: "see what is spent and what remains"})
 	}
