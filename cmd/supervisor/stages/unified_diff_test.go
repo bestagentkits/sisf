@@ -1,6 +1,10 @@
 package stages
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestAUnifiedDiffIsAppliedToTheFilesItNames(t *testing.T) {
 	t.Parallel()
@@ -42,6 +46,27 @@ func TestAPatchThatDoesNotMatchOrLeavesTheRepositoryIsRefused(t *testing.T) {
 	} {
 		if _, err := parseUnifiedDiff(diff); err == nil {
 			t.Errorf("%s: the patch was accepted", name)
+		}
+	}
+}
+
+// The refusal of a patch says why, so the Owner can tell an attempt that
+// changed nothing from one that swept in too many or binary files.
+func TestARefusedPatchSaysWhyItWasRefused(t *testing.T) {
+	t.Parallel()
+	var many strings.Builder
+	for i := range maxPatchFiles + 1 {
+		fmt.Fprintf(&many, "--- /dev/null\n+++ b/gen/f%d.txt\n@@ -0,0 +1 @@\n+x\n", i)
+	}
+	for name, c := range map[string]struct{ diff, want string }{
+		"empty":          {"", "the agent made no change"},
+		"many":           {many.String(), "changes 65 files, more than 64 (first: gen/f0.txt, gen/f1.txt"},
+		"binary":         {"diff --git a/img/logo.png b/img/logo.png\nindex 1..2 100644\nGIT binary patch\nliteral 3\n", "binary file img/logo.png"},
+		"binary summary": {"diff --git a/a.bin b/a.bin\nBinary files a/a.bin and b/a.bin differ\n", "binary file a.bin"},
+	} {
+		_, err := parseUnifiedDiff(c.diff)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want it to say %q", name, err, c.want)
 		}
 	}
 }
