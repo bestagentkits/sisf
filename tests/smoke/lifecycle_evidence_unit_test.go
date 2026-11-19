@@ -67,11 +67,11 @@ func TestTheJournalMustPassTheReleaseStatesInOrder(t *testing.T) {
 
 func TestTheMergedDiffMustAddTheRequestedRoute(t *testing.T) {
 	t.Parallel()
-	added := strings.Join([]string{"@@ -1,3 +1,5 @@", ` mux.HandleFunc("GET /healthz", health)`, `+	mux.HandleFunc("GET /version", version)`}, "\n")
+	added := strings.Join([]string{"@@ -1,3 +1,5 @@", ` mux.HandleFunc("GET /healthz", health)`, `+	mux.HandleFunc("GET ` + versionRoute + `", version)`}, "\n")
 	if !addsRoute(added, versionRoute) {
 		t.Error("an added route registration was missed")
 	}
-	removed := strings.Join([]string{"--- a/app.go", "+++ b/app.go", `-	mux.HandleFunc("GET /version", version)`, `+	// "/versioned" is planned`}, "\n")
+	removed := strings.Join([]string{"--- a/app.go", "+++ b/app.go", `-	mux.HandleFunc("GET ` + versionRoute + `", version)`, `+	// "` + versionRoute + `ed" is planned`}, "\n")
 	if addsRoute(removed, versionRoute) {
 		t.Error("a removed route or a longer path was taken for the requested route")
 	}

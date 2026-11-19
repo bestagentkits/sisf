@@ -19,7 +19,19 @@ const (
 	// alertThresholdUnits raises the Owner alert at 2 units.
 	alertThresholdUnits = "2"
 
-	issueTitle = "add GET /version returning the build revision"
+	// sandboxFeature is the feature of the sandbox's FEATURES.md the issue
+	// improves.
+	sandboxFeature = "Revision reporting"
+)
+
+// versionRoute is the route the issue asks for; the merged change must add
+// it. It is new on every run: the sandbox keeps every change an earlier run
+// merged, so a route asked for before is already there and an agent rightly
+// changes nothing.
+var versionRoute = "/revision-" + time.Now().UTC().Format("20060102-150405")
+
+var (
+	issueTitle = "add GET " + versionRoute + " returning the build revision"
 	// issueBody carries the sections intake reads (internal/intake/sections.go)
 	// so an improvement goes straight to Ready: the scope, the affected
 	// feature, which the sandbox's FEATURES.md lists, and a Definition of
@@ -40,12 +52,6 @@ revision the process runs as, as plain text.
 - A Go test covers the ` + "`" + versionRoute + "`" + ` handler.
 - ` + "`go test ./...`" + ` passes.
 `
-	// sandboxFeature is the feature of the sandbox's FEATURES.md the issue
-	// improves.
-	sandboxFeature = "Revision reporting"
-	// versionRoute is the route the issue asks for; the merged change must
-	// add it.
-	versionRoute = "/version"
 )
 
 var issueLabels = []string{"sisf:ready", "kind:improvement"}
