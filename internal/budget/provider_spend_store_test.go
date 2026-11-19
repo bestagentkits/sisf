@@ -188,6 +188,17 @@ func TestTheProviderSpendIsReadOnScheduleAndAFailureStoresNothing(t *testing.T) 
 				t.Fatalf("a failed read: %v", err)
 			}
 		}
+		// After a failure the providers are not asked again at once: the
+		// control pass runs every second.
+		reads := openai.reads()
+		db.Clock.Advance(budget.ProviderSpendRetry - time.Second)
+		if err := refresher.Refresh(ctx); err != nil || openai.reads() != reads {
+			t.Fatalf("asked again %d times within the retry delay: %v", openai.reads()-reads, err)
+		}
+		db.Clock.Advance(time.Second)
+		if err := refresher.Refresh(ctx); !core.HasCode(err, core.CodeUnavailable) || openai.reads() != reads+1 {
+			t.Fatalf("not asked again after the retry delay: %d reads, %v", openai.reads()-reads, err)
+		}
 		if err := reserveIn(t, db, agent, 2, million); !core.HasCode(err, core.CodeBudgetExceeded) {
 			t.Fatalf("a run admitted on a stale provider figure: %v", err)
 		}
@@ -203,6 +214,7 @@ func TestTheProviderSpendIsReadOnScheduleAndAFailureStoresNothing(t *testing.T) 
 
 		// A provider without a credential is not read and stores nothing.
 		delete(refresher.Sources, budget.ProviderOpenAI)
+		db.Clock.Advance(budget.ProviderSpendRetry)
 		if err := refresher.Refresh(ctx); !core.HasCode(err, core.CodeUnavailable) {
 			t.Fatalf("a provider without a credential: %v", err)
 		}
@@ -212,7 +224,8 @@ func TestTheProviderSpendIsReadOnScheduleAndAFailureStoresNothing(t *testing.T) 
 	})
 }
 
-// A damaged figure is replaced by the next read instead of blocking it.
+// A damaged figure holds capped runs but not a rollback, and is replaced
+// by the next read instead of blocking it.
 func TestADamagedProviderSpendIsReadAgain(t *testing.T) {
 	t.Parallel()
 	sqlstoretest.Run(t, func(t *testing.T, db *sqlstoretest.Database) {
@@ -224,8 +237,17 @@ func TestADamagedProviderSpendIsReadAgain(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := reserveIn(t, db, agent, 1, million); !core.HasCode(err, core.CodeTampered) {
+		if err := reserveIn(t, db, agent, 1, million); !core.HasCode(err, core.CodeBudgetExceeded) {
 			t.Fatalf("a run admitted on a damaged provider figure: %v", err)
+		}
+		gate := budget.NewGate(budget.Config{Clock: db.Clock})
+		rollback := request(3, million)
+		rollback.FactoryID = sqlstoretest.Factory
+		if err := agent.Update(ctx, func(ctx context.Context, tx state.Tx) error {
+			_, err := gate.ReserveRollback(ctx, tx, rollback)
+			return err
+		}); err != nil {
+			t.Fatalf("a rollback held by a damaged provider figure: %v", err)
 		}
 		refresher := budget.ProviderSpendRefresher{Store: budget.StateStore(control), Clock: db.Clock,
 			Sources: map[string]budget.CostSource{budget.ProviderAnthropic: &fakeSource{}}}

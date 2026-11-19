@@ -61,8 +61,8 @@ func LoadProviderSpend(ctx context.Context, kv state.KV) (p ProviderSpend, versi
 
 // providerFloor returns the least the current period counts as spent: the
 // sum of the figures of the providers the settings name. It holds, with
-// BUDGET_EXCEEDED, when a named provider's figure is missing or was read
-// longer than ProviderSpendMaxAge ago, since what the agents under-report
+// BUDGET_EXCEEDED, when a named provider's figure is missing, damaged or
+// was read longer than ProviderSpendMaxAge ago, since what the agents under-report
 // there would go unseen. Figures read for an earlier period do not count
 // and do not hold: at the start of a period the provider has not reported
 // it yet, which the fresh read of the earlier period shows.
@@ -76,6 +76,9 @@ func providerFloor(ctx context.Context, kv state.KV, s Settings, now time.Time) 
 	}
 	p, _, found, err := LoadProviderSpend(ctx, kv)
 	switch {
+	case core.HasCode(err, core.CodeTampered):
+		// The control zone replaces a damaged figure on its next read.
+		return 0, held("the stored provider spend cannot be read")
 	case err != nil:
 		return 0, err
 	case !found:

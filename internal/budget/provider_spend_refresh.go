@@ -23,6 +23,11 @@ type CostSource interface {
 // inside ProviderSpendMaxAge, so one failed read does not hold runs.
 const ProviderSpendEvery = 15 * time.Minute
 
+// ProviderSpendRetry is how long after a failed read the providers are
+// asked again. The control pass runs every second; without it, an outage
+// or a rate limit would be met with a request each second.
+const ProviderSpendRetry = time.Minute
+
 // ProviderSpendRefresher reads the spend of the providers the budget
 // settings name and stores it for the gate. A provider the settings name
 // that has no source here, as when its credential is not configured, is
@@ -32,19 +37,26 @@ type ProviderSpendRefresher struct {
 	Store   Store
 	Sources map[string]CostSource
 	Clock   core.Clock
+
+	// failedAt is when the last read failed; zero after a success.
+	failedAt time.Time
 }
 
 // Refresh reads the figures when the stored ones are older than
 // ProviderSpendEvery or cover another period, and stores what it read. A
 // provider that cannot be read keeps the rest from being stored, so the
-// stored figures always hold every named provider at one instant.
-func (r ProviderSpendRefresher) Refresh(ctx context.Context) error {
+// stored figures always hold every named provider at one instant; the
+// next attempt waits ProviderSpendRetry. It is not safe for concurrent use.
+func (r *ProviderSpendRefresher) Refresh(ctx context.Context) error {
 	var (
 		settings Settings
 		version  int64
 		due      bool
 	)
 	now := r.Clock.Now()
+	if !r.failedAt.IsZero() && now.Sub(r.failedAt) < ProviderSpendRetry && !now.Before(r.failedAt) {
+		return nil
+	}
 	err := r.Store.View(ctx, func(ctx context.Context, l Ledger) error {
 		s, _, found, err := loadSettings(ctx, l)
 		if err != nil || !found || len(s.ProviderCostSources) == 0 {
@@ -88,8 +100,10 @@ func (r ProviderSpendRefresher) Refresh(ctx context.Context) error {
 		next.Sources[name] = SourceSpend{SpentMicros: spent, CoveredUntil: covered}
 	}
 	if len(failures) > 0 {
+		r.failedAt = now
 		return errors.Join(failures...)
 	}
+	r.failedAt = time.Time{}
 	raw, err := json.Marshal(next)
 	if err != nil {
 		return core.NewError(core.CodeInternal, "the provider spend cannot be encoded").WithCause(err)
