@@ -21,8 +21,8 @@ type Cmd struct {
 	Dir string
 	// Env is added to the environment of the program, as KEY=VALUE.
 	Env []string
-	// OnlyEnv starts the program with Env and a minimal PATH and HOME, not
-	// with the environment of the caller, so a secret of the caller does
+	// OnlyEnv starts the program with Env and a minimal PATH, HOME and
+	// TMPDIR, not with the environment of the caller, so a secret of the caller does
 	// not reach a program that was not given it.
 	OnlyEnv bool
 	// Stdout and Stderr receive the output of a background process; Run
@@ -90,7 +90,7 @@ func (OSExec) Start(_ context.Context, c Cmd) (Process, error) {
 	cmd := exec.Command(c.Name, c.Args...)
 	cmd.Dir, cmd.Env = c.Dir, append(os.Environ(), c.Env...)
 	if c.OnlyEnv {
-		cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}, c.Env...)
+		cmd.Env = minimalEnv(os.Getenv, c.Env)
 	}
 	cmd.Stdout, cmd.Stderr = c.Stdout, c.Stderr
 	cmd.ExtraFiles = c.ExtraFiles
@@ -127,3 +127,14 @@ const (
 	stopPoll      = 500 * time.Millisecond
 	stopWaitPolls = 80
 )
+
+// minimalEnv is the environment of a program started with OnlyEnv: PATH and
+// HOME, TMPDIR when the caller set one, so a program on a read-only root
+// filesystem keeps its temporary files where the caller can write, and env.
+func minimalEnv(getenv func(string) string, env []string) []string {
+	base := []string{"PATH=" + getenv("PATH"), "HOME=" + getenv("HOME")}
+	if tmp := getenv("TMPDIR"); tmp != "" {
+		base = append(base, "TMPDIR="+tmp)
+	}
+	return append(base, env...)
+}
