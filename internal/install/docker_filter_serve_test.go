@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/internal/dockerfilter"
+	"github.com/bestagentkits/sisf/pkg/managedapp"
 )
 
 var filterImage = "sha256:" + strings.Repeat("b", 64)
@@ -50,5 +51,23 @@ func TestADockerFilterServesUntilItsContextEnds(t *testing.T) {
 	o.Listen = "not an address"
 	if err := ServeDockerFilter(t.Context(), o); err == nil {
 		t.Fatal("a filter served on an address it cannot listen on")
+	}
+}
+
+// A managed application is admitted by the deploy role only, which then
+// needs no --image of its own: the runtime image comes from the Spec.
+func TestOnlyTheDeployFilterAdmitsAManagedApplication(t *testing.T) {
+	t.Parallel()
+	app := &managedapp.RevisionConfig{Image: "wordpress:7.0@" + filterImage, Port: 80, User: "33:33", BundleTarget: "/var/www/html",
+		Mounts: []managedapp.Mount{{Name: "shop-secrets", Target: managedapp.SecretsDir, ReadOnly: true}}}
+	o := DockerFilterOptions{Role: dockerfilter.RoleDeploy, Listen: "127.0.0.1:0", Socket: "/var/run/docker.sock",
+		FactoryID: "sisf-acme", Network: "sisf-acme-deploy", App: app}
+	if _, err := o.filter(); err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	o.Role, o.Network = dockerfilter.RoleRunner, "sisf-acme-sandbox"
+	o.Images = []string{filterImage}
+	if _, err := o.filter(); err == nil {
+		t.Fatal("a runner filter admitted a managed application")
 	}
 }

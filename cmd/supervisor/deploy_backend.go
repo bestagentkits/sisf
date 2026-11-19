@@ -47,6 +47,9 @@ const localSlotsRecord = "local-slots"
 // trustDir is the trust volume, where the local backend records its
 // processes; empty records nothing.
 func (l *lifecycleFlags) deployBackend(factory core.FactoryID, ctl edge.Controller, trustDir string, clock core.Clock, log *slog.Logger) (deploy.Backend, error) {
+	if _, err := l.app.load(l.deploy); err != nil {
+		return nil, err
+	}
 	switch l.deploy {
 	case "local":
 		if l.localProgram == "" || !filepath.IsAbs(l.localProgram) {
@@ -69,10 +72,11 @@ func (l *lifecycleFlags) deployBackend(factory core.FactoryID, ctl edge.Controll
 		}
 		return local.New(local.Config{Factory: factory, Starter: starter, Edge: ctl, Clock: clock, Logger: log, StateDir: slots})
 	case "compose":
-		return compose.New(compose.Config{
-			Endpoint: l.deployEndpoint, Factory: factory, Network: l.deployNetwork, AppPort: l.appPort,
-			Edge: ctl, Clock: clock, Logger: log,
-		})
+		cfg, err := l.composeConfig(factory, ctl, trustDir, clock, log)
+		if err != nil {
+			return nil, err
+		}
+		return compose.New(cfg)
 	}
 	return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "--deploy must be local or compose"))
 }

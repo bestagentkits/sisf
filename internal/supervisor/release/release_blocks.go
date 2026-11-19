@@ -53,8 +53,9 @@ func judgedUnhealthy(reason string) *undo {
 // list only part of, a change of the trusted control surface, a unit the
 // factory may not publish by itself, a receipt or artifact that does not
 // verify, an expired one included, a base the supervisor does not accept
-// now (checkBaseAccepted), and a base that does not contain the LKG
-// release of the unit (checkBaseHasLKG).
+// now (checkBaseAccepted), a base that does not contain the LKG release
+// of the unit (checkBaseHasLKG), and a change only the Owner may release
+// that the Owner has not approved for this build (judgeChange).
 func (p *Pipeline) refusal(ctx context.Context, req Request, record core.StateRecord) (verifiedRelease, error) {
 	if err := req.validate(); err != nil {
 		return verifiedRelease{}, err
@@ -76,7 +77,11 @@ func (p *Pipeline) refusal(ctx context.Context, req Request, record core.StateRe
 	if err := p.checkBaseAccepted(ctx, v); err != nil {
 		return v, err
 	}
-	return v, p.checkBaseHasLKG(ctx, v)
+	if err := p.checkBaseHasLKG(ctx, v); err != nil {
+		return v, err
+	}
+	v.owner, err = p.judgeChange(ctx, v, req.Candidate.ChangedPaths)
+	return v, err
 }
 
 // judgedRefusal reports whether a refusal judged the candidate or the

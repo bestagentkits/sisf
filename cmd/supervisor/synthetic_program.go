@@ -139,6 +139,19 @@ func (b *boundedBuffer) String() string { return b.buf.String() }
 // a release whose real traffic is too thin then holds, as before. A named
 // program that is missing or cannot be executed fails the start.
 func (l *lifecycleFlags) syntheticSuite(backend deploy.Backend, log *slog.Logger) (release.SyntheticSuite, error) {
+	app, err := l.app.load(l.deploy)
+	if err != nil {
+		return nil, err
+	}
+	if app != nil {
+		if l.syntheticProgram != "" {
+			return nil, stages.Misconfigured(core.NewError(core.CodeInvalidArgument, "a managed application is judged by its Spec's checks; --synthetic-program is not taken with --app-spec"))
+		}
+		if checks := newManagedChecks(app.Spec, backend, log); checks != nil {
+			return checks, nil
+		}
+		return nil, nil
+	}
 	if l.syntheticProgram == "" {
 		return nil, nil
 	}

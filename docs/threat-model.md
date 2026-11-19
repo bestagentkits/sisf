@@ -123,6 +123,10 @@ When a run stops, or QA passes or holds it, the factory closes the budget reserv
 
 The supervisor runs the application's synthetic program, as its own operating-system user and with an environment of a fixed `PATH` only (`cmd/supervisor/synthetic_program.go`), to judge a low-traffic release. The program is not pinned by digest; it is trusted because `sisf up` builds it from the factory's own source, never from a candidate, and a candidate that changes it is a governance change.
 
+### Managed application bundles (TM-08, TM-09)
+
+A managed application's candidate runs its tests in the sandbox only. The supervisor then assembles the content bundle itself from the candidate commit as the GitHub API returns it, reading only the lockfile and the Spec's sources (`cmd/supervisor/stages/bundle_images.go`). It refuses a symlink, a submodule, a tree GitHub cut short and anything past the bundle limits. It downloads only archives the lockfile pins, from the fixed https hosts of their kinds, with bounded size and time, and keeps one only when its sha256 matches. No candidate code runs while the bundle is made. A change the Owner-installed Spec gives to the Owner (Core, a new component, a protected path, the Spec itself) is released only on a signed, single-use approval of that exact release digest, filed by the supervisor and spent when the rollout starts (`internal/supervisor/release/managed_change_gate.go`).
+
 Medium and Low scenarios (for example report-endpoint abuse, label spoofing, stale leases) are tracked in the owning tests and are not given IDs here.
 
 ## Coverage rule

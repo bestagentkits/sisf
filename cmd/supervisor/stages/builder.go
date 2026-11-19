@@ -48,6 +48,10 @@ type ImageResult struct {
 	// never from what a build command reports.
 	Program       *debug.BuildInfo
 	ProgramUnread string
+	// Bundle is the sha256 digest of the content bundle the supervisor
+	// assembled for a managed application, which runs in Image; Digest is
+	// then the PairDigest of the two. Empty for an image-only build.
+	Bundle string
 }
 
 // ImageBuilder turns a candidate commit into an immutable image.
@@ -182,7 +186,7 @@ func (b *CandidateBuilder) Build(ctx context.Context, req BuildRequest) (Built, 
 		return Built{}, core.NewError(core.CodeInternal, "the SBOM and provenance of the build cannot be made").WithCause(err)
 	}
 	return Built{Branch: branch, ChangedPaths: changed, Record: handoff.BuildRecord{
-		Commit: commit, Digest: image.Digest, Unit: unit, Image: image.Image, Builder: b.Images.Name(),
+		Commit: commit, Digest: image.Digest, Unit: unit, Image: image.Image, Bundle: image.Bundle, Builder: b.Images.Name(),
 		TestsPassed: image.TestsPassed, TestEvidence: image.TestEvidence,
 		SBOM: docs.SBOM, SBOMRef: docs.SBOMRef, Provenance: docs.Provenance, ProvenanceRef: docs.ProvenanceRef, BuiltAt: finished,
 	}}, nil

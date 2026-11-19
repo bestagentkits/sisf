@@ -1,0 +1,43 @@
+# The shop as its Owner runs it today, before SISF manages it: WordPress with
+# WooCommerce and a MariaDB database. `sisf adopt` reads this file.
+name: sisf-trial-wc
+services:
+  wordpress:
+    image: wordpress:7.0-php8.3-apache@sha256:b427cec767f5de2aa649390cb8805aa1fe320e1e0d57fc1f467754edb6cc0a49
+    depends_on: [db]
+    ports: ["127.0.0.1:7480:80"]
+    user: "33:33"
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: shop
+      WORDPRESS_DB_USER: shop
+      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/db_password
+      WORDPRESS_SECRET_FILE: /run/secrets/wp_secret
+      WORDPRESS_HOME: http://127.0.0.1:7480
+      APACHE_RUN_DIR: /tmp/apache2
+      APACHE_PID_FILE: /tmp/apache2/apache2.pid
+      APACHE_LOCK_DIR: /tmp/apache2/lock
+      APACHE_LOG_DIR: /tmp/apache2/log
+    volumes:
+      - ./build/bundle:/var/www/html:ro
+      - uploads:/var/www/html/wp-content/uploads
+    secrets: [db_password, wp_secret]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/healthz"]
+  db:
+    image: mariadb:11.4@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
+    environment:
+      MARIADB_DATABASE: shop
+      MARIADB_USER: shop
+      MARIADB_PASSWORD_FILE: /run/secrets/db_password
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+    volumes: [db:/var/lib/mysql]
+    secrets: [db_password]
+volumes:
+  uploads: {}
+  db: {}
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  wp_secret:
+    file: ./secrets/wp_secret

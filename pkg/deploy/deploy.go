@@ -8,6 +8,10 @@ package deploy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -32,18 +36,38 @@ type Artifact struct {
 	// same source, and an artifact of one is never released by the other.
 	FactoryID core.FactoryID `json:"factory_id"`
 	// Unit is the runtime unit name from the manifest, for example "app".
-	Unit   string             `json:"unit"`
+	Unit string `json:"unit"`
+	// Digest names the release. For a bundle artifact it must equal
+	// PairDigest(Image, Bundle), so the release record binds the pair.
 	Digest core.ReleaseDigest `json:"digest"`
-	// Image is the digest-pinned reference the backend pulls or loads.
+	// Image is the digest-pinned reference the backend pulls or loads. For a
+	// bundle artifact it is the runtime image the Owner pinned.
 	Image     string         `json:"image"`
 	Signature core.Signature `json:"signature"`
 	// SBOMRef and ProvenanceRef point to the supply-chain documents of the build.
 	SBOMRef       string `json:"sbom_ref,omitempty"`
 	ProvenanceRef string `json:"provenance_ref,omitempty"`
+	// Bundle is the sha256 digest of the content bundle that runs in Image,
+	// a reproducible tar assembled by trusted code. Empty for an image-only
+	// artifact.
+	Bundle string `json:"bundle,omitempty"`
+}
+
+// bundlePattern is the only digest a content bundle is named by.
+var bundlePattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+
+// PairDigest names the release of a runtime image and a content bundle
+// together: sha256:hex(sha256("sisf.pair.v1\n" + image + "\n" + bundle)).
+// image is the artifact's Image reference exactly as it is written.
+func PairDigest(image, bundle string) core.ReleaseDigest {
+	sum := sha256.Sum256([]byte("sisf.pair.v1\n" + image + "\n" + bundle))
+	return core.ReleaseDigest("sha256:" + hex.EncodeToString(sum[:]))
 }
 
 // Validate requires a unit, a full digest, an image reference and a signature,
-// and a well-formed factory when one is named. It does not verify the
+// and a well-formed factory when one is named. A bundle artifact also needs a
+// sha256 bundle digest, an image on one line, and a Digest that is the
+// PairDigest of the two. It does not verify the
 // signature, and it does not say which factory may release the artifact:
 // ValidateFor does.
 func (a Artifact) Validate() error {
@@ -57,6 +81,16 @@ func (a Artifact) Validate() error {
 	}
 	if err := a.Digest.Validate(); err != nil {
 		return err
+	}
+	if a.Bundle != "" {
+		switch {
+		case !bundlePattern.MatchString(a.Bundle):
+			return core.NewError(core.CodeInvalidArgument, "the bundle must be named by sha256:<64 hex>")
+		case strings.ContainsFunc(a.Image, func(r rune) bool { return r < 0x20 || r == 0x7f }):
+			return core.NewError(core.CodeInvalidArgument, "the image reference of a bundle artifact must be one plain line")
+		case a.Digest != PairDigest(a.Image, a.Bundle):
+			return core.NewError(core.CodeInvalidArgument, "a bundle artifact's digest must name its image and bundle together")
+		}
 	}
 	return a.Signature.Validate()
 }
@@ -77,27 +111,37 @@ func (a Artifact) ValidateFor(factory core.FactoryID) error {
 	return nil
 }
 
-// Domain and field-list version of the artifact's signing payload. Version 2
-// added the factory.
+// Domain and field-list versions of the artifact's signing payload. Version 2
+// added the factory; version 3 adds the bundle and is used only by bundle
+// artifacts, so an image-only artifact keeps the exact bytes it was signed
+// over and a stored last-known-good build still verifies after an upgrade.
 const (
-	artifactPayloadDomain  = "sisf.deploy_artifact"
-	artifactPayloadVersion = 2
+	artifactPayloadDomain        = "sisf.deploy_artifact"
+	artifactPayloadVersion       = 2
+	bundleArtifactPayloadVersion = 3
 )
 
 // SigningPayload returns the canonical bytes the release signer signs and
 // the supervisor verifies. Every field except the signature is bound, in a
 // fixed order, so an artifact cannot be relabelled as another factory, unit,
-// digest, image or set of supply-chain documents without invalidating its
-// signature.
+// digest, image, set of supply-chain documents or bundle without
+// invalidating its signature.
 func (a Artifact) SigningPayload() []byte {
-	return core.NewPayloadBuilder(artifactPayloadDomain, artifactPayloadVersion).
+	version := artifactPayloadVersion
+	if a.Bundle != "" {
+		version = bundleArtifactPayloadVersion
+	}
+	b := core.NewPayloadBuilder(artifactPayloadDomain, version).
 		Text("factory_id", string(a.FactoryID)).
 		Text("unit", a.Unit).
 		Text("digest", string(a.Digest)).
 		Text("image", a.Image).
 		Text("sbom_ref", a.SBOMRef).
-		Text("provenance_ref", a.ProvenanceRef).
-		Bytes()
+		Text("provenance_ref", a.ProvenanceRef)
+	if a.Bundle != "" {
+		b = b.Text("bundle", a.Bundle)
+	}
+	return b.Bytes()
 }
 
 // Revision is a staged or running version of a unit.

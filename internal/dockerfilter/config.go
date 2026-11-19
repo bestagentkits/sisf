@@ -91,6 +91,20 @@ type Config struct {
 	// ask for, in the deploy role only; DefaultDeployLimits fills a zero
 	// field. A revision must set every limit.
 	DeployLimits DeployLimits
+	// BundleTarget is where a revision mounts its content bundle volume,
+	// read-only, in the deploy role only. Empty allows no bundle volume and
+	// no bundle loader. See deploy_bundle_mounts.go.
+	BundleTarget string
+	// DataVolumes are the named volumes a revision may mount, each only at
+	// its own target, in the deploy role only.
+	DataVolumes []DeployVolume
+	// DeployEnv is the environment a revision gets after the revision it is
+	// started as, entry for entry and in this order, in the deploy role
+	// only. It holds configuration, never a secret.
+	DeployEnv []string
+	// MaxArchiveBytes bounds a bundle uploaded into a loader, in the deploy
+	// role only; DefaultMaxArchiveBytes when zero.
+	MaxArchiveBytes int64
 	// MaxBodyBytes bounds a create body; DefaultMaxBodyBytes when zero.
 	MaxBodyBytes int64
 	// Logger receives one line per refusal; slog.Default when nil.
@@ -118,8 +132,9 @@ func (c Config) settled() (Config, error) {
 	if c.Role != RoleRunner {
 		return c, invalid("the filter role must be runner or deploy")
 	}
-	if c.DeployNetwork != "" || len(c.SimulatedImages) > 0 || c.DeployLimits != (DeployLimits{}) {
-		return c, invalid("a runner filter takes no deploy network, simulated images or deploy limits")
+	if c.DeployNetwork != "" || len(c.SimulatedImages) > 0 || c.DeployLimits != (DeployLimits{}) ||
+		c.BundleTarget != "" || len(c.DataVolumes) > 0 || len(c.DeployEnv) > 0 || c.MaxArchiveBytes != 0 {
+		return c, invalid("a runner filter takes no deploy network, simulated images, deploy limits, bundle, volumes, environment or archive limit")
 	}
 	if c.RunnerLabel == "" {
 		c.RunnerLabel = DefaultRunnerLabel

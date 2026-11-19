@@ -1,6 +1,7 @@
 // Package dockerfiltertest is an in-memory stand-in for the Docker daemon,
 // for tests of the Docker request filter and of the docker execution
-// adapter. It speaks the few endpoints a runner's life needs, records every
+// adapter. It speaks the few endpoints a runner's and a revision's life
+// needs, named volumes and archive uploads among them, records every
 // request that reaches it and answers 200 to anything else, so a test can
 // prove that a refused request never reached the daemon. It runs nothing.
 package dockerfiltertest
@@ -50,7 +51,22 @@ type Container struct {
 	ExitCode int
 	Stdout   string
 	Stderr   string
+	// Archives are the tar streams uploaded into the container, in order.
+	Archives []Archive
 	done     chan struct{}
+}
+
+// Archive is one upload into a container: the path it was extracted at and
+// the bytes of the tar stream.
+type Archive struct {
+	Path string
+	Body []byte
+}
+
+// Volume is the daemon's record of one named volume.
+type Volume struct {
+	Name   string
+	Labels map[string]string
 }
 
 // Daemon is the fake daemon. It is safe for concurrent use.
@@ -62,13 +78,41 @@ type Daemon struct {
 	seq        int
 	runtimes   []string
 	networks   map[string]bool
+	volumes    map[string]*Volume
+	// failArchive makes every archive upload answer 500 when set.
+	failArchive bool
 	// Run decides what a started container does; it exits 0 at once when nil.
 	run func(Container) Outcome
 }
 
 // New returns a daemon that reports the given runtimes.
 func New(runtimes ...string) *Daemon {
-	return &Daemon{containers: map[string]*Container{}, runtimes: runtimes, networks: map[string]bool{}}
+	return &Daemon{containers: map[string]*Container{}, runtimes: runtimes, networks: map[string]bool{}, volumes: map[string]*Volume{}}
+}
+
+// AddVolume records a named volume that was not made through the API.
+func (d *Daemon) AddVolume(name string, labels map[string]string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.volumes[name] = &Volume{Name: name, Labels: labels}
+}
+
+// Volumes returns a copy of every volume that exists, by name.
+func (d *Daemon) Volumes() map[string]Volume {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make(map[string]Volume, len(d.volumes))
+	for name, v := range d.volumes {
+		out[name] = *v
+	}
+	return out
+}
+
+// FailArchives makes every archive upload from now on fail, or succeed again.
+func (d *Daemon) FailArchives(fail bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.failArchive = fail
 }
 
 // AddNetwork records a user-defined network, internal or not. A network
@@ -161,13 +205,82 @@ func (d *Daemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		d.list(w, r)
 	case len(parts) == 2 && parts[0] == "networks" && r.Method == http.MethodGet:
 		d.network(w, parts[1])
+	case path == "/volumes/create" && r.Method == http.MethodPost:
+		d.createVolume(w, body)
+	case len(parts) == 2 && parts[0] == "volumes":
+		d.volume(w, r, parts[1])
 	case len(parts) >= 2 && parts[0] == "containers":
-		d.container(w, r, parts[1], strings.Join(parts[2:], "/"))
+		d.container(w, r, parts[1], strings.Join(parts[2:], "/"), body)
 	default:
 		// A real daemon would have done this; answering keeps the test
 		// honest about what got through.
 		writeJSON(w, http.StatusOK, map[string]string{"message": "done"})
 	}
+}
+
+// createVolume makes a named volume, or answers with the one of that name
+// that exists, as the daemon does.
+func (d *Daemon) createVolume(w http.ResponseWriter, body []byte) {
+	var cfg struct {
+		Name   string
+		Labels map[string]string
+	}
+	if err := json.Unmarshal(body, &cfg); err != nil || cfg.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "bad body"})
+		return
+	}
+	d.mu.Lock()
+	v, ok := d.volumes[cfg.Name]
+	if !ok {
+		v = &Volume{Name: cfg.Name, Labels: cfg.Labels}
+		d.volumes[cfg.Name] = v
+	}
+	view := volumeView(v)
+	d.mu.Unlock()
+	writeJSON(w, http.StatusCreated, view)
+}
+
+// volume inspects or removes a named volume. A volume a container still
+// mounts is not removed.
+func (d *Daemon) volume(w http.ResponseWriter, r *http.Request, name string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	v, ok := d.volumes[name]
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"message": "get " + name + ": no such volume"})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, volumeView(v))
+	case http.MethodDelete:
+		for _, c := range d.containers {
+			if mountsVolume(c, name) {
+				writeJSON(w, http.StatusConflict, map[string]string{"message": "remove " + name + ": volume is in use"})
+				return
+			}
+		}
+		delete(d.volumes, name)
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"message": "done"})
+	}
+}
+
+func volumeView(v *Volume) map[string]any {
+	return map[string]any{"Name": v.Name, "Labels": v.Labels, "Driver": "local",
+		"Mountpoint": "/var/lib/docker/volumes/" + v.Name + "/_data", "Scope": "local"}
+}
+
+// mountsVolume reports whether the container's mounts name the volume.
+func mountsVolume(c *Container, name string) bool {
+	mounts, _ := c.Host["Mounts"].([]any)
+	for _, m := range mounts {
+		if m, ok := m.(map[string]any); ok && m["Source"] == name {
+			return true
+		}
+	}
+	return false
 }
 
 // network answers an inspect of a network by name.
@@ -265,7 +378,7 @@ func (d *Daemon) find(ref string) *Container {
 	return nil
 }
 
-func (d *Daemon) container(w http.ResponseWriter, r *http.Request, ref, action string) {
+func (d *Daemon) container(w http.ResponseWriter, r *http.Request, ref, action string, body []byte) {
 	d.mu.Lock()
 	c := d.find(ref)
 	if c == nil {
@@ -301,6 +414,17 @@ func (d *Daemon) container(w http.ResponseWriter, r *http.Request, ref, action s
 		code := c.ExitCode
 		d.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"StatusCode": code})
+	case action == "archive" && r.Method == http.MethodPut:
+		fail := d.failArchive
+		if !fail {
+			c.Archives = append(c.Archives, Archive{Path: r.URL.Query().Get("path"), Body: body})
+		}
+		d.mu.Unlock()
+		if fail {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"message": "extraction failed"})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	case action == "logs":
 		out, errOut := c.Stdout, c.Stderr
 		d.mu.Unlock()

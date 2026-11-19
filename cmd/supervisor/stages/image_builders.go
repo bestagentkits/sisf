@@ -144,23 +144,15 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 	if s.Programs == nil {
 		return ImageResult{}, unobservedImagesRefused()
 	}
-	caps, err := s.Exec.Capabilities(ctx)
+	sandbox, destroy, err := s.open(ctx, req)
 	if err != nil {
 		return ImageResult{}, err
 	}
-	if req.Untrusted && !execution.UntrustedCodeAllowed(caps) {
-		return ImageResult{}, untrustedRefused(s.Exec.Name())
-	}
-	spec := s.Specs.ForRun(req.RunID)
-	sandbox, err := s.Exec.CreateSandbox(ctx, spec)
-	if err != nil {
-		return ImageResult{}, err
-	}
-	defer func() { _ = s.Exec.Destroy(context.WithoutCancel(ctx), sandbox.ID) }()
+	defer destroy()
 	deadline := time.Now().Add(s.Timeout)
-	candidate := map[string]string{"SISF_COMMIT": string(req.Commit), "SISF_UNIT": req.Unit, "SISF_BRANCH": req.Branch}
+	candidate := candidateEnv(req)
 
-	tested, err := s.phase(ctx, sandbox.ID, phaseTest, candidate, deadline, nil)
+	tested, err := s.phase(ctx, sandbox, phaseTest, candidate, deadline, nil)
 	if err != nil {
 		return ImageResult{}, err
 	}
@@ -169,7 +161,7 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 	// system fails here, as its own failure.
 	targeted := maps.Clone(candidate)
 	targeted["SISF_TARGET_OS"], targeted["SISF_TARGET_ARCH"] = runtime.GOOS, runtime.GOARCH
-	built, err := s.phase(ctx, sandbox.ID, phaseBuild, targeted, deadline, nil)
+	built, err := s.phase(ctx, sandbox, phaseBuild, targeted, deadline, nil)
 	if err != nil {
 		return ImageResult{}, err
 	}
@@ -197,7 +189,7 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 	defer intake.Abort()
 	report := newReportReader(nonce, intake)
 	env["SISF_REPORT_TARGET_OS"], env["SISF_REPORT_TARGET_ARCH"] = runtime.GOOS, runtime.GOARCH
-	reported, err := s.phase(ctx, sandbox.ID, phaseReport, env, deadline, report)
+	reported, err := s.phase(ctx, sandbox, phaseReport, env, deadline, report)
 	if err != nil {
 		return ImageResult{}, err
 	}
@@ -214,6 +206,48 @@ func (s SandboxImages) BuildImage(ctx context.Context, req ImageRequest) (ImageR
 	out.TestsPassed = tested.ExitCode == 0
 	out.TestEvidence = "sandbox test phase exited with status " + strconv.Itoa(tested.ExitCode)
 	return out, nil
+}
+
+// TestCandidate runs only the test phase of the build command for req, in
+// a sandbox of its own, and reports whether it passed. It is the suite of
+// a candidate whose artifact the supervisor makes itself, such as a
+// managed application's content bundle: the candidate's code runs here,
+// isolated, and nowhere else.
+func (s SandboxImages) TestCandidate(ctx context.Context, req ImageRequest) (passed bool, evidence string, err error) {
+	if len(s.Argv) == 0 || s.Timeout <= 0 {
+		return false, "", core.NewError(core.CodeInvalidArgument, "the sandboxed test needs a command and a timeout")
+	}
+	sandbox, destroy, err := s.open(ctx, req)
+	if err != nil {
+		return false, "", err
+	}
+	defer destroy()
+	tested, err := s.phase(ctx, sandbox, phaseTest, candidateEnv(req), time.Now().Add(s.Timeout), nil)
+	if err != nil {
+		return false, "", err
+	}
+	return tested.ExitCode == 0, "sandbox test phase exited with status " + strconv.Itoa(tested.ExitCode), nil
+}
+
+// open creates the sandbox of req's run on a backend that isolates the
+// candidate's code when it is untrusted; destroy removes it.
+func (s SandboxImages) open(ctx context.Context, req ImageRequest) (execution.SandboxID, func(), error) {
+	caps, err := s.Exec.Capabilities(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	if req.Untrusted && !execution.UntrustedCodeAllowed(caps) {
+		return "", nil, untrustedRefused(s.Exec.Name())
+	}
+	sandbox, err := s.Exec.CreateSandbox(ctx, s.Specs.ForRun(req.RunID))
+	if err != nil {
+		return "", nil, err
+	}
+	return sandbox.ID, func() { _ = s.Exec.Destroy(context.WithoutCancel(ctx), sandbox.ID) }, nil
+}
+
+func candidateEnv(req ImageRequest) map[string]string {
+	return map[string]string{"SISF_COMMIT": string(req.Commit), "SISF_UNIT": req.Unit, "SISF_BRANCH": req.Branch}
 }
 
 // maxBuildInfoBytes bounds the Go build information of a candidate's

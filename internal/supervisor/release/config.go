@@ -130,6 +130,11 @@ type Config struct {
 	// NOT_SUPPORTED.
 	Approvals ApprovalSpender
 	Policy    PolicyInForce
+	// ChangeGate is optional; with it a change only the Owner may release,
+	// such as a managed application's Core upgrade, is released only on
+	// the Owner's approval of its exact build, which Approvals must then be
+	// able to file and spend (ChangeApprovals).
+	ChangeGate ChangeGate
 	// Audit is optional; it records each release decision.
 	Audit core.AuditLog
 	// Budget is optional; with it every rollback reserves through the

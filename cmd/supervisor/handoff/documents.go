@@ -101,6 +101,11 @@ type BuildRecord struct {
 	Digest core.Digest    `json:"digest"`
 	Unit   string         `json:"unit"`
 	Image  string         `json:"image"`
+	// Bundle is the sha256 digest of the content bundle a managed
+	// application's build assembled, which runs in Image; Digest is then
+	// the PairDigest of the two. Empty for an image-only build, and in a
+	// record written before bundles were built.
+	Bundle string `json:"bundle,omitempty"`
 	// Builder names how the build was made, for example "simulated" or "sandbox:docker".
 	Builder string `json:"builder"`
 	// TestsPassed is the result of the deterministic suite run with the build.

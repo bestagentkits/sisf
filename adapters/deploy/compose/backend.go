@@ -3,6 +3,7 @@ package compose
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/bestagentkits/sisf/internal/edge"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -13,6 +14,8 @@ import (
 type Backend struct {
 	cfg Config
 	api *dockerAPI
+	// bundleMu serialises the loading of bundle volumes.
+	bundleMu sync.Mutex
 }
 
 var _ deploy.Backend = (*Backend)(nil)
@@ -78,6 +81,14 @@ func (b *Backend) Stage(ctx context.Context, a deploy.Artifact) (deploy.Revision
 	}
 	if !pinned(a.Image) {
 		return deploy.Revision{}, core.NewError(core.CodeInvalidArgument, "the image must be pinned by digest")
+	}
+	if a.Bundle != "" {
+		if b.cfg.BundleSource == nil || b.cfg.BundleTarget == "" {
+			return deploy.Revision{}, core.NewError(core.CodeInvalidArgument, "this backend has no bundle target and source, and takes no bundle artifact")
+		}
+		if err := b.ensureBundle(ctx, a); err != nil {
+			return deploy.Revision{}, err
+		}
 	}
 	rev := deploy.Revision{Unit: a.Unit, Digest: a.Digest, ID: b.containerName(a.Unit, a.Digest)}
 	if err := b.ensureRunning(ctx, rev, a); err != nil {

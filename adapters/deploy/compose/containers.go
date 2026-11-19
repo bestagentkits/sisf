@@ -16,6 +16,7 @@ type createSpec struct {
 	Image      string            `json:"Image"`
 	Env        []string          `json:"Env"`
 	Labels     map[string]string `json:"Labels"`
+	User       string            `json:"User,omitempty"`
 	HostConfig hostConfig        `json:"HostConfig"`
 }
 
@@ -38,9 +39,10 @@ type restartPolicy struct {
 }
 
 type mount struct {
-	Type   string `json:"Type"`
-	Source string `json:"Source"`
-	Target string `json:"Target"`
+	Type     string `json:"Type"`
+	Source   string `json:"Source"`
+	Target   string `json:"Target"`
+	ReadOnly bool   `json:"ReadOnly,omitempty"`
 }
 
 // containerName is derived from the factory, the unit and the digest, so one
@@ -53,23 +55,46 @@ func (b *Backend) containerName(unit string, digest core.ReleaseDigest) string {
 	return string(b.cfg.Factory) + "-" + unit + "-" + hex[:12]
 }
 
-// spec builds the container of an artifact.
+// spec builds the container of an artifact. A bundle artifact mounts its
+// bundle volume first, read-only, at the bundle target.
 func (b *Backend) spec(a deploy.Artifact) createSpec {
 	env := append([]string{RevisionEnv + "=" + string(a.Digest)}, b.cfg.Env...)
-	mounts := make([]mount, 0, len(b.cfg.Volumes))
+	mounts := make([]mount, 0, len(b.cfg.Volumes)+1)
+	if a.Bundle != "" {
+		mounts = append(mounts, mount{Type: "volume", Source: b.bundleVolume(a.Bundle), Target: b.cfg.BundleTarget, ReadOnly: true})
+	}
 	for _, v := range b.cfg.Volumes {
-		mounts = append(mounts, mount{Type: "volume", Source: v.Name, Target: v.Target})
+		mounts = append(mounts, mount{Type: "volume", Source: v.Name, Target: v.Target, ReadOnly: v.ReadOnly})
 	}
 	return createSpec{
-		Image: a.Image, Env: env,
-		Labels: map[string]string{LabelFactory: string(b.cfg.Factory), LabelUnit: a.Unit, LabelDigest: string(a.Digest)},
-		HostConfig: hostConfig{
-			NetworkMode: b.cfg.Network, RestartPolicy: restartPolicy{Name: "unless-stopped"},
-			ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"},
-			Tmpfs: map[string]string{"/tmp": "rw,noexec,nosuid,size=64m"}, Mounts: mounts,
-			Memory: b.cfg.Limits.MemoryBytes, MemorySwap: b.cfg.Limits.MemoryBytes,
-			NanoCpus: b.cfg.Limits.NanoCPUs, PidsLimit: b.cfg.Limits.Pids,
-		},
+		Image: a.Image, Env: env, User: b.cfg.User,
+		Labels:     map[string]string{LabelFactory: string(b.cfg.Factory), LabelUnit: a.Unit, LabelDigest: string(a.Digest)},
+		HostConfig: b.hostConfig(b.cfg.Network, "unless-stopped", mounts),
+	}
+}
+
+// loaderSpec builds the loader of a bundle: a container of the runtime
+// image, on no network and with no command, that holds the empty bundle
+// volume open read-write so the bundle can be uploaded into it. It is never
+// started.
+func (b *Backend) loaderSpec(a deploy.Artifact) createSpec {
+	return createSpec{
+		Image: a.Image, User: b.cfg.User,
+		Labels:     map[string]string{LabelFactory: string(b.cfg.Factory), LabelLoader: "1", LabelBundle: a.Bundle},
+		HostConfig: b.hostConfig("none", "no", []mount{{Type: "volume", Source: b.bundleVolume(a.Bundle), Target: LoaderTarget}}),
+	}
+}
+
+// hostConfig is what every container of the backend shares: a read-only
+// root, no capability, no-new-privileges, a small scratch /tmp and the
+// configured limits.
+func (b *Backend) hostConfig(network, restart string, mounts []mount) hostConfig {
+	return hostConfig{
+		NetworkMode: network, RestartPolicy: restartPolicy{Name: restart},
+		ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"},
+		Tmpfs: map[string]string{"/tmp": "rw,noexec,nosuid,size=64m"}, Mounts: mounts,
+		Memory: b.cfg.Limits.MemoryBytes, MemorySwap: b.cfg.Limits.MemoryBytes,
+		NanoCpus: b.cfg.Limits.NanoCPUs, PidsLimit: b.cfg.Limits.Pids,
 	}
 }
 

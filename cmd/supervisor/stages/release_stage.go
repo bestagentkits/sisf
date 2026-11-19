@@ -153,7 +153,7 @@ func (s *ReleaseStage) release(ctx context.Context, record core.StateRecord, r Q
 // the changelog line of the run.
 func (s *ReleaseStage) request(ctx context.Context, record core.StateRecord, r QAResult, doc handoff.CandidateDoc, build handoff.BuildRecord) (release.Request, error) {
 	artifact, err := supplychain.SignArtifact(ctx, s.ArtifactSigner, deploy.Artifact{
-		FactoryID: s.FactoryID, Unit: build.Unit, Digest: core.ReleaseDigest(build.Digest), Image: build.Image,
+		FactoryID: s.FactoryID, Unit: build.Unit, Digest: core.ReleaseDigest(build.Digest), Image: build.Image, Bundle: build.Bundle,
 		SBOMRef: build.SBOMRef, ProvenanceRef: build.ProvenanceRef,
 	})
 	if err != nil {

@@ -113,12 +113,20 @@ func (f *Filter) containerAction(w http.ResponseWriter, r *http.Request, rt rout
 		Config struct {
 			Labels map[string]string `json:"Labels"`
 		} `json:"Config"`
+		State struct {
+			Running bool `json:"Running"`
+		} `json:"State"`
 	}
 	if err := json.Unmarshal(body, &seen); err != nil || !fullID.MatchString(seen.ID) {
 		return deny(http.StatusBadGateway, "the daemon's inspect answer is not understood")
 	}
-	if f.cfg.Role == RoleDeploy && !f.deployed(seen.Config.Labels) {
-		return deny(http.StatusForbidden, "the container is not a deployed unit of this factory")
+	if f.cfg.Role == RoleDeploy {
+		if d := f.deployAction(rt, seen.Config.Labels, seen.State.Running); d != nil {
+			return d
+		}
+		if rt.endpoint == endpointArchive {
+			return f.forwardArchive(w, r, rt, seen.ID)
+		}
 	}
 	if f.cfg.Role != RoleDeploy && seen.Config.Labels[f.cfg.RunnerLabel] != string(f.cfg.RunnerValue) {
 		return deny(http.StatusForbidden, "the container is not a runner of this factory")

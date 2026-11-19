@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/bestagentkits/sisf/adapters/deploy/compose"
+	"github.com/bestagentkits/sisf/internal/dockerfilter"
 	"github.com/bestagentkits/sisf/internal/dockerfilter/dockerfiltertest"
 	"github.com/bestagentkits/sisf/internal/edge"
 	"github.com/bestagentkits/sisf/pkg/core"
@@ -79,6 +81,10 @@ type worldOptions struct {
 	edge    func(edge.Controller) edge.Controller
 	cfg     func(*compose.Config)
 	timeout time.Duration
+	// filter, when set, puts a Docker request filter of the deploy role
+	// with this configuration between the backend and the daemon; the
+	// world fills its upstream, factory and logger.
+	filter *dockerfilter.Config
 }
 
 func newWorld(t *testing.T, o worldOptions) *world {
@@ -116,6 +122,18 @@ func newWorld(t *testing.T, o worldOptions) *world {
 	if o.cfg != nil {
 		o.cfg(&cfg)
 	}
+	if o.filter != nil {
+		fc := *o.filter
+		fc.Role, fc.Upstream, fc.UpstreamURL = dockerfilter.RoleDeploy, w.docker.Client().Transport, w.docker.URL
+		fc.RunnerValue, fc.Logger = factory, slog.New(slog.DiscardHandler)
+		f, err := dockerfilter.New(fc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		filtered := httptest.NewServer(f)
+		t.Cleanup(filtered.Close)
+		cfg.Endpoint = filtered.URL
+	}
 	if w.backend, err = compose.New(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +143,12 @@ func newWorld(t *testing.T, o worldOptions) *world {
 // serveDocker is the daemon plus the container list endpoint, with the
 // ability to make inspect lie about the digest label.
 func (w *world) serveDocker(rw http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path[strings.Index(r.URL.Path, "/containers"):]
+	at := strings.Index(r.URL.Path, "/containers")
+	if at < 0 {
+		w.daemon.ServeHTTP(rw, r)
+		return
+	}
+	path := r.URL.Path[at:]
 	switch {
 	case r.Method == http.MethodGet && path == "/containers/json":
 		w.list(rw, r)

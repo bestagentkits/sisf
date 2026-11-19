@@ -291,11 +291,11 @@ func TestOnlyAFactoryThatKeepsProgramsOrTheSimulationObservesReleases(t *testing
 	t.Parallel()
 	store, _ := trustStore(t)
 	kept := &lifecycleFlags{coderAgent: "claude", programs: &localPrograms{launcher: launcherPath, store: store}}
-	if o, err := kept.artifactObserver(false); err != nil || o != release.ArtifactObserver(kept.programs) {
+	if o, err := kept.artifactObserver(false, ""); err != nil || o != release.ArtifactObserver(kept.programs) {
 		t.Errorf("a factory that keeps programs observes with %T, %v", o, err)
 	}
 	simulated := &lifecycleFlags{coderAgent: "fake", programs: &localPrograms{launcher: launcherPath}}
-	if o, err := simulated.artifactObserver(true); err != nil {
+	if o, err := simulated.artifactObserver(true, ""); err != nil {
 		t.Errorf("the simulation: %T, %v", o, err)
 	} else if _, ok := o.(stages.SimulatedArtifacts); !ok {
 		t.Errorf("the simulation observes with %T", o)
@@ -308,7 +308,7 @@ func TestOnlyAFactoryThatKeepsProgramsOrTheSimulationObservesReleases(t *testing
 		"the simulation with a real agent":   {&lifecycleFlags{coderAgent: "claude", programs: &localPrograms{launcher: launcherPath}}, true},
 		"the scripted agent outside the sim": {&lifecycleFlags{coderAgent: "fake", programs: &localPrograms{launcher: launcherPath}}, false},
 	} {
-		if _, err := l.flags.artifactObserver(l.sim); !core.HasCode(err, core.CodeNotSupported) {
+		if _, err := l.flags.artifactObserver(l.sim, ""); !core.HasCode(err, core.CodeNotSupported) {
 			t.Errorf("%s: %v, want NOT_SUPPORTED", name, err)
 		}
 	}

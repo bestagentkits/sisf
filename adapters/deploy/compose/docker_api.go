@@ -76,6 +76,12 @@ func (a *dockerAPI) call(ctx context.Context, method, path string, query url.Val
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := a.http.Do(req)
+	return a.answer(ctx, resp, err, method, path, want...)
+}
+
+// answer returns the response of a sent request when its status is one of
+// want, and the typed error of anything else.
+func (a *dockerAPI) answer(ctx context.Context, resp *http.Response, err error, method, path string, want ...int) (*http.Response, error) {
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

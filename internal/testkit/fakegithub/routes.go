@@ -27,6 +27,8 @@ func (s *Server) routes() {
 	m.HandleFunc("PATCH "+repoPath+"/check-runs/{id}", s.patchCheckRun)
 	m.HandleFunc("POST "+repoPath+"/releases", s.createRelease)
 	m.HandleFunc("GET "+repoPath+"/contents/{path...}", s.getContents)
+	m.HandleFunc("GET "+repoPath+"/git/trees/{sha}", s.getTree)
+	m.HandleFunc("GET "+repoPath+"/git/blobs/{sha}", s.getBlob)
 	m.HandleFunc("GET /app/hook/deliveries", s.listDeliveries)
 	m.HandleFunc("POST /app/hook/deliveries/{id}/attempts", s.redeliver)
 	m.HandleFunc("POST /_sim/repos", s.simRepo)
