@@ -1,6 +1,7 @@
 package stages
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
 	"slices"
@@ -29,10 +30,15 @@ type hunk struct {
 // is data from an agent: anything it cannot read exactly is refused.
 func parseUnifiedDiff(diff string) ([]filePatch, error) {
 	var files []filePatch
+	block := "" // the path named by the current "diff --git" header
 	lines := strings.Split(strings.ReplaceAll(diff, "\r\n", "\n"), "\n")
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
 		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			block = gitHeaderPath(line)
+		case strings.HasPrefix(line, "GIT binary patch") || strings.HasPrefix(line, "Binary files "):
+			return nil, fmt.Errorf("line %d: the patch changes binary file %s, which cannot be applied", i+1, orUnnamed(block))
 		case strings.HasPrefix(line, "--- "):
 			if i+1 >= len(lines) || !strings.HasPrefix(lines[i+1], "+++ ") {
 				return nil, fmt.Errorf("line %d: a --- header must be followed by +++", i+1)
@@ -88,10 +94,39 @@ func parseUnifiedDiff(diff string) ([]filePatch, error) {
 			files[len(files)-1].hunks = append(files[len(files)-1].hunks, h)
 		}
 	}
-	if len(files) == 0 || len(files) > maxPatchFiles {
-		return nil, fmt.Errorf("a patch must change between 1 and %d files", maxPatchFiles)
+	if len(files) == 0 {
+		return nil, fmt.Errorf("the patch changes no file: the agent made no change (a patch must change between 1 and %d files)", maxPatchFiles)
+	}
+	if len(files) > maxPatchFiles {
+		return nil, fmt.Errorf("the patch changes %d files, more than %d (first: %s)", len(files), maxPatchFiles, firstPaths(files, 5))
 	}
 	return files, nil
+}
+
+// gitHeaderPath is the new path of a "diff --git a/X b/Y" header, or "" when
+// it cannot be read plainly.
+func gitHeaderPath(line string) string {
+	_, b, ok := strings.Cut(strings.TrimPrefix(line, "diff --git "), " b/")
+	if !ok {
+		return ""
+	}
+	return b
+}
+
+func orUnnamed(path string) string {
+	if path == "" {
+		return "(unnamed)"
+	}
+	return path
+}
+
+// firstPaths names the first n files of a patch, for a refusal message.
+func firstPaths(files []filePatch, n int) string {
+	var names []string
+	for _, f := range files[:min(n, len(files))] {
+		names = append(names, orUnnamed(cmp.Or(f.newPath, f.oldPath)))
+	}
+	return strings.Join(names, ", ")
 }
 
 func count(raw string) int {
