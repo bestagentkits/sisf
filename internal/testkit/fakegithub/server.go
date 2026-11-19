@@ -78,7 +78,9 @@ func New(opts ...Option) *Server {
 	for _, opt := range opts {
 		opt(s)
 	}
-	s.hooks.client.Timeout = 5 * time.Second
+	// A transport of its own: closing another test server closes the idle
+	// connections of the shared default transport under a delivery.
+	s.hooks.client = http.Client{Timeout: 5 * time.Second, Transport: http.DefaultTransport.(*http.Transport).Clone()}
 	s.routes()
 	return s
 }
