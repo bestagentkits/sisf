@@ -25,8 +25,3 @@ func addMicros(amounts ...core.Micros) core.Micros {
 	}
 	return sum
 }
-
-// usedIn is what a period holds and has spent.
-func usedIn(t core.BudgetTotals) core.Micros {
-	return addMicros(t.Reserved, t.SpentVerified, t.SpentUnverified)
-}

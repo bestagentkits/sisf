@@ -3,6 +3,7 @@ package budget
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	"github.com/bestagentkits/sisf/internal/actions"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
@@ -30,7 +31,8 @@ const (
 	setInput = `{"type":"object","additionalProperties":false,"required":["mode"],"properties":{` +
 		`"mode":{"enum":["unlimited","capped"]},"cap_micros":{"type":"integer","minimum":0},` +
 		`"period":{"enum":["","day","week","month"]},"alert_threshold_micros":{"type":"integer","minimum":0},` +
-		`"rollback_reserve_micros":{"type":"integer","minimum":0},"provider_hard_cap":{"type":"boolean"}}}`
+		`"rollback_reserve_micros":{"type":"integer","minimum":0},"provider_hard_cap":{"type":"boolean"},` +
+		`"provider_cost_sources":{"type":"array","uniqueItems":true,"items":{"enum":["anthropic","openai"]}}}}`
 	anyOutput = `{"type":"object"}`
 )
 
@@ -53,7 +55,7 @@ func Actions(cfg ActionsConfig) ([]core.Action, error) {
 			Sensitivity: core.SensitivityRead, Scopes: []string{"budget:read"},
 			Roles: []core.Role{core.RoleOwner, core.RoleMaintainer, core.RoleViewer},
 			Input: actions.Schema(getInput), Output: actions.Schema(anyOutput)}, Handle: h.get},
-		{Spec: core.ActionSpec{Name: ActionSet, Summary: "Change the budget mode, cap, alert threshold or rollback reserve; Owner only.",
+		{Spec: core.ActionSpec{Name: ActionSet, Summary: "Change the budget mode, cap, alert threshold, rollback reserve or provider cost sources; Owner only.",
 			Sensitivity: core.SensitivitySensitive, Scopes: []string{"budget:write"}, Roles: []core.Role{core.RoleOwner}, StepUp: true,
 			Input: actions.Schema(setInput), Output: actions.Schema(anyOutput)}, Handle: h.set},
 	}, nil
@@ -121,6 +123,9 @@ func warnings(current Settings, found bool, next Settings) []string {
 		out = append(out, "Removes the monetary cap: the factory will meter spending but no longer stop it.")
 	case next.Mode == core.BudgetCapped && found && next.CapMicros > current.CapMicros:
 		out = append(out, "Raises the spending cap.")
+	}
+	if found && slices.ContainsFunc(current.ProviderCostSources, func(s string) bool { return !slices.Contains(next.ProviderCostSources, s) }) {
+		out = append(out, "Stops checking spending against a provider's own report: what an agent under-reports there is no longer caught.")
 	}
 	if !next.ProviderHardCap {
 		out = append(out, "The provider has no hard cap, so the budget is not a guarantee against charges.")

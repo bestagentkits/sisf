@@ -30,6 +30,7 @@ import (
 	"github.com/bestagentkits/sisf/cmd/factoryd/lifecycle"
 	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/cmd/supervisor/stages"
+	"github.com/bestagentkits/sisf/internal/budget"
 	"github.com/bestagentkits/sisf/internal/control"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/internal/install"
@@ -105,6 +106,9 @@ type Options struct {
 	// the operator's own gh login: it names no GitHub App installation,
 	// takes no webhooks and learns of issues only by reconciliation.
 	OperatorToken bool
+	// ProviderCost reads the providers' spend for the budget gate, as the
+	// control zone's admin keys would.
+	ProviderCost map[string]budget.CostSource
 }
 
 // Factory is one factory running in the test process.
@@ -249,7 +253,7 @@ func New(t testing.TB, opts Options) *Factory {
 			core.ZoneApplication: control.HealthProbeFunc(func(context.Context) error { return nil }),
 			core.ZoneAgent:       control.HealthProbeFunc(f.dispatcherAlive),
 		},
-		Surfaces: f.surfaceConfig(base), Decision: opts.Decision, Reconcile: opts.Reconcile,
+		Surfaces: f.surfaceConfig(base), Decision: opts.Decision, Reconcile: opts.Reconcile, ProviderCost: opts.ProviderCost,
 	})
 	if err != nil {
 		t.Fatalf("harness: build the control zone: %v", err)

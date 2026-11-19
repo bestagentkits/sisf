@@ -401,6 +401,13 @@ paths:
                         - day
                         - week
                         - month
+                    provider_cost_sources:
+                      items:
+                        enum:
+                          - anthropic
+                          - openai
+                      type: array
+                      uniqueItems: true
                     provider_hard_cap:
                       type: boolean
                     rollback_reserve_micros:
@@ -430,7 +437,7 @@ paths:
       security:
         - bearerAuth:
             - budget:write
-      summary: Change the budget mode, cap, alert threshold or rollback reserve; Owner only.
+      summary: Change the budget mode, cap, alert threshold, rollback reserve or provider cost sources; Owner only.
       tags:
         - budget
       x-sisf-action: budget.set

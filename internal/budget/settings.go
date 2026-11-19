@@ -65,7 +65,19 @@ type Settings struct {
 	// ProviderHardCap states that the provider account enforces a hard limit
 	// of its own. When false the budget is flagged as having no hard cap.
 	ProviderHardCap bool `json:"provider_hard_cap,omitempty"`
+	// ProviderCostSources names the providers whose own report of what
+	// was spent, read by the control zone, is the least a capped period
+	// counts as spent, whatever the agents reported. Capped mode with a
+	// period only. A named source whose figure is missing or stale holds
+	// new runs until it is read again; see ProviderSpend.
+	ProviderCostSources []string `json:"provider_cost_sources,omitempty"`
 }
+
+// Provider cost sources the control zone can read.
+const (
+	ProviderAnthropic = "anthropic"
+	ProviderOpenAI    = "openai"
+)
 
 // Validate rejects settings that are ambiguous or cannot be enforced.
 func (s Settings) Validate() error {
@@ -83,6 +95,21 @@ func (s Settings) Validate() error {
 		return bad("a capped budget needs a cap above zero")
 	case s.Mode == core.BudgetCapped && s.RollbackReserveMicros >= s.CapMicros:
 		return bad("the rollback reserve must be smaller than the cap")
+	case len(s.ProviderCostSources) > 0 && s.Mode != core.BudgetCapped:
+		return bad("a provider cost source checks a cap; choose capped to name one")
+	case len(s.ProviderCostSources) > 0 && s.Period == PeriodNone:
+		// Providers report a bounded past, not everything ever spent.
+		return bad("a provider cost source needs a budget period of a day, a week or a month")
+	}
+	seen := map[string]bool{}
+	for _, source := range s.ProviderCostSources {
+		if source != ProviderAnthropic && source != ProviderOpenAI {
+			return bad("a provider cost source must be anthropic or openai")
+		}
+		if seen[source] {
+			return bad("a provider cost source is named twice")
+		}
+		seen[source] = true
 	}
 	return nil
 }

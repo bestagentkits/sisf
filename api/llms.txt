@@ -34,7 +34,7 @@ An agent never acts as the Owner, even through an Owner's browser session.
   roles: owner, maintainer, viewer; scopes: approvals:read; POST /api/v1/actions/approvals.list
 - budget.get [read] Show the budget mode, cap, alert threshold and usage, with unverified usage marked.
   roles: owner, maintainer, viewer; scopes: budget:read; POST /api/v1/actions/budget.get
-- budget.set [sensitive, step-up] Change the budget mode, cap, alert threshold or rollback reserve; Owner only.
+- budget.set [sensitive, step-up] Change the budget mode, cap, alert threshold, rollback reserve or provider cost sources; Owner only.
   roles: owner; scopes: budget:write; POST /api/v1/actions/budget.set
 - changelog.list [read] List the changelog entries of released work.
   roles: owner, maintainer, reporter, viewer, agent; scopes: catalog:read; POST /api/v1/actions/changelog.list

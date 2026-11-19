@@ -24,6 +24,11 @@ type Status struct {
 	// SpentUnverifiedMicros is usage the provider could not confirm; it is
 	// shown apart and counts against the cap.
 	SpentUnverifiedMicros core.Micros `json:"spent_unverified_micros"`
+	// ProviderSpentMicros is what the providers the settings name report
+	// was spent in the period, as the control zone last read it; nil when
+	// no provider is named or no figure counts. It is the least the period
+	// counts as spent, and is kept apart from what the agents reported.
+	ProviderSpentMicros *core.Micros `json:"provider_spent_micros,omitempty"`
 	// AvailableMicros is what a normal run may still reserve; capped only.
 	AvailableMicros *core.Micros `json:"available_micros,omitempty"`
 	// Warnings are plain-language notices about the level of guarantee.
@@ -50,8 +55,22 @@ func ReadStatus(ctx context.Context, src dispatcher.ConfirmationSource, ledger L
 		return Status{}, err
 	}
 	st.ReservedMicros, st.SpentVerifiedMicros, st.SpentUnverifiedMicros = totals.Reserved, totals.SpentVerified, totals.SpentUnverified
+	floor, err := providerFloor(ctx, ledger, settings, now)
+	var held *core.Error
+	switch {
+	case core.HasCode(err, core.CodeBudgetExceeded) && errors.As(err, &held):
+		st.Warnings = append(st.Warnings, "capped runs are held: "+held.Message)
+	case err != nil:
+		return Status{}, err
+	case len(settings.ProviderCostSources) > 0:
+		st.ProviderSpentMicros = &floor
+		if reported := addMicros(totals.SpentVerified, totals.SpentUnverified); floor > reported {
+			st.Warnings = append(st.Warnings, "the providers report more spent in the period than the agents did: an agent may "+
+				"under-report its costs, or something else spends through the same key or workspace; the providers' figure counts")
+		}
+	}
 	if settings.Mode == core.BudgetCapped {
-		available := settings.CapMicros - settings.RollbackReserveMicros - usedIn(totals)
+		available := settings.CapMicros - settings.RollbackReserveMicros - usedWith(totals, floor)
 		st.AvailableMicros = &available
 	}
 	if totals.SpentUnverified > 0 {

@@ -35,6 +35,7 @@ var trustedGoPackageDirs = []string{
 	"internal/audit/",
 	"internal/auth/",
 	"internal/budget/",
+	"internal/budget/providercost/",
 	"internal/catalog/",
 	"internal/conformance/",
 	"internal/control/",

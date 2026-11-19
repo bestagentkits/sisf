@@ -11,6 +11,7 @@ import (
 	"github.com/bestagentkits/sisf/adapters/agent/fake"
 	"github.com/bestagentkits/sisf/cmd/factoryd/wiring"
 	"github.com/bestagentkits/sisf/cmd/supervisor/observe"
+	"github.com/bestagentkits/sisf/internal/budget"
 	"github.com/bestagentkits/sisf/internal/dispatcher"
 	"github.com/bestagentkits/sisf/pkg/core"
 	"github.com/bestagentkits/sisf/pkg/manifest"
@@ -55,9 +56,11 @@ func setup(ctx context.Context, getenv func(string) string, zone core.Zone) (zon
 	return zoneSetup{env: env, manifest: m, store: store, clock: clock}, nil
 }
 
-// newControl builds the control zone from its setup; surfaces and decisions
-// are nil for the Owner's command-line use, which serves and decides nothing.
-func newControl(s zoneSetup, log *slog.Logger, surfaces *wiring.SurfaceConfig, decisions *wiring.DecisionConfig) (*wiring.Control, error) {
+// newControl builds the control zone from its setup; surfaces, decisions and
+// the providers' cost sources are nil for the Owner's command-line use,
+// which serves, decides and reads nothing.
+func newControl(s zoneSetup, log *slog.Logger, surfaces *wiring.SurfaceConfig, decisions *wiring.DecisionConfig,
+	providerCost map[string]budget.CostSource) (*wiring.Control, error) {
 	settings, err := wiring.GitHubSettingsOf(s.manifest)
 	if err != nil {
 		return nil, err
@@ -78,7 +81,7 @@ func newControl(s zoneSetup, log *slog.Logger, surfaces *wiring.SurfaceConfig, d
 		WebhookSecret: s.env.WebhookSecret, ApprovalKey: key, Surfaces: surfaces, Decision: decisions,
 		ListenAddr: listenOr(s.env.Listen, wiring.DefaultControlListen), AllowNonLoopback: s.env.AllowNonLoopback,
 		Probes: wiring.ZoneProbes(s.env.AppHealthURL, s.env.DispatcherHealthURL), Clock: s.clock, Logger: log,
-		TrustedProxies: s.env.TrustedProxies, Reconcile: s.env.Reconcile,
+		TrustedProxies: s.env.TrustedProxies, Reconcile: s.env.Reconcile, ProviderCost: providerCost,
 	})
 }
 
@@ -118,7 +121,13 @@ func runControl(ctx context.Context, args []string, getenv func(string) string, 
 	if decisions != nil {
 		decisions.Secrets = secretSet.Resolver
 	}
-	c, err := newControl(s, log, surfaces, decisions)
+	// The control zone alone holds the admin keys that read what the
+	// providers report was spent.
+	providerCost, err := wiring.ProviderCostFromEnv(getenv)
+	if err != nil {
+		return err
+	}
+	c, err := newControl(s, log, surfaces, decisions, providerCost)
 	if err != nil {
 		return err
 	}
@@ -159,7 +168,7 @@ func runPolicyApprove(ctx context.Context, args []string, getenv func(string) st
 		return err
 	}
 	defer func() { _ = s.store.Close() }()
-	c, err := newControl(s, log, nil, nil)
+	c, err := newControl(s, log, nil, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -187,7 +196,7 @@ func runPolicyRequest(ctx context.Context, args []string, getenv func(string) st
 		return err
 	}
 	defer func() { _ = s.store.Close() }()
-	c, err := newControl(s, log, nil, nil)
+	c, err := newControl(s, log, nil, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -216,7 +225,7 @@ func runIssueRetry(ctx context.Context, args []string, getenv func(string) strin
 		return err
 	}
 	defer func() { _ = s.store.Close() }()
-	c, err := newControl(s, log, nil, nil)
+	c, err := newControl(s, log, nil, nil, nil)
 	if err != nil {
 		return err
 	}
