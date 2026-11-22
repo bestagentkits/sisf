@@ -17,6 +17,8 @@ func TestAPipelineRefusesParametersThatWeakenTheReleaseRules(t *testing.T) {
 		"canary that never reaches 100": func(c *Config) { c.CanarySteps = []int{5, 25} },
 		"canary steps that go down":     func(c *Config) { c.CanarySteps = []int{25, 5, 100} },
 		"threshold of 100 percent":      func(c *Config) { c.Monitor.ErrorRateThreshold = 1 },
+		"severe rate at the threshold":  func(c *Config) { c.Monitor.ErrorRateThreshold, c.Monitor.SevereErrorRate = 0.3, 0.3 },
+		"severe rate above 100 percent": func(c *Config) { c.Monitor.SevereErrorRate = 1.5 },
 		"lease shorter than a window":   func(c *Config) { c.LeaseTTL = time.Minute },
 		"pass score above 100":          func(c *Config) { c.PassScore = 101 },
 		"no protected paths":            func(c *Config) { c.Protected = []string{} },

@@ -46,7 +46,10 @@ type WindowReport struct {
 //     its error rate and breaks a run of breaching windows;
 //   - a window breaches when its 5xx rate exceeds ErrorRateThreshold and
 //     exceeds the baseline by more than MinDelta; Consecutive breaching
-//     windows in a row roll back, and a clean window resets the count.
+//     windows in a row roll back, and a clean window resets the count;
+//   - a breaching window whose 5xx rate reaches SevereErrorRate rolls back
+//     at once, so a candidate that fails most requests does not advance the
+//     split to gather a second window of evidence.
 type Monitor struct {
 	cfg      MonitorConfig
 	breaches int
@@ -82,6 +85,9 @@ func (m *Monitor) Judge(candidate deploy.Metrics, baseline float64) (WindowRepor
 		return decide(DecisionContinue, "")
 	}
 	m.breaches++
+	if rate >= m.cfg.SevereErrorRate {
+		return decide(DecisionRollback, fmt.Sprintf("the 5xx rate %.4f reached the severe rate %.4f over %d responses, above the baseline %.4f", rate, m.cfg.SevereErrorRate, candidate.Requests, baseline))
+	}
 	if m.breaches >= m.cfg.Consecutive {
 		return decide(DecisionRollback, fmt.Sprintf("the 5xx rate %.4f breached the threshold and the baseline %.4f for %d windows in a row", rate, baseline, m.breaches))
 	}

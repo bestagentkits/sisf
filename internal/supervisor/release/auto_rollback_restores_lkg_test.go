@@ -153,3 +153,20 @@ func TestAnEmergencyStopDuringTheRolloutRestoresTheLKG(t *testing.T) {
 		t.Fatalf("reason %q, want the emergency stop", out.Reason)
 	}
 }
+
+func TestACanaryFailingEveryRequestIsRolledBackAtTheFirstStep(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.backend.errorRate[core.ReleaseDigest(firstBuild)] = 1.0
+	issue, run := issueRef(89), core.RunID("run-89")
+	w.seedReleaseCandidate(issue, run, firstBuild)
+
+	out, err := w.pipeline().Release(context.Background(), w.request(issue, run, firstBuild))
+	requireRestored(t, w, issue, run, out, err)
+	if len(out.Windows) != 1 || !out.Windows[0].Breach || out.Windows[0].Decision != DecisionRollback {
+		t.Fatalf("windows %+v, want one breaching window that rolled back", out.Windows)
+	}
+	if promotions, _, _, _ := w.backend.snapshot(); len(promotions) != 1 {
+		t.Fatalf("promotions %v, want the split never advanced past the first canary step", promotions)
+	}
+}
