@@ -66,3 +66,43 @@ func TestAnUnhealthyWindowRollsBackWhateverItsTraffic(t *testing.T) {
 		}
 	}
 }
+
+func TestASevereWindowRollsBackAtOnce(t *testing.T) {
+	t.Parallel()
+	for name, window := range map[string]deploy.Metrics{
+		"every request failed": metrics(100, 100, true),
+		"half the requests":    metrics(200, 100, true),
+	} {
+		report, decision := NewMonitor(MonitorConfig{}).Judge(window, 0)
+		if decision != DecisionRollback || !report.Breach {
+			t.Errorf("%s: first window decided %s (breach %v), want rollback", name, decision, report.Breach)
+		}
+	}
+}
+
+func TestABorderlineSingleBreachStillWaitsForTheNextWindow(t *testing.T) {
+	t.Parallel()
+	for name, window := range map[string]deploy.Metrics{
+		"just above the threshold":   metrics(1000, 25, true),
+		"just below the severe rate": metrics(1000, 499, true),
+	} {
+		report, decision := NewMonitor(MonitorConfig{}).Judge(window, 0)
+		if decision != DecisionContinue || !report.Breach {
+			t.Errorf("%s: first window decided %s (breach %v), want continue on a breach", name, decision, report.Breach)
+		}
+	}
+}
+
+func TestASevereRateWithTooFewSamplesDrawsNoConclusion(t *testing.T) {
+	t.Parallel()
+	if _, decision := NewMonitor(MonitorConfig{}).Judge(metrics(20, 20, true), 0); decision != DecisionLowTraffic {
+		t.Fatalf("20 failed responses below the sample floor decided %s, want low traffic", decision)
+	}
+}
+
+func TestASevereRateAsHighAsTheBaselineIsNoBreach(t *testing.T) {
+	t.Parallel()
+	if report, decision := NewMonitor(MonitorConfig{}).Judge(metrics(100, 60, true), 0.6); decision != DecisionContinue || report.Breach {
+		t.Fatalf("a severe rate no higher than the baseline decided %s (breach %v), want continue", decision, report.Breach)
+	}
+}

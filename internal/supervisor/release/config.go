@@ -38,6 +38,7 @@ const (
 	DefaultErrorRateThreshold = 0.02
 	DefaultMinDelta           = 0.01
 	DefaultConsecutive        = 2
+	DefaultSevereErrorRate    = 0.5
 	DefaultPassScore          = 85
 	DefaultObservationWindows = 2
 	DefaultStepWindows        = 1
@@ -71,6 +72,10 @@ type MonitorConfig struct {
 	MinDelta           float64
 	// Consecutive is how many breaching windows in a row roll back.
 	Consecutive int
+	// SevereErrorRate is the 5xx rate at or above which one breaching window
+	// with enough samples rolls back at once instead of waiting for the
+	// next window. It must lie above ErrorRateThreshold.
+	SevereErrorRate float64
 }
 
 // LowTrafficConfig is the synthetic hold of a release whose real traffic
@@ -240,6 +245,9 @@ func (m MonitorConfig) withDefaults() MonitorConfig {
 	if m.Consecutive == 0 {
 		m.Consecutive = DefaultConsecutive
 	}
+	if m.SevereErrorRate == 0 {
+		m.SevereErrorRate = DefaultSevereErrorRate
+	}
 	return m
 }
 
@@ -251,6 +259,8 @@ func (c Config) validate() error {
 		return invalid("the monitor needs a positive window, at least one sample and one window to roll back on")
 	case m.ErrorRateThreshold <= 0 || m.ErrorRateThreshold >= 1 || m.MinDelta <= 0 || m.MinDelta >= 1:
 		return invalid("the error rate threshold and its rise over the baseline must lie between 0 and 1")
+	case !(m.SevereErrorRate > m.ErrorRateThreshold && m.SevereErrorRate <= 1):
+		return invalid("the severe error rate must lie above the error rate threshold and at most 1")
 	case c.LeaseTTL <= m.Window:
 		return invalid("the issue lease must outlast one observation window")
 	case c.PassScore < 1 || c.PassScore > 100:
