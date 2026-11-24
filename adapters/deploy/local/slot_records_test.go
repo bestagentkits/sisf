@@ -271,12 +271,11 @@ func alive(pid int) bool {
 func TestARestartedBackendStopsAProcessItsLauncherExecedInto(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "slots")
-	launcher := filepath.Join(t.TempDir(), "launcher")
-	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexec /bin/sleep 300\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	// The launcher is the system shell, not a script this test writes:
+	// executing a file written moments earlier fails with "text file busy"
+	// when a parallel test forks while the write descriptor is still open.
 	real := local.ExecStarter{AddrEnv: "LISTEN", Env: []string{"PATH=/usr/bin:/bin"},
-		Command: func(string) (string, []string, error) { return launcher, nil, nil }}
+		Command: shell("exec /bin/sleep 300")}
 	w := newWorld(t, worldOptions{cfg: func(c *local.Config) {
 		c.StateDir = dir
 		c.Starter = execBackedStarter{Starter: c.Starter, real: real}
@@ -291,8 +290,18 @@ func TestARestartedBackendStopsAProcessItsLauncherExecedInto(t *testing.T) {
 			_ = p.Kill()
 		}
 	})
-	// Let the launcher become the program before the restart.
-	time.Sleep(200 * time.Millisecond)
+	// Wait until the launcher has become the program before the restart.
+	execDeadline := time.Now().Add(10 * time.Second)
+	for {
+		out, err := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(rec.PID)).Output()
+		if err == nil && strings.HasPrefix(strings.TrimSpace(string(out)), "/bin/sleep") {
+			break
+		}
+		if time.Now().After(execDeadline) {
+			t.Fatalf("process %d never became the program: %q", rec.PID, out)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	restarted(t, w, dir).stage(digestB)
 	deadline := time.Now().Add(10 * time.Second)
 	for alive(rec.PID) {
